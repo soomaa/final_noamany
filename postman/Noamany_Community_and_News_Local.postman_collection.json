@@ -1,0 +1,92 @@
+{
+  "info": {
+    "_postman_id": "6d7da7cb-c1d1-4b9c-b7b4-9e01d8f5b3c6",
+    "name": "Noamany - Member Community & News (Local)",
+    "description": "Member-mobile APIs only: authentication, community categories/posts/reactions, member notifications, published news and news types. Import the paired Local environment and run Member Login first. All test values are local only.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:4010/api" },
+    { "key": "memberPhone", "value": "01000000099" },
+    { "key": "memberPassword", "value": "TestPass123!" },
+    { "key": "memberToken", "value": "" },
+    { "key": "postId", "value": "" },
+    { "key": "notificationId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "01 - Member Authentication",
+      "item": [
+        {
+          "name": "Member Login (stores memberToken)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{memberPhone}}\",\n  \"password\": \"{{memberPassword}}\"\n}" },
+            "url": "{{baseUrl}}/member/auth/login"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('member login succeeds', () => pm.response.to.have.status(200));", "pm.collectionVariables.set('memberToken', pm.response.json().accessToken);"] } }]
+        },
+        {
+          "name": "Refresh Member Token",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"refreshToken\": \"ضع refreshToken الناتج من Member Login هنا\"\n}" },
+            "url": "{{baseUrl}}/member/auth/refresh"
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 - Community (Member)",
+      "item": [
+        {
+          "name": "Get Community Categories",
+          "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }], "url": "{{baseUrl}}/member/community/categories" },
+          "description": "Returns data[] with values question, experience, discussion. Send a value as category when creating or filtering posts."
+        },
+        {
+          "name": "Create Community Post (stores postId)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }, { "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"category\": \"question\",\n  \"title\": \"سؤال اختبار المجتمع\",\n  \"description\": \"هذا المنشور مُنشأ محليًا لاختبار تكامل Flutter.\"\n}" },
+            "url": "{{baseUrl}}/member/community/posts"
+          },
+          "event": [{ "listen": "test", "script": { "exec": ["pm.test('post created', () => pm.response.to.have.status(201));", "pm.collectionVariables.set('postId', pm.response.json().id);"] } }]
+        },
+        { "name": "List Approved Posts + Search", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }], "url": "{{baseUrl}}/member/community/posts?page=1&pageSize=20&category=question&search=اختبار" } },
+        { "name": "Get My Post Details", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }], "url": "{{baseUrl}}/member/community/posts/{{postId}}" } },
+        { "name": "Set Like (toggle / swap supported)", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"reactionType\": \"like\" }" }, "url": "{{baseUrl}}/member/community/posts/{{postId}}/reaction" } },
+        { "name": "Set Loved It", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"reactionType\": \"love\" }" }, "url": "{{baseUrl}}/member/community/posts/{{postId}}/reaction" } }
+      ]
+    },
+    {
+      "name": "03 - Member Notifications",
+      "item": [
+        { "name": "List Notifications", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }], "url": "{{baseUrl}}/member/notifications?unread=true&limit=50" }, "event": [{ "listen": "test", "script": { "exec": ["const data = pm.response.json();", "if (data.notifications && data.notifications[0]) pm.collectionVariables.set('notificationId', data.notifications[0].id);"] } }] },
+        { "name": "Unread Notification Count", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }], "url": "{{baseUrl}}/member/notifications/unread-count" } },
+        { "name": "Mark One Notification Read", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }], "url": "{{baseUrl}}/member/notifications/{{notificationId}}/read" } },
+        { "name": "Mark All Notifications Read", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }], "url": "{{baseUrl}}/member/notifications/read-all" } }
+      ]
+    },
+    {
+      "name": "04 - News (Member)",
+      "item": [
+        { "name": "Get News Types", "request": { "method": "GET", "url": "{{baseUrl}}/app/news/types" }, "description": "Returns data[] with values nutrition, championships, exercises, supplements. Use these values to group or filter the news UI." },
+        { "name": "List Published News", "request": { "method": "GET", "url": "{{baseUrl}}/app/news?page=1&pageSize=20&search=&isPublished=true" } }
+      ]
+    },
+    {
+      "name": "05 - Online Coach (Member)",
+      "description": "Temporary static endpoints for the four Online Coach tabs. Every request returns data: [] and the Arabic empty-state message until online coaching is enabled.",
+      "item": [
+        { "name": "Nutrition Plan - Empty State", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }], "url": "{{baseUrl}}/member/online-coaching/nutrition" } },
+        { "name": "Daily Workouts - Empty State", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }], "url": "{{baseUrl}}/member/online-coaching/workouts" } },
+        { "name": "Instant Chat - Empty State", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }], "url": "{{baseUrl}}/member/online-coaching/chat" } },
+        { "name": "Coach Notes - Empty State", "request": { "method": "GET", "header": [{ "key": "Authorization", "value": "Bearer {{memberToken}}" }], "url": "{{baseUrl}}/member/online-coaching/coach-notes" } }
+      ]
+    }
+  ]
+}

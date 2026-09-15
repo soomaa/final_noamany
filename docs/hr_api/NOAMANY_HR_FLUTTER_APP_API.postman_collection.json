@@ -1,0 +1,2659 @@
+{
+  "info": {
+    "_postman_id": "ab8b583b-4402-473c-a395-2ce65e2af7d1",
+    "name": "Noamany HR - Flutter Employee App (Modern APIs)",
+    "description": "Modern /api APIs for the Flutter HR employee application. Includes the final GPS attendance flow: employee identity from JWT, geofence determined by employees.emp_sign, new shift assignments only, offline sync, and employee-only attendance reports without branch filtering. Legacy /Api routes are excluded.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://final.noamanycenter.com",
+      "type": "string"
+    },
+    {
+      "key": "token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "username",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "employeeId",
+      "value": "2593",
+      "type": "string"
+    },
+    {
+      "key": "employeeCode",
+      "value": "163",
+      "type": "string"
+    },
+    {
+      "key": "employeePhone",
+      "value": "01007699888",
+      "type": "string"
+    },
+    {
+      "key": "recipientUserId",
+      "value": "369",
+      "type": "string"
+    },
+    {
+      "key": "leaveTypeId",
+      "value": "17",
+      "type": "string"
+    },
+    {
+      "key": "leaveId",
+      "value": "6380",
+      "type": "string"
+    },
+    {
+      "key": "permissionId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "loanId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "shiftId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "shiftSwapId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "extraHoursId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "messageId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "warningId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "circularId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "legalFileId",
+      "value": "4",
+      "type": "string"
+    },
+    {
+      "key": "activityId",
+      "value": "539",
+      "type": "string"
+    },
+    {
+      "key": "notificationId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "latitude",
+      "value": "30.5694625",
+      "type": "string"
+    },
+    {
+      "key": "longitude",
+      "value": "31.0080154",
+      "type": "string"
+    },
+    {
+      "key": "attendancePhoto",
+      "value": "https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png",
+      "type": "string"
+    },
+    {
+      "key": "activityFilePath",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "uploadedPhotoName",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "fcmToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "permissionDate",
+      "value": "2026-09-01",
+      "type": "string"
+    },
+    {
+      "key": "leaveStartDate",
+      "value": "2026-12-20",
+      "type": "string"
+    },
+    {
+      "key": "leaveEndDate",
+      "value": "2026-12-20",
+      "type": "string"
+    },
+    {
+      "key": "dateFrom",
+      "value": "2026-08-01",
+      "type": "string"
+    },
+    {
+      "key": "dateTo",
+      "value": "2026-08-31",
+      "type": "string"
+    },
+    {
+      "key": "nextMonthFirstDay",
+      "value": "2026-09-01",
+      "type": "string"
+    },
+    {
+      "key": "reportSearch",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "shiftDate",
+      "value": "2026-12-20",
+      "type": "string"
+    },
+    {
+      "key": "extraHoursDate",
+      "value": "2026-12-20",
+      "type": "string"
+    },
+    {
+      "key": "offlineId",
+      "value": "00000000-0000-4000-8000-000000000001",
+      "type": "string"
+    },
+    {
+      "key": "capturedAtUtc",
+      "value": "2026-08-24T08:00:00.000Z",
+      "type": "string"
+    },
+    {
+      "key": "statsMonth",
+      "value": "8",
+      "type": "string"
+    },
+    {
+      "key": "statsYear",
+      "value": "2026",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "01 - الدخول والتطبيق",
+      "item": [
+        {
+          "name": "تسجيل الدخول",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "login"
+              ]
+            },
+            "description": "يحفظ اختبار Postman التوكن في متغير collection token.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const data = pm.response.json();",
+                  "if (data.accessToken) pm.collectionVariables.set('token', data.accessToken);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "البروفايل",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "profile"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "تغيير كلمة المرور",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/auth/change-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "auth",
+                "change-password"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{currentPassword}}\",\n  \"newPassword\": \"{{newPassword}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "رفع صورة شخصية",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/uploads/emp-photo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "uploads",
+                "emp-photo"
+              ]
+            },
+            "description": "multipart/form-data: field name file. بعد الرفع استخدم تحديث الموظف بالصورة الناتجة."
+          },
+          "response": []
+        },
+        {
+          "name": "تحديث الصورة الشخصية",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/employees/{{employeeId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "employees",
+                "{{employeeId}}"
+              ]
+            },
+            "description": "يتطلب صلاحية تعديل بيانات الموظف.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"personal_photo\": \"{{uploadedPhotoName}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 - الحضور والانصراف",
+      "item": [
+        {
+          "name": "تسجيل حضور أو انصراف بالبصمة",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/punch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "punch"
+              ]
+            },
+            "description": "لا ترسلي empCode أو branchId أو type: السيرفر يحدد الموظف من JWT والحضور/الانصراف تلقائيًا. emp_sign الرقمي يفرض فرع البصمة، والقيمة all أو الفارغة تختار أقرب فرع صالح داخل النطاق. مصدر الدوام حصراً tbl_hdoor_dawms_emps وtbl_hdodr_setting؛ إذا لم توجد وردية جديدة مطابقة يرفض الطلب ولا ينشئ انصرافًا منفردًا.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": \"{{latitude}}\",\n  \"long\": \"{{longitude}}\",\n  \"photo\": \"{{attendancePhoto}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "مزامنة بصمة تم حفظها أثناء انقطاع النت",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/offline-sync",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "offline-sync"
+              ]
+            },
+            "description": "هذه النسخة التجريبية تولّد تلقائيًا UUID v4 ووقت UTC حديثين عند كل Send، حتى لا تنتهي مهلة الـ24 ساعة. لاختبار إعادة المحاولة الفعلية استخدمي نفس offlineId ونفس capturedAtUtc ونفس الموقع تمامًا. تطبق نفس قواعد GPS والورديات الجديدة الخاصة بالبصمة المباشرة.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"offlineId\": \"{{$guid}}\",\n  \"capturedAtUtc\": \"{{$isoTimestamp}}\",\n  \"timezone\": \"Africa/Cairo\",\n  \"lat\": \"{{latitude}}\",\n  \"long\": \"{{longitude}}\",\n  \"photo\": \"{{attendancePhoto}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 - تقارير الحضور والانصراف",
+      "item": [
+        {
+          "name": "تقرير الحضور اليومي",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/reports/basma?dateFrom={{dateFrom}}&dateTo={{dateTo}}&search={{reportSearch}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "reports",
+                "basma"
+              ],
+              "query": [
+                {
+                  "key": "dateFrom",
+                  "value": "{{dateFrom}}"
+                },
+                {
+                  "key": "dateTo",
+                  "value": "{{dateTo}}"
+                },
+                {
+                  "key": "search",
+                  "value": "{{reportSearch}}"
+                }
+              ]
+            },
+            "description": "يعرض بصمات الموظف المسجل فقط. empCode وbranchId القادمان من التطبيق يُتجاهلان؛ التقرير لا يُقيّد بفرع حتى تظهر كل بصمات الموظف عبر المواقع المسموح بها."
+          },
+          "response": []
+        },
+        {
+          "name": "تقرير التأخير",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/reports/late?dateFrom={{dateFrom}}&dateTo={{dateTo}}&search={{reportSearch}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "reports",
+                "late"
+              ],
+              "query": [
+                {
+                  "key": "dateFrom",
+                  "value": "{{dateFrom}}"
+                },
+                {
+                  "key": "dateTo",
+                  "value": "{{dateTo}}"
+                },
+                {
+                  "key": "search",
+                  "value": "{{reportSearch}}"
+                }
+              ]
+            },
+            "description": "يعرض تأخيرات الموظف المسجل فقط دون أي تقييد بفرع. empCode وbranchId القادمان من التطبيق يُتجاهلان."
+          },
+          "response": []
+        },
+        {
+          "name": "تقرير الغياب",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/reports/absence?dateFrom={{dateFrom}}&dateTo={{dateTo}}&search={{reportSearch}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "reports",
+                "absence"
+              ],
+              "query": [
+                {
+                  "key": "dateFrom",
+                  "value": "{{dateFrom}}"
+                },
+                {
+                  "key": "dateTo",
+                  "value": "{{dateTo}}"
+                },
+                {
+                  "key": "search",
+                  "value": "{{reportSearch}}"
+                }
+              ]
+            },
+            "description": "يعرض غياب الموظف المسجل فقط دون أي تقييد بفرع. empCode وbranchId القادمان من التطبيق يُتجاهلان."
+          },
+          "response": []
+        },
+        {
+          "name": "تقرير الساعات الإضافية الخاصة بي",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/extra-hours?page=1&perPage=20&dateFrom={{dateFrom}}&dateTo={{dateTo}}&search={{reportSearch}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "extra-hours"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                },
+                {
+                  "key": "dateFrom",
+                  "value": "{{dateFrom}}"
+                },
+                {
+                  "key": "dateTo",
+                  "value": "{{dateTo}}"
+                },
+                {
+                  "key": "search",
+                  "value": "{{reportSearch}}"
+                }
+              ]
+            },
+            "description": "يعرض فقط الساعات التي أُضيفت بطلب إضافة ساعات إضافية، ولا يحسب ساعات تلقائيًا من الحضور."
+          },
+          "response": []
+        },
+        {
+          "name": "تقرير تبديل أو إضافة الشيفتات الخاصة بي",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/shift-swaps?page=1&perPage=20&dateFrom={{dateFrom}}&dateTo={{dateTo}}&search={{reportSearch}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "shift-swaps"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                },
+                {
+                  "key": "dateFrom",
+                  "value": "{{dateFrom}}"
+                },
+                {
+                  "key": "dateTo",
+                  "value": "{{dateTo}}"
+                },
+                {
+                  "key": "search",
+                  "value": "{{reportSearch}}"
+                }
+              ]
+            },
+            "description": "يعرض طلبات التبديل أو الإضافة الخاصة بالموظف؛ يعيد قائمة فارغة عند عدم وجود طلبات."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 - الإجازات",
+      "item": [
+        {
+          "name": "أنواع الإجازات",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/leaves/types",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "leaves",
+                "types"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "الإجازات الصادرة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/leaves?mode=sader&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "leaves"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "sader"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "الإجازات الواردة أو الواقفة عندي",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/leaves?mode=wared&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "leaves"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "wared"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "الإجازات المقبولة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/leaves?mode=accept&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "leaves"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "accept"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "الإجازات المرفوضة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/leaves?mode=reject&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "leaves"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "reject"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "إضافة إجازة",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/leaves",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "leaves"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leaveTypeId\": \"{{leaveTypeId}}\",\n  \"startDate\": \"{{leaveStartDate}}\",\n  \"endDate\": \"{{leaveEndDate}}\",\n  \"reason\": \"طلب إجازة من تطبيق الموظف\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "قبول إجازة محولة لي",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/leaves/{{leaveId}}/action",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "leaves",
+                "{{leaveId}}",
+                "action"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"accept\",\n  \"reason\": \"تمت الموافقة\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "رفض إجازة محولة لي",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/leaves/{{leaveId}}/action",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "leaves",
+                "{{leaveId}}",
+                "action"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"reject\",\n  \"reason\": \"تم الرفض\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 - الأذونات",
+      "item": [
+        {
+          "name": "رصيد الأذونات المتاح",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/permissions/available?date={{permissionDate}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "permissions",
+                "available"
+              ],
+              "query": [
+                {
+                  "key": "date",
+                  "value": "{{permissionDate}}"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "الأذونات الصادرة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/permissions?mode=sader&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "permissions"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "sader"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "الأذونات الواردة أو الواقفة عندي",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/permissions?mode=wared&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "permissions"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "wared"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "الأذونات المقبولة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/permissions?mode=accept&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "permissions"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "accept"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "الأذونات المرفوضة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/permissions?mode=reject&page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "permissions"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "reject"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "أنواع الأذونات (من النظام)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/lookups",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "lookups"
+              ]
+            },
+            "description": "الأنواع الحديثة الثابتة: 1 = إذن شخصي، 2 = إذن للعمل. لا يوجد endpoint منفصل للأنواع في الإصدار المنشور؛ هذا الطلب يجلب كتالوجات النظام، واستخدمي القيم الثابتة في طلب الإذن."
+          },
+          "response": []
+        },
+        {
+          "name": "إضافة إذن",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/permissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "permissions"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"no3Ezn\": 1,\n  \"eznDate\": \"{{permissionDate}}\",\n  \"fromHour\": \"10:00\",\n  \"toHour\": \"11:00\",\n  \"reason\": \"إذن من تطبيق الموظف\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "قبول إذن محول لي",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/permissions/{{permissionId}}/action",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "permissions",
+                "{{permissionId}}",
+                "action"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"accept\",\n  \"reason\": \"تمت الموافقة\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "رفض إذن محول لي",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/permissions/{{permissionId}}/action",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "permissions",
+                "{{permissionId}}",
+                "action"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"reject\",\n  \"reason\": \"تم الرفض\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "06 - السلف",
+      "item": [
+        {
+          "name": "بيانات السلف",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/loans/meta",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "loans",
+                "meta"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "السلف الصادرة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/loans?mode=sader&page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "loans"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "sader"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "السلف الواردة أو الواقفة عندي",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/loans?mode=wared&page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "loans"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "wared"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "السلف المقبولة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/loans?mode=accept&page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "loans"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "accept"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "السلف المرفوضة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/loans?mode=reject&page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "loans"
+              ],
+              "query": [
+                {
+                  "key": "mode",
+                  "value": "reject"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "تفاصيل سلفة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/loans/{{loanId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "loans",
+                "{{loanId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "إضافة طلب سلفة",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/loans",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "loans"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 100,\n  \"repaymentMethod\": 3,\n  \"installments\": 2,\n  \"deductionStartDate\": \"{{nextMonthFirstDay}}\",\n  \"reason\": \"طلب اختبار من تطبيق الموظف\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "قبول سلفة محولة لي",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/loans/{{loanId}}/action",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "loans",
+                "{{loanId}}",
+                "action"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"accept\",\n  \"reason\": \"تمت الموافقة\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "رفض سلفة محولة لي",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/loans/{{loanId}}/action",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "loans",
+                "{{loanId}}",
+                "action"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"reject\",\n  \"reason\": \"تم الرفض\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "إلغاء طلب السلفة الصادر",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/loans/{{loanId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "loans",
+                "{{loanId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "07 - الشفتات والساعات الإضافية",
+      "item": [
+        {
+          "name": "أنواع الشيفتات المتاحة للموظف",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/shift-types?page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "shift-types"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "أنواع عملية الشيفت",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/shift-operation-types",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "shift-operation-types"
+              ]
+            },
+            "description": "يعيد دائمًا نوعَي العملية لاستخدامهما في نموذج المدير: 1 = تبديل شيفت، 2 = إضافة شيفت."
+          },
+          "response": []
+        },
+        {
+          "name": "المدير: تبديل شيفت لموظف",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/shift-swaps",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "shift-swaps"
+              ]
+            },
+            "description": "يكتب المدير رقم هاتف الموظف. الباك يبحث عنه ثم يتحقق أن المرسل مديره المباشر أو HR قبل الحفظ.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employeePhone\": \"{{employeePhone}}\",\n  \"ttype\": 1,\n  \"dwamIdFk\": \"{{shiftId}}\",\n  \"sheftDate\": \"{{shiftDate}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "المدير: إضافة شيفت لموظف",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/shift-swaps",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "shift-swaps"
+              ]
+            },
+            "description": "لا يمكن للموظف إضافة شفت لنفسه؛ المدير أو HR فقط.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employeePhone\": \"{{employeePhone}}\",\n  \"ttype\": 2,\n  \"dwamIdFk\": \"{{shiftId}}\",\n  \"sheftDate\": \"{{shiftDate}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "تقرير تبديل وإضافة شيفتاتي",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/shift-swaps?page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "shift-swaps"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "المدير: إضافة ساعات إضافية لموظف",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/extra-hours",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "extra-hours"
+              ]
+            },
+            "description": "المدير يدخل رقم هاتف الموظف. المدير المباشر أو HR فقط؛ هذه الساعات لا تُحسب تلقائيًا من الحضور.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"employeePhone\": \"{{employeePhone}}\",\n  \"numHours\": 2,\n  \"edafaDate\": \"{{extraHoursDate}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "تقرير ساعاتي الإضافية",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/attendance/extra-hours?page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "attendance",
+                "extra-hours"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "08 - الرسائل الداخلية",
+      "item": [
+        {
+          "name": "كل الرسائل الواردة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/messages/inbox?page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "messages",
+                "inbox"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "الرسائل غير المقروءة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/messages/inbox?page=1&perPage=20&status=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "messages",
+                "inbox"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                },
+                {
+                  "key": "status",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "الرسائل المقروءة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/messages/inbox?page=1&perPage=20&status=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "messages",
+                "inbox"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                },
+                {
+                  "key": "status",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "الرسائل الصادرة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/messages/sent?page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "messages",
+                "sent"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "تفاصيل رسالة داخلية",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/messages/{{messageId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "messages",
+                "{{messageId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "إرسال رسالة داخلية",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/messages",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "messages"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"toUserIds\": [\n    \"{{recipientUserId}}\"\n  ],\n  \"subject\": \"رسالة من التطبيق\",\n  \"message\": \"رسالة اختبار\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "تعليم الرسالة كمقروءة",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/messages/{{messageId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "messages",
+                "{{messageId}}",
+                "read"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "09 - الإنذارات والتعاميم",
+      "item": [
+        {
+          "name": "كل الإنذارات",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/warnings?page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "warnings"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "تفاصيل إنذار",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/warnings/{{warningId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "warnings",
+                "{{warningId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "تعليم الإنذار كمقروء",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/warnings/{{warningId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "warnings",
+                "{{warningId}}",
+                "read"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "كل التعاميم",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/circulars?page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "circulars"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "تفاصيل تعميم",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/circulars/{{circularId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "circulars",
+                "{{circularId}}"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "تعليم التعميم كمقروء وزيادة المشاهدة",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/circulars/{{circularId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "circulars",
+                "{{circularId}}",
+                "read"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "10 - الأنشطة واللوائح",
+      "item": [
+        {
+          "name": "طلباتي من الأنشطة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/activities/my-requests?page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "activities",
+                "my-requests"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "طلبات الأنشطة الجديدة من النظام",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/activities/new-requests?page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "activities",
+                "new-requests"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "كل الأنشطة الخاصة بي",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/activities?page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "activities"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "تفاصيل نشاط",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/activities/{{activityId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "activities",
+                "{{activityId}}"
+              ]
+            },
+            "description": "تفاصيل النشاط متاحة في إدارة HR وتتطلب صلاحيتها."
+          },
+          "response": []
+        },
+        {
+          "name": "إضافة نشاط بدون مرفق",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/activities",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "activities"
+              ]
+            },
+            "description": "يحفظ في جدول hr_ansheta ويظهر في طلباتي. المرفق اختياري.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"نشاط من تطبيق الموظف\",\n  \"notes\": \"تفاصيل النشاط\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "إضافة نشاط بمرفق اختياري",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/activities",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "activities"
+              ]
+            },
+            "description": "ارفعي الملف أولًا عبر /api/uploads/activity ثم أرسلي المسار الناتج.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"نشاط من تطبيق الموظف\",\n  \"notes\": \"تفاصيل النشاط\",\n  \"files\": [\n    \"{{activityFilePath}}\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "كل اللوائح",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/legal-files?page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "legal-files"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "تفاصيل لائحة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/legal-files/{{legalFileId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "legal-files",
+                "{{legalFileId}}"
+              ]
+            },
+            "description": "تفاصيل اللائحة متاحة في إدارة HR وتتطلب صلاحيتها."
+          },
+          "response": []
+        },
+        {
+          "name": "تعليم اللائحة كمقروءة وزيادة المشاهدة",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/legal-files/{{legalFileId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "legal-files",
+                "{{legalFileId}}",
+                "read"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "11 - المأموريات والمهام",
+      "item": [
+        {
+          "name": "قائمة المأموريات",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/missions?page=1&pageSize=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "missions"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "pageSize",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "يتطلب صلاحية leaves.missions:view. الإصدار الحالي لا يفلتر المأموريات تلقائيًا للموظف."
+          },
+          "response": []
+        },
+        {
+          "name": "تفاصيل مأمورية",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/missions/{{missionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "missions",
+                "{{missionId}}"
+              ]
+            },
+            "description": "يتطلب صلاحية leaves.missions:view."
+          },
+          "response": []
+        },
+        {
+          "name": "قائمة مهام الموظف",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/tasks?page=1&perPage=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "tasks"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "perPage",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "القائمة الحالية في تطبيق الموظف."
+          },
+          "response": []
+        },
+        {
+          "name": "تفاصيل مهمة",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/tasks/{{taskId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "tasks",
+                "{{taskId}}"
+              ]
+            },
+            "description": "تفاصيل المهمة متاحة حاليًا عبر إدارة HR وتتطلب صلاحية affairs.tasks:view؛ لا يوجد GET تفصيلي مخصص لتطبيق الموظف في النسخة المنشورة."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "12 - الإشعارات والخصوصية",
+      "item": [
+        {
+          "name": "كل الإشعارات",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/notifications",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "notifications"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "تعليم إشعار كمقروء",
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/notifications/{{notificationId}}/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "notifications",
+                "{{notificationId}}",
+                "read"
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        },
+        {
+          "name": "عن تطبيق الموارد البشرية",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/content/about",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "content",
+                "about"
+              ]
+            },
+            "description": "محتوى HR مستقل ومتاح للموظف المسجل فقط."
+          },
+          "response": []
+        },
+        {
+          "name": "سياسة خصوصية الموارد البشرية",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/content/privacy-policy",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "content",
+                "privacy-policy"
+              ]
+            },
+            "description": "ليست سياسة النظام أو تطبيق الأعضاء؛ تُدار من /api/hr/mobile-content بعد النشر."
+          },
+          "response": []
+        },
+        {
+          "name": "تحديث FCM token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/device-token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "device-token"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"{{fcmToken}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "13 - إحصائيات الموظف",
+      "item": [
+        {
+          "name": "إحصائيات الموظف للشهر الحالي",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/statistics/monthly",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "statistics",
+                "monthly"
+              ]
+            },
+            "description": "يعيد أرقام الموظف المسجل فقط: leavesCount, permissionsCount, lateCount, lateMinutes, loansTotal, warningsCount."
+          },
+          "response": []
+        },
+        {
+          "name": "إحصائيات الموظف لشهر محدد",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/mobile/statistics/monthly?month={{statsMonth}}&year={{statsYear}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "mobile",
+                "statistics",
+                "monthly"
+              ],
+              "query": [
+                {
+                  "key": "month",
+                  "value": "{{statsMonth}}"
+                },
+                {
+                  "key": "year",
+                  "value": "{{statsYear}}"
+                }
+              ]
+            },
+            "description": ""
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

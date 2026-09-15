@@ -1,0 +1,3385 @@
+{
+  "generatedAt": "2026-08-24T06:36:10.546Z",
+  "baseUrl": "https://final.noamanycenter.com",
+  "scope": "Modern HR management and modern employee application only; legacy /Api routes excluded.",
+  "folders": 43,
+  "requests": 371,
+  "byMethod": {
+    "GET": 149,
+    "POST": 95,
+    "PATCH": 62,
+    "DELETE": 55,
+    "PUT": 10
+  },
+  "online": {
+    "staffLoginStatus": 200,
+    "mobileLoginStatus": 200,
+    "byCategory": {
+      "server_error": 2,
+      "auth_guard": 330,
+      "business_response": 12,
+      "ok": 27
+    },
+    "failures": [
+      {
+        "folder": "Activities",
+        "method": "GET",
+        "route": "/api/activities",
+        "httpStatus": 500,
+        "category": "server_error",
+        "elapsedMs": 298,
+        "message": "حدث خطأ غير متوقع"
+      },
+      {
+        "folder": "DailyReports",
+        "method": "GET",
+        "route": "/api/hr/daily-reports",
+        "httpStatus": 500,
+        "category": "server_error",
+        "elapsedMs": 95,
+        "message": "حدث خطأ غير متوقع"
+      }
+    ],
+    "results": [
+      {
+        "folder": "Activities",
+        "method": "GET",
+        "route": "/api/activities",
+        "httpStatus": 500,
+        "category": "server_error",
+        "elapsedMs": 298,
+        "message": "حدث خطأ غير متوقع"
+      },
+      {
+        "folder": "Activities",
+        "method": "POST",
+        "route": "/api/activities",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 274,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Activities",
+        "method": "DELETE",
+        "route": "/api/activities/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 264,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Activities",
+        "method": "GET",
+        "route": "/api/activities/{{id}}",
+        "httpStatus": 404,
+        "category": "business_response",
+        "elapsedMs": 88,
+        "message": "النشاط غير موجود"
+      },
+      {
+        "folder": "Activities",
+        "method": "PATCH",
+        "route": "/api/activities/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Activities",
+        "method": "POST",
+        "route": "/api/activities/{{id}}/approve",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Activities",
+        "method": "GET",
+        "route": "/api/activities/{{id}}/files",
+        "httpStatus": 404,
+        "category": "business_response",
+        "elapsedMs": 78,
+        "message": "النشاط غير موجود"
+      },
+      {
+        "folder": "Activities",
+        "method": "POST",
+        "route": "/api/activities/{{id}}/files",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Activities",
+        "method": "POST",
+        "route": "/api/activities/{{id}}/reject",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Activities",
+        "method": "DELETE",
+        "route": "/api/activities/files/{{fileId}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 115,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "POST",
+        "route": "/api/attendance/check",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 106,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/devices",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 83,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "POST",
+        "route": "/api/attendance/devices",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 117,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "DELETE",
+        "route": "/api/attendance/devices/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 105,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "POST",
+        "route": "/api/attendance/devices/{{id}}/sync",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 114,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "POST",
+        "route": "/api/attendance/devices/sync-all",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 119,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/extra-hours",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "POST",
+        "route": "/api/attendance/extra-hours",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 86,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "DELETE",
+        "route": "/api/attendance/extra-hours/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 91,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "POST",
+        "route": "/api/attendance/imports/device-file",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/manual-options",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 113,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/reports/absence",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 92,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/reports/basma",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 86,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/reports/full-sheet",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 87,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/reports/late",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 86,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/reports/overtime",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 88,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/reports/shift-swap",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 83,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/rules",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 130,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "PATCH",
+        "route": "/api/attendance/rules",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 127,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/settings",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 86,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "PATCH",
+        "route": "/api/attendance/settings",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/shift-swaps",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "POST",
+        "route": "/api/attendance/shift-swaps",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "DELETE",
+        "route": "/api/attendance/shift-swaps/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "GET",
+        "route": "/api/attendance/shifts",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Attendance",
+        "method": "POST",
+        "route": "/api/attendance/shifts",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "DELETE",
+        "route": "/api/attendance/shifts/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Attendance",
+        "method": "PUT",
+        "route": "/api/attendance/shifts/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Auth",
+        "method": "POST",
+        "route": "/api/auth/change-password",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Auth",
+        "method": "POST",
+        "route": "/api/auth/login",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 918,
+        "message": null
+      },
+      {
+        "folder": "Auth",
+        "method": "POST",
+        "route": "/api/auth/logout",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Auth",
+        "method": "GET",
+        "route": "/api/auth/me",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 85,
+        "message": null
+      },
+      {
+        "folder": "Auth",
+        "method": "POST",
+        "route": "/api/auth/refresh",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "انتهت الجلسة"
+      },
+      {
+        "folder": "Branches",
+        "method": "GET",
+        "route": "/api/branches",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 92,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Branches",
+        "method": "POST",
+        "route": "/api/branches",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 100,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Branches",
+        "method": "DELETE",
+        "route": "/api/branches/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 115,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Branches",
+        "method": "PATCH",
+        "route": "/api/branches/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 99,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Dashboard",
+        "method": "GET",
+        "route": "/api/dashboard/executive",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 241,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Dashboard",
+        "method": "GET",
+        "route": "/api/dashboard/summary",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Org",
+        "method": "GET",
+        "route": "/api/departments",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 107,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Org",
+        "method": "POST",
+        "route": "/api/departments",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 106,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Org",
+        "method": "DELETE",
+        "route": "/api/departments/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 102,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Org",
+        "method": "PATCH",
+        "route": "/api/departments/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 99,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Org",
+        "method": "GET",
+        "route": "/api/departments/job-titles",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 400,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Org",
+        "method": "POST",
+        "route": "/api/departments/job-titles",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 96,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Org",
+        "method": "DELETE",
+        "route": "/api/departments/job-titles/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 97,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Org",
+        "method": "PATCH",
+        "route": "/api/departments/job-titles/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 97,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Org",
+        "method": "GET",
+        "route": "/api/departments/tree",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 110,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Documents",
+        "method": "GET",
+        "route": "/api/documents",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Documents",
+        "method": "POST",
+        "route": "/api/documents",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Documents",
+        "method": "DELETE",
+        "route": "/api/documents/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Documents",
+        "method": "GET",
+        "route": "/api/documents/expiring",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "POST",
+        "route": "/api/employees",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "DELETE",
+        "route": "/api/employees/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "PUT",
+        "route": "/api/employees/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "DELETE",
+        "route": "/api/employees/{{id}}/app-user",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "POST",
+        "route": "/api/employees/{{id}}/app-user",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/{{id}}/banks",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "PUT",
+        "route": "/api/employees/{{id}}/banks",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/{{id}}/contract",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "PUT",
+        "route": "/api/employees/{{id}}/contract",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/{{id}}/documents",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "PUT",
+        "route": "/api/employees/{{id}}/documents",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/{{id}}/dwam",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "PUT",
+        "route": "/api/employees/{{id}}/dwam",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "DELETE",
+        "route": "/api/employees/{{id}}/dwam/{{assignmentId}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/{{id}}/finance",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "PUT",
+        "route": "/api/employees/{{id}}/finance",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "DELETE",
+        "route": "/api/employees/{{id}}/finance/{{rowId}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/{{id}}/identity",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/{{id}}/insurance",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/{{id}}/profile",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "PATCH",
+        "route": "/api/employees/{{id}}/status",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/next-code",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/pos-options",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Employees",
+        "method": "GET",
+        "route": "/api/employees/sales-reps",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "ActionScreen",
+        "method": "GET",
+        "route": "/api/hr/action-screen",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 104,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "ActionScreen",
+        "method": "POST",
+        "route": "/api/hr/action-screen",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "ActionScreen",
+        "method": "DELETE",
+        "route": "/api/hr/action-screen/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 277,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "ActionScreen",
+        "method": "PATCH",
+        "route": "/api/hr/action-screen/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 284,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "ActionScreen",
+        "method": "GET",
+        "route": "/api/hr/action-screen/grades",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 279,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "AdministrativeDecisions",
+        "method": "GET",
+        "route": "/api/hr/administrative-decisions",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 322,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "AdministrativeDecisions",
+        "method": "POST",
+        "route": "/api/hr/administrative-decisions",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "AdministrativeDecisions",
+        "method": "DELETE",
+        "route": "/api/hr/administrative-decisions/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 104,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "AdministrativeDecisions",
+        "method": "GET",
+        "route": "/api/hr/administrative-decisions/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "AdministrativeDecisions",
+        "method": "PATCH",
+        "route": "/api/hr/administrative-decisions/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 99,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "AdministrativeDecisions",
+        "method": "GET",
+        "route": "/api/hr/administrative-decisions/lookups",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Circulars",
+        "method": "GET",
+        "route": "/api/hr/circulars",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 114,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Circulars",
+        "method": "POST",
+        "route": "/api/hr/circulars",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 115,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Circulars",
+        "method": "DELETE",
+        "route": "/api/hr/circulars/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 110,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Circulars",
+        "method": "GET",
+        "route": "/api/hr/circulars/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 117,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Circulars",
+        "method": "PATCH",
+        "route": "/api/hr/circulars/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 118,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Circulars",
+        "method": "PATCH",
+        "route": "/api/hr/circulars/{{id}}/seen",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 108,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Circulars",
+        "method": "GET",
+        "route": "/api/hr/circulars/recipients/departments",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 112,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Custody",
+        "method": "GET",
+        "route": "/api/hr/custody",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Custody",
+        "method": "POST",
+        "route": "/api/hr/custody",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Custody",
+        "method": "DELETE",
+        "route": "/api/hr/custody/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Custody",
+        "method": "PATCH",
+        "route": "/api/hr/custody/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Custody",
+        "method": "PATCH",
+        "route": "/api/hr/custody/{{id}}/return",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Custody",
+        "method": "GET",
+        "route": "/api/hr/custody/devices",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Custody",
+        "method": "POST",
+        "route": "/api/hr/custody/transfer",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Custody",
+        "method": "GET",
+        "route": "/api/hr/custody/transfers/{{empCode}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "DailyReports",
+        "method": "GET",
+        "route": "/api/hr/daily-reports",
+        "httpStatus": 500,
+        "category": "server_error",
+        "elapsedMs": 95,
+        "message": "حدث خطأ غير متوقع"
+      },
+      {
+        "folder": "DailyReports",
+        "method": "POST",
+        "route": "/api/hr/daily-reports",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "DailyReports",
+        "method": "DELETE",
+        "route": "/api/hr/daily-reports/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 82,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "DailyReports",
+        "method": "GET",
+        "route": "/api/hr/daily-reports/{{id}}",
+        "httpStatus": 404,
+        "category": "business_response",
+        "elapsedMs": 79,
+        "message": "التقرير اليومي غير موجود"
+      },
+      {
+        "folder": "DailyReports",
+        "method": "PATCH",
+        "route": "/api/hr/daily-reports/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 81,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "DailyReports",
+        "method": "POST",
+        "route": "/api/hr/daily-reports/{{id}}/approve",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 90,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "DailyReports",
+        "method": "POST",
+        "route": "/api/hr/daily-reports/{{id}}/reject",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Evaluations",
+        "method": "GET",
+        "route": "/api/hr/evaluations",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Evaluations",
+        "method": "POST",
+        "route": "/api/hr/evaluations",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Evaluations",
+        "method": "DELETE",
+        "route": "/api/hr/evaluations/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Evaluations",
+        "method": "GET",
+        "route": "/api/hr/evaluations/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Evaluations",
+        "method": "GET",
+        "route": "/api/hr/evaluations/criteria",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "GymRates",
+        "method": "GET",
+        "route": "/api/hr/gym-rates",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "GymRates",
+        "method": "POST",
+        "route": "/api/hr/gym-rates",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "GymRates",
+        "method": "DELETE",
+        "route": "/api/hr/gym-rates/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "GymRates",
+        "method": "PATCH",
+        "route": "/api/hr/gym-rates/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "GET",
+        "route": "/api/hr/job-requests",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "POST",
+        "route": "/api/hr/job-requests",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "DELETE",
+        "route": "/api/hr/job-requests/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 107,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "GET",
+        "route": "/api/hr/job-requests/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 112,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "PATCH",
+        "route": "/api/hr/job-requests/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 106,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "GET",
+        "route": "/api/hr/job-requests/applications",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 113,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "POST",
+        "route": "/api/hr/job-requests/applications",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 108,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "DELETE",
+        "route": "/api/hr/job-requests/applications/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "GET",
+        "route": "/api/hr/job-requests/applications/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 111,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "PATCH",
+        "route": "/api/hr/job-requests/applications/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 88,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "POST",
+        "route": "/api/hr/job-requests/applications/{{id}}/courses",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 79,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "GET",
+        "route": "/api/hr/job-requests/applications/{{id}}/interview",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 114,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "POST",
+        "route": "/api/hr/job-requests/applications/{{id}}/interview",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 110,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "PATCH",
+        "route": "/api/hr/job-requests/applications/{{id}}/interview-date",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "GET",
+        "route": "/api/hr/job-requests/applications/{{id}}/offer",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 113,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "POST",
+        "route": "/api/hr/job-requests/applications/{{id}}/offer",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 112,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "POST",
+        "route": "/api/hr/job-requests/applications/{{id}}/previous-work",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 84,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "POST",
+        "route": "/api/hr/job-requests/applications/{{id}}/qualifications",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 84,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "POST",
+        "route": "/api/hr/job-requests/applications/{{id}}/references",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "POST",
+        "route": "/api/hr/job-requests/applications/{{id}}/skills",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "JobRequests",
+        "method": "GET",
+        "route": "/api/hr/job-requests/applications/offers",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 111,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Partners",
+        "method": "GET",
+        "route": "/api/hr/partners",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 181,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Partners",
+        "method": "POST",
+        "route": "/api/hr/partners",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 185,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Partners",
+        "method": "DELETE",
+        "route": "/api/hr/partners/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 131,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Partners",
+        "method": "GET",
+        "route": "/api/hr/partners/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 186,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Partners",
+        "method": "PUT",
+        "route": "/api/hr/partners/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 189,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Partners",
+        "method": "GET",
+        "route": "/api/hr/partners/options",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 184,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "GET",
+        "route": "/api/hr/warnings",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "POST",
+        "route": "/api/hr/warnings",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "DELETE",
+        "route": "/api/hr/warnings/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "GET",
+        "route": "/api/hr/warnings/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "PATCH",
+        "route": "/api/hr/warnings/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "PATCH",
+        "route": "/api/hr/warnings/{{id}}/send-emp",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "PATCH",
+        "route": "/api/hr/warnings/{{id}}/send-hr",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "GET",
+        "route": "/api/hr/warnings/templates",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "POST",
+        "route": "/api/hr/warnings/templates",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "DELETE",
+        "route": "/api/hr/warnings/templates/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "PATCH",
+        "route": "/api/hr/warnings/templates/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "HrWarnings",
+        "method": "GET",
+        "route": "/api/hr/warnings/types",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 79,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Initiatives",
+        "method": "GET",
+        "route": "/api/initiatives",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 83,
+        "message": null
+      },
+      {
+        "folder": "Initiatives",
+        "method": "POST",
+        "route": "/api/initiatives",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Initiatives",
+        "method": "DELETE",
+        "route": "/api/initiatives/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Initiatives",
+        "method": "GET",
+        "route": "/api/initiatives/{{id}}",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 81,
+        "message": null
+      },
+      {
+        "folder": "Initiatives",
+        "method": "PATCH",
+        "route": "/api/initiatives/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Initiatives",
+        "method": "POST",
+        "route": "/api/initiatives/{{id}}/approve",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Initiatives",
+        "method": "POST",
+        "route": "/api/initiatives/{{id}}/reject",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Leaves",
+        "method": "GET",
+        "route": "/api/leaves",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 85,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Leaves",
+        "method": "POST",
+        "route": "/api/leaves",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Leaves",
+        "method": "POST",
+        "route": "/api/leaves/{{id}}/approve",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 84,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Leaves",
+        "method": "POST",
+        "route": "/api/leaves/{{id}}/cancel",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 113,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Leaves",
+        "method": "POST",
+        "route": "/api/leaves/{{id}}/reject",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 277,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Leaves",
+        "method": "GET",
+        "route": "/api/leaves/available",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Leaves",
+        "method": "GET",
+        "route": "/api/leaves/balances",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Leaves",
+        "method": "POST",
+        "route": "/api/leaves/carry-over",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 106,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Leaves",
+        "method": "GET",
+        "route": "/api/leaves/types",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 106,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Leaves",
+        "method": "POST",
+        "route": "/api/leaves/types",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 106,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Leaves",
+        "method": "DELETE",
+        "route": "/api/leaves/types/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 106,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Leaves",
+        "method": "PATCH",
+        "route": "/api/leaves/types/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 106,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LegalFiles",
+        "method": "GET",
+        "route": "/api/legal-files",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 130,
+        "message": null
+      },
+      {
+        "folder": "LegalFiles",
+        "method": "POST",
+        "route": "/api/legal-files",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 119,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LegalFiles",
+        "method": "DELETE",
+        "route": "/api/legal-files/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 79,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LegalFiles",
+        "method": "GET",
+        "route": "/api/legal-files/{{id}}",
+        "httpStatus": 404,
+        "category": "business_response",
+        "elapsedMs": 129,
+        "message": "الملف غير موجود"
+      },
+      {
+        "folder": "LegalFiles",
+        "method": "PATCH",
+        "route": "/api/legal-files/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 126,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LegalFiles",
+        "method": "POST",
+        "route": "/api/legal-files/{{id}}/seen",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LegalFiles",
+        "method": "GET",
+        "route": "/api/legal-files/{{id}}/seens",
+        "httpStatus": 404,
+        "category": "business_response",
+        "elapsedMs": 78,
+        "message": "الملف غير موجود"
+      },
+      {
+        "folder": "Loans",
+        "method": "GET",
+        "route": "/api/loans",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Loans",
+        "method": "POST",
+        "route": "/api/loans",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Loans",
+        "method": "DELETE",
+        "route": "/api/loans/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 81,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Loans",
+        "method": "PATCH",
+        "route": "/api/loans/{{id}}/approve",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Loans",
+        "method": "PATCH",
+        "route": "/api/loans/{{id}}/auto-deduct",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 80,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Loans",
+        "method": "POST",
+        "route": "/api/loans/{{id}}/postpone",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Loans",
+        "method": "PATCH",
+        "route": "/api/loans/{{id}}/reject",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 81,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Loans",
+        "method": "GET",
+        "route": "/api/loans/{{id}}/schedule",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Loans",
+        "method": "GET",
+        "route": "/api/loans/ceiling/{{empId}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Loans",
+        "method": "GET",
+        "route": "/api/loans/form-meta",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Loans",
+        "method": "PATCH",
+        "route": "/api/loans/installments/{{questId}}/pay",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LoanSettings",
+        "method": "GET",
+        "route": "/api/loans/settings",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 114,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "LoanSettings",
+        "method": "GET",
+        "route": "/api/loans/settings/accounts",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "LoanSettings",
+        "method": "POST",
+        "route": "/api/loans/settings/accounts",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LoanSettings",
+        "method": "DELETE",
+        "route": "/api/loans/settings/accounts/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 79,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LoanSettings",
+        "method": "PATCH",
+        "route": "/api/loans/settings/accounts/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LoanSettings",
+        "method": "GET",
+        "route": "/api/loans/settings/dawabt",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "LoanSettings",
+        "method": "POST",
+        "route": "/api/loans/settings/dawabt",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LoanSettings",
+        "method": "DELETE",
+        "route": "/api/loans/settings/dawabt/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 79,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LoanSettings",
+        "method": "PATCH",
+        "route": "/api/loans/settings/dawabt/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "LoanSettings",
+        "method": "GET",
+        "route": "/api/loans/settings/main",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "LoanSettings",
+        "method": "PATCH",
+        "route": "/api/loans/settings/main",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Loans",
+        "method": "GET",
+        "route": "/api/loans/statement",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Loans",
+        "method": "GET",
+        "route": "/api/loans/statement/grid",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Lookups",
+        "method": "GET",
+        "route": "/api/lookups",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 80,
+        "message": null
+      },
+      {
+        "folder": "Lookups",
+        "method": "GET",
+        "route": "/api/lookups/{{type}}",
+        "httpStatus": 404,
+        "category": "business_response",
+        "elapsedMs": 101,
+        "message": "قائمة غير معروفة: general"
+      },
+      {
+        "folder": "Lookups",
+        "method": "POST",
+        "route": "/api/lookups/{{type}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 95,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Lookups",
+        "method": "DELETE",
+        "route": "/api/lookups/{{type}}/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 93,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Lookups",
+        "method": "PATCH",
+        "route": "/api/lookups/{{type}}/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 93,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Messaging",
+        "method": "POST",
+        "route": "/api/messages",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 122,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Messaging",
+        "method": "DELETE",
+        "route": "/api/messages/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 130,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Messaging",
+        "method": "GET",
+        "route": "/api/messages/{{id}}",
+        "httpStatus": 404,
+        "category": "business_response",
+        "elapsedMs": 124,
+        "message": "الرسالة غير موجودة"
+      },
+      {
+        "folder": "Messaging",
+        "method": "POST",
+        "route": "/api/messages/{{id}}/reply",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 119,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Messaging",
+        "method": "GET",
+        "route": "/api/messages/inbox",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 104,
+        "message": null
+      },
+      {
+        "folder": "Messaging",
+        "method": "GET",
+        "route": "/api/messages/memos",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 120,
+        "message": null
+      },
+      {
+        "folder": "Messaging",
+        "method": "POST",
+        "route": "/api/messages/memos",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 119,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Messaging",
+        "method": "GET",
+        "route": "/api/messages/sent",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 111,
+        "message": null
+      },
+      {
+        "folder": "Missions",
+        "method": "GET",
+        "route": "/api/missions",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 171,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Missions",
+        "method": "POST",
+        "route": "/api/missions",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 174,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Missions",
+        "method": "DELETE",
+        "route": "/api/missions/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 166,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Missions",
+        "method": "GET",
+        "route": "/api/missions/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 173,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Missions",
+        "method": "PATCH",
+        "route": "/api/missions/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 167,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/activities",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 87,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "POST",
+        "route": "/api/mobile/activities",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 84,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "DELETE",
+        "route": "/api/mobile/activities/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 85,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "POST",
+        "route": "/api/mobile/attendance/punch",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 79,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/circulars",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 86,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/circulars/{{id}}",
+        "httpStatus": 404,
+        "category": "business_response",
+        "elapsedMs": 81,
+        "message": "التعميم غير موجه لهذا الموظف"
+      },
+      {
+        "folder": "Mobile",
+        "method": "PATCH",
+        "route": "/api/mobile/circulars/{{id}}/read",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "POST",
+        "route": "/api/mobile/device-token",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 126,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/employees",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 89,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/leaves",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 116,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "POST",
+        "route": "/api/mobile/leaves",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 104,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/legal-files",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 87,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "PATCH",
+        "route": "/api/mobile/legal-files/{{id}}/read",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/loans",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 90,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "POST",
+        "route": "/api/mobile/loans",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 83,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "DELETE",
+        "route": "/api/mobile/loans/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 86,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/loans/{{id}}",
+        "httpStatus": 404,
+        "category": "business_response",
+        "elapsedMs": 90,
+        "message": "طلب السلفة غير موجود أو غير متاح لك"
+      },
+      {
+        "folder": "Mobile",
+        "method": "PATCH",
+        "route": "/api/mobile/loans/{{id}}/action",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 102,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/loans/meta",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 102,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "POST",
+        "route": "/api/mobile/login",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 563,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "POST",
+        "route": "/api/mobile/messages",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 79,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "DELETE",
+        "route": "/api/mobile/messages/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 80,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/messages/{{id}}",
+        "httpStatus": 404,
+        "category": "business_response",
+        "elapsedMs": 83,
+        "message": "الرسالة غير موجودة"
+      },
+      {
+        "folder": "Mobile",
+        "method": "PATCH",
+        "route": "/api/mobile/messages/{{id}}/read",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 79,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/messages/inbox",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 85,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/messages/sent",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 84,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/notifications",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 119,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "PATCH",
+        "route": "/api/mobile/notifications/{{id}}/read",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 115,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/permissions",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 116,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "POST",
+        "route": "/api/mobile/permissions",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/profile",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 157,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/requests",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 83,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/tasks",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 84,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "POST",
+        "route": "/api/mobile/tasks",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 81,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "DELETE",
+        "route": "/api/mobile/tasks/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 79,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "POST",
+        "route": "/api/mobile/visit",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/warnings",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 88,
+        "message": null
+      },
+      {
+        "folder": "Mobile",
+        "method": "GET",
+        "route": "/api/mobile/warnings/{{id}}",
+        "httpStatus": 404,
+        "category": "business_response",
+        "elapsedMs": 85,
+        "message": "الإنذار غير موجه لهذا الموظف"
+      },
+      {
+        "folder": "Mobile",
+        "method": "PATCH",
+        "route": "/api/mobile/warnings/{{id}}/read",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Notifications",
+        "method": "DELETE",
+        "route": "/api/notifications",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 95,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Notifications",
+        "method": "GET",
+        "route": "/api/notifications",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 97,
+        "message": null
+      },
+      {
+        "folder": "Notifications",
+        "method": "DELETE",
+        "route": "/api/notifications/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 102,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Notifications",
+        "method": "PATCH",
+        "route": "/api/notifications/{{id}}/read",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 99,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Notifications",
+        "method": "GET",
+        "route": "/api/notifications/alerts",
+        "httpStatus": 400,
+        "category": "business_response",
+        "elapsedMs": 98,
+        "message": "خطأ في قاعدة البيانات"
+      },
+      {
+        "folder": "Notifications",
+        "method": "GET",
+        "route": "/api/notifications/count",
+        "httpStatus": 200,
+        "category": "ok",
+        "elapsedMs": 95,
+        "message": null
+      },
+      {
+        "folder": "Notifications",
+        "method": "PATCH",
+        "route": "/api/notifications/read-all",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 95,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Payroll",
+        "method": "GET",
+        "route": "/api/payroll/components",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 129,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Payroll",
+        "method": "POST",
+        "route": "/api/payroll/components",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 124,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Payroll",
+        "method": "DELETE",
+        "route": "/api/payroll/components/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 123,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Payroll",
+        "method": "PATCH",
+        "route": "/api/payroll/components/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 125,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Payroll",
+        "method": "GET",
+        "route": "/api/payroll/preview",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 125,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Payroll",
+        "method": "GET",
+        "route": "/api/payroll/runs",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Payroll",
+        "method": "POST",
+        "route": "/api/payroll/runs",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Payroll",
+        "method": "DELETE",
+        "route": "/api/payroll/runs/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Payroll",
+        "method": "GET",
+        "route": "/api/payroll/runs/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 146,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Payroll",
+        "method": "POST",
+        "route": "/api/payroll/runs/{{id}}/{{action}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 152,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Payroll",
+        "method": "GET",
+        "route": "/api/payroll/runs/{{id}}/bank-file",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 170,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Payroll",
+        "method": "GET",
+        "route": "/api/payroll/runs/{{id}}/lines",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 160,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Payroll",
+        "method": "GET",
+        "route": "/api/payroll/runs/{{id}}/slip/{{empId}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 176,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Payroll",
+        "method": "PATCH",
+        "route": "/api/payroll/runs/{{id}}/slip/{{empId}}/overrides",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 172,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Payroll",
+        "method": "GET",
+        "route": "/api/payroll/salary-increases",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 79,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Payroll",
+        "method": "POST",
+        "route": "/api/payroll/salary-increases",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Payroll",
+        "method": "DELETE",
+        "route": "/api/payroll/salary-increases/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Payroll",
+        "method": "PATCH",
+        "route": "/api/payroll/salary-increases/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "SalaryScale",
+        "method": "GET",
+        "route": "/api/payroll/salary-scale",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "SalaryScale",
+        "method": "POST",
+        "route": "/api/payroll/salary-scale",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "SalaryScale",
+        "method": "DELETE",
+        "route": "/api/payroll/salary-scale/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "SalaryScale",
+        "method": "PATCH",
+        "route": "/api/payroll/salary-scale/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Penalties",
+        "method": "GET",
+        "route": "/api/penalties",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 93,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Penalties",
+        "method": "POST",
+        "route": "/api/penalties",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 93,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Penalties",
+        "method": "DELETE",
+        "route": "/api/penalties/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 118,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Penalties",
+        "method": "PATCH",
+        "route": "/api/penalties/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 117,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Penalties",
+        "method": "PATCH",
+        "route": "/api/penalties/{{id}}/approve",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 119,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Penalties",
+        "method": "PATCH",
+        "route": "/api/penalties/{{id}}/investigate",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 107,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Penalties",
+        "method": "PATCH",
+        "route": "/api/penalties/{{id}}/reject",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 162,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Penalties",
+        "method": "GET",
+        "route": "/api/penalties/bylaw",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 104,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Penalties",
+        "method": "POST",
+        "route": "/api/penalties/bylaw",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 107,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Penalties",
+        "method": "DELETE",
+        "route": "/api/penalties/bylaw/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 121,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Penalties",
+        "method": "PATCH",
+        "route": "/api/penalties/bylaw/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 110,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Permissions",
+        "method": "GET",
+        "route": "/api/permissions",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 136,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Permissions",
+        "method": "POST",
+        "route": "/api/permissions",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 136,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Permissions",
+        "method": "POST",
+        "route": "/api/permissions/{{id}}/action",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 136,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Permissions",
+        "method": "POST",
+        "route": "/api/permissions/{{id}}/approve",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 119,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Permissions",
+        "method": "POST",
+        "route": "/api/permissions/{{id}}/reject",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 106,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Permissions",
+        "method": "GET",
+        "route": "/api/permissions/available",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 136,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Reports",
+        "method": "GET",
+        "route": "/api/reports/{{key}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 81,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Requests",
+        "method": "GET",
+        "route": "/api/requests",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Requests",
+        "method": "POST",
+        "route": "/api/requests",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Requests",
+        "method": "GET",
+        "route": "/api/requests/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Requests",
+        "method": "PATCH",
+        "route": "/api/requests/{{id}}/approve",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Requests",
+        "method": "PATCH",
+        "route": "/api/requests/{{id}}/reject",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Rewards",
+        "method": "GET",
+        "route": "/api/rewards",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Rewards",
+        "method": "POST",
+        "route": "/api/rewards",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Rewards",
+        "method": "DELETE",
+        "route": "/api/rewards/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Rewards",
+        "method": "PATCH",
+        "route": "/api/rewards/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Rewards",
+        "method": "PATCH",
+        "route": "/api/rewards/{{id}}/approve",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Rewards",
+        "method": "PATCH",
+        "route": "/api/rewards/{{id}}/reject",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Rewards",
+        "method": "GET",
+        "route": "/api/rewards/next-number",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 77,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "FormsSettings",
+        "method": "GET",
+        "route": "/api/settings/forms",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "FormsSettings",
+        "method": "POST",
+        "route": "/api/settings/forms",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "FormsSettings",
+        "method": "DELETE",
+        "route": "/api/settings/forms/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "FormsSettings",
+        "method": "PATCH",
+        "route": "/api/settings/forms/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "InsuranceSettings",
+        "method": "GET",
+        "route": "/api/settings/insurance",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "InsuranceSettings",
+        "method": "PUT",
+        "route": "/api/settings/insurance",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "InsuranceSettings",
+        "method": "DELETE",
+        "route": "/api/settings/insurance/{{nationalityType}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "InsuranceSettings",
+        "method": "PUT",
+        "route": "/api/settings/insurance/{{nationalityType}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 73,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "InsuranceSettings",
+        "method": "GET",
+        "route": "/api/settings/insurance/rates",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 76,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "SiteVisits",
+        "method": "GET",
+        "route": "/api/sites/visits",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 99,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "SiteVisits",
+        "method": "POST",
+        "route": "/api/sites/visits",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 96,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "SiteVisits",
+        "method": "DELETE",
+        "route": "/api/sites/visits/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "SiteVisits",
+        "method": "PATCH",
+        "route": "/api/sites/visits/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "SiteVisits",
+        "method": "GET",
+        "route": "/api/sites/visits/{{id}}/records",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Tasks",
+        "method": "GET",
+        "route": "/api/tasks",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 81,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Tasks",
+        "method": "POST",
+        "route": "/api/tasks",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Tasks",
+        "method": "DELETE",
+        "route": "/api/tasks/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Tasks",
+        "method": "GET",
+        "route": "/api/tasks/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Tasks",
+        "method": "PATCH",
+        "route": "/api/tasks/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Tasks",
+        "method": "POST",
+        "route": "/api/tasks/{{id}}/action",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Archive",
+        "method": "GET",
+        "route": "/api/termination/archive",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 135,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Archive",
+        "method": "POST",
+        "route": "/api/termination/archive",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 134,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Archive",
+        "method": "DELETE",
+        "route": "/api/termination/archive/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 139,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Archive",
+        "method": "GET",
+        "route": "/api/termination/archive/{{id}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 110,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Archive",
+        "method": "PATCH",
+        "route": "/api/termination/archive/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 138,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Clearance",
+        "method": "GET",
+        "route": "/api/termination/clearance",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 90,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Clearance",
+        "method": "POST",
+        "route": "/api/termination/clearance",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Clearance",
+        "method": "DELETE",
+        "route": "/api/termination/clearance/{{groupId}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Clearance",
+        "method": "GET",
+        "route": "/api/termination/clearance/{{groupId}}",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 80,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "Clearance",
+        "method": "PATCH",
+        "route": "/api/termination/clearance/{{groupId}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 79,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "Uploads",
+        "method": "POST",
+        "route": "/api/uploads/{{category}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 74,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "WeeklyLeaves",
+        "method": "GET",
+        "route": "/api/weekly-leaves",
+        "httpStatus": 403,
+        "category": "auth_guard",
+        "elapsedMs": 78,
+        "message": "ليس لديك صلاحية للوصول"
+      },
+      {
+        "folder": "WeeklyLeaves",
+        "method": "POST",
+        "route": "/api/weekly-leaves",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 75,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "WeeklyLeaves",
+        "method": "DELETE",
+        "route": "/api/weekly-leaves/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 80,
+        "message": "Unauthorized"
+      },
+      {
+        "folder": "WeeklyLeaves",
+        "method": "PATCH",
+        "route": "/api/weekly-leaves/{{id}}",
+        "httpStatus": 401,
+        "category": "auth_guard",
+        "elapsedMs": 81,
+        "message": "Unauthorized"
+      }
+    ]
+  }
+}

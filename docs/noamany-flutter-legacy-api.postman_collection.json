@@ -1,0 +1,166 @@
+{
+  "info": {
+    "name": "Noamany HR - Flutter Legacy API Compatibility",
+    "description": "Same /Api endpoint names used by the installed legacy Flutter employee app. Read docs/FLUTTER_LEGACY_API_HANDOFF.md for field-level contracts.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://final.noamanycenter.com" },
+    { "key": "accessToken", "value": "" },
+    { "key": "phone", "value": "" },
+    { "key": "password", "value": "102030" }
+  ],
+  "item": [
+    {
+      "name": "01 Public and login",
+      "auth": { "type": "noauth" },
+      "item": [
+        { "name": "getAppinfo", "request": { "method": "POST", "url": "{{baseUrl}}/Api/getAppinfo" } },
+        { "name": "getAppPolicy", "request": { "method": "POST", "url": "{{baseUrl}}/Api/getAppPolicy" } },
+        { "name": "SplashScreens", "request": { "method": "POST", "url": "{{baseUrl}}/Api/SplashScreens" } },
+        { "name": "Check_Option", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/x-www-form-urlencoded" }], "body": { "mode": "urlencoded", "urlencoded": [{ "key": "emp_option", "value": "code" }, { "key": "emp_value", "value": "" }] }, "url": "{{baseUrl}}/Api/Check_Option" } },
+        {
+          "name": "login_app - NEW /api/mobile/login",
+          "event": [{ "listen": "test", "script": { "exec": ["const body = pm.response.json();", "if (body.accessToken) pm.collectionVariables.set('accessToken', body.accessToken);", "if (body.refreshToken) pm.collectionVariables.set('refreshToken', body.refreshToken);"] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"username\": \"{{phone}}\",\n  \"password\": \"{{password}}\"\n}", "options": { "raw": { "language": "json" } } },
+            "url": "{{baseUrl}}/api/mobile/login",
+            "description": "New production login endpoint. The request name is kept recognizable for the existing Flutter login screen."
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 Profile, services and alerts",
+      "item": [
+        { "name": "getProfile", "request": { "method": "POST", "url": "{{baseUrl}}/Api/getProfile" } },
+        { "name": "AppServices", "request": { "method": "POST", "url": "{{baseUrl}}/Api/AppServices" } },
+        { "name": "AllEmplyees", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "page", "value": "1" }, { "key": "per_page", "value": "20" }, { "key": "search_title", "value": "" }] }, "url": "{{baseUrl}}/Api/AllEmplyees" } },
+        { "name": "update_pass", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "user_pass", "value": "" }, { "key": "confirm_user_pass", "value": "" }] }, "url": "{{baseUrl}}/Api/update_pass" } },
+        { "name": "update_pass_past", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "current_pass", "value": "" }, { "key": "user_pass", "value": "" }, { "key": "confirm_user_pass", "value": "" }] }, "url": "{{baseUrl}}/Api/update_pass_past" } },
+        { "name": "update_profile_image", "request": { "method": "POST", "body": { "mode": "formdata", "formdata": [{ "key": "m_image", "type": "file", "src": [] }] }, "url": "{{baseUrl}}/Api/update_profile_image" } },
+        { "name": "Add_signature", "request": { "method": "POST", "body": { "mode": "formdata", "formdata": [{ "key": "m_image", "type": "file", "src": [] }] }, "url": "{{baseUrl}}/Api/Add_signature" } },
+        { "name": "show_screen_alert", "request": { "method": "POST", "url": "{{baseUrl}}/Api/show_screen_alert" } },
+        { "name": "Alert_Screen", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Alert_Screen" } },
+        { "name": "Add_Screen_action", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "eqrar_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Add_Screen_action" } }
+      ]
+    },
+    {
+      "name": "03 Messages and notifications",
+      "item": [
+        { "name": "SendMessage", "request": { "method": "POST", "body": { "mode": "formdata", "formdata": [{ "key": "to_user_ids", "value": "[]", "type": "text" }, { "key": "subject", "value": "", "type": "text" }, { "key": "message", "value": "", "type": "text" }, { "key": "msg_image", "type": "file", "src": [] }] }, "url": "{{baseUrl}}/Api/SendMessage" } },
+        { "name": "InboxMessages", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "page", "value": "1" }, { "key": "per_page", "value": "20" }, { "key": "seen", "value": "" }] }, "url": "{{baseUrl}}/Api/InboxMessages" } },
+        { "name": "SentMessages", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "page", "value": "1" }, { "key": "per_page", "value": "20" }] }, "url": "{{baseUrl}}/Api/SentMessages" } },
+        { "name": "ViewMessage", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "msg_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/ViewMessage" } },
+        { "name": "SeenMessage", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "msg_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/SeenMessage" } },
+        { "name": "DeleteMessage", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "msg_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/DeleteMessage" } },
+        { "name": "today_notification", "request": { "method": "POST", "url": "{{baseUrl}}/Api/today_notification" } },
+        { "name": "register_device_token", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "device_token", "value": "" }] }, "url": "{{baseUrl}}/Api/register_device_token" } },
+        { "name": "insert_update_token", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "device_token", "value": "" }] }, "url": "{{baseUrl}}/Api/insert_update_token" } }
+      ]
+    },
+    {
+      "name": "04 Leaves",
+      "item": [
+        { "name": "Agazat_types", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Agazat_types" } },
+        { "name": "Add_Agaza", "request": { "method": "POST", "body": { "mode": "formdata", "formdata": [{ "key": "no3_agaza_id", "value": "1", "type": "text" }, { "key": "from_date", "value": "2026-08-20", "type": "text" }, { "key": "to_date", "value": "2026-08-20", "type": "text" }, { "key": "reason", "value": "", "type": "text" }, { "key": "hospital_report", "type": "file", "src": [] }] }, "url": "{{baseUrl}}/Api/Add_Agaza" } },
+        { "name": "Add_Agazax", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "no3_agaza_id", "value": "1" }, { "key": "from_date", "value": "2026-08-20" }, { "key": "to_date", "value": "2026-08-20" }] }, "url": "{{baseUrl}}/Api/Add_Agazax" } },
+        { "name": "Get_agaza_List", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "status", "value": "sader" }, { "key": "page", "value": "1" }, { "key": "per_page", "value": "20" }] }, "url": "{{baseUrl}}/Api/Get_agaza_List" } },
+        { "name": "Get_Agaza_data", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "agaza_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Get_Agaza_data" } },
+        { "name": "Edit_Agaza", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "agaza_id", "value": "1" }, { "key": "no3_agaza_id", "value": "1" }, { "key": "from_date", "value": "2026-08-20" }, { "key": "to_date", "value": "2026-08-20" }] }, "url": "{{baseUrl}}/Api/Edit_Agaza" } },
+        { "name": "Egraa_agaza", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "agaza_id", "value": "1" }, { "key": "action_option", "value": "accept" }, { "key": "reason", "value": "" }] }, "url": "{{baseUrl}}/Api/Egraa_agaza" } },
+        { "name": "Delete_agaza", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "agaza_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Delete_agaza" } }
+      ]
+    },
+    {
+      "name": "05 Permissions",
+      "item": [
+        { "name": "Ozonat_types", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Ozonat_types" } },
+        { "name": "Add_Ezn", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "ezn_type_id", "value": "1" }, { "key": "ezn_date", "value": "2026-08-20" }, { "key": "from_time", "value": "10:00 AM" }, { "key": "to_time", "value": "11:00 AM" }, { "key": "reason", "value": "" }] }, "url": "{{baseUrl}}/Api/Add_Ezn" } },
+        { "name": "Get_Ezn_List", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "status", "value": "sader" }, { "key": "page", "value": "1" }, { "key": "per_page", "value": "20" }] }, "url": "{{baseUrl}}/Api/Get_Ezn_List" } },
+        { "name": "Get_Wared_Ezn_List", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "status", "value": "wared" }, { "key": "page", "value": "1" }, { "key": "per_page", "value": "20" }] }, "url": "{{baseUrl}}/Api/Get_Wared_Ezn_List" } },
+        { "name": "Get_Ezn_data", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "ezn_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Get_Ezn_data" } },
+        { "name": "Edit_Ezn", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "ezn_id", "value": "1" }, { "key": "ezn_type_id", "value": "1" }, { "key": "from_time", "value": "10:00 AM" }, { "key": "to_time", "value": "11:00 AM" }] }, "url": "{{baseUrl}}/Api/Edit_Ezn" } },
+        { "name": "Egraa_ezn", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "ezn_id", "value": "1" }, { "key": "action_option", "value": "accept" }, { "key": "reason", "value": "" }] }, "url": "{{baseUrl}}/Api/Egraa_ezn" } },
+        { "name": "Delete_ezn", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "ezn_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Delete_ezn" } }
+      ]
+    },
+    {
+      "name": "06 Attendance and overtime",
+      "item": [
+        { "name": "add_hdor_ensraf", "request": { "method": "POST", "body": { "mode": "formdata", "formdata": [{ "key": "lat", "value": "30.0", "type": "text" }, { "key": "long", "value": "31.0", "type": "text" }, { "key": "basma_img", "type": "file", "src": [] }] }, "url": "{{baseUrl}}/Api/add_hdor_ensraf" } },
+        { "name": "attendance_new", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "lat", "value": "30.0" }, { "key": "long", "value": "31.0" }] }, "url": "{{baseUrl}}/Api/attendance_new" } },
+        { "name": "get_branches", "request": { "method": "POST", "url": "{{baseUrl}}/Api/get_branches" } },
+        { "name": "Report_Basma", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "date_from", "value": "2026-08-01" }, { "key": "date_to", "value": "2026-08-31" }] }, "url": "{{baseUrl}}/Api/Report_Basma" } },
+        { "name": "Basma_Today", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Basma_Today" } },
+        { "name": "sheft_types", "request": { "method": "POST", "url": "{{baseUrl}}/Api/sheft_types" } },
+        { "name": "dwam_types", "request": { "method": "POST", "url": "{{baseUrl}}/Api/dwam_types" } },
+        { "name": "add_sheft_edafi", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "ttype", "value": "1" }, { "key": "dwam_id_fk", "value": "1" }, { "key": "sheft_date", "value": "2026-08-20" }] }, "url": "{{baseUrl}}/Api/add_sheft_edafi" } },
+        { "name": "add_hours_edafi", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "num_hours", "value": "2" }, { "key": "edafa_date", "value": "2026-08-20" }] }, "url": "{{baseUrl}}/Api/add_hours_edafi" } },
+        { "name": "Report_hours_edafi", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Report_hours_edafi" } },
+        { "name": "report_tabdel_sheft", "request": { "method": "POST", "url": "{{baseUrl}}/Api/report_tabdel_sheft" } }
+      ]
+    },
+    {
+      "name": "07 Circulars, warnings, laws and correspondence",
+      "item": [
+        { "name": "Get_ta3mem_list", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Get_ta3mem_list" } },
+        { "name": "Get_ta3mem_data", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "ta3mem_id_fk", "value": "1" }] }, "url": "{{baseUrl}}/Api/Get_ta3mem_data" } },
+        { "name": "SeenTa3mem", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "ta3mem_id_fk", "value": "1" }] }, "url": "{{baseUrl}}/Api/SeenTa3mem" } },
+        { "name": "Get_Enzarat_list", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Get_Enzarat_list" } },
+        { "name": "Get_enzar_data", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "enzar_id_fk", "value": "1" }] }, "url": "{{baseUrl}}/Api/Get_enzar_data" } },
+        { "name": "SeenEnzar", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "enzar_id_fk", "value": "1" }] }, "url": "{{baseUrl}}/Api/SeenEnzar" } },
+        { "name": "Get_lawa2h_list", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Get_lawa2h_list" } },
+        { "name": "SeenLayha", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "layha_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/SeenLayha" } },
+        { "name": "Months_List", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Months_List" } },
+        { "name": "Get_mosalat_list", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Get_mosalat_list" } },
+        { "name": "Add_mosala_response", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "mosala_id", "value": "1" }, { "key": "answer_reasons", "value": "" }, { "key": "answer_mobarer", "value": "" }, { "key": "answer_other", "value": "" }] }, "url": "{{baseUrl}}/Api/Add_mosala_response" } }
+      ]
+    },
+    {
+      "name": "08 Employee services",
+      "item": [
+        { "name": "Ntaqat_types", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Ntaqat_types" } },
+        { "name": "Get_emp_ntaq", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Get_emp_ntaq" } },
+        { "name": "Talabat_types", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Talabat_types" } },
+        { "name": "Get_emp_ehsaeyat", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Get_emp_ehsaeyat" } },
+        { "name": "Add_Talab", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "talab_type_id", "value": "1" }, { "key": "notes", "value": "" }] }, "url": "{{baseUrl}}/Api/Add_Talab" } },
+        { "name": "Get_Talabat_List", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Get_Talabat_List" } },
+        { "name": "Get_Talab_data", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "order_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Get_Talab_data" } },
+        { "name": "Delete_Talab_order", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "order_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Delete_Talab_order" } },
+        { "name": "Add_Mobadra", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "title", "value": "" }, { "key": "notes", "value": "" }] }, "url": "{{baseUrl}}/Api/Add_Mobadra" } },
+        { "name": "Get_Mobadarat_List", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Get_Mobadarat_List" } },
+        { "name": "Delete_Mobadra", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "mobadra_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Delete_Mobadra" } },
+        { "name": "add_nashat", "request": { "method": "POST", "body": { "mode": "formdata", "formdata": [{ "key": "title", "value": "", "type": "text" }, { "key": "notes", "value": "", "type": "text" }, { "key": "files", "type": "file", "src": [] }] }, "url": "{{baseUrl}}/Api/add_nashat" } },
+        { "name": "Get_Nashat_List", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Get_Nashat_List" } },
+        { "name": "Delete_Nashat", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "main_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Delete_Nashat" } },
+        { "name": "Add_Task", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "title", "value": "" }, { "key": "notes", "value": "" }, { "key": "status", "value": "inprogress" }] }, "url": "{{baseUrl}}/Api/Add_Task" } },
+        { "name": "Get_Tasks_List", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Get_Tasks_List" } },
+        { "name": "Delete_task", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "task_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Delete_task" } },
+        { "name": "Add_location_basma", "request": { "method": "POST", "body": { "mode": "formdata", "formdata": [{ "key": "lat", "value": "30.0", "type": "text" }, { "key": "long", "value": "31.0", "type": "text" }, { "key": "site_id", "value": "1", "type": "text" }, { "key": "site_name", "value": "", "type": "text" }, { "key": "notes", "value": "", "type": "text" }, { "key": "zeyara_img", "type": "file", "src": [] }] }, "url": "{{baseUrl}}/Api/Add_location_basma" } },
+        { "name": "get_employee_visits", "request": { "method": "POST", "url": "{{baseUrl}}/Api/get_employee_visits" } },
+        { "name": "Delete_zeyara", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "zeyara_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Delete_zeyara" } },
+        { "name": "All_sliders", "request": { "method": "POST", "url": "{{baseUrl}}/Api/All_sliders" } }
+      ]
+    },
+    {
+      "name": "09 Employee loans",
+      "item": [
+        { "name": "Solaf_meta", "request": { "method": "POST", "url": "{{baseUrl}}/Api/Solaf_meta" } },
+        { "name": "Add_Solfa", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "qemt_solaf", "value": "1000" }, { "key": "sadad_solfa", "value": "3" }, { "key": "qst_num", "value": "5" }, { "key": "khsm_form_date_m", "value": "2026-09-01" }, { "key": "solaf_reason", "value": "سبب طلب السلفة" }] }, "url": "{{baseUrl}}/Api/Add_Solfa" } },
+        { "name": "Get_Solaf_List - sent", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "status", "value": "sader" }, { "key": "page", "value": "1" }, { "key": "per_page", "value": "20" }] }, "url": "{{baseUrl}}/Api/Get_Solaf_List" } },
+        { "name": "Get_Solaf_List - incoming", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "status", "value": "wared" }, { "key": "page", "value": "1" }, { "key": "per_page", "value": "20" }] }, "url": "{{baseUrl}}/Api/Get_Solaf_List" } },
+        { "name": "Get_Solfa_data", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "solfa_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Get_Solfa_data" } },
+        { "name": "Egraa_solfa - accept", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "solfa_id", "value": "1" }, { "key": "action_option", "value": "accept" }, { "key": "reason", "value": "" }] }, "url": "{{baseUrl}}/Api/Egraa_solfa" } },
+        { "name": "Egraa_solfa - reject", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "solfa_id", "value": "1" }, { "key": "action_option", "value": "reject" }, { "key": "reason", "value": "سبب الرفض" }] }, "url": "{{baseUrl}}/Api/Egraa_solfa" } },
+        { "name": "Delete_solfa", "request": { "method": "POST", "body": { "mode": "urlencoded", "urlencoded": [{ "key": "solfa_id", "value": "1" }] }, "url": "{{baseUrl}}/Api/Delete_solfa" } }
+      ]
+    }
+  ]
+}

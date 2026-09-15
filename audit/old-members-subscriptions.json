@@ -1,0 +1,33 @@
+{
+  "departments": ["إدارة الأعضاء والاشتراكات"],
+  "base_url": "https://noamanycenter.com",
+  "audit_status": "complete",
+  "menu": {
+    "ملف الأعضاء": ["/Members/add_member", "/Members/today_members", "/Members/period_members", "/Members", "/Members/search_members", "/Members/add_block", "/Members/list_blocked", "/Members/all_inbody"],
+    "الاشتراكات": ["/Subscription/add_subscription", "/Subscription", "/Subscription/period_subscription", "/Subscription/list_subscription", "/Subscription/list_stoped_subscription", "/Subscription/list_ended_subscription"],
+    "الاشتراكات البرايفت": ["/Subscription/allSpecialSubscription", "/Subscription/addSpecialSubscription"],
+    "تحويلات الاشتراكات": ["/eshtrakat/Transformation", "/eshtrakat/Transformation/period_tahwelat_report"],
+    "مرتجع الاشتراكات": ["/eshtrakat/Hadback", "/eshtrakat/Hadback/period_hadback_report"]
+  },
+  "members": [
+    {"name":"إضافة عضو جديد","url":"/Members/add_member","crud":"Create","fields":["فرع","اسم","كود عضو","هاتف","جنس","بطاقة","ميلاد","عنوان","حالة اجتماعية","شركة","وظيفة","بريد","جنسية","كلمة مرور تطبيق","صورة"],"actions":["حفظ"]},
+    {"name":"قائمة الأعضاء","url":"/Members","crud":"Read","actions":["Print","Excel","مستندات العضوية","إضافة اشتراك","إضافة اشتراك لوكر"],"search":true,"pagination":"10/25/50/100","columns":["اسم","كود","هاتف","فرع","جنس","القائم بالإضافة","وقت","إجراء"]},
+    {"name":"تقرير بحث الأعضاء","url":"/Members/search_members","search":"الكود أو الاسم أو الهاتف"},
+    {"name":"حظر عضو","url":"/Members/add_block","workflow":"اختيار فرع ثم عضو ثم سبب وحفظ"},
+    {"name":"قائمة المحظورين","url":"/Members/list_blocked","search":true,"pagination":"10/25/50/100","columns":["الاسم","الكود/الباركود","الجنس","تاريخ ووقت الحظر","السبب","القائم به","إجراء"]},
+    {"name":"الأعضاء خلال فترة","url":"/Members/period_members","filters":["فرع","جنس","من/إلى"],"action":"عرض التقرير"}
+  ],
+  "subscriptions": [
+    {"name":"إضافة اشتراك عضو","url":"/Subscription/add_subscription","crud":"Create","workflow":"اختيار فرع وعضو ونوع اشتراك ومدة وسعر وخصم ونوع/جنس وموظف وطريقة دفع ومدفوع/متبقي ورقم إيصال؛ يعرض نقاط وأكواد خصم صالحة"},
+    {"name":"اشتراكات اليوم","url":"/Subscription","search":true,"pagination":"10/25/50/100","columns":["كود واسم عضو","مدرب","نوع","تسجيل","بداية/نهاية","قيمة","خصم","مدفوع","فرع","دفع","جنس","إيصال","مُدخل","إجراء"]},
+    {"name":"الاشتراكات خلال فترة","url":"/Subscription/period_subscription","filters":["فرع","جنس","نوع اشتراك","من/إلى"],"action":"بحث"},
+    {"name":"كل الاشتراكات","url":"/Subscription/list_subscription","actions":["Print","Excel"],"search":true,"pagination":"10/25/50/100","columns":["عضو","مدرب","نوع","بداية/نهاية","فرع","تسجيل","دفع","جنس","إيصال","مُدخل","حالة","إجراء"]},
+    {"name":"الاشتراكات المجمدة","url":"/Subscription/list_stoped_subscription","actions":["Copy","Excel","CSV","PDF","Print"],"search":true,"columns":["عضو","نوع","بداية/نهاية الوقف","سبب","فرع","مُدخل","حالة","إجراء"]},
+    {"name":"الاشتراكات المنتهية","url":"/Subscription/list_ended_subscription","filters":["فرع","جنس","من/إلى"],"action":"عرض التقرير"},
+    {"name":"الاشتراكات البرايفت","url":"/Subscription/allSpecialSubscription","actions":["شيت Excel","نسخ","طباعة"],"search":true,"columns":["عضو","مدرب","فرع","نوع","تسجيل","بداية/نهاية","قيمة","خصم","مدفوع","إيصال","جنس","دفع","مُدخل","حالة","إجراء"]},
+    {"name":"إضافة اشتراك برايفت","url":"/Subscription/addSpecialSubscription","workflow":"مثل الاشتراك العادي مع اختيار الكابتن"},
+    {"name":"تحويلات الاشتراكات","url":"/eshtrakat/Transformation","search":true,"export":"Excel/نسخ","columns":["تاريخ","فرع","محول منه","محول إليه","نوع","القائم بالتحويل","إجراء"]},
+    {"name":"مرتجع الاشتراكات","url":"/eshtrakat/Hadback","search":true,"export":"Excel/نسخ","columns":["كود واسم","فرع","نوع","مدفوع","بداية/نهاية","تاريخ وقيمة المرتجع","إجراء"]}
+  ],
+  "notes": ["توجد صفحات أعضاء اليوم وقياسات الأعضاء في قائمة النظام القديم ولم تُفحص تفصيلياً لأنها ليست لازمة لمقارنة نطاق العضوية/الاشتراكات المطلوب.", "لم يظهر زر تجديد مستقل في الصفحات المفتوحة؛ الإضافة من صفحة العضو أو صفحة الاشتراك هي المسار المتحقق."]
+}

@@ -1,0 +1,234 @@
+{
+  "info": {
+    "_postman_id": "1c0f6ddd-23b6-4cbd-b056-6a72a7c19fbb",
+    "name": "Noamany HR - Mobile Permissions (New Approval Flow)",
+    "description": "مجموعة لمهندس Flutter لاختبار أذونات الموارد البشرية على المسار الجديد فقط. لا تستخدم permissionId قديم بحالة start أو progress؛ أنشئ إذناً جديداً من الطلب رقم 4 ثم استخدم رقمه في الوارد والقبول أو الرفض.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000",
+      "type": "string"
+    },
+    {
+      "key": "username",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "permissionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "permissionDate",
+      "value": "2026-08-31",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - تسجيل الدخول (الموظف أو المدير)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const response = pm.response.json();",
+              "if (response.accessToken) pm.collectionVariables.set('accessToken', response.accessToken);",
+              "pm.test('تم تسجيل الدخول', () => pm.expect(pm.response.code).to.equal(200));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/mobile/login",
+        "description": "ضع اسم المستخدم وكلمة المرور في متغيرات المجموعة. يُحفظ accessToken تلقائياً بعد نجاح تسجيل الدخول."
+      },
+      "response": []
+    },
+    {
+      "name": "02 - بيانات المستخدم الحالي",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/mobile/profile"
+      },
+      "response": []
+    },
+    {
+      "name": "03 - الرصيد المتاح من الأذونات",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/mobile/permissions/available?date={{permissionDate}}",
+        "description": "يعيد الرصيد الخاص بالمستخدم المسجل فقط."
+      },
+      "response": []
+    },
+    {
+      "name": "04 - إنشاء إذن جديد (يدخل المسار الجديد)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "const response = pm.response.json();",
+              "if (response.id) pm.collectionVariables.set('permissionId', String(response.id));",
+              "pm.test('تم إنشاء الإذن الجديد', () => pm.expect(pm.response.code).to.equal(201));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"no3Ezn\": 1,\n  \"eznDate\": \"{{permissionDate}}\",\n  \"fromHour\": \"10:00\",\n  \"toHour\": \"11:00\",\n  \"reason\": \"اختبار مسار الإذن الجديد\",\n  \"fatraFk\": 1\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/mobile/permissions",
+        "description": "ينشئ طلباً جديداً بحالة send_to_direct_manager ويحفظ رقمه تلقائياً في permissionId. لا ترسل empId من تطبيق الموظف."
+      },
+      "response": []
+    },
+    {
+      "name": "05 - الأذونات الواردة للمدير",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/mobile/permissions?mode=wared&page=1&pageSize=20",
+        "description": "سجل دخول المدير المُحوّل إليه الإذن قبل إرسال هذا الطلب. استخدم id الناتج لطلب جديد فقط."
+      },
+      "response": []
+    },
+    {
+      "name": "06 - قبول إذن جديد",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"action\": \"accept\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/mobile/permissions/{{permissionId}}/action",
+        "description": "يجب أن يكون accessToken للمستخدم الموجود في current_to_user_id. النتيجة الناجحة تحتوي stage و suspend و status."
+      },
+      "response": []
+    },
+    {
+      "name": "07 - رفض إذن جديد",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          },
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"action\": \"reject\",\n  \"reason\": \"سبب الرفض - اختبار\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": "{{baseUrl}}/api/mobile/permissions/{{permissionId}}/action",
+        "description": "بديل للقبول وليس طلباً يُرسل بعده. استخدمه على إذن جديد منفصل."
+      },
+      "response": []
+    },
+    {
+      "name": "08 - الأذونات الصادرة للمستخدم",
+      "request": {
+        "method": "GET",
+        "header": [
+          {
+            "key": "Authorization",
+            "value": "Bearer {{accessToken}}"
+          }
+        ],
+        "url": "{{baseUrl}}/api/mobile/permissions?mode=sader&page=1&pageSize=20"
+      },
+      "response": []
+    }
+  ]
+}

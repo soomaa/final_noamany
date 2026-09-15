@@ -1,0 +1,21 @@
+.dashboard-command-totals { background: #142d42; color: #f2f8fd; }
+.dashboard-command-totals dt { color: #bcd9ed; }
+
+.dashboard-command-banner .dashboard-command-field {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid hsl(var(--input));
+  border-radius: 0.75rem;
+  padding: 0.625rem 0.75rem;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  -webkit-text-fill-color: hsl(var(--foreground));
+  color-scheme: light;
+  font-size: 0.875rem;
+}
+.dark .dashboard-command-banner .dashboard-command-field { color-scheme: dark; }
+.dashboard-command-banner .dashboard-command-field:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}

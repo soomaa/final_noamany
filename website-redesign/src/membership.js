@@ -1,0 +1,7 @@
+import { api, money, escapeHtml } from './portal.js';
+const params = new URLSearchParams(location.search);
+const cleanRoute = location.pathname.match(/^\/memberships\/(\d+)\/?$/);
+const id = Number(params.get('id') || cleanRoute?.[1]); const branchId = Number(params.get('branchId'));
+const state = document.querySelector('#membershipState'); const card = document.querySelector('#membershipDetail');
+if (!Number.isInteger(id) || id < 1 || !Number.isInteger(branchId) || branchId < 1) { state.classList.add('error'); state.textContent = 'اختر باقة وفرعًا صحيحين من صفحة العضويات.'; }
+else api(`/memberships/${id}?branchId=${branchId}`).then((item) => { document.querySelector('#membershipDays').textContent = `${item.days} يوم`; document.querySelector('#membershipName').textContent = item.name; document.querySelector('#membershipDescription').textContent = item.description || 'عضوية مصممة لروتينك في النعماني.'; document.querySelector('#membershipPrice').textContent = money(item.price); document.querySelector('#membershipBenefits').innerHTML = [['عدد الدعوات',item.invitationsCount],['قياسات InBody',item.inbodyCount],['جلسات',item.sessionsCount],['أيام تجميد',item.freezeDays]].filter(([,v])=>v).map(([k,v])=>`<li>${escapeHtml(k)}: ${escapeHtml(v)}</li>`).join(''); document.querySelector('#membershipCheckout').href = `/membership-checkout?packageId=${item.id}&branchId=${item.branchId}`; state.hidden=true; card.hidden=false; }).catch((error) => { state.classList.add('error'); state.textContent = error.message; });

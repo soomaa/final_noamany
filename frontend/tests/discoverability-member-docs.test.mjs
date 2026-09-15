@@ -1,0 +1,6 @@
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
+import test from 'node:test';
+const read=(p)=>readFile(new URL(p,import.meta.url),'utf8');
+test('catalog exposes management withdrawals and localized online subscriptions',async()=>{const [routes,nav,ar,en,catalog]=await Promise.all(['../src/lib/club-routes.ts','../src/lib/nav.ts','../src/locales/ar.json','../src/locales/en.json','../../backend/src/modules/rbac/catalog/rbac.catalog.ts'].map(read));assert.match(routes,/managementWithdrawals: '\/club\/cafe\/inventory'/);assert.match(nav,/CR\.cafe\.managementWithdrawals/);assert.match(catalog,/page\('gym-sales\.inventory\.gym_issue', 'مسحوبات الإدارة', '\/club\/cafe\/inventory'/);assert.match(ar,/"\/club\/subscriptions\/online": "الاشتراكات الأونلاين"/);assert.match(en,/"\/club\/subscriptions\/online": "Online Subscriptions"/);});
+test('profile links employee self service and member documents deep link reuses members page',async()=>{const [topbar,router,members]=await Promise.all(['../src/components/layout/topbar.tsx','../src/app/router.tsx','../src/pages/club/members.tsx'].map(read));assert.match(topbar,/user\?\.emp_code != null/);assert.match(topbar,/\/me\/evaluations/);assert.match(topbar,/\/me\/permissions/);assert.match(router,/club\/members\/:id/);assert.match(members,/membership-documents/);});

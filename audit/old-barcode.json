@@ -1,0 +1,15 @@
+{
+  "department": "إدارة الباركود",
+  "base_url": "https://noamanycenter.com",
+  "audit_status": "complete",
+  "pages": [
+    {"name":"البحث بالباركود","url":"/Barcode/findBarcode","function":"إدخال كود العضوية للبحث/السحب"},
+    {"name":"تسجيل حضور حصص","url":"/Barcode/barcode_classess","function":"إدخال كود العضوية لتسجيل حضور حصة"},
+    {"name":"طباعة الباركود","url":"/Barcode/createBarcodes","function":"عرض/طباعة الباركود بنطاق كود عضو من/إلى","fields":["كود من","كود إلى"],"action":"عرض الباركود"},
+    {"name":"تسجيل حضور سبا","url":"/Barcode/barcode_spa","function":"إدخال كود العضوية لتسجيل حضور سبا"},
+    {"name":"توقيتات سحب الباركود","url":"/Barcode/barcode_times","function":"تقرير سحوبات الباركود","filters":["فرع","جنس","كود عضو","من/إلى","وقت من/إلى"],"action":"عرض التقرير"},
+    {"name":"سحب الباركود down","url":"/Barcode/findBarcode_down","function":"مسار سحب باركود منفصل للفرع down"},
+    {"name":"تقرير حضور الحصص","url":"/Report/all_users_classes","function":"مرتبط بقائمة الباركود؛ لم يُفحص تفصيلياً"}
+  ],
+  "features": ["بحث/قراءة باركود","تسجيل حضور حصص","تسجيل حضور سبا","طباعة نطاق باركود","تقرير توقيتات السحب","مسار down"]
+}

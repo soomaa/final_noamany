@@ -1,0 +1,10 @@
+export { CafeProductsPage } from './products';
+export { CafeCategoriesPage } from './categories';
+export { CafePosPage } from './pos';
+export { CafeRawMaterialsPage } from './raw-materials';
+export { CafeReportsPage } from './reports';
+export { CafeWastePage } from './waste';
+export { CafeItemFeedbackReportPage } from './item-feedback-report';
+export { CafeCustomersPage } from './customers';
+export { CafePurchasesPage } from './purchases';
+export { CafeSuppliersPage } from './suppliers';

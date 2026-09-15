@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="description" content="متجر النعماني للمكملات والإكسسوارات الرياضية">
+  <title>جميع المنتجات | مركز النعماني</title>
+  <link rel="stylesheet" href="/src/shop.css">
+  <link rel="stylesheet" href="/src/nav-unified.css">
+</head>
+<body class="shop-page">
+  <div class="shop-progress" aria-hidden="true"><span></span></div>
+  <header class="shop-header"><div class="shop-container nav-row"><a class="shop-logo" href="/" aria-label="النعماني فيتنس سنتر"><img src="/assets/noamany-logo.png" alt="شعار مركز النعماني للياقة البدنية"></a><nav><a href="/">الرئيسية</a><a href="/#about">عن الجيم</a><a href="/#services">الخدمات</a><a class="active" href="/shop.html">المتجر</a><a href="/careers.html">الوظائف</a><a href="/#contact">تواصل معنا</a></nav><button class="shop-cart-button" id="openCart">السلة <span id="shopCartCount">0</span></button><button class="shop-menu" aria-label="فتح القائمة">☰</button></div></header>
+  <main>
+    <section class="shop-hero"><div class="hero-frame"></div><div class="shop-container"><div class="shop-hero-copy"><span class="shop-hero-kicker"><i></i> NOAMANY PERFORMANCE STORE</span><h1>اختيارات أقوى.<br><em>لأداء يتفوّق.</em></h1><p>منتجات ومكملات مختارة بعناية لتدعم تمرينك، طاقتك، ونتيجتك كل يوم.</p><div class="shop-hero-actions"><a href="#catalog" class="shop-hero-cta">تسوّق المنتجات <b>←</b></a><a href="/#contact" class="shop-hero-link">اسأل عن المنتج المناسب</a></div><div class="shop-proof"><span><b>✓</b> منتجات مختارة</span><span><b>✓</b> دعم قبل الشراء</span><span><b>✓</b> أداء أفضل</span></div></div><div class="crumb"><a href="/">الرئيسية</a><b>←</b><span>المتجر</span></div></div></section>
+    <section class="shop-products" id="catalog"><div class="shop-container">
+      <div class="shop-toolbar"><div class="results"><strong id="visibleCount">39</strong><span>منتجًا<br>متاحًا</span></div><label class="search"><span>⌕</span><input id="productSearch" type="search" placeholder="ابحث باسم المنتج أو التصنيف..."></label><label class="sort"><span>ترتيب العرض</span><select id="sortFilter"><option value="default">الترتيب الافتراضي</option><option value="price-low">السعر: الأقل أولًا</option><option value="price-high">السعر: الأعلى أولًا</option><option value="name-asc">الاسم: أ–ي</option><option value="name-desc">الاسم: ي–أ</option><option value="newest">الأحدث</option></select></label></div>
+      <div class="category-filter" id="categoryFilter" aria-label="تصفية المنتجات"></div>
+      <div class="catalog-line"><span id="catalogStatus">كل المنتجات</span><i></i><b>39 ITEM</b></div>
+      <div class="shop-grid" id="shopGrid" aria-live="polite"></div><div class="no-results" id="noResults"><b>لا توجد منتجات مطابقة</b><span>جرّبي استخدام كلمات بحث مختلفة.</span></div>
+    </div></section>
+  </main>
+  <footer class="shop-footer"><div class="shop-container"><img src="/assets/noamany-logo.png" alt="النعماني"><p>أفضل المكملات والإكسسوارات لدعم رحلتك الرياضية.</p><a href="/">العودة للموقع الرئيسي ←</a></div></footer>
+  <div class="cart-drawer" id="cartDrawer"><button class="drawer-close" aria-label="إغلاق">×</button><h2>سلة المشتريات</h2><div id="drawerItems"></div><div id="drawerTotal"></div></div><div class="drawer-backdrop" id="drawerBackdrop"></div><div class="shop-toast" id="shopToast"></div>
+  <script type="module" src="/src/shop.js"></script>
+</body></html>

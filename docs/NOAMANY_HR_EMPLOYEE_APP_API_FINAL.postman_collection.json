@@ -1,0 +1,610 @@
+{
+  "info": {
+    "name": "Noamany HR - Employee Mobile App API (Final)",
+    "description": "Employee HR application only. Every request uses a mobile self-service route or employee-owned data; HR management reports are intentionally excluded.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://final.noamanycenter.com"
+    },
+    {
+      "key": "phone",
+      "value": ""
+    },
+    {
+      "key": "password",
+      "value": ""
+    },
+    {
+      "key": "accessToken",
+      "value": ""
+    },
+    {
+      "key": "notificationId",
+      "value": "1"
+    },
+    {
+      "key": "taskId",
+      "value": "1"
+    },
+    {
+      "key": "circularId",
+      "value": "1"
+    },
+    {
+      "key": "warningId",
+      "value": "1"
+    },
+    {
+      "key": "legalFileId",
+      "value": "1"
+    },
+    {
+      "key": "activityId",
+      "value": "1"
+    },
+    {
+      "key": "messageId",
+      "value": "1"
+    },
+    {
+      "key": "loanId",
+      "value": "1"
+    },
+    {
+      "key": "photoPath",
+      "value": ""
+    },
+    {
+      "key": "activityPhotoPath",
+      "value": ""
+    },
+    {
+      "key": "messageFilePath",
+      "value": ""
+    },
+    {
+      "key": "permissionDate",
+      "value": "2026-08-20",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Authentication and profile",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{phone}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/login"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"Login succeeded\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.expect(body.accessToken, \"accessToken\").to.be.a(\"string\").and.not.empty;",
+                  "pm.collectionVariables.set(\"accessToken\", body.accessToken);",
+                  "pm.collectionVariables.set(\"refreshToken\", body.refreshToken || \"\");",
+                  "pm.collectionVariables.set(\"employeeId\", String(body.user?.emp_code || \"\"));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Profile",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/profile"
+          }
+        },
+        {
+          "name": "Register FCM token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"token\": \"FCM_DEVICE_TOKEN\"\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/device-token"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Attendance",
+      "item": [
+        {
+          "name": "Punch in / out",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": \"30.044420\",\n  \"long\": \"31.235712\",\n  \"photo\": \"{{photoPath}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/attendance/punch"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Leaves and permissions",
+      "item": [
+        {
+          "name": "Leave types",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/mobile/leaves/types",
+            "description": "Employee-safe leave types. This endpoint does not require leaves:view."
+          },
+          "response": []
+        },
+        {
+          "name": "Available permission balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": "{{baseUrl}}/api/mobile/permissions/available?date={{permissionDate}}",
+            "description": "Personal permission balance for the signed-in employee only."
+          },
+          "response": []
+        },
+        {
+          "name": "Leaves list",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/leaves"
+          }
+        },
+        {
+          "name": "Create leave",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"leaveTypeId\": 1,\n  \"startDate\": \"2026-09-01\",\n  \"endDate\": \"2026-09-01\",\n  \"reason\": \"سبب الإجازة\"\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/leaves"
+          }
+        },
+        {
+          "name": "Permissions list",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/permissions?page=1&pageSize=20"
+          }
+        },
+        {
+          "name": "Create permission",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"no3Ezn\": 1,\n  \"eznDate\": \"2026-09-01\",\n  \"fromHour\": \"10:00\",\n  \"toHour\": \"11:00\",\n  \"reason\": \"سبب الإذن\",\n  \"fatraFk\": 1\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/permissions"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tasks and requests",
+      "item": [
+        {
+          "name": "Tasks list",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/tasks?page=1&perPage=20"
+          }
+        },
+        {
+          "name": "Create task",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"عنوان المهمة\",\n  \"notes\": \"تفاصيل المهمة\",\n  \"status\": \"inprogress\"\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/tasks"
+          }
+        },
+        {
+          "name": "Delete task",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/mobile/tasks/{{taskId}}"
+          }
+        },
+        {
+          "name": "Generic requests list",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/requests"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Notifications and documents",
+      "item": [
+        {
+          "name": "Notifications",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/notifications"
+          }
+        },
+        {
+          "name": "Mark notification read",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/mobile/notifications/{{notificationId}}/read"
+          }
+        },
+        {
+          "name": "Circulars list",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/circulars?page=1&perPage=20"
+          }
+        },
+        {
+          "name": "Circular detail",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/circulars/{{circularId}}"
+          }
+        },
+        {
+          "name": "Mark circular read",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/mobile/circulars/{{circularId}}/read"
+          }
+        },
+        {
+          "name": "Warnings list",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/warnings?page=1&perPage=20"
+          }
+        },
+        {
+          "name": "Warning detail",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/warnings/{{warningId}}"
+          }
+        },
+        {
+          "name": "Mark warning read",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/mobile/warnings/{{warningId}}/read"
+          }
+        },
+        {
+          "name": "Legal files list",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/legal-files?page=1&perPage=20"
+          }
+        },
+        {
+          "name": "Mark legal file read",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/mobile/legal-files/{{legalFileId}}/read"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Visits, activities and uploads",
+      "item": [
+        {
+          "name": "Create visit",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lat\": \"30.044420\",\n  \"long\": \"31.235712\",\n  \"notes\": \"تفاصيل الزيارة\"\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/visit"
+          }
+        },
+        {
+          "name": "Activities list",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/activities?page=1&perPage=20"
+          }
+        },
+        {
+          "name": "Create activity",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"عنوان النشاط\",\n  \"notes\": \"تفاصيل النشاط\",\n  \"files\": [\"{{activityPhotoPath}}\"]\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/activities"
+          }
+        },
+        {
+          "name": "Delete activity",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/mobile/activities/{{activityId}}"
+          }
+        },
+        {
+          "name": "Employees directory",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/employees?page=1&perPage=100"
+          }
+        },
+        {
+          "name": "Upload app",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/uploads/app"
+          }
+        },
+        {
+          "name": "Upload activity",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/uploads/activity"
+          }
+        },
+        {
+          "name": "Upload message",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/uploads/message"
+          }
+        },
+        {
+          "name": "Upload document",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/uploads/document"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Internal messages",
+      "item": [
+        {
+          "name": "Send internal message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"toUserIds\": [1],\n  \"subject\": \"عنوان الرسالة\",\n  \"message\": \"نص الرسالة\",\n  \"file\": \"{{messageFilePath}}\"\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/messages"
+          }
+        },
+        {
+          "name": "Inbox messages",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/messages/inbox?page=1&perPage=20"
+          }
+        },
+        {
+          "name": "Sent messages",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/messages/sent?page=1&perPage=20"
+          }
+        },
+        {
+          "name": "Message detail",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/messages/{{messageId}}"
+          }
+        },
+        {
+          "name": "Mark message read",
+          "request": {
+            "method": "PATCH",
+            "url": "{{baseUrl}}/api/mobile/messages/{{messageId}}/read"
+          }
+        },
+        {
+          "name": "Delete message",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/mobile/messages/{{messageId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Loans",
+      "item": [
+        {
+          "name": "Loan metadata",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/loans/meta"
+          }
+        },
+        {
+          "name": "Loans sent",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/loans?mode=sader&page=1&perPage=20"
+          }
+        },
+        {
+          "name": "Loans incoming",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/loans?mode=wared&page=1&perPage=20"
+          }
+        },
+        {
+          "name": "Loan detail",
+          "request": {
+            "method": "GET",
+            "url": "{{baseUrl}}/api/mobile/loans/{{loanId}}"
+          }
+        },
+        {
+          "name": "Create loan request",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 1000,\n  \"repaymentMethod\": 3,\n  \"installments\": 5,\n  \"deductionStartDate\": \"2026-09-01\",\n  \"reason\": \"سبب طلب السلفة\"\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/loans"
+          }
+        },
+        {
+          "name": "Accept loan stage",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"accept\",\n  \"reason\": \"\"\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/loans/{{loanId}}/action"
+          }
+        },
+        {
+          "name": "Reject loan stage",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"reject\",\n  \"reason\": \"سبب الرفض\"\n}"
+            },
+            "url": "{{baseUrl}}/api/mobile/loans/{{loanId}}/action"
+          }
+        },
+        {
+          "name": "Cancel loan request",
+          "request": {
+            "method": "DELETE",
+            "url": "{{baseUrl}}/api/mobile/loans/{{loanId}}"
+          }
+        }
+      ]
+    }
+  ]
+}

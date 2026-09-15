@@ -1,0 +1,80 @@
+@import '@fontsource-variable/noto-kufi-arabic/wght.css';
+@import '@fontsource-variable/alexandria/wght.css';
+@import '@fontsource/aref-ruqaa/arabic-400.css';
+@import '@fontsource/aref-ruqaa/arabic-700.css';
+
+html,
+body,
+button,
+input,
+select,
+textarea {
+  font-family: 'Noto Kufi Arabic Variable', sans-serif !important;
+}
+
+/* A calligraphic display face gives the large Arabic statements a premium,
+   editorial character while the geometric Kufi face keeps UI copy readable. */
+h1,
+h2,
+.hero h1,
+.section h2,
+.shop-hero h1,
+.page-intro h1,
+.product-copy h1,
+.auth-copy h2,
+.career-form-copy h2 {
+  font-family: 'Aref Ruqaa', 'Noto Kufi Arabic Variable', serif !important;
+  letter-spacing: 0 !important;
+  line-height: 1.18 !important;
+  font-weight: 700 !important;
+}
+
+.hero-content > p {
+  font-family: 'Aref Ruqaa', 'Noto Kufi Arabic Variable', serif !important;
+  font-size: clamp(20px, 1.55vw, 25px) !important;
+  font-weight: 400 !important;
+  line-height: 1.85 !important;
+  letter-spacing: 0 !important;
+}
+
+@media (max-width: 700px) {
+  .hero-content > p {
+    font-size: 19px !important;
+    line-height: 1.75 !important;
+  }
+}
+
+.desktop-nav,
+.mobile-nav,
+.shop-header nav,
+.btn,
+.nav-cta,
+.shop-product h2,
+.product h3 {
+  font-family: 'Noto Kufi Arabic Variable', sans-serif !important;
+}
+
+.home-products-empty {
+  grid-column: 1 / -1;
+  min-height: 260px;
+  display: grid;
+  place-content: center;
+  gap: 10px;
+  padding: 40px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  background: linear-gradient(135deg, rgba(255, 255, 255, .04), rgba(237, 28, 36, .05));
+  text-align: center;
+}
+
+.home-products-empty b { font-size: 24px; }
+.home-products-empty span { color: #aaa69d; }
+.home-products-empty a { margin-top: 8px; color: #ff4b52; font-weight: 700; }
+
+.product-visual img[data-placeholder='true'],
+.shop-product-image img[data-placeholder='true'],
+.checkout-thumb img[data-placeholder='true'] {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover !important;
+  filter: none !important;
+}

@@ -1,0 +1,18 @@
+{
+  "department": "تقارير النظام — نطاق النادي",
+  "base_url": "https://noamanycenter.com",
+  "audit_status": "complete",
+  "reports": [
+    {"name":"الأعضاء خلال فترة","url":"/Members/period_members","filters":["فرع","جنس","من/إلى"]},
+    {"name":"الاشتراكات خلال فترة","url":"/Subscription/period_subscription","filters":["فرع","جنس","نوع اشتراك","من/إلى"]},
+    {"name":"اشتراكات أوشكت على الانتهاء","url":"/Report/subscriptions_about_expire","filters":["فرع","جنس","عدد الأيام المتبقية"],"export":["Copy","Excel","Print"],"search":true,"columns":["تاريخ","كود/اسم/هاتف","نوع","قيمة","بداية/نهاية","أيام متبقية","إجراء"]},
+    {"name":"تقرير إيرادات الموظفين","url":"/Report/all_users_subs","filters":["فرع","من/إلى","مستخدم"]},
+    {"name":"تقرير الإيرادات تفصيلي","url":"/Report/all_user_subs","filters":["فرع","جنس","طريقة دفع","من/إلى","مستخدم"]},
+    {"name":"تقرير الإيصالات خلال فترة","url":"/Report/esalat_report","filters":["فرع","عضو","من/إلى"]},
+    {"name":"الاشتراكات الفعالة لكل فرع","url":"/Report/active_subscriptions_report","filters":["فرع","جنس"]},
+    {"name":"حضور الأعضاء خلال فترة","url":"/Report/member_attendance_report","filters":["فرع","جنس","نوع حضور: اشتراك/حصة/سبا/InBody","من/إلى"],"export":["Copy","Excel","Print"],"search":true,"columns":["كود","اسم","هاتف","نوع حضور","تاريخ","وقت","موظف","جنس"]},
+    {"name":"المبيعات والاشتراكات — رسوم وإحصاءات","url":"/Report/sales_by_branch_charts","filters":["فرع","من/إلى","جنس","نوع: اشتراكات وغيرها"],"charts":true},
+    {"name":"حصص الاشتراكات الحالية","url":"/Report/all_classes","status":"unopened_linked_report"},
+    {"name":"تقرير حضور الحصص","url":"/Report/all_users_classes","status":"unopened_linked_report"}
+  ]
+}

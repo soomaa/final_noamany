@@ -1,0 +1,22 @@
+NOAMANY ENGINEER HANDOFF — 2026-09-09
+
+Start with README-FIRST.md.
+
+Included:
+- Backend, admin frontend, and public website source with locked dependencies.
+- Current unified production bundle in backend/public.
+- Versioned Prisma schema and migrations.
+- Reviewed database snapshot: backups/noamany_final_new-before-20260909-upgrade.sql.gz
+- Safe restore script with checksum, empty-target, GTID, and record-count guards.
+- Locally available public uploads.
+
+Snapshot SHA-256:
+ca21148d16d0a4dc5b8bc7b2632371cbd4e96828763051f1dda730e29adaea30
+
+Excluded from every client delivery:
+- backend/.env, env_server.txt, and all credentials/secrets.
+- node_modules and machine-local runtime state.
+- private upload roots unless transferred separately through approved secure storage.
+
+Never run demo seed/reset/fresh-deploy commands against restored client data.
+Use prisma migrate deploy followed by npm run db:seed:rbac.

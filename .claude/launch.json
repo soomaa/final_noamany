@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "website-redesign",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "--prefix", "website-redesign", "dev"],
+      "port": 5173
+    },
+    {
+      "name": "backend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "--prefix", "backend", "start:dev"],
+      "port": 4000
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "--prefix", "frontend", "dev"],
+      "port": 5173
+    }
+  ]
+}

@@ -1,0 +1,106 @@
+خطوات جعل طلب SeenMessage مسجلاً ومصرحاً له في Postman
+========================================================
+
+1) تسجيل الدخول والحصول على التوكن
+-----------------------------------
+
+أنشئي طلباً جديداً في Postman بالبيانات التالية:
+
+Method: POST
+URL: {{baseUrl}}/Api/login_app
+
+من تبويب Body اختاري:
+raw ثم JSON
+
+واكتبي:
+
+{
+  "phone": "رقم هاتف الموظف",
+  "user_pass": "كلمة المرور"
+}
+
+اضغطي Send.
+
+ستحتوي الاستجابة الناجحة على:
+
+{
+  "status": 200,
+  "data": {
+    "access_token": "التوكن يظهر هنا"
+  }
+}
+
+
+2) حفظ التوكن تلقائياً في Postman
+----------------------------------
+
+في طلب login_app افتحي تبويب Tests، ثم أضيفي الكود التالي:
+
+const response = pm.response.json();
+pm.collectionVariables.set("access_token", response.data.access_token);
+
+بعد ذلك اضغطي Send مرة أخرى.
+
+سيتم حفظ التوكن داخل Collection Variable باسم:
+
+access_token
+
+
+3) إضافة التوكن إلى طلب SeenMessage
+------------------------------------
+
+افتحي طلب SeenMessage ثم افتحي تبويب Authorization.
+
+اختاري:
+
+Type: Bearer Token
+Token: {{access_token}}
+
+مهم: عند وضع التوكن يدوياً، ضعي قيمة التوكن فقط ولا تكتبي كلمة Bearer داخل خانة Token؛ Postman يضيفها تلقائياً.
+
+
+4) إرسال طلب SeenMessage
+-------------------------
+
+Method: POST
+URL: {{baseUrl}}/Api/SeenMessage
+
+من تبويب Body اختاري:
+raw ثم JSON
+
+واكتبي رقم الرسالة المطلوب تعليمها كمقروءة:
+
+{
+  "msg_id": 1
+}
+
+استبدلي الرقم 1 برقم الرسالة الصحيح، ثم اضغطي Send.
+
+
+5) تطبيق التوكن على جميع طلبات الـ Collection
+----------------------------------------------
+
+بدلاً من ضبط Authorization لكل طلب على حدة:
+
+1. افتحي إعدادات الـ Collection.
+2. افتحي تبويب Authorization.
+3. اختاري Bearer Token.
+4. اكتبي {{access_token}} في خانة Token.
+5. داخل كل Request اختاري Inherit auth from parent.
+
+
+حل مشكلة 401 Unauthorized
+--------------------------
+
+إذا استمرت رسالة 401 Unauthorized فتأكدي من الآتي:
+
+1. تم تنفيذ طلب login_app بنجاح وكانت قيمة status تساوي 200.
+2. تم حفظ data.access_token وليس refresh_token.
+3. طلب SeenMessage يستخدم Bearer Token أو Inherit auth from parent.
+4. المتغير {{access_token}} يحتوي على قيمة فعلية في الـ Collection.
+5. التوكن غير منتهي الصلاحية؛ إذا انتهى أعيدي تنفيذ login_app.
+6. baseUrl يشير إلى نفس السيرفر الذي أصدر التوكن.
+7. msg_id هو رقم رسالة موجهة إلى المستخدم الذي سجل الدخول.
+
+ملاحظة:
+إذا كان التوكن صحيحاً لكن الرسالة ليست موجهة إلى المستخدم الحالي، فسيعيد السيرفر رسالة تفيد بأن الرسالة غير موجهة إليه.

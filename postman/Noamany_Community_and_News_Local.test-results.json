@@ -1,0 +1,53 @@
+{
+  "scope": "local-only",
+  "server": "http://127.0.0.1:4010/api",
+  "database": "noamany_community_api_test_20260825",
+  "testAccount": {
+    "phone": "01000000099",
+    "password": "TestPass123!",
+    "memberId": 1
+  },
+  "verifiedLookupResponses": {
+    "communityCategories": [
+      { "value": "question", "label": "سؤال" },
+      { "value": "experience", "label": "تجربة" },
+      { "value": "discussion", "label": "نقاش" }
+    ],
+    "newsTypes": [
+      { "value": "nutrition", "label": "التغذية" },
+      { "value": "championships", "label": "البطولات" },
+      { "value": "exercises", "label": "التمارين" },
+      { "value": "supplements", "label": "المكملات" }
+    ]
+  },
+  "verifiedRequests": [
+    { "method": "POST", "path": "/member/auth/login", "status": 200 },
+    { "method": "POST", "path": "/member/auth/refresh", "status": 200 },
+    { "method": "GET", "path": "/member/community/categories", "status": 200 },
+    { "method": "POST", "path": "/member/community/posts", "status": 201 },
+    { "method": "GET", "path": "/member/community/posts", "status": 200 },
+    { "method": "GET", "path": "/member/community/posts/:id", "status": 200 },
+    { "method": "POST", "path": "/member/community/posts/:id/reaction", "status": 200, "covered": ["like", "love/swap"] },
+    { "method": "GET", "path": "/member/notifications", "status": 200 },
+    { "method": "GET", "path": "/member/notifications/unread-count", "status": 200 },
+    { "method": "POST", "path": "/member/notifications/:id/read", "status": 200 },
+    { "method": "POST", "path": "/member/notifications/read-all", "status": 200 },
+    { "method": "GET", "path": "/app/news/types", "status": 200 },
+    { "method": "GET", "path": "/app/news", "status": 200 },
+    { "method": "GET", "path": "/member/online-coaching/nutrition", "status": 200, "expected": { "data": [], "message": "لا يوجد بيانات حاليًا" } },
+    { "method": "GET", "path": "/member/online-coaching/workouts", "status": 200, "expected": { "data": [], "message": "لا يوجد بيانات حاليًا" } },
+    { "method": "GET", "path": "/member/online-coaching/chat", "status": 200, "expected": { "data": [], "message": "لا يوجد بيانات حاليًا" } },
+    { "method": "GET", "path": "/member/online-coaching/coach-notes", "status": 200, "expected": { "data": [], "message": "لا يوجد بيانات حاليًا" } }
+  ],
+  "postman": {
+    "collection": "Noamany_Community_and_News_Local.postman_collection.json",
+    "environment": "Noamany_Community_and_News_Local.postman_environment.json",
+    "folders": [
+      "01 - Member Authentication",
+      "02 - Community (Member)",
+      "03 - Member Notifications",
+      "04 - News (Member)",
+      "05 - Online Coach (Member)"
+    ]
+  }
+}

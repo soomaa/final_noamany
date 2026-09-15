@@ -1,0 +1,94 @@
+{
+  "info": {
+    "name": "Noamany HR Mobile API — Final",
+    "description": "النسخة النهائية لتطبيق موارد الموظفين: الدخول، البصمة الجغرافية، التقارير، الإجازات، الأذونات، الورديات، والإضافي. هوية الموظف مشتقة دائماً من JWT.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000" },
+    { "key": "accessToken", "value": "" },
+    { "key": "phone", "value": "" },
+    { "key": "password", "value": "102030" },
+    { "key": "photoPath", "value": "" },
+    { "key": "dateFrom", "value": "2026-08-01" },
+    { "key": "dateTo", "value": "2026-08-31" },
+    { "key": "requestId", "value": "1" },
+    { "key": "shiftId", "value": "1" },
+    { "key": "employeePhone", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Modern Flutter API",
+      "item": [
+        {
+          "name": "Login",
+          "event": [{ "listen": "test", "script": { "exec": ["const json = pm.response.json();", "if (json.accessToken) pm.collectionVariables.set('accessToken', json.accessToken);"] } }],
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"username\": \"{{phone}}\",\n  \"password\": \"{{password}}\"\n}" }, "url": "{{baseUrl}}/api/mobile/login", "description": "username هو رقم هاتف الموظف. كلمة المرور الافتراضية 102030 وتغييرها اختياري." }
+        },
+        {
+          "name": "Upload Punch Photo",
+          "event": [{ "listen": "test", "script": { "exec": ["const json = pm.response.json();", "if (json.path) pm.collectionVariables.set('photoPath', json.path);"] } }],
+          "request": { "method": "POST", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "body": { "mode": "formdata", "formdata": [{ "key": "file", "type": "file", "src": [] }] }, "url": "{{baseUrl}}/api/uploads/app" }
+        },
+        {
+          "name": "Punch Attendance",
+          "request": { "method": "POST", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"lat\": \"30.044420\",\n  \"long\": \"31.235712\",\n  \"photo\": \"{{photoPath}}\"\n}" }, "url": "{{baseUrl}}/api/mobile/attendance/punch", "description": "لا ترسل branchId. السيرفر يقارن الموقع مع employees.emp_sign وليس branch_id_fk؛ والقيمة all تسمح بأقرب فرع داخل نطاقه." }
+        },
+        { "name": "Profile", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/profile" } },
+        { "name": "Register FCM Token", "request": { "method": "POST", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"token\": \"FCM_DEVICE_TOKEN\"\n}" }, "url": "{{baseUrl}}/api/mobile/device-token" } },
+        {
+          "name": "Sync Offline Punch",
+          "request": { "method": "POST", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"offlineId\": \"6c2d91fd-4637-4172-8e78-4c2f1bfe1c58\",\n  \"capturedAtUtc\": \"2026-08-26T08:00:00.000Z\",\n  \"timezone\": \"Africa/Cairo\",\n  \"lat\": \"30.044420\",\n  \"long\": \"31.235712\",\n  \"photo\": \"{{photoPath}}\"\n}" }, "url": "{{baseUrl}}/api/mobile/attendance/offline-sync", "description": "يعيد نفس offlineId النتيجة المحفوظة ولا يسجل بصمة ثانية." }
+        },
+        {
+          "name": "Attendance & Reports",
+          "item": [
+            { "name": "Monthly Statistics", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/statistics/monthly?month=8&year=2026" } },
+            { "name": "Attendance Report", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/attendance/reports/basma?dateFrom={{dateFrom}}&dateTo={{dateTo}}", "description": "التقرير للموظف الحالي فقط؛ تُهمل فلاتر الموظف والفرع المرسلة من العميل." } },
+            { "name": "Late Report", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/attendance/reports/late?dateFrom={{dateFrom}}&dateTo={{dateTo}}" } },
+            { "name": "Absence Report", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/attendance/reports/absence?dateFrom={{dateFrom}}&dateTo={{dateTo}}" } },
+            { "name": "Shift Types", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/attendance/shift-types?page=1&pageSize=100" } },
+            { "name": "Shift Operation Types", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/attendance/shift-operation-types" } },
+            { "name": "My Shift Changes", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/attendance/shift-swaps?page=1&perPage=20&dateFrom={{dateFrom}}&dateTo={{dateTo}}" } },
+            { "name": "Create Shift Change", "request": { "method": "POST", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"employeePhone\": \"{{employeePhone}}\",\n  \"ttype\": 1,\n  \"dwamIdFk\": {{shiftId}},\n  \"sheftDate\": \"2026-08-27\"\n}" }, "url": "{{baseUrl}}/api/mobile/attendance/shift-swaps" } },
+            { "name": "My Extra Hours", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/attendance/extra-hours?page=1&perPage=20&dateFrom={{dateFrom}}&dateTo={{dateTo}}" } },
+            { "name": "Create Extra Hours", "request": { "method": "POST", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"employeePhone\": \"{{employeePhone}}\",\n  \"numHours\": 2,\n  \"edafaDate\": \"2026-08-27\"\n}" }, "url": "{{baseUrl}}/api/mobile/attendance/extra-hours" } }
+          ]
+        },
+        {
+          "name": "Leaves & Permissions",
+          "item": [
+            { "name": "Leave Types", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/leaves/types" } },
+            { "name": "My Leave Requests", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/leaves?mode=sader&page=1&pageSize=20" } },
+            { "name": "Create Leave Request", "request": { "method": "POST", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"leaveTypeId\": 1,\n  \"startDate\": \"2026-08-27\",\n  \"endDate\": \"2026-08-27\",\n  \"reason\": \"طلب إجازة\"\n}" }, "url": "{{baseUrl}}/api/mobile/leaves" } },
+            { "name": "Permission Balance", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/permissions/available?date=2026-08-27" } },
+            { "name": "My Permission Requests", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/permissions?mode=sader&page=1&pageSize=20" } },
+            { "name": "Create Permission Request", "request": { "method": "POST", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"no3Ezn\": 1,\n  \"eznDate\": \"2026-08-27\",\n  \"fromHour\": \"01:00 PM\",\n  \"toHour\": \"02:00 PM\",\n  \"reason\": \"موعد شخصي\"\n}" }, "url": "{{baseUrl}}/api/mobile/permissions" } }
+          ]
+        },
+        {
+          "name": "Loans",
+          "item": [
+            { "name": "Loan Metadata", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/loans/meta" } },
+            { "name": "My Loan Requests", "request": { "method": "GET", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "url": "{{baseUrl}}/api/mobile/loans?page=1&perPage=20" } },
+            { "name": "Create Loan Request", "request": { "method": "POST", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"amount\": 1000,\n  \"repaymentMethod\": 3,\n  \"installments\": 4,\n  \"reason\": \"سلفة طارئة\"\n}" }, "url": "{{baseUrl}}/api/mobile/loans" } }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Legacy App Compatibility",
+      "item": [
+        {
+          "name": "Legacy Login",
+          "event": [{ "listen": "test", "script": { "exec": ["const json = pm.response.json();", "if (json.data && json.data.access_token) pm.collectionVariables.set('accessToken', json.data.access_token);"] } }],
+          "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{phone}}\",\n  \"user_pass\": \"{{password}}\"\n}" }, "url": "{{baseUrl}}/Api/login_app" }
+        },
+        {
+          "name": "Legacy Punch",
+          "request": { "method": "POST", "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] }, "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{\n  \"lat\": \"30.044420\",\n  \"long\": \"31.235712\",\n  \"basma_img\": \"{{photoPath}}\"\n}" }, "url": "{{baseUrl}}/Api/add_hdor_ensraf" }
+        }
+      ]
+    }
+  ]
+}

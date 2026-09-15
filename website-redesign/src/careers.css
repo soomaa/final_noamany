@@ -1,0 +1,72 @@
+.careers-intro{display:grid;grid-template-columns:1.2fr .8fr;align-items:end}.careers-intro>span{grid-column:1/-1}.careers-intro p{font-size:16px;line-height:1.9;max-width:520px}.careers-content{display:block}.jobs-heading{margin:0 0 24px}.jobs-heading span,.career-form-copy>span,.empty-careers>span{font-size:10px;letter-spacing:3px;color:#ff6268}.jobs-heading h2{font-size:34px;margin:8px 0}.jobs-grid{display:grid;gap:12px}.job-card{display:grid;grid-template-columns:65px 1fr auto;align-items:center;gap:28px;padding:28px 32px;border:1px solid var(--line);background:linear-gradient(110deg,#181415,#110e0f);transition:.25s}.job-card:hover{transform:translateY(-3px);border-color:#ed1c2455}.job-card>span{display:grid;place-items:center;width:56px;height:56px;border-radius:50%;border:1px solid #ffffff22;color:#ff6268}.job-card small{color:#a99fa1}.job-card h2{font-size:26px;margin:5px 0}.job-card p{color:#a99fa1;line-height:1.7;margin:5px 0;max-width:720px}.job-card button,.submit-application{border:0;background:linear-gradient(135deg,#f3222b,#a90c13);color:#fff;padding:14px 22px;font-weight:900;cursor:pointer}.career-form-shell{display:grid;grid-template-columns:.75fr 1.25fr;margin-top:70px;background:#f5f0eb;color:#171314}.career-form-copy{padding:55px;background:radial-gradient(circle at 20% 90%,#58151a,#171314 58%);color:#fff}.career-form-copy h2{font-size:48px;line-height:1.05;margin:18px 0}.career-form-copy em{font-style:normal;color:#ed1c24}.career-form-copy p,.career-form-copy li{color:#b8adaf;line-height:1.8}.career-form-copy ul{padding-right:18px;margin-top:35px}.career-form{padding:48px;display:grid;grid-template-columns:1fr 1fr;gap:18px}.career-form label{font-size:11px;color:#756a6c}.career-form input,.career-form select,.career-form textarea{display:block;width:100%;margin-top:7px;padding:11px 4px;border:0;border-bottom:1px solid #c9bfba;background:transparent;outline:0}.career-form select{height:44px}.career-form textarea{height:72px;resize:vertical}.career-form input:focus,.career-form select:focus,.career-form textarea:focus{border-color:var(--red)}.file-field{padding:14px;border:1px solid #d7ccc7}.file-field input{border:0;padding:5px 0}.file-field small{display:block;color:#9a8e90}.submit-application{min-height:55px}.submit-application:disabled{opacity:.6}.form-response{min-height:20px;margin:0;color:#17834e}.form-response[data-kind=error]{color:#b11b22}.empty-careers{text-align:center;padding:90px 20px;background:#f5f0eb;color:#171314}.empty-careers h2{font-size:42px;margin:18px 0}.empty-careers p{color:#786d6f}.empty-careers a{display:inline-block;background:#171314;color:#fff;padding:14px 24px;margin-top:18px}
+@media(max-width:900px){.careers-intro,.career-form-shell{grid-template-columns:1fr}.career-form-copy{padding:40px}.job-card{grid-template-columns:55px 1fr}.job-card button{grid-column:2}.career-form{padding:32px}}
+@media(max-width:560px){.careers-intro h1{font-size:42px}.job-card{grid-template-columns:1fr;padding:24px}.job-card button{grid-column:auto}.career-form{grid-template-columns:1fr;padding:22px 18px}.career-form .wide,.career-form label{grid-column:1}.career-form-copy h2{font-size:38px}.empty-careers h2{font-size:32px}}
+
+/* Luxury careers navigation */
+.commerce-header{
+  height:86px;
+  overflow:hidden;
+  isolation:isolate;
+  border-bottom:1px solid rgba(255,71,79,.28);
+  background:radial-gradient(ellipse at 87% 0,rgba(237,28,36,.17),transparent 48%),linear-gradient(112deg,rgba(9,7,8,.985) 0%,rgba(27,14,17,.985) 53%,rgba(61,15,21,.975) 100%);
+  box-shadow:0 18px 55px rgba(0,0,0,.4),inset 0 1px rgba(255,255,255,.045);
+  backdrop-filter:blur(22px) saturate(1.2);
+}
+.commerce-header::before{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  inset:auto 0 0;
+  height:2px;
+  background:linear-gradient(90deg,transparent 5%,rgba(237,28,36,.18) 27%,#f32d36 50%,rgba(237,28,36,.18) 73%,transparent 95%);
+  box-shadow:0 0 18px rgba(237,28,36,.42);
+}
+.commerce-header::after{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  top:-115%;
+  left:42%;
+  width:320px;
+  aspect-ratio:1;
+  border:1px solid rgba(255,255,255,.035);
+  border-radius:50%;
+  box-shadow:0 0 0 48px rgba(237,28,36,.018),0 0 0 96px rgba(255,255,255,.012);
+}
+.commerce-header nav{gap:34px}
+.commerce-header nav a{position:relative;padding:11px 2px;color:#d9d0d2;transition:color .25s,text-shadow .25s}
+.commerce-header nav a:hover{color:#fff;text-shadow:0 0 22px rgba(255,255,255,.27)}
+.commerce-header nav a.active{color:#ff5259}
+.commerce-header nav a.active::after{
+  content:"";
+  position:absolute;
+  right:50%;
+  bottom:0;
+  width:30px;
+  height:2px;
+  border-radius:5px;
+  transform:translateX(50%);
+  background:linear-gradient(90deg,transparent,#ff3038,transparent);
+  box-shadow:0 0 13px rgba(237,28,36,.8);
+}
+.commerce-logo{
+  border:1px solid rgba(255,255,255,.38);
+  background:linear-gradient(145deg,rgba(255,250,246,.98),rgba(230,219,217,.95));
+  box-shadow:0 13px 35px rgba(0,0,0,.42),0 0 0 1px rgba(237,28,36,.08),0 0 24px rgba(237,28,36,.09);
+  transition:transform .3s,box-shadow .3s;
+}
+.commerce-logo:hover{transform:translateY(-2px);box-shadow:0 17px 42px rgba(0,0,0,.5),0 0 0 1px rgba(237,28,36,.25),0 0 30px rgba(237,28,36,.14)}
+.commerce-cart{
+  min-height:48px;
+  display:flex;
+  align-items:center;
+  gap:8px;
+  border-color:rgba(255,255,255,.14);
+  border-radius:11px;
+  background:linear-gradient(145deg,rgba(255,255,255,.075),rgba(255,255,255,.025));
+  box-shadow:inset 0 1px rgba(255,255,255,.07);
+  transition:.25s;
+}
+.commerce-cart:hover{border-color:rgba(237,28,36,.48);background:rgba(237,28,36,.1);transform:translateY(-2px)}
+.commerce-cart span{margin:0;border:1px solid rgba(255,255,255,.22);background:linear-gradient(145deg,#ff313a,#b90b13);box-shadow:0 6px 15px rgba(237,28,36,.25)}
+@media(max-width:560px){.commerce-header{height:74px}}

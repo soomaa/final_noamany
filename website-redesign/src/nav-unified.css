@@ -1,0 +1,389 @@
+:root{
+  --nav-charcoal:#0b0809;
+  --nav-wine:#361015;
+  --nav-red:#f32d36;
+  --nav-text:#d9d0d2;
+}
+
+/* One navigation identity across the public website and store pages. */
+.site-header,
+.site-header.scrolled,
+.shop-header,
+.commerce-header{
+  padding-top:env(safe-area-inset-top);
+  border-bottom:1px solid rgba(255,74,81,.28)!important;
+  background:linear-gradient(115deg,rgba(11,8,9,.985) 0%,rgba(28,15,18,.985) 48%,rgba(54,16,21,.975) 100%)!important;
+  box-shadow:0 18px 55px rgba(0,0,0,.38),inset 0 1px rgba(255,255,255,.045)!important;
+  backdrop-filter:blur(22px) saturate(1.2)!important;
+}
+
+.site-header{height:calc(92px + env(safe-area-inset-top))}
+.site-header.scrolled{height:calc(76px + env(safe-area-inset-top))}
+.shop-header{height:calc(82px + env(safe-area-inset-top))!important}
+.commerce-header{height:calc(90px + env(safe-area-inset-top))}
+
+:where(a,button,input,select,textarea):focus-visible{
+  outline:2px solid #ff5158!important;
+  outline-offset:3px;
+}
+
+.site-header::before,
+.shop-header::before,
+.commerce-header::before{
+  content:"";
+  position:absolute;
+  z-index:0;
+  inset:auto 0 -1px;
+  height:2px;
+  background:linear-gradient(90deg,transparent 4%,rgba(237,28,36,.2) 28%,var(--nav-red) 50%,rgba(237,28,36,.2) 72%,transparent 96%);
+  box-shadow:0 0 18px rgba(237,28,36,.42);
+  pointer-events:none;
+}
+
+.site-header .nav-shell,
+.shop-header .nav-row,
+.commerce-header>*{
+  position:relative;
+  z-index:1;
+}
+
+.site-header .desktop-nav a,
+.shop-header nav a,
+.commerce-header nav a{
+  color:var(--nav-text)!important;
+  transition:color .25s,text-shadow .25s;
+}
+
+.site-header .desktop-nav a:hover,
+.shop-header nav a:hover,
+.commerce-header nav a:hover{
+  color:#fff!important;
+  text-shadow:0 0 22px rgba(255,255,255,.25);
+}
+
+.site-header .desktop-nav .active,
+.shop-header nav .active,
+.commerce-header nav .active{
+  color:#ff5158!important;
+}
+
+.site-header .desktop-nav .active::after,
+.shop-header nav .active::after,
+.commerce-header nav .active::after{
+  top:auto!important;
+  right:50%!important;
+  left:auto!important;
+  bottom:-10px!important;
+  width:30px!important;
+  height:2px!important;
+  transform:translateX(50%)!important;
+  border-radius:4px;
+  background:linear-gradient(90deg,transparent,#ff3038,transparent)!important;
+  box-shadow:0 0 13px rgba(237,28,36,.8);
+}
+
+/* Dropdowns use a light canvas, so they need their own high-contrast palette. */
+.site-header .desktop-nav .dropdown{
+  border-top-color:#ed1c24;
+  background:linear-gradient(145deg,#fffaf7,#f2e9e6);
+  box-shadow:0 22px 55px rgba(0,0,0,.36),0 0 0 1px rgba(237,28,36,.08);
+}
+
+.site-header .desktop-nav .dropdown a{
+  color:#2c2022!important;
+  font-weight:800;
+  text-shadow:none!important;
+  background:transparent;
+}
+
+.site-header .desktop-nav .dropdown a:hover,
+.site-header .desktop-nav .dropdown a:focus{
+  color:#a90c14!important;
+  background:rgba(237,28,36,.09)!important;
+  text-shadow:none!important;
+}
+
+.site-header .desktop-nav .dropdown .cart-count{
+  color:#fff!important;
+}
+
+.site-header .nav-cta,
+.shop-header .shop-cart-button,
+.commerce-header .commerce-cart{
+  border-color:rgba(255,255,255,.14)!important;
+  background:linear-gradient(145deg,rgba(255,255,255,.075),rgba(255,255,255,.025))!important;
+  color:#f4edef!important;
+  box-shadow:inset 0 1px rgba(255,255,255,.07);
+}
+
+.site-header .nav-cta:hover,
+.shop-header .shop-cart-button:hover,
+.commerce-header .commerce-cart:hover{
+  border-color:rgba(237,28,36,.48)!important;
+  background:rgba(237,28,36,.1)!important;
+}
+
+.site-header .nav-cta{
+  border-color:#ed1c24!important;
+  background:#ed1c24!important;
+  color:#fff!important;
+  box-shadow:0 10px 28px rgba(237,28,36,.27),inset 0 1px rgba(255,255,255,.18)!important;
+}
+
+.site-header .nav-cta:hover{
+  border-color:#b90b13!important;
+  background:#b90b13!important;
+  color:#fff!important;
+  box-shadow:0 14px 34px rgba(237,28,36,.38)!important;
+}
+
+/* Deep wine canvas matching the navigation identity. */
+body.shop-page,
+body.careers-page{
+  background-color:var(--nav-charcoal);
+  background-image:
+    radial-gradient(circle at 92% 8%,rgba(237,28,36,.18),transparent 31%),
+    radial-gradient(circle at 8% 74%,rgba(133,14,23,.2),transparent 29%),
+    linear-gradient(135deg,#0b0809 0%,#1c0f12 48%,#361015 100%);
+  background-attachment:fixed;
+}
+
+body.shop-page .shop-products{
+  position:relative;
+  isolation:isolate;
+  background:
+    linear-gradient(115deg,rgba(11,8,9,.88) 0%,rgba(28,15,18,.82) 52%,rgba(54,16,21,.78) 100%),
+    radial-gradient(circle at 88% 12%,rgba(237,28,36,.22),transparent 34%)!important;
+}
+
+body.shop-page .shop-products::after{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  inset:0;
+  pointer-events:none;
+  background:radial-gradient(circle at 16% 30%,rgba(237,28,36,.1),transparent 30%);
+  mask-image:linear-gradient(to bottom,rgba(0,0,0,.62),transparent 72%);
+}
+
+body.careers-page .careers-main{
+  background:transparent;
+}
+
+body.careers-page .careers-intro{
+  position:relative;
+  isolation:isolate;
+}
+
+body.careers-page .careers-intro::before{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  inset:-55px calc(50% - 50vw) -38px;
+  background:linear-gradient(115deg,rgba(11,8,9,.48),rgba(28,15,18,.42) 52%,rgba(54,16,21,.36));
+  border-bottom:1px solid rgba(255,74,81,.08);
+  pointer-events:none;
+}
+
+.shop-header .shop-logo{
+  position:relative;
+  width:158px;
+  height:68px;
+  flex:none;
+  overflow:hidden;
+  background:linear-gradient(145deg,rgba(48,20,24,.92),rgba(12,8,9,.78));
+  box-shadow:0 14px 34px rgba(0,0,0,.38);
+  -webkit-mask-image:radial-gradient(ellipse 94% 88% at center,#000 68%,transparent 100%);
+  mask-image:radial-gradient(ellipse 94% 88% at center,#000 68%,transparent 100%);
+}
+
+.shop-header .shop-logo img{
+  position:absolute;
+  top:50%;
+  left:50%;
+  width:188px;
+  height:188px;
+  max-width:none;
+  max-height:none;
+  object-fit:contain;
+  transform:translate(-50.8%,-47.5%);
+  filter:drop-shadow(0 1px 0 rgba(255,255,255,.75)) drop-shadow(0 4px 12px rgba(0,0,0,.48)) drop-shadow(0 0 8px rgba(255,255,255,.18)) saturate(1.16) contrast(1.12);
+}
+
+.commerce-menu{
+  display:none;
+  min-width:44px;
+  min-height:44px;
+  padding:0;
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:10px;
+  background:rgba(255,255,255,.045);
+  color:#fff;
+  cursor:pointer;
+}
+
+.commerce-menu svg{
+  width:24px;
+  height:24px;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+}
+
+@media(max-width:1100px){
+  .commerce-header nav{display:none}
+
+  .commerce-header nav.open{
+    display:flex;
+    position:absolute;
+    top:100%;
+    right:0;
+    left:0;
+    flex-direction:column;
+    gap:0;
+    margin:0;
+    padding:16px 24px;
+    border-top:1px solid rgba(255,255,255,.08);
+    background:linear-gradient(145deg,rgba(18,11,13,.99),rgba(48,14,19,.99));
+    box-shadow:0 24px 55px rgba(0,0,0,.55);
+  }
+
+  .commerce-header nav.open a{
+    display:flex;
+    align-items:center;
+    min-height:48px;
+    border-bottom:1px solid rgba(255,255,255,.07);
+  }
+
+  .commerce-menu{display:grid;place-items:center}
+}
+
+@media(max-width:900px){
+  .site-header .mobile-nav,
+  .shop-header nav{
+    border-top:1px solid rgba(255,255,255,.07)!important;
+    background:linear-gradient(145deg,rgba(18,11,13,.99),rgba(48,14,19,.99))!important;
+    box-shadow:0 24px 55px rgba(0,0,0,.55)!important;
+    backdrop-filter:blur(22px);
+  }
+}
+
+/* The source logo has a square canvas around a wide mark. Crop that canvas
+   visually so the brand—not its empty pixels—owns the header. */
+.commerce-header .commerce-logo{
+  width:172px;
+  height:68px;
+  flex:none;
+  overflow:hidden;
+  display:grid;
+  place-items:center;
+  border:1px solid rgba(255,93,100,.32)!important;
+  border-radius:20px 7px 20px 7px;
+  background:
+    radial-gradient(circle at 24% 22%,rgba(255,67,76,.16),transparent 42%),
+    linear-gradient(145deg,rgba(48,20,24,.92),rgba(12,8,9,.78))!important;
+  box-shadow:
+    0 13px 30px rgba(0,0,0,.4),
+    inset 0 1px rgba(255,255,255,.1),
+    0 0 0 1px rgba(237,28,36,.06)!important;
+  transition:transform .25s ease, border-color .25s ease, box-shadow .25s ease;
+}
+
+.commerce-header .commerce-logo img{
+  position:absolute;
+  top:50%;
+  left:50%;
+  width:200px;
+  height:200px;
+  max-width:none;
+  max-height:none;
+  object-fit:contain;
+  transform:translate(-50.8%,-47.5%);
+  filter:
+    drop-shadow(0 1px 0 rgba(255,255,255,.72))
+    drop-shadow(0 0 8px rgba(255,255,255,.2))
+    saturate(1.16)
+    contrast(1.08);
+}
+
+.commerce-header .commerce-logo:hover{
+  transform:translateY(-2px);
+  border-color:rgba(255,93,100,.58)!important;
+  box-shadow:
+    0 17px 38px rgba(0,0,0,.48),
+    inset 0 1px rgba(255,255,255,.12),
+    0 0 24px rgba(237,28,36,.16)!important;
+}
+
+.commerce-header .commerce-logo:focus-visible{
+  outline:2px solid #ff656b;
+  outline-offset:3px;
+}
+
+@media(max-width:560px){
+  .commerce-header{height:calc(74px + env(safe-area-inset-top))}
+
+  .shop-header .shop-logo{
+    width:124px;
+    height:54px;
+  }
+
+  .shop-header .shop-logo img{
+    width:148px;
+    height:148px;
+  }
+
+  .commerce-header .commerce-logo{
+    width:138px;
+    height:54px;
+    border-radius:16px 6px 16px 6px;
+  }
+
+  .commerce-header .commerce-logo img{
+    width:160px;
+    height:160px;
+  }
+}
+
+@media(max-width:700px){
+  .site-header{height:calc(72px + env(safe-area-inset-top))}
+}
+
+@media(max-width:650px){
+  .shop-header{height:calc(76px + env(safe-area-inset-top))!important}
+  .shop-header nav{top:100%!important}
+}
+
+@media(prefers-reduced-motion:reduce){
+  .commerce-header .commerce-logo{transition:none}
+}
+
+@media(max-width:420px){
+  .site-header .mobile-nav a{
+    min-height:48px;
+  }
+
+  .site-header .menu-toggle,
+  .shop-header .shop-menu{
+    min-width:44px;
+    min-height:44px;
+  }
+
+  .commerce-header .commerce-cart{
+    min-height:44px;
+  }
+
+  .submit-order{
+    min-height:52px;
+  }
+
+  .checkout-item>button{
+    min-width:44px;
+    min-height:44px;
+  }
+
+  .coupon-row button{
+    min-height:44px;
+  }
+}

@@ -1,0 +1,15 @@
+export const EVENTS_ROUTES = {
+  list: '/club/events',
+  create: '/club/events/create',
+  detail: (id: number | string) => `/club/events/${id}`,
+  registrations: '/club/events/registrations',
+  checkin: '/club/events/checkin',
+  settings: '/club/events/settings',
+  liveHub: (id: number | string) => `/club/events/${id}/live`,
+  liveDisplay: (id: number | string) => `/club/events/${id}/live/display`,
+  liveCheckin: (id: number | string) => `/club/events/${id}/live/checkin`,
+  liveGuest: (id: number | string) => `/club/events/${id}/live/guest`,
+  liveKiosk: (id: number | string) => `/club/events/${id}/live/kiosk`,
+  liveProgram: (id: number | string) => `/club/events/${id}/live/program`,
+  liveSettings: (id: number | string) => `/club/events/${id}/live/settings`,
+} as const;
