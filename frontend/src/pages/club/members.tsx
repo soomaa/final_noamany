@@ -398,9 +398,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   const [deletingMember, setDeletingMember] = useState(false);
   const [refundingSubscriptionId, setRefundingSubscriptionId] = useState<number | 'all' | null>(null);
 
-  const [checkInCode, setCheckInCode] = useState('');
-  const [checkInLoading, setCheckInLoading] = useState(false);
-  const checkInRef = useRef<HTMLInputElement>(null);
   const didAutoOpenCreate = useRef(false);
   const saveMemberInFlight = useRef(false);
   const openedDocumentMember = useRef<string | null>(null);
@@ -873,35 +870,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     }
   };
 
-  const handleCheckIn = async () => {
-    const code = checkInCode.trim();
-    if (!code) {
-      toast.error(ct('members.enterCode'));
-      return;
-    }
-    setCheckInLoading(true);
-    try {
-      const { data: list } = await api.get<{ data: ClubMemberListItem[] }>('/club-members', {
-        params: { search: code, pageSize: 5 },
-      });
-      const exact = list.data.find((m) => m.memberCode === code || m.cardNumber === code);
-      if (!exact) {
-        toast.error(ct('members.noMemberFound'));
-        setCheckInLoading(false);
-        return;
-      }
-      await api.post('/club-attendance/check-in', { memberId: exact.id, consumeSession: true });
-      toast.success(ct('members.checkInNamed', { name: exact.name }));
-      setCheckInCode('');
-      checkInRef.current?.focus();
-      void qc.invalidateQueries({ queryKey: ['club-attendance'] });
-    } catch (e) {
-      toast.error(apiError(e));
-    } finally {
-      setCheckInLoading(false);
-    }
-  };
-
   const handleCheckOut = async (attendanceId: number) => {
     try {
       await api.post('/club-attendance/check-out', { attendanceId });
@@ -972,12 +940,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         },
       },
       {
-        accessorKey: 'lastCheckIn',
-        header: ui('آخر دخول للجيم'),
-        cell: ({ getValue }) => {
-          const value = getValue() as string | null | undefined;
-          return value ? <span className="whitespace-nowrap nums">{formatDateTime(value)}</span> : <span className="text-muted-foreground">{ui('لم يحضر بعد')}</span>;
-        },
+        id: 'branch',
+        header: ct('common.branch'),
+        cell: ({ row }) => resolveBranchName(branches, row.original.branchId, user?.branch, user?.branch_name),
       },
       {
         accessorKey: 'isActive',
@@ -1016,7 +981,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         ),
       },
     ],
-    [ct, ui, canUpdateMembers, canDeleteMembers],
+    [branches, ct, canUpdateMembers, canDeleteMembers, user?.branch, user?.branch_name],
   );
 
   const blockedColumns = useMemo<ColumnDef<ClubMemberListItem>[]>(
@@ -1253,25 +1218,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
               </TabsList>
             </Tabs>
           </div>
-          {memberListMode === 'all' ? <div className="rounded-xl border bg-card p-4 shadow-sm">
-            <h3 className="mb-3 flex items-center gap-2 font-medium">
-              <LogIn className="size-4 text-primary" /> {ct('members.barcodeTitle')}
-            </h3>
-            <div className="flex flex-wrap gap-2">
-              <Input
-                ref={checkInRef}
-                className="max-w-xs"
-                placeholder={ct('members.barcodePlaceholder')}
-                value={checkInCode}
-                onChange={(e) => setCheckInCode(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && void handleCheckIn()}
-              />
-              <Button variant="brand" onClick={() => void handleCheckIn()} disabled={checkInLoading}>
-                {ct('members.checkIn')}
-              </Button>
-            </div>
-          </div> : null}
-
           <FilterBar fields={filters} />
 
           <DataTable
