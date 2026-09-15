@@ -21,6 +21,7 @@ nomany old/
 .codex-backup/
 .impeccable/
 .superpowers/
+.worktrees/
 release/
 review/**/*.png
 review/**/*.json
