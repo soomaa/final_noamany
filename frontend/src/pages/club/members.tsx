@@ -981,7 +981,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         ),
       },
     ],
-    [branches, ct, canUpdateMembers, canDeleteMembers, user?.branch, user?.branch_name],
+    [branches, ct, ui, canUpdateMembers, canDeleteMembers, user?.branch, user?.branch_name],
   );
 
   const blockedColumns = useMemo<ColumnDef<ClubMemberListItem>[]>(

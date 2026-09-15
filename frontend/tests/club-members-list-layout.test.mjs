@@ -20,3 +20,12 @@ test('members list does not embed a barcode check-in panel', async () => {
   assert.doesNotMatch(source, /const handleCheckIn = async/);
   assert.doesNotMatch(source, /members\.barcodeTitle/);
 });
+
+test('members list column memo recomputes when localized registration-date text changes', async () => {
+  const source = await readFile(membersPage, 'utf8');
+
+  assert.match(
+    source,
+    /header: ui\('تاريخ تسجيل العضو'\)[\s\S]*?\[branches, ct, ui, canUpdateMembers, canDeleteMembers, user\?\.branch, user\?\.branch_name\]/,
+  );
+});
