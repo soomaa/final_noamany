@@ -11,14 +11,19 @@ export type ClubPaymentMethod =
   | 'transfer'
   | 'online';
 
+/** Methods that can be used for new subscription collections. */
 export const CLUB_PAYMENT_METHODS: ClubPaymentMethod[] = [
   'cash',
+  'card',
+  'transfer',
+];
+
+/** Older receipts may still contain a retired method and must remain readable. */
+const LEGACY_PAYMENT_METHODS: ClubPaymentMethod[] = [
   'visa',
   'instapay',
   'wallet',
   'bank',
-  'transfer',
-  'card',
   'online',
 ];
 
@@ -33,7 +38,7 @@ export function clubPaymentMethodLabel(
   method: string | null | undefined,
 ): string {
   if (!method) return '—';
-  return CLUB_PAYMENT_METHODS.includes(method as ClubPaymentMethod)
+  return [...CLUB_PAYMENT_METHODS, ...LEGACY_PAYMENT_METHODS].includes(method as ClubPaymentMethod)
     ? ct(`payments.${method}`)
     : method;
 }

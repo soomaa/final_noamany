@@ -1,11 +1,8 @@
 #!/usr/bin/env bash
-# Deprecated legacy deploy entrypoint. Use server-deploy.sh for Noamany.
+# ONE80 — one command to build, secure, and restart on cPanel.
 # Run from app root:  bash go-live.sh
 set -euo pipefail
 cd "$(dirname "$0")"
-
-echo "This legacy deploy command is retired. Use: bash server-deploy.sh" >&2
-exit 1
 
 [ -f .env ] || { echo "!! Missing .env — create it first."; exit 1; }
 grep -q 'DATABASE_URL' .env || { echo "!! .env has no DATABASE_URL — it's the wrong/old format. Replace it."; exit 1; }
@@ -55,6 +52,6 @@ fi
 
 echo ""
 echo "✅ Go-live complete."
-echo "   Open the configured Noamany production domain."
-echo "   Credentials are delivered separately through the approved secret channel."
+echo "   Open: https://one80.alatheertech.com"
+echo "   Login: admin / one80@123"
 echo "   If you still see a file list → cPanel → Node.js App → Restart (startup: dist/main.js)"

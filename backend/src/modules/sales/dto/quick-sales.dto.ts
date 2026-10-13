@@ -41,14 +41,6 @@ export class ListQuickSalesDto extends PaginationDto {
   @IsOptional() @IsString() shiftSessionIds?: string;
 }
 
-export class ListCafeCustomersDto extends PaginationDto {
-  @IsInt() @Type(() => Number) branchId!: number;
-  @IsOptional() @IsIn(["customer", "employee"]) kind?:
-    | "customer"
-    | "employee";
-  @IsOptional() @IsIn(["spend", "orders"]) sortBy?: "spend" | "orders";
-}
-
 export class CreateQuickSaleItemDto {
   @IsOptional() @IsInt() productId?: number;
   @IsOptional() @IsInt() cafeProductId?: number;
@@ -65,14 +57,17 @@ export class CreateQuickSaleItemDto {
 export class PosPaymentDto {
   @IsIn(["cash", "card", "wallet", "transfer"]) method!: string;
   @IsNumber() @Min(0) amount!: number;
-  @IsOptional() @IsInt() @Min(1) catalogPaymentMethodId?: number;
   @IsOptional() @IsString() reference?: string;
 }
 
 export class CreateQuickSaleDto {
-  @IsOptional() @IsInt() @Min(0) expectedEmployeeFreeDrinks?: number;
   @IsInt() branchId!: number;
-  @IsOptional() @IsInt() @Min(1) customerMemberId?: number;
+  @IsIn(["male", "female"])
+  gender!: "male" | "female";
+  @Transform(({ value }) => Number(value))
+  @IsInt()
+  @Min(1)
+  cafeCategoryId!: number;
   @IsOptional() @IsString() customerName?: string;
   @IsOptional()
   @IsString()
@@ -86,6 +81,7 @@ export class CreateQuickSaleDto {
   @IsOptional() @IsIn(["customer", "employee", "partner"]) saleType?:
     "customer" | "employee" | "partner";
   @IsOptional() @IsInt() employeeId?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) targetEmployeeId?: number;
   @IsOptional() @IsInt() partnerId?: number;
   @IsOptional() @IsIn(["immediate", "daily", "monthly"]) billingCycle?:
     "immediate" | "daily" | "monthly";
@@ -98,8 +94,6 @@ export class CreateQuickSaleDto {
   @IsOptional()
   @IsIn(["cash", "card", "wallet", "transfer", "mixed"])
   paymentMethod?: string;
-  @IsOptional() @IsInt() @Min(1) catalogPaymentMethodId?: number;
-  @IsOptional() @IsString() @MaxLength(100) paymentReference?: string;
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
@@ -116,10 +110,6 @@ export class CreateQuickSaleDto {
   )
   @IsBoolean()
   allowIngredientShortage?: boolean;
-}
-
-export class EditCompletedQuickSaleDto extends CreateQuickSaleDto {
-  @IsInt() @Min(0) expectedRevision!: number;
 }
 
 export class InvoiceFeedbackDto {

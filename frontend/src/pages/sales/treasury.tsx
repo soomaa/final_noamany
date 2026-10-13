@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
@@ -26,7 +26,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useBranches } from '@/hooks/use-branches';
-import { usePermission } from '@/hooks/use-permission';
 import { usePosEmployeeOptions } from '@/hooks/use-pos-employee-options';
 import { useCurrentShiftSession } from '@/hooks/use-shift-session';
 import { api, apiError } from '@/lib/api';
@@ -34,8 +33,6 @@ import { formatDate, formatTimeFromDate, localToday } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
-
-import { resolveTreasuryReportDate } from './treasury-operating-date';
 
 type MovementType = 'petty_expense' | 'custody_issue' | 'custody_return';
 
@@ -104,19 +101,15 @@ const movementLabels: Record<string, string> = {
   shift_transfer_in: 'استلام من وردية',
   shift_transfer_out: 'تسليم لوردية',
   cash_drop: 'توريد للخزنة',
-  account_settlement: 'تحصيل حساب موظف / شريك',
 };
 
 export function SalesTreasuryPage() {
   const { ui } = useLocale();
-  const { can } = usePermission();
-  const canCreate = can('gym-sales.sales.treasury:create');
   const qc = useQueryClient();
   const { data: branches } = useBranches();
   const { data: employees = [] } = usePosEmployeeOptions();
   const [branchId, setBranchId] = useState('');
   const [date, setDate] = useState(localToday());
-  const userSelectedDate = useRef(false);
   const [movementOpen, setMovementOpen] = useState(false);
   const [movementType, setMovementType] = useState<MovementType>('petty_expense');
   const [amount, setAmount] = useState('');
@@ -127,18 +120,6 @@ export function SalesTreasuryPage() {
   const [saving, setSaving] = useState(false);
   const effectiveBranch = branchId || String(branches?.[0]?.id ?? '');
   const { data: current } = useCurrentShiftSession(effectiveBranch);
-
-  useEffect(() => {
-    const reportDate = resolveTreasuryReportDate(
-      date,
-      current?.sessionDate,
-      userSelectedDate.current,
-    );
-
-    if (reportDate !== date) {
-      setDate(reportDate);
-    }
-  }, [current?.sessionDate, date]);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['shift-sessions', 'daily-report', effectiveBranch, date],
@@ -168,7 +149,6 @@ export function SalesTreasuryPage() {
   );
 
   const openMovement = (type: MovementType, custody?: OpenCustody) => {
-    if (!canCreate) return;
     setMovementType(type);
     setAmount(custody ? String(custody.outstandingAmount) : '');
     setEmployeeId(custody?.employeeId ? String(custody.employeeId) : '');
@@ -186,7 +166,6 @@ export function SalesTreasuryPage() {
   };
 
   const saveMovement = async () => {
-    if (!canCreate) return;
     if (!current) return toast.error(ui('افتح وردية أولاً لتسجيل حركة الدرج'));
     if (!Number(amount) || !description.trim()) return toast.error(ui('أدخل المبلغ وسبب الحركة'));
     if (movementType === 'custody_issue' && !employeeId) return toast.error(ui('اختر الموظف صاحب العهدة'));
@@ -245,23 +224,14 @@ export function SalesTreasuryPage() {
         </div>
         <div>
           <Label className="text-xs">{ui('التاريخ')}</Label>
-          <Input
-            className="nums mt-1"
-            type="date"
-            value={date}
-            onChange={(event) => {
-              if (!event.target.value) return;
-              userSelectedDate.current = true;
-              setDate(event.target.value);
-            }}
-          />
+          <Input className="nums mt-1" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
         </div>
         <div className={`ms-auto rounded-xl px-4 py-2 text-sm font-bold ${current ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/20' : 'bg-rose-50 text-rose-700 dark:bg-rose-950/20'}`}>
           {current ? `${ui('الوردية المفتوحة')}: ${current.shift?.shiftName ?? `#${current.shiftId}`}` : ui('لا توجد وردية مفتوحة لهذا المستخدم')}
         </div>
       </div>
 
-      {canCreate ? <div className="mb-5 grid gap-3 md:grid-cols-3">
+      <div className="mb-5 grid gap-3 md:grid-cols-3">
         <button type="button" disabled={!current} onClick={() => openMovement('petty_expense')} className="group rounded-2xl border bg-card p-4 text-start transition hover:border-primary/50 hover:shadow-sm disabled:opacity-50">
           <span className="mb-3 grid size-10 place-items-center rounded-xl bg-rose-50 text-rose-600"><ReceiptText className="size-5" /></span>
           <b>{ui('تسجيل مصروف')}</b><p className="mt-1 text-xs text-muted-foreground">{ui('صيانة، خدمة طارئة أو مشتريات سريعة')}</p>
@@ -274,7 +244,7 @@ export function SalesTreasuryPage() {
           <span className="mb-3 grid size-10 place-items-center rounded-xl bg-emerald-50 text-emerald-600"><RotateCcw className="size-5" /></span>
           <b>{ui('رد عهدة')}</b><p className="mt-1 text-xs text-muted-foreground">{ui('اختر من العهد المصروفة فعلياً؛ لا يمكن رد أكثر من المتبقي')}</p>
         </button>
-      </div> : null}
+      </div>
 
       {isError ? <div className="mb-5 flex items-center justify-between rounded-xl border border-destructive/40 bg-destructive/5 p-4"><span>{ui('تعذر تحميل بيانات الخزينة')}</span><Button variant="outline" onClick={() => void refetch()}>{ui('إعادة المحاولة')}</Button></div> : null}
       <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -292,7 +262,7 @@ export function SalesTreasuryPage() {
               <div className="flex items-start justify-between gap-2"><div><b>{custody.employee?.employee ?? ui('موظف غير محدد')}</b><p className="nums text-xs text-muted-foreground">{custody.reference} · {formatDate(custody.issuedAt)}</p></div><Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">{toArabicDigits(custody.outstandingAmount.toFixed(2))} EGP</Badge></div>
               <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{custody.description}</p>
               <div className="mt-3 flex items-center justify-between text-xs"><span>{ui('المصروف')}: <b className="nums">{toArabicDigits(custody.issuedAmount.toFixed(2))}</b></span><span>{ui('المردود')}: <b className="nums text-emerald-600">{toArabicDigits(custody.returnedAmount.toFixed(2))}</b></span></div>
-              {canCreate ? <Button permissionAction="create" className="mt-3 w-full" size="sm" variant="outline" disabled={!current} onClick={() => openMovement('custody_return', custody)}><RotateCcw className="me-2 size-3.5" />{ui('تسجيل رد')}</Button> : null}
+              <Button className="mt-3 w-full" size="sm" variant="outline" disabled={!current} onClick={() => openMovement('custody_return', custody)}><RotateCcw className="me-2 size-3.5" />{ui('تسجيل رد')}</Button>
             </div>
           ))}
           {!custodiesLoading && !custodies?.data.length ? <p className="col-span-full py-5 text-center text-sm text-muted-foreground">{ui('لا توجد عهد مفتوحة — كل العهد المصروفة تم ردها')}</p> : null}
@@ -358,7 +328,7 @@ export function SalesTreasuryPage() {
         </section>
       </div>
 
-      <Dialog open={canCreate && movementOpen} onOpenChange={setMovementOpen}>
+      <Dialog open={movementOpen} onOpenChange={setMovementOpen}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader><DialogTitle>{ui(movementType === 'petty_expense' ? 'تسجيل مصروف من الدرج' : movementType === 'custody_issue' ? 'صرف عهدة لموظف' : 'رد عهدة مصروفة')}</DialogTitle><DialogDescription>{ui('الحفظ يحدّث رصيد الدرج وسجل الحركة والقيد المحاسبي في عملية واحدة.')}</DialogDescription></DialogHeader>
           <div className="space-y-4">
@@ -370,7 +340,7 @@ export function SalesTreasuryPage() {
             {movementType === 'petty_expense' ? <div><Label>{ui('نوع المصروف')}</Label><select className="mt-1 h-11 w-full rounded-md border bg-background px-3" value={category} onChange={(event) => setCategory(event.target.value)}><option value="maintenance">{ui('صيانة')}</option><option value="emergency_service">{ui('خدمة طارئة')}</option><option value="urgent_purchase">{ui('مشتريات عاجلة')}</option><option value="supplies">{ui('مستلزمات سريعة')}</option><option value="other">{ui('أخرى')}</option></select></div> : null}
             <div><Label>{ui('البيان / السبب')}</Label><Textarea className="mt-1" rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder={ui('اكتب سبب واضح يظهر في السجل والمحاسبة')} /></div>
           </div>
-          <DialogFooter><Button permissionAction="create" onClick={() => void saveMovement()} disabled={saving}>{saving ? ui('جارٍ الحفظ…') : ui('حفظ واعتماد الحركة')}</Button><Button variant="outline" onClick={() => setMovementOpen(false)}>{ui('إلغاء')}</Button></DialogFooter>
+          <DialogFooter><Button onClick={() => void saveMovement()} disabled={saving}>{saving ? ui('جارٍ الحفظ…') : ui('حفظ واعتماد الحركة')}</Button><Button variant="outline" onClick={() => setMovementOpen(false)}>{ui('إلغاء')}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </GymSalesPageShell>

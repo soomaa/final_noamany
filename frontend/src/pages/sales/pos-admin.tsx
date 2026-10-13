@@ -1,4 +1,3 @@
-import { receiptLogoUrl as resolveReceiptLogoUrl } from '@/lib/receipt-brand';
 import { useEffect, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Monitor, CreditCard, FileText, Bell, BarChart3, Settings, CalendarClock, WalletCards, ReceiptText } from 'lucide-react';
@@ -9,7 +8,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api, apiError } from '@/lib/api';
 import { useLocale } from '@/store/locale';
@@ -17,9 +15,6 @@ import { GymSalesPageShell } from '../gym-sales/shell';
 import { useBranches } from '@/hooks/use-branches';
 import { useAuth } from '@/store/auth';
 import { PosInvoiceTemplatesEditor } from '@/components/sales/pos-invoice-templates-editor';
-import { PosPaymentMethodsEditor } from '@/components/sales/pos-payment-methods-editor';
-import { usePermission } from '@/hooks/use-permission';
-import { toggleAllCategoryIds } from './employee-benefit-category-selection';
 
 type Tab = 'devices' | 'payments' | 'invoices' | 'reports' | 'notifications' | 'settings' | 'shifts';
 
@@ -27,13 +22,10 @@ type PosSettingRow = { key: string; value: unknown; type?: string; description?:
 
 export function PosAdminPage() {
   const { ui } = useLocale();
-  const { can } = usePermission();
-  const canCreate = can('gym-sales.sales.pos_admin:create');
-  const canUpdate = can('gym-sales.sales.pos_admin:update');
-  const canConfigure = can('gym-sales.sales.pos_admin:configure');
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>('settings');
   const [newName, setNewName] = useState('');
+  const [newPaymentBase, setNewPaymentBase] = useState<'cash' | 'card' | 'wallet' | 'transfer'>('card');
 
   const { data: devices } = useQuery({
     queryKey: ['pos-devices'],
@@ -41,11 +33,29 @@ export function PosAdminPage() {
     enabled: tab === 'devices',
   });
 
+  const { data: payments } = useQuery({
+    queryKey: ['pos-payment-methods'],
+    queryFn: async () => (await api.get('/pos-payment-methods', { params: { pageSize: 100 } })).data,
+    enabled: tab === 'payments',
+  });
+
   const createDevice = useMutation({
-    mutationFn: (name: string) => canCreate
-      ? api.post('/pos-devices', { name, deviceType: 'terminal' })
-      : Promise.reject(new Error('غير مصرح')),
+    mutationFn: (name: string) => api.post('/pos-devices', { name, deviceType: 'terminal' }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['pos-devices'] }); setNewName(''); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+
+  const createPayment = useMutation({
+    mutationFn: (name: string) => {
+      const code = `${newPaymentBase}-${Date.now().toString(36)}`;
+      return api.post('/pos-payment-methods', { name, code, baseMethod: newPaymentBase });
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['pos-payment-methods'] }); setNewName(''); },
+    onError: (e) => toast.error(apiError(e)),
+  });
+  const togglePayment = useMutation({
+    mutationFn: (id: number) => api.patch(`/pos-payment-methods/${id}/toggle`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['pos-payment-methods'] }),
     onError: (e) => toast.error(apiError(e)),
   });
 
@@ -72,17 +82,17 @@ export function PosAdminPage() {
         </TabsList>
 
         <TabsContent value="settings">
-          <GeneralPosSettings ui={ui} canConfigure={canConfigure} />
+          <GeneralPosSettings ui={ui} />
         </TabsContent>
 
         <TabsContent value="devices">
           <Card>
             <CardHeader><CardTitle>{ui('أجهزة POS')}</CardTitle></CardHeader>
             <CardContent>
-              {canCreate ? <div className="mb-4 flex gap-2">
+              <div className="mb-4 flex gap-2">
                 <Input placeholder={ui('اسم الجهاز')} value={newName} onChange={(e) => setNewName(e.target.value)} />
                 <Button onClick={() => newName && createDevice.mutate(newName)} disabled={createDevice.isPending}>{ui('إضافة')}</Button>
-              </div> : null}
+              </div>
               <ul className="space-y-2">
                 {(devices?.data ?? []).map((d: { id: number; name: string; deviceType: string; isActive: boolean }) => (
                   <li key={d.id} className="flex justify-between rounded border p-2 text-sm">
@@ -97,14 +107,32 @@ export function PosAdminPage() {
 
         <TabsContent value="shifts">
           <div className="grid gap-4 md:grid-cols-3">
-            {can('gym-sales.sales.shifts:view') ? <Card><CardHeader><CardTitle className="flex items-center gap-2"><CalendarClock className="size-5 text-primary" />{ui('إعدادات الورديات')}</CardTitle></CardHeader><CardContent><p className="mb-4 text-sm text-muted-foreground">{ui('أضف أي عدد من الشيفتات وحدد المواعيد والمسؤول الأساسي لكل شيفت.')}</p><Button asChild className="w-full"><Link to="/sales/shifts">{ui('إدارة الورديات')}</Link></Button></CardContent></Card> : null}
-            {can('gym-sales.sales.treasury:view') ? <Card><CardHeader><CardTitle className="flex items-center gap-2"><WalletCards className="size-5 text-primary" />{ui('الخزينة والعهد')}</CardTitle></CardHeader><CardContent><p className="mb-4 text-sm text-muted-foreground">{ui('مصروفات الدرج، العهد، التوريد اليومي وسجل التسليم بين الشيفتات.')}</p><Button asChild variant="outline" className="w-full"><Link to="/sales/treasury">{ui('فتح إدارة الخزينة')}</Link></Button></CardContent></Card> : null}
-            {can('gym-sales.sales.settlements:view') ? <Card><CardHeader><CardTitle className="flex items-center gap-2"><ReceiptText className="size-5 text-primary" />{ui('تسويات الموظفين والشركاء')}</CardTitle></CardHeader><CardContent><p className="mb-4 text-sm text-muted-foreground">{ui('تجميع يومي أو شهري وتسوية بالراتب أو نسبة الشريك أو الدفع المباشر.')}</p><Button asChild variant="outline" className="w-full"><Link to="/sales/settlements">{ui('فتح التسويات')}</Link></Button></CardContent></Card> : null}
+            <Card><CardHeader><CardTitle className="flex items-center gap-2"><CalendarClock className="size-5 text-primary" />{ui('إعدادات الورديات')}</CardTitle></CardHeader><CardContent><p className="mb-4 text-sm text-muted-foreground">{ui('أضف أي عدد من الشيفتات وحدد المواعيد والمسؤول الأساسي لكل شيفت.')}</p><Button asChild className="w-full"><Link to="/sales/shifts">{ui('إدارة الورديات')}</Link></Button></CardContent></Card>
+            <Card><CardHeader><CardTitle className="flex items-center gap-2"><WalletCards className="size-5 text-primary" />{ui('الخزينة والعهد')}</CardTitle></CardHeader><CardContent><p className="mb-4 text-sm text-muted-foreground">{ui('مصروفات الدرج، العهد، التوريد اليومي وسجل التسليم بين الشيفتات.')}</p><Button asChild variant="outline" className="w-full"><Link to="/sales/treasury">{ui('فتح إدارة الخزينة')}</Link></Button></CardContent></Card>
+            <Card><CardHeader><CardTitle className="flex items-center gap-2"><ReceiptText className="size-5 text-primary" />{ui('تسويات الموظفين والشركاء')}</CardTitle></CardHeader><CardContent><p className="mb-4 text-sm text-muted-foreground">{ui('تجميع يومي أو شهري وتسوية بالراتب أو نسبة الشريك أو الدفع المباشر.')}</p><Button asChild variant="outline" className="w-full"><Link to="/sales/settlements">{ui('فتح التسويات')}</Link></Button></CardContent></Card>
           </div>
         </TabsContent>
 
         <TabsContent value="payments">
-          <PosPaymentMethodsEditor ui={ui} canCreate={canCreate} canUpdate={canUpdate} />
+          <Card>
+            <CardHeader><CardTitle>{ui('طرق الدفع')}</CardTitle></CardHeader>
+            <CardContent>
+              <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_180px_auto]">
+                <Input placeholder={ui('اسم طريقة الدفع')} value={newName} onChange={(e) => setNewName(e.target.value)} />
+                <select className="rounded-md border bg-background px-3 py-2 text-sm" value={newPaymentBase} onChange={(event) => setNewPaymentBase(event.target.value as typeof newPaymentBase)}><option value="cash">{ui('نقدي')}</option><option value="card">{ui('بطاقة/شبكة')}</option><option value="wallet">{ui('محفظة')}</option><option value="transfer">{ui('تحويل')}</option></select>
+                <Button onClick={() => newName && createPayment.mutate(newName)} disabled={createPayment.isPending}>{ui('إضافة')}</Button>
+              </div>
+              <p className="mb-4 text-xs text-muted-foreground">{ui('اختيار النوع المحاسبي مطلوب حتى يظهر الاسم المخصص في نقطة البيع ويُرحّل في التقرير بالطريقة الصحيحة.')}</p>
+              <ul className="space-y-2">
+                {(payments?.data ?? []).map((p: { id: number; name: string; code: string; baseMethod: string; isEnabled: boolean; fees: number }) => (
+                  <li key={p.id} className="flex flex-wrap items-center justify-between gap-3 rounded border p-3 text-sm">
+                    <span><span className="font-medium">{p.name}</span> <span className="text-muted-foreground">({p.code})</span><span className="ms-2 rounded bg-muted px-2 py-0.5 text-xs">{p.baseMethod}</span> — {ui('عمولة')} {p.fees}%</span>
+                    <label className="flex items-center gap-2"><span className={p.isEnabled ? 'text-green-600' : 'text-muted-foreground'}>{p.isEnabled ? ui('مفعّل') : ui('معطل')}</span><Switch checked={p.isEnabled} onCheckedChange={() => togglePayment.mutate(p.id)} disabled={togglePayment.isPending} /></label>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         <TabsContent value="invoices">
@@ -121,7 +149,7 @@ export function PosAdminPage() {
   );
 }
 
-function GeneralPosSettings({ ui, canConfigure }: { ui: (s: string) => string; canConfigure: boolean }) {
+function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
   const qc = useQueryClient();
   const user = useAuth((state) => state.user);
   const { data: branches = [] } = useBranches();
@@ -138,73 +166,40 @@ function GeneralPosSettings({ ui, canConfigure }: { ui: (s: string) => string; c
   });
 
   const [enableTax, setEnableTax] = useState(true);
-  const [inventoryTrackingEnabled, setInventoryTrackingEnabled] = useState(true);
   const [taxRate, setTaxRate] = useState('15');
   const [customerDiscount, setCustomerDiscount] = useState('0');
   const [employeeDiscount, setEmployeeDiscount] = useState('0');
-  const [employeeDiscountEnabled, setEmployeeDiscountEnabled] = useState(true);
-  const [freeDrinksEnabled, setFreeDrinksEnabled] = useState(false);
-  const [freeDrinksDaily, setFreeDrinksDaily] = useState('1');
-  const [freeCategories, setFreeCategories] = useState<number[]>([]);
-  const [touchKeypad, setTouchKeypad] = useState(false);
-  const { data: drinkCategories = [] } = useQuery({
-    queryKey: ['cafe-categories', 'employee-benefits'],
-    queryFn: async () => {
-      const { data } = await api.get('/categories');
-      return ((Array.isArray(data) ? data : data.data) as Array<{ id: number; nameAr: string }>).map((row) => ({ id: row.id, name: row.nameAr }));
-    },
-  });
   const [partnerDiscount, setPartnerDiscount] = useState('0');
   const [currency, setCurrency] = useState('EGP');
-  const [receiptBusinessName, setReceiptBusinessName] = useState('NOAMANY · CAFE');
+  const [receiptBusinessName, setReceiptBusinessName] = useState('Noamany CLUB · CAFE');
   const [receiptLogoUrl, setReceiptLogoUrl] = useState('/noamany-logo.png');
   const [receiptFooter, setReceiptFooter] = useState(ui('شكراً لزيارتكم'));
-  const drinkCategoryIds = drinkCategories.map((category) => category.id);
-  const allDrinkCategoriesSelected = drinkCategoryIds.length > 0
-    && drinkCategoryIds.every((id) => freeCategories.includes(id));
-  const someDrinkCategoriesSelected = drinkCategoryIds.some((id) => freeCategories.includes(id));
 
   useEffect(() => {
     if (!settings?.length) return;
     const byKey = Object.fromEntries(settings.map((s) => [s.key, s.value]));
     setEnableTax(byKey.enable_tax !== false);
-    setInventoryTrackingEnabled(byKey.inventory_tracking_enabled !== false);
     setTaxRate(String(byKey.tax_rate ?? 15));
     setCustomerDiscount(String(byKey.default_discount_percentage ?? 0));
     setEmployeeDiscount(String(byKey.employee_discount_percentage ?? 0));
-    setEmployeeDiscountEnabled(byKey.employee_discount_enabled !== false);
-    setFreeDrinksEnabled(byKey.employee_free_drinks_enabled === true);
-    setFreeDrinksDaily(String(byKey.employee_free_drinks_daily ?? 1));
-    setFreeCategories(Array.isArray(byKey.employee_free_drink_categories) ? byKey.employee_free_drink_categories.map(Number) : []);
-    setTouchKeypad(byKey.touch_keypad_enabled === true);
     setPartnerDiscount(String(byKey.partner_discount_percentage ?? 0));
     setCurrency(String(byKey.currency ?? 'EGP'));
-    setReceiptBusinessName(String(byKey.receipt_business_name ?? 'NOAMANY · CAFE'));
-    setReceiptLogoUrl(resolveReceiptLogoUrl(String(byKey.receipt_logo_url ?? '/noamany-logo.png')));
+    setReceiptBusinessName(String(byKey.receipt_business_name ?? 'Noamany CLUB · CAFE'));
+    setReceiptLogoUrl(String(byKey.receipt_logo_url ?? '/noamany-logo.png'));
     setReceiptFooter(String(byKey.receipt_footer ?? ui('شكراً لزيارتكم')));
   }, [settings, ui]);
 
   const save = useMutation({
     mutationFn: async () => {
-      if (!canConfigure) throw new Error('غير مصرح');
-      if (freeDrinksEnabled && (!freeCategories.length || !Number.isInteger(Number(freeDrinksDaily)) || Number(freeDrinksDaily) < 1 || Number(freeDrinksDaily) > 100)) {
-        throw new Error(ui('حدد أقسام المشروبات وعددًا صحيحًا من 1 إلى 100 لكل موظف يوميًا'));
-      }
       const next: PosSettingRow[] = [
-        { key: 'employee_discount_enabled', value: employeeDiscountEnabled, type: 'boolean' },
-        { key: 'employee_free_drinks_enabled', value: freeDrinksEnabled, type: 'boolean' },
-        { key: 'employee_free_drinks_daily', value: Number(freeDrinksDaily) || 1, type: 'number' },
-        { key: 'employee_free_drink_categories', value: freeCategories, type: 'json' },
-        { key: 'touch_keypad_enabled', value: touchKeypad, type: 'boolean' },
         { key: 'default_discount_percentage', value: Math.min(100, Math.max(0, Number(customerDiscount) || 0)), type: 'number' },
         { key: 'employee_discount_percentage', value: Math.min(100, Math.max(0, Number(employeeDiscount) || 0)), type: 'number' },
         { key: 'partner_discount_percentage', value: Math.min(100, Math.max(0, Number(partnerDiscount) || 0)), type: 'number' },
         { key: 'enable_tax', value: enableTax, type: 'boolean' },
-        { key: 'inventory_tracking_enabled', value: inventoryTrackingEnabled, type: 'boolean' },
         { key: 'tax_rate', value: Math.min(100, Math.max(0, Number(taxRate) || 0)), type: 'number' },
         { key: 'currency', value: currency.trim() || 'EGP', type: 'string' },
-        { key: 'receipt_business_name', value: receiptBusinessName.trim() || 'NOAMANY · CAFE', type: 'string' },
-        { key: 'receipt_logo_url', value: resolveReceiptLogoUrl(receiptLogoUrl), type: 'string' },
+        { key: 'receipt_business_name', value: receiptBusinessName.trim() || 'Noamany CLUB · CAFE', type: 'string' },
+        { key: 'receipt_logo_url', value: receiptLogoUrl.trim() || '/noamany-logo.png', type: 'string' },
         { key: 'receipt_footer', value: receiptFooter.trim() || ui('شكراً لزيارتكم'), type: 'string' },
       ];
       // Preserve any other general keys already stored.
@@ -242,23 +237,12 @@ function GeneralPosSettings({ ui, canConfigure }: { ui: (s: string) => string; c
           <p className="text-sm text-muted-foreground">{ui('جاري التحميل…')}</p>
         ) : (
           <>
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/20 bg-primary/5 p-4">
-              <div>
-                <Label>{ui('ربط الكاشير بالمخزون')}</Label>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {inventoryTrackingEnabled
-                    ? ui('كاشير + مخزن: كل طلب يخصم مكونات الـRecipe والمنتجات الجاهزة فورًا.')
-                    : ui('كاشير فقط: البيع والتكلفة والتقارير تعمل، بدون فحص أو خصم أي رصيد مخزني.')}
-                </p>
-              </div>
-              {canConfigure ? <Switch checked={inventoryTrackingEnabled} onCheckedChange={setInventoryTrackingEnabled} /> : null}
-            </div>
             <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
               <div>
                 <Label>{ui('تفعيل الضريبة')}</Label>
                 <p className="text-xs text-muted-foreground">{ui('عند الإيقاف تكون الضريبة 0% في نقطة البيع.')}</p>
               </div>
-              {canConfigure ? <Switch checked={enableTax} onCheckedChange={setEnableTax} /> : null}
+              <Switch checked={enableTax} onCheckedChange={setEnableTax} />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-2 rounded-xl border bg-muted/20 p-3">
@@ -276,8 +260,8 @@ function GeneralPosSettings({ ui, canConfigure }: { ui: (s: string) => string; c
                 <p className="text-xs text-muted-foreground">{ui('يُطبق تلقائيًا عند اختيار «عميل» في شاشة البيع، ويمكن تعديله أثناء الطلب وفق الصلاحيات.')}</p>
               </div>
               <div className="grid gap-2 rounded-xl border bg-muted/20 p-3">
-                <label className="flex min-h-11 items-center gap-3 font-semibold"><Checkbox disabled={!canConfigure} checked={employeeDiscountEnabled} onCheckedChange={(checked) => setEmployeeDiscountEnabled(checked === true)} />{ui('تفعيل خصم الموظف')}</label>
-                {employeeDiscountEnabled && <><Label htmlFor="employeeDefaultDiscount">{ui('نسبة الخصم %')}</Label><Input
+                <Label htmlFor="employeeDefaultDiscount">{ui('خصم الموظفين الافتراضي %')}</Label>
+                <Input
                   id="employeeDefaultDiscount"
                   className="nums"
                   type="number"
@@ -286,7 +270,7 @@ function GeneralPosSettings({ ui, canConfigure }: { ui: (s: string) => string; c
                   step="0.01"
                   value={employeeDiscount}
                   onChange={(e) => setEmployeeDiscount(e.target.value)}
-                /></>}
+                />
                 <p className="text-xs text-muted-foreground">{ui('يُطبق تلقائيًا عند اختيار «موظف» ويُعتمد من إعدادات الفرع لحماية سياسة خصم الموظفين.')}</p>
               </div>
               <div className="grid gap-2 rounded-xl border bg-muted/20 p-3">
@@ -303,31 +287,6 @@ function GeneralPosSettings({ ui, canConfigure }: { ui: (s: string) => string; c
                 />
                 <p className="text-xs text-muted-foreground">{ui('يُطبق تلقائيًا عند اختيار «شريك» في شاشة البيع، وتُحسب الضريبة على القيمة بعد الخصم.')}</p>
               </div>
-            </div>
-            <section className="space-y-3 rounded-xl border p-4">
-              <label className="flex min-h-11 items-center gap-3 font-semibold"><Checkbox disabled={!canConfigure} checked={freeDrinksEnabled} onCheckedChange={(checked) => setFreeDrinksEnabled(checked === true)} />{ui('مشروبات مجانية للموظف')}</label>
-              <p className="text-sm text-muted-foreground">{ui('رصيد يومي لكل موظف يتجدد عند منتصف الليل بتوقيت القاهرة، ولا يتجدد بتغيير الوردية. يمكن تفعيله مع الخصم؛ الخصم على المشروبات المدفوعة فقط.')}</p>
-              {freeDrinksEnabled && <div className="space-y-3">
-                <div className="grid max-w-xs gap-2"><Label htmlFor="freeDrinksDaily">{ui('عدد المشروبات لكل موظف يوميًا')}</Label><Input id="freeDrinksDaily" type="number" min={1} max={100} step={1} value={freeDrinksDaily} onChange={(e) => setFreeDrinksDaily(e.target.value)} /></div>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="font-semibold">{ui('أقسام المشروبات المشمولة')}</p>
-                  <label className="flex min-h-11 cursor-pointer items-center gap-2 rounded-lg px-2 text-sm font-semibold hover:bg-muted/60 focus-within:ring-2 focus-within:ring-ring">
-                    <Checkbox
-                      checked={allDrinkCategoriesSelected ? true : someDrinkCategoriesSelected ? 'indeterminate' : false}
-                      disabled={!canConfigure || !drinkCategoryIds.length}
-                      onCheckedChange={() => setFreeCategories((ids) => toggleAllCategoryIds(drinkCategoryIds, ids))}
-                    />
-                    <span>{ui(allDrinkCategoriesSelected ? 'إلغاء تحديد الكل' : 'تحديد الكل')}</span>
-                  </label>
-                </div>
-                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{drinkCategories.map((category) => <label key={category.id} className="flex min-h-12 items-center gap-3 rounded-lg border px-3 py-2"><Checkbox disabled={!canConfigure} checked={freeCategories.includes(category.id)} onCheckedChange={(checked) => setFreeCategories((ids) => checked === true ? [...ids, category.id] : ids.filter((id) => id !== category.id))} /><span>{category.name}</span></label>)}</div>
-                {!freeCategories.length && <p className="text-sm text-amber-800 dark:text-amber-200">{ui('اختر قسمًا واحدًا على الأقل؛ المنتجات خارج هذه الأقسام تُحاسب بالسعر المعتاد.')}</p>}
-                <p className="text-sm text-muted-foreground">{ui('المجاني يُطبق حسب ترتيب إضافة المشروبات للسلة. الفاتورة المعلقة تحجز الرصيد؛ إلغاؤها يعيده. الاسترداد بعد التحضير لا يجدد الرصيد.')}</p>
-              </div>}
-            </section>
-            <div className="flex items-center justify-between gap-4 rounded-xl border p-4">
-              <div><Label htmlFor="touchKeypad">{ui('تفعيل لوحة الأرقام باللمس')}</Label><p className="mt-1 text-sm text-muted-foreground">{ui('تفتح عند لمس المبالغ والكميات وتغلق بالضغط خارجها. مناسبة للتابلت وتعمل في نوافذ الورديات أيضًا.')}</p></div>
-              <Switch disabled={!canConfigure} id="touchKeypad" checked={touchKeypad} onCheckedChange={setTouchKeypad} />
             </div>
             <div className="grid gap-2 sm:max-w-xs">
               <Label>{ui('نسبة الضريبة %')}</Label>
@@ -351,9 +310,9 @@ function GeneralPosSettings({ ui, canConfigure }: { ui: (s: string) => string; c
               <div className="grid gap-2"><Label>{ui('مسار شعار الإيصال')}</Label><Input dir="ltr" value={receiptLogoUrl} onChange={(event) => setReceiptLogoUrl(event.target.value)} placeholder="/noamany-logo.png" /></div>
               <div className="grid gap-2 sm:col-span-2"><Label>{ui('رسالة نهاية الإيصال')}</Label><Input value={receiptFooter} onChange={(event) => setReceiptFooter(event.target.value)} /></div>
             </div>
-            {canConfigure ? <Button permissionResource="gym-sales.sales.pos_admin" permissionAction="configure" onClick={() => save.mutate()} disabled={save.isPending || (!effectiveBranchId && branches.length > 0)}>
+            <Button onClick={() => save.mutate()} disabled={save.isPending || (!effectiveBranchId && branches.length > 0)}>
               {ui('حفظ')}
-            </Button> : null}
+            </Button>
           </>
         )}
       </CardContent>

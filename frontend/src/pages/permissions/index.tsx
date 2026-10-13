@@ -1,5 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Check, Plus, X } from 'lucide-react';
+import { Check, Eye, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Combobox } from '@/components/common/combobox';
@@ -23,7 +23,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
+import { confirm } from '@/lib/confirm';
 import { formatTime } from '@/lib/formatters';
 import { isNotImplemented, useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
@@ -37,13 +39,22 @@ interface PermissionRow {
   no3Ezn?: number;
   no3EznTitle?: string;
   employeeName?: string;
+  employeeId?: number;
   date?: string;
   fromTime?: string;
   toTime?: string;
   minutes?: number;
+  reason?: string;
+  fatraFk?: number;
   currentTo?: string;
   status?: string;
   canAction?: boolean;
+  canModify?: boolean;
+}
+
+interface PermissionDetails extends PermissionRow {
+  eznRkm?: number;
+  workflowStage?: string;
 }
 
 const MODE_TABS = [
@@ -111,8 +122,15 @@ export function PermissionsPage() {
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<PermissionRow>('permissions', params);
   const { data: empOptions } = useEmployeeOptions();
+  const { can } = usePermission();
+  const canUpdate = can('leaves.permissions:update');
+  const canDelete = can('leaves.permissions:delete');
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editing, setEditing] = useState<PermissionRow | null>(null);
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [details, setDetails] = useState<PermissionDetails | null>(null);
+  const [detailsLoading, setDetailsLoading] = useState(false);
   const [form, setForm] = useState<EznForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [balance, setBalance] = useState<PermissionBalance | null>(null);
@@ -154,7 +172,57 @@ export function PermissionsPage() {
     { success: ui('تم رفض الإذن'), invalidate: ['permissions'] },
   );
 
-  const createEzn = async () => {
+  const deleteMutation = useMutationWithToast(
+    (id: number) => api.delete(`/permissions/${id}`),
+    { success: ui('تم حذف الإذن'), invalidate: ['permissions'] },
+  );
+
+  const openCreate = () => {
+    setEditing(null);
+    setForm(EMPTY_FORM);
+    setDialogOpen(true);
+  };
+
+  const openEdit = (row: PermissionRow) => {
+    setEditing(row);
+    setForm({
+      empId: row.employeeId ? String(row.employeeId) : '',
+      no3Ezn: String(row.no3Ezn ?? 1),
+      eznDate: row.date ?? '',
+      fromHour: row.fromTime ?? '',
+      toHour: row.toTime ?? '',
+      fatraFk: row.fatraFk ? String(row.fatraFk) : '',
+      reason: row.reason ?? '',
+    });
+    setDialogOpen(true);
+  };
+
+  const openDetails = async (id: number) => {
+    setDetailsOpen(true);
+    setDetails(null);
+    setDetailsLoading(true);
+    try {
+      const { data: value } = await api.get<PermissionDetails>(`/permissions/${id}`);
+      setDetails(value);
+    } catch (e) {
+      toast.error(apiError(e));
+      setDetailsOpen(false);
+    } finally {
+      setDetailsLoading(false);
+    }
+  };
+
+  const handleDelete = async (row: PermissionRow) => {
+    const ok = await confirm({
+      title: ui('حذف الإذن'),
+      description: ui('هل تريد حذف طلب الإذن؟ سيُحذف من القائمة مع الاحتفاظ بسجل المراجعة.'),
+      confirmLabel: ui('حذف'),
+      variant: 'destructive',
+    });
+    if (ok) deleteMutation.mutate(row.id);
+  };
+
+  const saveEzn = async () => {
     if (!form.empId) {
       toast.error(ui('اختر الموظف'));
       return;
@@ -177,7 +245,7 @@ export function PermissionsPage() {
     }
     setSaving(true);
     try {
-      await api.post('/permissions', {
+      const payload = {
         empId: Number(form.empId),
         no3Ezn: Number(form.no3Ezn),
         eznDate: form.eznDate,
@@ -185,9 +253,16 @@ export function PermissionsPage() {
         toHour: form.toHour,
         reason: form.reason.trim(),
         fatraFk: form.fatraFk ? Number(form.fatraFk) : undefined,
-      });
-      toast.success(ui('تم تقديم طلب الإذن'));
+      };
+      if (editing) {
+        await api.put(`/permissions/${editing.id}`, payload);
+        toast.success(ui('تم تعديل الإذن'));
+      } else {
+        await api.post('/permissions', payload);
+        toast.success(ui('تم تقديم طلب الإذن'));
+      }
       setDialogOpen(false);
+      setEditing(null);
       setForm(EMPTY_FORM);
       void refetch();
     } catch (e) {
@@ -233,25 +308,45 @@ export function PermissionsPage() {
       id: 'actions',
       header: ui('الإجراءات'),
       cell: ({ row }) => {
-        if (!row.original.canAction) return '—';
         return (
-          <div className="flex gap-1">
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={approveMutation.isPending}
-              onClick={() => approveMutation.mutate(row.original.id)}
-            >
-              <Check className="size-4 text-success" /> {ui('اعتماد')}
+          <div className="flex flex-wrap gap-1">
+            <Button variant="ghost" size="icon" aria-label={ui('التفاصيل')} onClick={() => void openDetails(row.original.id)}>
+              <Eye className="size-4 text-sky-500" />
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={rejectMutation.isPending}
-              onClick={() => rejectMutation.mutate(row.original.id)}
-            >
-              <X className="size-4 text-destructive" /> {ui('رفض')}
-            </Button>
+            {row.original.canModify && (canUpdate || canDelete) && (
+              <>
+                {canUpdate && (
+                  <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+                    <Pencil className="size-4" />
+                  </Button>
+                )}
+                {canDelete && (
+                  <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
+                    <Trash2 className="size-4 text-destructive" />
+                  </Button>
+                )}
+              </>
+            )}
+            {row.original.canAction && (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={approveMutation.isPending}
+                  onClick={() => approveMutation.mutate(row.original.id)}
+                >
+                  <Check className="size-4 text-success" /> {ui('اعتماد')}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={rejectMutation.isPending}
+                  onClick={() => rejectMutation.mutate(row.original.id)}
+                >
+                  <X className="size-4 text-destructive" /> {ui('رفض')}
+                </Button>
+              </>
+            )}
           </div>
         );
       },
@@ -274,7 +369,7 @@ export function PermissionsPage() {
           title={ui('الأذونات')}
           description={ui('طلبات ومتابعة أذونات الموظفين')}
           actions={
-            <Button variant="brand" size="sm" onClick={() => setDialogOpen(true)}>
+            <Button variant="brand" size="sm" onClick={openCreate}>
               <Plus className="size-4" /> {ui('طلب إذن جديد')}
             </Button>
           }
@@ -301,7 +396,7 @@ export function PermissionsPage() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent size="lg">
           <DialogHeader>
-            <DialogTitle>{ui('طلب إذن جديد')}</DialogTitle>
+            <DialogTitle>{editing ? ui('تعديل الإذن') : ui('طلب إذن جديد')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
@@ -312,6 +407,7 @@ export function PermissionsPage() {
                 onValueChange={(v: string) => setForm((f) => ({ ...f, empId: v }))}
                 placeholder={ui('اختر الموظف')}
                 searchPlaceholder={ui('بحث بالاسم…')}
+                disabled={!!editing}
               />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
@@ -384,10 +480,35 @@ export function PermissionsPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
               {ui('إلغاء')}
             </Button>
-            <Button variant="brand" onClick={() => void createEzn()} disabled={saving}>
-              {saving ? ui('جارٍ الإرسال…') : ui('تقديم الطلب')}
+            <Button variant="brand" onClick={() => void saveEzn()} disabled={saving}>
+              {saving ? ui('جارٍ الحفظ…') : editing ? ui('حفظ التعديل') : ui('تقديم الطلب')}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={detailsOpen} onOpenChange={(open) => { if (!open) setDetailsOpen(false); }}>
+        <DialogContent size="lg" aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle>{ui('تفاصيل الإذن')}{details?.eznRkm ? ` #${toArabicDigits(details.eznRkm)}` : ''}</DialogTitle>
+          </DialogHeader>
+          {detailsLoading ? (
+            <p className="py-8 text-center text-sm text-muted-foreground">{ui('جارٍ تحميل التفاصيل…')}</p>
+          ) : details ? (
+            <div className="space-y-4 text-sm">
+              <div className="grid gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-3">
+                <div><span className="text-muted-foreground">{ui('الموظف')}:</span> {details.employeeName ?? '—'}</div>
+                <div><span className="text-muted-foreground">{ui('النوع')}:</span> {details.no3EznTitle ?? '—'}</div>
+                <div><span className="text-muted-foreground">{ui('الحالة')}:</span> <StatusBadge status={STATUS_KEY[details.status ?? ''] ?? 'pending'} /></div>
+                <div><span className="text-muted-foreground">{ui('التاريخ')}:</span> <DateText value={details.date} /></div>
+                <div><span className="text-muted-foreground">{ui('من الساعة')}:</span> <span className="nums">{formatTime(details.fromTime ?? '')}</span></div>
+                <div><span className="text-muted-foreground">{ui('إلى الساعة')}:</span> <span className="nums">{formatTime(details.toTime ?? '')}</span></div>
+                <div><span className="text-muted-foreground">{ui('المدة')}:</span> <span className="nums">{toArabicDigits(details.minutes ?? '')} {ui('دقيقة')}</span></div>
+                <div><span className="text-muted-foreground">{ui('محول إلى')}:</span> {details.currentTo ?? '—'}</div>
+              </div>
+              <div className="rounded-xl border bg-muted/20 p-4"><p className="mb-1 font-semibold">{ui('السبب')}</p><p className="text-muted-foreground">{details.reason ?? '—'}</p></div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </>

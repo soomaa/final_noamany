@@ -14,6 +14,7 @@ import { RequiresPermission } from '../../../common/decorators/requires-permissi
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RbacUsersService } from './rbac-users.service';
 import { AssignRolesDto, SaveMatrixDto } from './dto/role.dto';
+import { AssignOperationalScopeDto, SetSectionExceptionDto } from './dto/operational-scope.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('rbac/users')
@@ -41,6 +42,43 @@ export class RbacUsersController {
     @CurrentUser('sub') actor: number,
   ) {
     return this.users.setUserRoles(id, dto, actor);
+  }
+
+  @Get(':id/operational-scope')
+  @RequiresPermission('admin.roles:view')
+  getOperationalScope(@Param('id', ParseIntPipe) id: number) {
+    return this.users.getOperationalScope(id);
+  }
+
+  @Put(':id/operational-scope')
+  @RequiresPermission('admin.roles:manage')
+  setOperationalScope(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AssignOperationalScopeDto,
+    @CurrentUser('sub') actor: number,
+  ) {
+    return this.users.setOperationalScope(id, dto, actor);
+  }
+
+  @Put(':id/section-exception')
+  @RequiresPermission('admin.exceptions:manage')
+  setSectionException(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetSectionExceptionDto,
+    @CurrentUser('sub') actor: number,
+  ) {
+    return this.users.setSectionException(id, dto, actor);
+  }
+
+  @Delete(':id/section-exception/:branchId/:section')
+  @RequiresPermission('admin.exceptions:manage')
+  clearSectionException(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Param('section') section: 'female' | 'male',
+    @CurrentUser('sub') actor: number,
+  ) {
+    return this.users.clearSectionException(id, branchId, section, actor);
   }
 
   @Get(':id/exceptions')

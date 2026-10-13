@@ -11,14 +11,6 @@ export class ListClubTrainersDto extends PaginationDto {
   @Transform(({ value }) => value === 'true' || value === true)
   @IsBoolean()
   isActive?: boolean;
-
-  @IsOptional()
-  @IsString()
-  branch?: string;
-
-  @IsOptional()
-  @IsIn(['male', 'female'])
-  gender?: 'male' | 'female';
 }
 
 export class ListClubTrainerSalariesDto extends PaginationDto {

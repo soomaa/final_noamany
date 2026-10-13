@@ -104,6 +104,10 @@ export class CreatePrivateEnrollmentDto {
   paidAmount!: number;
 
   @IsOptional()
+  @IsString()
+  receiptNumber?: string;
+
+  @IsOptional()
   @IsIn(['male', 'female'])
   gender?: 'male' | 'female';
 

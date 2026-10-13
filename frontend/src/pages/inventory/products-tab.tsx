@@ -22,12 +22,11 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Switch } from '@/components/ui/switch';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
-import type { InventorySection, NamedEntity, PackagedMaterialSizeForm, ProductFormData, ProductListItem } from '@/types/inventory';
+import type { InventorySection, NamedEntity, ProductFormData, ProductListItem } from '@/types/inventory';
 import { useLocale } from '@/store/locale';
 import { indexColumn } from './simple-crud-tab';
 import { CAFE_UNIT_OPTIONS, convertCafeUnit, defaultCafeRecipeUnit } from '@/lib/cafe-units';
@@ -50,14 +49,6 @@ function useCatalogOptions(resource: string, enabled = true) {
   });
 }
 
-const emptyPackage = (): PackagedMaterialSizeForm => ({
-  packageSize: 700,
-  packageUnit: 'ml',
-  packagePrice: 0,
-  initialPackageCount: 0,
-  reorderPoint: 0,
-});
-
 const EMPTY: ProductFormData = {
   nameAr: '',
   nameEn: '',
@@ -69,8 +60,6 @@ const EMPTY: ProductFormData = {
   barcode: '',
   description: '',
   size: '',
-  isPackaged: false,
-  packages: [emptyPackage()],
   reorderPoint: 10,
   applyToAllBranches: false,
   unitOfMeasure: 'piece',
@@ -82,17 +71,6 @@ const EMPTY: ProductFormData = {
   inventorySection: 'general',
   recipes: [],
 };
-
-function packageBaseUnit(unit: string) {
-  const normalized = unit.toLowerCase();
-  if (['g', 'kg', 'oz'].includes(normalized)) return 'g';
-  if (['ml', 'l', 'fl_oz'].includes(normalized)) return 'ml';
-  return 'piece';
-}
-
-function packageBaseQuantity(pack: PackagedMaterialSizeForm) {
-  return convertCafeUnit(pack.packageSize, pack.packageUnit, packageBaseUnit(pack.packageUnit)) ?? 0;
-}
 
 export function ProductsTab({
   inventoryKind,
@@ -252,7 +230,6 @@ export function ProductsTab({
           <div>
             <span>{row.original.nameAr}</span>
             {row.original.size ? <Badge variant="outline" className="ms-2 nums">{row.original.size}</Badge> : null}
-            {row.original.isPackaged ? <Badge variant="secondary" className="ms-2">{ui('عبوة')}</Badge> : null}
             {row.original.inventoryKind === 'manufactured_internal' ? (
               <Badge variant="secondary" className="ms-2">{ui('مصنعة')}</Badge>
             ) : null}
@@ -338,59 +315,42 @@ export function ProductsTab({
                 void (async () => {
                   setEditId(row.original.id);
                   let recipes: RecipeLine[] = [];
-                  let detail = row.original;
-                  const scopedCurrentStock = row.original.currentStock ?? 0;
-                  if (row.original.inventoryKind === 'manufactured_internal' || row.original.isPackaged) {
+                  if (row.original.inventoryKind === 'manufactured_internal') {
                     try {
-                      const response = await api.get<ProductListItem>(`/products/${row.original.id}`);
-                      detail = response.data;
-                      if (row.original.inventoryKind === 'manufactured_internal') {
-                        recipes = (detail.recipes ?? []).map((line) => ({
-                          ingredientId: line.ingredientId,
-                          quantity: line.quantity,
-                          unit: (line.unit as RecipeUnit) || 'piece',
-                        }));
-                      }
+                      const { data } = await api.get<ProductListItem>(`/products/${row.original.id}`);
+                      recipes = (data.recipes ?? []).map((line) => ({
+                        ingredientId: line.ingredientId,
+                        quantity: line.quantity,
+                        unit: (line.unit as RecipeUnit) || 'piece',
+                      }));
                     } catch {
                       recipes = [];
                     }
                   }
                   setForm({
-                  nameAr: detail.nameAr,
-                  nameEn: detail.nameEn ?? '',
-                  productCode: detail.productCode,
-                  sellingPrice: detail.sellingPrice,
-                  costPrice: detail.costPrice,
-                  categoryId: detail.categoryId ?? undefined,
-                  brandId: detail.brandId ?? undefined,
-                  supplierId: detail.supplierId ?? undefined,
-                  imageUrl: detail.imageUrl ?? '',
-                  status: detail.status,
+                  nameAr: row.original.nameAr,
+                  nameEn: row.original.nameEn ?? '',
+                  productCode: row.original.productCode,
+                  sellingPrice: row.original.sellingPrice,
+                  costPrice: row.original.costPrice,
+                  categoryId: row.original.categoryId ?? undefined,
+                  brandId: row.original.brandId ?? undefined,
+                  supplierId: row.original.supplierId ?? undefined,
+                  imageUrl: row.original.imageUrl ?? '',
+                  status: row.original.status,
                   barcode: '',
                   description: '',
-                  size: detail.size ?? '',
-                  isPackaged: detail.isPackaged ?? false,
-                  packages: detail.isPackaged
-                    ? (detail.packages ?? []).map((item) => ({
-                        id: item.id,
-                        packageSize: Number(item.packageSize),
-                        packageUnit: item.packageUnit,
-                        packagePrice: Number(item.packagePrice),
-                        initialPackageCount: 0,
-                        reorderPoint: Number(item.reorderPoint ?? 0),
-                        packageBaseQuantity: item.packageBaseQuantity,
-                      }))
-                    : [emptyPackage()],
-                  reorderPoint: detail.reorderPoint,
+                  size: row.original.size ?? '',
+                  reorderPoint: row.original.reorderPoint,
                   applyToAllBranches: false,
-                  inventoryKind: detail.inventoryKind ?? inventoryKind ?? 'general',
-                  inventorySection: detail.inventorySection ?? inventorySection ?? 'general',
-                  unitOfMeasure: detail.unitOfMeasure,
-                  minStock: detail.reorderPoint ?? detail.minStock ?? 0,
+                  inventoryKind: row.original.inventoryKind ?? inventoryKind ?? 'general',
+                  inventorySection: row.original.inventorySection ?? inventorySection ?? 'general',
+                  unitOfMeasure: row.original.unitOfMeasure,
+                  minStock: row.original.reorderPoint ?? row.original.minStock ?? 0,
                   initialStock: 0,
                   initialTotalCost: 0,
                   openingBranchId: defaultOpeningBranchId,
-                  currentStock: scopedCurrentStock,
+                  currentStock: row.original.currentStock ?? 0,
                   recipes,
                 });
                 setOpen(true);
@@ -440,33 +400,8 @@ export function ProductsTab({
         return;
       }
     }
-    const isPackaged = isRawMaterial && !isComposite && form.isPackaged === true;
-    const packages = (form.packages ?? []).filter((pack) => pack.packageSize > 0);
-    if (isPackaged) {
-      if (!packages.length) {
-        toast.error(ui('أضف حجم عبوة واحدًا على الأقل'));
-        return;
-      }
-      if (packages.some((pack) => pack.packagePrice <= 0)) {
-        toast.error(ui('أدخل سعر كل عبوة'));
-        return;
-      }
-      const dimensions = new Set(packages.map((pack) => packageBaseUnit(pack.packageUnit)));
-      if (dimensions.size > 1) {
-        toast.error(ui('كل أحجام الخامة يجب أن تكون من نفس النوع: حجم أو وزن أو قطعة'));
-        return;
-      }
-      const normalizedSizes = packages.map((pack) => packageBaseQuantity(pack).toFixed(3));
-      if (new Set(normalizedSizes).size !== normalizedSizes.length) {
-        toast.error(ui('لا يمكن إضافة نفس حجم العبوة مرتين'));
-        return;
-      }
-    }
     const initialStock = Number(form.initialStock) || 0;
-    const hasOpeningStock = isPackaged
-      ? packages.some((pack) => Number(pack.initialPackageCount) > 0)
-      : initialStock > 0;
-    if (!isComposite && hasOpeningStock && !form.openingBranchId) {
+    if (!editId && !isComposite && initialStock > 0 && !form.openingBranchId) {
       toast.error(ui('اختر فرع الرصيد الافتتاحي'));
       return;
     }
@@ -481,25 +416,11 @@ export function ProductsTab({
         nameEn: form.nameEn || form.nameAr,
         productCode: form.productCode || undefined,
         ...(!isRawMaterial || !editId ? { sellingPrice: isRawMaterial || isComposite ? 0 : Number(form.sellingPrice) } : {}),
-        ...(!isPackaged ? {
-          costPrice: isComposite ? Number(compositeCost.toFixed(4)) : Number(form.costPrice) || 0,
-        } : {}),
-        ...(!editId && !isComposite && !isPackaged ? {
+        costPrice: isComposite ? Number(compositeCost.toFixed(4)) : Number(form.costPrice) || 0,
+        ...(!editId && !isComposite ? {
           initialStock,
           initialTotalCost: initialStock > 0 ? Number(form.initialTotalCost) || 0 : undefined,
           openingBranchId: form.openingBranchId || undefined,
-        } : {}),
-        ...(isPackaged ? {
-          isPackaged: true,
-          openingBranchId: form.openingBranchId || undefined,
-          packages: packages.map((pack) => ({
-            id: pack.id,
-            packageSize: Number(pack.packageSize),
-            packageUnit: pack.packageUnit,
-            packagePrice: Number(pack.packagePrice),
-            initialPackageCount: editId && pack.id ? 0 : Number(pack.initialPackageCount) || 0,
-            reorderPoint: Number(pack.reorderPoint) || 0,
-          })),
         } : {}),
         categoryId: isRawMaterial || isComposite ? undefined : form.categoryId || undefined,
         brandId: isRawMaterial || isComposite ? undefined : form.brandId || undefined,
@@ -508,13 +429,13 @@ export function ProductsTab({
         status: form.status,
         barcode: form.barcode || undefined,
         description: form.description || undefined,
-        size: isPackaged ? undefined : form.size?.trim() || undefined,
+        size: form.size?.trim() || undefined,
         reorderPoint: alertQuantity,
         applyToAllBranches: form.applyToAllBranches,
         inventoryKind: kind,
         inventorySection: inventorySection ?? form.inventorySection ?? 'general',
-        unitOfMeasure: isPackaged ? packageBaseUnit(packages[0].packageUnit) : form.unitOfMeasure || 'piece',
-        minStock: isPackaged ? undefined : alertQuantity,
+        unitOfMeasure: form.unitOfMeasure || 'piece',
+        minStock: alertQuantity,
         ...(isComposite ? { recipes } : {}),
       };
       if (editId) await api.patch(`/products/${editId}`, payload);
@@ -546,7 +467,6 @@ export function ProductsTab({
             setInlineBomIngredients([]);
             setForm({
               ...EMPTY,
-              packages: [emptyPackage()],
               inventoryKind: inventoryKind ?? 'general',
               inventorySection: inventorySection ?? 'general',
               openingBranchId: defaultOpeningBranchId,
@@ -620,7 +540,6 @@ export function ProductsTab({
                     onClick={() => setForm((f) => ({
                       ...f,
                       inventoryKind: 'manufactured_internal',
-                      isPackaged: false,
                       supplierId: undefined,
                       initialStock: 0,
                       recipes: f.recipes?.length ? f.recipes : [{ ingredientId: 0, quantity: 1, unit: defaultCafeRecipeUnit(f.unitOfMeasure ?? 'piece') }],
@@ -634,25 +553,6 @@ export function ProductsTab({
               </div>
             )}
             {isRawMaterial && !isComposite && (
-              <div className="flex items-center justify-between gap-4 rounded-xl border bg-muted/15 p-4 sm:col-span-2">
-                <div>
-                  <Label>{ui('الخامة لها عبوات بأحجام متعددة')}</Label>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {ui('فعّلها لإضافة أكثر من حجم وسعر تحت نفس الخامة؛ كل المشتريات تتجمع في رصيد واحد بالملي أو الجرام.')}
-                  </p>
-                </div>
-                <Switch
-                  checked={form.isPackaged === true}
-                  disabled={!!editId}
-                  onCheckedChange={(checked) => setForm((current) => ({
-                    ...current,
-                    isPackaged: checked,
-                    packages: current.packages?.length ? current.packages : [emptyPackage()],
-                  }))}
-                />
-              </div>
-            )}
-            {isRawMaterial && !isComposite && !form.isPackaged && (
               <div className="grid gap-2 sm:col-span-2">
                 <Label htmlFor="inventoryProductSize">{ui('المقاس / الحجم (اختياري)')}</Label>
                 <Input
@@ -662,60 +562,9 @@ export function ProductsTab({
                   onChange={(e) => setForm((f) => ({ ...f, size: e.target.value }))}
                   placeholder="8 oz / 12 oz / 16 oz / Large"
                 />
-              </div>
-            )}
-            {isRawMaterial && !isComposite && form.isPackaged && (
-              <div className="space-y-3 rounded-2xl border bg-muted/10 p-4 sm:col-span-2">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h3 className="font-semibold">{ui('أحجام وأسعار العبوات')}</h3>
-                    <p className="mt-1 text-xs text-muted-foreground">{ui('المخزون يُحفظ داخليًا بالملي أو الجرام، والـCosting يعمل بأصغر وحدة. العبوة الأولى سعر مرجعي حتى أول استلام، ثم تُستخدم التكلفة المتوسطة الفعلية.')}</p>
-                  </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => setForm((current) => ({ ...current, packages: [...(current.packages ?? []), emptyPackage()] }))}>
-                    <Plus className="size-4" />{ui('إضافة حجم')}
-                  </Button>
-                </div>
-                <div className="space-y-3">
-                  {(form.packages ?? []).map((pack, packageIndex) => {
-                    const baseUnit = packageBaseUnit(pack.packageUnit);
-                    const baseQuantity = packageBaseQuantity(pack);
-                    const unitCost = baseQuantity > 0 ? pack.packagePrice / baseQuantity : 0;
-                    const updatePackage = (patch: Partial<PackagedMaterialSizeForm>) => setForm((current) => ({
-                      ...current,
-                      packages: (current.packages ?? []).map((item, index) => index === packageIndex ? { ...item, ...patch } : item),
-                    }));
-                    return (
-                      <article key={pack.id ?? `new-${packageIndex}`} className="rounded-xl border bg-background p-3">
-                        <div className="mb-3 flex items-center justify-between gap-3">
-                          <p className="flex items-center gap-2 font-semibold">
-                            {ui('عبوة')} {toArabicDigits(packageIndex + 1)}
-                            {packageIndex === 0 ? <Badge variant="secondary">{ui('مرجعية')}</Badge> : null}
-                          </p>
-                          <Button type="button" variant="ghost" size="icon" className="size-8 text-destructive" disabled={!!pack.id || (form.packages?.length ?? 0) === 1} title={pack.id ? ui('الحجم القائم لا يُحذف من التعديل حفاظًا على الحركات والوصفات') : ui('حذف الحجم')} onClick={() => setForm((current) => ({ ...current, packages: (current.packages ?? []).filter((_, index) => index !== packageIndex) }))}>
-                            <Trash2 className="size-4" />
-                          </Button>
-                        </div>
-                        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-                          <div><Label className="text-xs">{ui('حجم العبوة')}</Label><Input className="nums mt-1" type="number" min={0.001} step={0.001} value={pack.packageSize} disabled={!!pack.id} onChange={(event) => updatePackage({ packageSize: Number(event.target.value) })} /></div>
-                          <div><Label className="text-xs">{ui('وحدة الحجم')}</Label><select className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm disabled:opacity-60" value={pack.packageUnit} disabled={!!pack.id} onChange={(event) => updatePackage({ packageUnit: event.target.value })}>{CAFE_UNIT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{ui(option.label)}</option>)}</select></div>
-                          <div><Label className="text-xs">{ui('سعر العبوة')}</Label><Input className="nums mt-1" type="number" min={0} step={0.01} value={pack.packagePrice} onChange={(event) => updatePackage({ packagePrice: Number(event.target.value) })} /></div>
-                          <div><Label className="text-xs">{ui('تنبيه بعدد العبوات')}</Label><Input className="nums mt-1" type="number" min={0} step={1} value={pack.reorderPoint} onChange={(event) => updatePackage({ reorderPoint: Number(event.target.value) })} /></div>
-                          <div>
-                            <Label className="text-xs">{pack.id ? ui('إجمالي رصيد الخامة') : ui('عدد العبوات الافتتاحي')}</Label>
-                            {pack.id ? (
-                              <div className="nums mt-1 flex h-10 items-center rounded-md border bg-muted/30 px-3 text-sm">{toArabicDigits(form.currentStock ?? 0)} {form.unitOfMeasure}</div>
-                            ) : (
-                              <Input className="nums mt-1" type="number" min={0} step={1} value={pack.initialPackageCount} onChange={(event) => updatePackage({ initialPackageCount: Number(event.target.value) })} />
-                            )}
-                          </div>
-                        </div>
-                        <p className="nums mt-3 rounded-lg bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
-                          {ui('العبوة تساوي')} {toArabicDigits(Number(baseQuantity.toFixed(3)))} {baseUnit} · {ui('تكلفة الوحدة الأساسية')} {toArabicDigits(Number(unitCost.toFixed(6)))}
-                        </p>
-                      </article>
-                    );
-                  })}
-                </div>
+                <p className="text-xs text-muted-foreground">
+                  {ui('سجّل كل مقاس كصنف مستقل ليكون له رصيد وتكلفة وتنبيه شراء خاص به؛ مثال: كوب ورقي — 8 oz.')}
+                </p>
               </div>
             )}
             {!isRawMaterial && (
@@ -744,7 +593,7 @@ export function ProductsTab({
               </>
             )}
 
-            {!isComposite && !form.isPackaged && (
+            {!isComposite && (
               <div className="grid gap-2">
                 <Label>{ui(editId
                   ? 'تكلفة وحدة المخزون الحالية'
@@ -768,13 +617,13 @@ export function ProductsTab({
                       ? ` ${ui('تكلفة وحدة المخزون')}: ${(Number(form.initialTotalCost) / Number(form.initialStock)).toFixed(4)}`
                       : ''}
                   </p>
-                ) : isRawMaterial ? (
+                ) : isRawMaterial && editId ? (
                   <p className="text-xs text-muted-foreground">{ui('يمكن تعديل التكلفة يدويًا، وستُستخدم في تكلفة الوصفات والتقارير القادمة.')}</p>
                 ) : null}
               </div>
             )}
 
-            {(inventoryKind === 'raw_material' || inventoryKind === 'ready_product') && !isComposite && !form.isPackaged && (
+            {(inventoryKind === 'raw_material' || inventoryKind === 'ready_product') && !isComposite && (
               <div className="grid gap-2">
                 <Label>{ui(editId ? 'الموجود حاليًا في المخزن' : 'الموجود حاليًا في المخزن (رصيد افتتاحي)')}</Label>
                 <Input
@@ -789,7 +638,7 @@ export function ProductsTab({
                 {editId ? <p className="text-xs text-muted-foreground">{ui('الرصيد يتغير من المشتريات والبيع والجرد فقط.')}</p> : null}
               </div>
             )}
-            {(!editId || form.isPackaged) && (inventoryKind === 'raw_material' || inventoryKind === 'ready_product') && !isComposite && (
+            {!editId && (inventoryKind === 'raw_material' || inventoryKind === 'ready_product') && !isComposite && (
               <div className="grid gap-2">
                 <Label>{ui('فرع الرصيد الافتتاحي')}</Label>
                 <select
@@ -805,7 +654,7 @@ export function ProductsTab({
               </div>
             )}
 
-            {!form.isPackaged && <div className="grid gap-2">
+            <div className="grid gap-2">
               <Label>{ui(isComposite ? 'وحدة ناتج الوصفة' : 'وحدة القياس')}</Label>
               <select
                 className="rounded-md border bg-background px-3 py-2 text-sm"
@@ -823,8 +672,8 @@ export function ProductsTab({
               ) : isComposite ? (
                 <p className="text-xs text-muted-foreground">{ui('الوصفة أدناه تُعرَّف لإنتاج وحدة واحدة بهذه الوحدة. لا يُحفظ رصيد مستقل لهذه الخامة.')}</p>
               ) : null}
-            </div>}
-            {!isComposite && !form.isPackaged && (
+            </div>
+            {!isComposite && (
               <div className="grid gap-2">
                 <Label>{ui('تنبيه الكمية')}</Label>
                 <Input type="number" min={0} step={0.001} value={form.minStock ?? 0} onChange={(e) => setForm((f) => ({ ...f, minStock: Number(e.target.value) }))} />

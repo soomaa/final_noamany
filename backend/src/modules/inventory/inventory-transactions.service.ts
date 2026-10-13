@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { CafeBusinessClassification, InventoryTxnStatus, InventoryTxnType, Prisma } from '@prisma/client';
+import { InventoryTxnStatus, InventoryTxnType, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { isDryRun, previewResponse, PreviewRow } from '../../common/preview';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -20,15 +20,6 @@ import {
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
 import { recordSystemExpense } from '../finance/system-expense.util';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
-
-export function resolveInventoryConsumptionUnitCost(
-  suppliedPrice: number,
-  productCost: number,
-  authoritativeCostOnly: boolean,
-) {
-  if (authoritativeCostOnly) return productCost;
-  return suppliedPrice > 0 ? suppliedPrice : productCost;
-}
 
 @Injectable()
 export class InventoryTransactionsService {
@@ -61,7 +52,6 @@ export class InventoryTransactionsService {
       sourceWarehouseId: row.source_warehouse_id,
       targetWarehouseId: row.target_warehouse_id,
       branchId: row.branch_id,
-      businessClassification: row.business_classification,
       totalAmount: toNumber(row.total_amount),
       notes: row.notes,
       reason: row.reason,
@@ -157,20 +147,11 @@ export class InventoryTransactionsService {
     return this.map(row);
   }
 
-  async create(
-    dto: UpsertInventoryTransactionDto,
-    user: JwtUser,
-    businessClassification?: CafeBusinessClassification,
-  ) {
+  async create(dto: UpsertInventoryTransactionDto, user: JwtUser) {
     if (!dto.items?.length) throw new BadRequestException('يجب إضافة بند واحد على الأقل');
     if (!this.supportedTypes.includes(dto.txnType as InventoryTxnType)) {
       throw new BadRequestException('استخدم شاشة المشتريات أو المرتجعات أو الجرد لهذه الحركة');
     }
-    const isManagementWithdrawal =
-      businessClassification === CafeBusinessClassification.management_withdrawal;
-    const items = isManagementWithdrawal
-      ? dto.items.map((item) => ({ ...item, price: 0, total: 0 }))
-      : dto.items;
 
     const branchId = Number(dto.branchId ?? user.branch ?? 0);
     if (!branchId) throw new BadRequestException('اختر الفرع قبل إنشاء حركة المخزون');
@@ -186,7 +167,7 @@ export class InventoryTransactionsService {
       }
     }
 
-    const totalAmount = items.reduce(
+    const totalAmount = dto.items.reduce(
       (s, i) => s + (i.total ?? (i.price ?? 0) * i.quantity),
       0,
     );
@@ -201,13 +182,12 @@ export class InventoryTransactionsService {
           source_warehouse_id: sourceWarehouseId ?? null,
           target_warehouse_id: targetWarehouseId ?? null,
           branch_id: branchId,
-          business_classification: businessClassification ?? null,
           total_amount: totalAmount,
           notes: dto.notes ?? null,
           reason: dto.reason ?? null,
           created_by: user.sub,
           items: {
-            create: items.map((i) => ({
+            create: dto.items.map((i) => ({
               product_id: i.productId ?? null,
               item_code: i.itemCode ?? null,
               item_name: i.itemName,
@@ -227,14 +207,6 @@ export class InventoryTransactionsService {
     return this.map(row);
   }
 
-  createManagementWithdrawal(dto: UpsertInventoryTransactionDto, user: JwtUser) {
-    return this.create(
-      { ...dto, txnType: InventoryTxnType.issue },
-      user,
-      CafeBusinessClassification.management_withdrawal,
-    );
-  }
-
   async update(id: number, dto: Partial<UpsertInventoryTransactionDto>, user: JwtUser) {
     const existing = await this.prisma.inv_transactions.findFirst({
       where: { id, ...notDeletedFilter() },
@@ -248,13 +220,6 @@ export class InventoryTransactionsService {
     if (dto.txnType && !this.supportedTypes.includes(dto.txnType as InventoryTxnType)) {
       throw new BadRequestException('نوع الحركة غير مدعوم من شاشة الحركات اليدوية');
     }
-    const isManagementWithdrawal =
-      existing.business_classification === CafeBusinessClassification.management_withdrawal;
-    const items = dto.items
-      ? isManagementWithdrawal
-        ? dto.items.map((item) => ({ ...item, price: 0, total: 0 }))
-        : dto.items
-      : undefined;
 
     const row = await this.prisma.$transaction(async (tx) => {
       if (dto.items) {
@@ -264,23 +229,17 @@ export class InventoryTransactionsService {
         where: { id },
         data: {
           ...(dto.reference != null ? { reference: dto.reference } : {}),
-          ...(dto.txnType != null || isManagementWithdrawal
-            ? {
-                txn_type: isManagementWithdrawal
-                  ? InventoryTxnType.issue
-                  : dto.txnType as InventoryTxnType,
-              }
-            : {}),
+          ...(dto.txnType != null ? { txn_type: dto.txnType as InventoryTxnType } : {}),
           ...(dto.txnDate != null ? { txn_date: new Date(dto.txnDate) } : {}),
           ...(dto.sourceWarehouseId !== undefined ? { source_warehouse_id: dto.sourceWarehouseId ?? null } : {}),
           ...(dto.targetWarehouseId !== undefined ? { target_warehouse_id: dto.targetWarehouseId ?? null } : {}),
           ...(dto.branchId != null ? { branch_id: dto.branchId } : {}),
           ...(dto.notes !== undefined ? { notes: dto.notes ?? null } : {}),
           ...(dto.reason !== undefined ? { reason: dto.reason ?? null } : {}),
-          ...(items
+          ...(dto.items
             ? {
                 items: {
-                  create: items.map((i) => ({
+                  create: dto.items.map((i) => ({
                     product_id: i.productId ?? null,
                     item_code: i.itemCode ?? null,
                     item_name: i.itemName,
@@ -291,7 +250,7 @@ export class InventoryTransactionsService {
                     notes: i.notes ?? null,
                   })),
                 },
-                total_amount: items.reduce(
+                total_amount: dto.items.reduce(
                   (s, i) => s + (i.total ?? (i.price ?? 0) * i.quantity),
                   0,
                 ),
@@ -380,18 +339,13 @@ export class InventoryTransactionsService {
         select: { id: true, cost_price: true },
       });
       const productCosts = new Map(products.map((product) => [product.id, toNumber(product.cost_price)]));
-      const authoritativeCostOnly =
-        txn.business_classification === CafeBusinessClassification.management_withdrawal;
       const valuedItems = txn.items.map((item) => {
         const suppliedPrice = toNumber(item.price);
-        const productCost = item.product_id != null
-          ? productCosts.get(item.product_id) ?? 0
-          : 0;
-        const unitCost = resolveInventoryConsumptionUnitCost(
-          suppliedPrice,
-          productCost,
-          authoritativeCostOnly,
-        );
+        const unitCost = suppliedPrice > 0
+          ? suppliedPrice
+          : item.product_id != null
+            ? productCosts.get(item.product_id) ?? 0
+            : 0;
         return { item, unitCost, total: Math.round(toNumber(item.quantity) * unitCost * 100) / 100 };
       });
       const financialAmount = Math.round(valuedItems.reduce((sum, row) => sum + row.total, 0) * 100) / 100;

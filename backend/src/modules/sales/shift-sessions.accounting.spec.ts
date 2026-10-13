@@ -114,7 +114,7 @@ describe("shift session financial attribution", () => {
     });
   });
 
-  it("attributes an authorized staff sale to the branch open shift even when another user opened it", async () => {
+  it("attributes post-midnight sales to the still-open shift", async () => {
     const findFirst = jest.fn().mockResolvedValue({ id: 41 });
     const tx = {
       sales_shift_sessions: { findFirst },
@@ -128,11 +128,12 @@ describe("shift session financial attribution", () => {
     );
 
     await expect(
-      service.findBranchSessionForSale(tx as never, 1),
+      service.findBranchSessionForSale(tx as never, 1, 9),
     ).resolves.toEqual({ id: 41 });
     expect(findFirst).toHaveBeenCalledWith({
       where: {
         branch_id: 1,
+        user_id: 9,
         status: "open",
       },
       orderBy: { id: "desc" },

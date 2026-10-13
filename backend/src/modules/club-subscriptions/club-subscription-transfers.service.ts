@@ -1,8 +1,11 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, Inject, NotFoundException } from '@nestjs/common';
+import { ClubBranchGroupService, ClubBranchGroupReader } from '../../common/branch-groups/club-branch-group.service';
+import { assertClubOperationBranch, clubOperationBranchIds } from '../../common/branch-groups/club-operation-scope';
+import { club_subscriptions, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import { assertDateOrder } from '../../common/validators';
 import { localDateString } from '../club-members/club-member.utils';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
@@ -27,6 +30,7 @@ import {
   toNum,
 } from './club-subscription.utils';
 import { TransferSubscriptionToMemberDto } from './dto/transfer-subscription-to-member.dto';
+import { UpdateMemberSubscriptionTransferDto } from './dto/update-member-subscription-transfer.dto';
 import { TransferSubscriptionPlanDto } from './dto/transfer-subscription-plan.dto';
 import { isSubscriptionTypeAvailableAtBranch } from './subscription-type-branch-scope';
 
@@ -60,6 +64,7 @@ export class ClubSubscriptionTransfersService {
     private readonly accounting: ClubSubscriptionAccountingService,
     private readonly audit: BusinessAuditService,
     private readonly branchScope: BranchScopeService,
+    @Inject(ClubBranchGroupService) private readonly branchGroups: Pick<ClubBranchGroupReader, 'siblingBranchIds'> = { siblingBranchIds: async (id) => [id] },
   ) {}
 
   private assertBranchAccess(user: JwtUser | undefined, branchId: number | null | undefined) {
@@ -70,7 +75,12 @@ export class ClubSubscriptionTransfersService {
 
   private branchWhere(user?: JwtUser): Prisma.club_subscription_transfersWhereInput {
     const allowed = this.branchScope.allowedBranchIds(user);
-    return allowed === null ? {} : { branch_id: { in: allowed } };
+    return { ...(allowed === null ? {} : { branch_id: { in: allowed } }), ...(user?.level === 2 && !isSystemAdmin(user) ? { transfer_date: localDateString() } : {}) };
+  }
+
+  private async assertMemberOperationBranch(user: JwtUser | undefined, branchId: number | null | undefined) {
+    if (branchId != null && this.branchScope.isBranchAllowed(user, branchId)) return;
+    await assertClubOperationBranch(this.branchScope, this.branchGroups, user, branchId);
   }
 
   /**
@@ -100,7 +110,7 @@ export class ClubSubscriptionTransfersService {
       if (!source.member_id || !source.member) {
         throw new BadRequestException('لا يمكن تحويل اشتراك غير مرتبط بعضو');
       }
-      this.assertBranchAccess(user, source.branch_id);
+      await this.assertMemberOperationBranch(user, source.branch_id);
       if (source.member_id === body.destinationMemberId) {
         throw new BadRequestException('يجب اختيار عضو آخر لاستلام الاشتراك');
       }
@@ -136,10 +146,7 @@ export class ClubSubscriptionTransfersService {
       if (!destination.is_active) {
         throw new BadRequestException('لا يمكن التحويل إلى عضو غير نشط');
       }
-      this.assertBranchAccess(user, destination.branch_id);
-      if (destination.branch_id !== source.branch_id) {
-        throw new BadRequestException('التحويل بين الأعضاء مسموح داخل نفس الفرع فقط');
-      }
+      await this.assertMemberOperationBranch(user, destination.branch_id);
       const sourceGender = source.gender ?? source.member.gender;
       if (sourceGender !== destination.gender) {
         throw new BadRequestException('نوع العضوية (رجالي/حريمي) للعضوين غير متطابق');
@@ -325,17 +332,209 @@ export class ClubSubscriptionTransfersService {
   }
 
   async listMemberTransfers(user?: JwtUser) {
-    const allowed = this.branchScope.allowedBranchIds(user);
-    return this.prisma.club_member_subscription_transfers.findMany({
-      where: allowed === null
-        ? {}
-        : { OR: [{ source_branch_id: { in: allowed } }, { destination_branch_id: { in: allowed } }] },
+    const allowed = await clubOperationBranchIds(this.branchScope, this.branchGroups, user);
+    const rows = await this.prisma.club_member_subscription_transfers.findMany({
+      where: {
+        ...(allowed === null ? {} : { OR: [{ source_branch_id: { in: allowed } }, { destination_branch_id: { in: allowed } }] }),
+        ...(user?.level === 2 && !isSystemAdmin(user) ? { effective_date: localDateString() } : {}),
+      },
       include: {
         source_member: { select: { id: true, member_code: true, name: true } },
         destination_member: { select: { id: true, member_code: true, name: true } },
+        source_subscription: { select: { subscription_number: true, subscription_type: true, subscription_start_date: true, subscription_end_date: true, subscription_value: true } },
+        destination_subscription: { select: { subscription_number: true, subscription_start_date: true, subscription_end_date: true, subscription_value: true } },
       },
       orderBy: { id: 'desc' },
     });
+    const userIds = [...new Set(rows.map((row) => row.created_by))];
+    const users = userIds.length
+      ? await this.prisma.users.findMany({ where: { user_id: { in: userIds } }, select: { user_id: true, name: true, username: true } })
+      : [];
+    const userNameById = new Map(users.map((item) => [item.user_id, item.name ?? item.username ?? '—']));
+    return rows.map((row) => ({ ...row, created_by_name: userNameById.get(row.created_by) ?? '—' }));
+  }
+
+  /** Recipient changes and reversal are only safe before the transferred entitlement is used. */
+  private async assertMemberTransferUnused(tx: Prisma.TransactionClient, transfer: {
+    destination_subscription_id: number;
+    destination_member_id: number;
+    destination_branch_id: number;
+    effective_date: string;
+    transferred_value: Prisma.Decimal;
+    after_json: Prisma.JsonValue;
+  }, destination: club_subscriptions) {
+    const after = transfer.after_json as Record<string, unknown> | null;
+    if (destination.member_id !== transfer.destination_member_id ||
+        destination.branch_id !== transfer.destination_branch_id ||
+        destination.subscription_start_date !== transfer.effective_date ||
+        destination.subscription_end_date !== after?.endDate ||
+        Math.abs(toNum(destination.subscription_value) - toNum(transfer.transferred_value)) > 0.009 ||
+        Math.abs(toNum(destination.transferred_credit_amount) - toNum(transfer.transferred_value)) > 0.009 ||
+        toNum(destination.paid_amount) > 0.009 ||
+        toNum(destination.waived_amount) > 0.009 ||
+        toNum(destination.remaining_amount) > 0.009 ||
+        toNum(destination.transferred_out_amount) > 0.009 ||
+        destination.sessions_used > 0) {
+      throw new BadRequestException('لا يمكن تغيير أو حذف التحويل بعد تعديل أو استخدام الاشتراك المستلم');
+    }
+    const id = destination.id;
+    const counts = await Promise.all([
+      tx.club_attendance.count({ where: { subscription_id: id } }),
+      tx.club_receipts.count({ where: { subscription_id: id } }),
+      tx.club_subscription_refunds.count({ where: { subscription_id: id, status: { not: 'cancelled' } } }),
+      tx.club_subscription_freezes.count({ where: { subscription_id: id } }),
+      tx.club_subscription_waivers.count({ where: { subscription_id: id } }),
+      tx.club_subscription_transfers.count({ where: { OR: [{ subscription_id: id }, { destination_subscription_id: id }] } }),
+      tx.club_member_subscription_transfers.count({ where: { source_subscription_id: id } }),
+      tx.club_subscriptions.count({ where: { renewed_from_subscription_id: id } }),
+      tx.club_inbody_invoices.count({ where: { subscription_id: id } }),
+      tx.club_spa_invoices.count({ where: { subscription_id: id } }),
+      tx.club_spa_attendance.count({ where: { subscription_id: id } }),
+      tx.club_class_enrollments.count({ where: { subscription_id: id } }),
+      tx.club_member_point_transactions.count({ where: { OR: [{ subscription_id: id }, { source_subscription_id: id }] } }),
+      tx.cs_feedbacks.count({ where: { subscription_id: id } }),
+      tx.staff_tasks.count({ where: { subscription_id: id } }),
+      tx.club_customer_service_interactions.count({ where: { subscription_id: id } }),
+    ]);
+    if (counts.some((count) => count > 0)) {
+      throw new BadRequestException('لا يمكن تغيير أو حذف التحويل بعد استخدام الاشتراك أو تسجيل عملية مرتبطة به');
+    }
+  }
+
+  async updateMemberTransfer(id: number, body: UpdateMemberSubscriptionTransferDto, user: JwtUser) {
+    const reason = body.reason?.trim();
+    if (!reason || reason.length < 3) throw new BadRequestException('سبب التحويل مطلوب (3 أحرف على الأقل)');
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM club_member_subscription_transfers WHERE id = ${id} FOR UPDATE`;
+      const transfer = await tx.club_member_subscription_transfers.findUnique({
+        where: { id },
+        include: { source_subscription: true, destination_subscription: true, source_member: true },
+      });
+      if (!transfer) throw new NotFoundException('التحويل غير موجود');
+      await this.assertMemberOperationBranch(user, transfer.source_branch_id);
+      await this.assertMemberOperationBranch(user, transfer.destination_branch_id);
+      await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id IN (${transfer.source_subscription_id}, ${transfer.destination_subscription_id}) FOR UPDATE`;
+      const nextMemberId = body.destinationMemberId ?? transfer.destination_member_id;
+      if (nextMemberId === transfer.destination_member_id) {
+        const updated = await tx.club_member_subscription_transfers.update({ where: { id }, data: { reason } });
+        await tx.business_audit_log.create({ data: {
+          entity_type: 'club_member_subscription_transfer', entity_id: String(id),
+          action: 'member_entitlement_transfer_update', actor_user_id: user.sub,
+          branch_id: transfer.source_branch_id,
+          before_json: { reason: transfer.reason }, after_json: { reason },
+          changed_fields: ['reason'], reason,
+        } });
+        return updated;
+      }
+      await this.assertMemberTransferUnused(tx, transfer, transfer.destination_subscription);
+      const nextMember = await tx.club_members.findUnique({ where: { id: nextMemberId } });
+      if (!nextMember || nextMember.is_deleted) throw new NotFoundException('العضو المستلم غير موجود');
+      if (!nextMember.is_active) throw new BadRequestException('لا يمكن التحويل إلى عضو غير نشط');
+      await this.assertMemberOperationBranch(user, nextMember.branch_id);
+      if (nextMember.id === transfer.source_member_id) throw new BadRequestException('يجب اختيار عضو آخر لاستلام الاشتراك');
+      if ((transfer.source_subscription.gender ?? transfer.source_member.gender) !== nextMember.gender) {
+        throw new BadRequestException('نوع العضوية (رجالي/حريمي) للعضوين غير متطابق');
+      }
+      const source = transfer.source_subscription;
+      const entitlementIdentity: Prisma.club_subscriptionsWhereInput | null = source.subscription_type_id != null
+        ? { subscription_type_id: source.subscription_type_id }
+        : source.subscription_type?.trim() ? { subscription_type: source.subscription_type.trim() } : null;
+      if (entitlementIdentity) {
+        const existing = await tx.club_subscriptions.findMany({
+          where: { member_id: nextMember.id, ...entitlementIdentity },
+          select: { status: true, subscription_start_date: true, subscription_end_date: true, is_linked_to_sessions: true, sessions_count: true, sessions_used: true },
+        });
+        if (existing.some((item) => item.status === 'frozen' || deriveSessionAwareStatus({
+          startDate: item.subscription_start_date,
+          endDate: item.subscription_end_date,
+          isLinkedToSessions: item.is_linked_to_sessions,
+          sessionsCount: item.sessions_count,
+          sessionsUsed: item.sessions_used,
+        }) !== 'expired')) {
+          throw new BadRequestException('العضو المستلم لديه بالفعل نفس الاشتراك بحالة نشطة أو موقوفة');
+        }
+      }
+      await tx.club_subscriptions.update({
+        where: { id: transfer.destination_subscription_id },
+        data: {
+          subscription_number: `MT${transfer.source_subscription_id}D${nextMember.id}`,
+          member_id: nextMember.id,
+          branch_id: nextMember.branch_id,
+          customer_name: nextMember.name,
+          gender: nextMember.gender,
+          guardian_name: nextMember.guardian_name,
+          guardian_phone: nextMember.guardian_phone,
+        },
+      });
+      const after = transfer.after_json as Record<string, unknown>;
+      const updated = await tx.club_member_subscription_transfers.update({
+        where: { id },
+        data: {
+          destination_member_id: nextMember.id,
+          destination_branch_id: nextMember.branch_id,
+          reason,
+          after_json: { ...after, memberId: nextMember.id },
+        },
+      });
+      await tx.business_audit_log.create({ data: {
+        entity_type: 'club_member_subscription_transfer', entity_id: String(id),
+        action: 'member_entitlement_transfer_update', actor_user_id: user.sub,
+        branch_id: transfer.source_branch_id,
+        before_json: { destinationMemberId: transfer.destination_member_id, destinationBranchId: transfer.destination_branch_id, reason: transfer.reason },
+        after_json: { destinationMemberId: nextMember.id, destinationBranchId: nextMember.branch_id, reason },
+        changed_fields: ['destinationMemberId', 'destinationBranchId', 'reason'], reason,
+      } });
+      return updated;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }
+
+  async deleteMemberTransfer(id: number, user: JwtUser) {
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM club_member_subscription_transfers WHERE id = ${id} FOR UPDATE`;
+      const transfer = await tx.club_member_subscription_transfers.findUnique({
+        where: { id }, include: { source_subscription: true, destination_subscription: true },
+      });
+      if (!transfer) throw new NotFoundException('التحويل غير موجود');
+      await this.assertMemberOperationBranch(user, transfer.source_branch_id);
+      await this.assertMemberOperationBranch(user, transfer.destination_branch_id);
+      await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id IN (${transfer.source_subscription_id}, ${transfer.destination_subscription_id}) FOR UPDATE`;
+      await this.assertMemberTransferUnused(tx, transfer, transfer.destination_subscription);
+      const source = transfer.source_subscription;
+      const before = transfer.before_json as Record<string, unknown> | null;
+      const oldEndDate = before?.endDate;
+      const oldSessionsUsed = before?.sessionsUsed;
+      if (typeof oldEndDate !== 'string' || typeof oldSessionsUsed !== 'number' ||
+          source.subscription_end_date !== addDays(transfer.effective_date, -1) ||
+          (source.is_linked_to_sessions && source.sessions_used !== source.sessions_count) ||
+          toNum(source.transferred_out_amount) + 0.009 < toNum(transfer.transferred_value)) {
+        throw new BadRequestException('لا يمكن إلغاء التحويل بعد تغيير الاشتراك الأصلي');
+      }
+      const restoredStatus = deriveSessionAwareStatus({
+        startDate: source.subscription_start_date,
+        endDate: oldEndDate,
+        isLinkedToSessions: source.is_linked_to_sessions,
+        sessionsCount: source.sessions_count,
+        sessionsUsed: oldSessionsUsed,
+      });
+      await tx.club_member_subscription_transfers.delete({ where: { id } });
+      await tx.club_subscriptions.delete({ where: { id: transfer.destination_subscription_id } });
+      await tx.club_subscriptions.update({ where: { id: transfer.source_subscription_id }, data: {
+        subscription_end_date: oldEndDate,
+        sessions_used: oldSessionsUsed,
+        transferred_out_amount: roundMoney(Math.max(0, toNum(source.transferred_out_amount) - toNum(transfer.transferred_value))),
+        status: restoredStatus,
+      } });
+      await tx.business_audit_log.create({ data: {
+        entity_type: 'club_member_subscription_transfer', entity_id: String(id),
+        action: 'member_entitlement_transfer_delete', actor_user_id: user.sub,
+        branch_id: transfer.source_branch_id,
+        before_json: { sourceSubscriptionId: transfer.source_subscription_id, destinationSubscriptionId: transfer.destination_subscription_id, destinationMemberId: transfer.destination_member_id, reason: transfer.reason },
+        after_json: { restoredSubscriptionId: transfer.source_subscription_id, restoredEndDate: oldEndDate, restoredSessionsUsed: oldSessionsUsed },
+        changed_fields: ['transferDeleted', 'sourceSubscriptionRestored'],
+        reason: 'إلغاء تحويل الاشتراك بين الأعضاء',
+      } });
+      return { success: true };
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   private async computePlanTransferPreview(

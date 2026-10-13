@@ -30,6 +30,7 @@ export class PurchaseInvoicesService {
   private mapItem(item: Prisma.prc_purchase_invoice_itemsGetPayload<object>) {
     return {
       id: item.id,
+      productId: item.product_id,
       name: item.name,
       quantity: toNumber(item.quantity),
       price: toNumber(item.price),
@@ -76,6 +77,7 @@ export class PurchaseInvoicesService {
     return items.map((i) => {
       const total = lineTotal(i.quantity, i.price);
       return {
+        product_id: i.productId,
         name: i.name.trim(),
         quantity: i.quantity,
         price: i.price,
@@ -120,25 +122,40 @@ export class PurchaseInvoicesService {
       throw new BadRequestException('إذن الاستلام لا يطابق أمر الشراء');
     }
 
-    const poQtyByKey = new Map<string, number>();
+    const poQtyByProductId = new Map<number, number>();
     for (const item of po?.items ?? []) {
-      const key = item.product_id ? `p:${item.product_id}` : `n:${item.name.toLowerCase()}`;
-      poQtyByKey.set(key, toNumber(item.quantity));
+      if (item.product_id != null) {
+        poQtyByProductId.set(item.product_id, toNumber(item.quantity));
+      }
     }
 
-    const grnQtyByKey = new Map<string, number>();
+    const grnQtyByProductId = new Map<number, number>();
     for (const item of grn?.items ?? []) {
       if (item.rejected) continue;
-      const key = item.product_id ? `p:${item.product_id}` : `n:${item.name.toLowerCase()}`;
-      grnQtyByKey.set(key, (grnQtyByKey.get(key) ?? 0) + toNumber(item.received_qty));
+      if (item.product_id != null) {
+        grnQtyByProductId.set(
+          item.product_id,
+          (grnQtyByProductId.get(item.product_id) ?? 0) + toNumber(item.received_qty),
+        );
+      }
     }
 
     return dto.items.map((item) => {
-      const key = item.name.trim().toLowerCase();
-      const poQuantity = item.poQuantity ?? poQtyByKey.get(`n:${key}`);
-      const grnQuantity = item.grnQuantity ?? grnQtyByKey.get(`n:${key}`);
+      const poQuantity = item.poQuantity ?? poQtyByProductId.get(item.productId);
+      const grnQuantity = item.grnQuantity ?? grnQtyByProductId.get(item.productId);
       return { ...item, poQuantity, grnQuantity };
     });
+  }
+
+  private async assertProductsExist(items: UpsertPurchaseInvoiceDto['items']) {
+    const productIds = [...new Set(items.map((item) => item.productId))];
+    const products = await this.prisma.inv_products.findMany({
+      where: { id: { in: productIds }, is_deleted: false },
+      select: { id: true },
+    });
+    if (products.length !== productIds.length) {
+      throw new NotFoundException('أحد منتجات بنود فاتورة الشراء غير موجود');
+    }
   }
 
   async list(q: ListPurchaseInvoicesDto) {
@@ -190,6 +207,7 @@ export class PurchaseInvoicesService {
       );
     }
 
+    await this.assertProductsExist(dto.items);
     const enrichedItems = await this.enrichItemsFromLinks(dto);
     const builtItems = this.buildItems(enrichedItems);
     const invoiceAmount = builtItems.reduce((sum, i) => sum + toNumber(i.total), 0);
@@ -247,6 +265,7 @@ export class PurchaseInvoicesService {
       throw new BadRequestException('يجب مطابقة فاتورة الشراء مع إذن الاستلام قبل الاعتماد');
     }
 
+    if (dto.items) await this.assertProductsExist(dto.items);
     const builtItems = dto.items ? this.buildItems(dto.items) : null;
     const invoiceAmount = builtItems
       ? builtItems.reduce((sum, i) => sum + toNumber(i.total), 0)

@@ -33,8 +33,16 @@ import {
   type ExpenseRow,
 } from '@/types/finance';
 import { useLocale } from '@/store/locale';
+import { useAuth } from '@/store/auth';
+import { usePermission } from '@/hooks/use-permission';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { FinancePageShell } from './finance-shell';
+
+const GENDER_OPTIONS = [
+  { value: '', label: 'الكل' },
+  { value: 'male', label: 'رجالي' },
+  { value: 'female', label: 'حريمي' },
+] as const;
 
 const EMPTY_FORM = {
   expenseDate: '',
@@ -51,13 +59,22 @@ const EMPTY_FORM = {
   taxAmount: '',
   notes: '',
   branchId: '',
+  genderScope: '' as '' | 'male' | 'female',
+  hasPercentage: false,
+  malePercentage: '60',
+  femalePercentage: '40',
 };
 
 export function FinanceExpensesPage() {
   const { ui } = useLocale();
   const { params, setParams } = useListQuery();
+  const user = useAuth((state) => state.user);
+  const { superAdmin } = usePermission();
+  const title = user?.job_title ?? '';
+  const receptionOnly = !superAdmin && user?.level !== 1 && user?.level !== 3 && /(استقبال|ريسيبشن|ريسبشن|reception)/i.test(title) && !/(مدير|مشرف|رئيس|manager|supervisor|head)/i.test(title);
+  const expenseParams = receptionOnly ? { ...params, filters: { ...params.filters, branchId: String(user?.branch ?? 0), dateFrom: localToday(), dateTo: localToday() } } : params;
   const { data: branches } = useBranches();
-  const { data, isLoading, isError, refetch } = usePaginatedList<ExpenseRow>('expenses', params);
+  const { data, isLoading, isError, refetch } = usePaginatedList<ExpenseRow>('expenses', expenseParams);
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
@@ -84,6 +101,11 @@ export function FinanceExpensesPage() {
   );
   const paymentMethodOptions = financeOptions(PAYMENT_METHOD_VALUES);
   const paymentStatusOptions = financeOptions(PAYMENT_STATUS_VALUES);
+
+  // Derived: percentages must sum to 100 when hasPercentage is on
+  const malePct = Number(form.malePercentage) || 0;
+  const femalePct = Number(form.femalePercentage) || 0;
+  const percentageValid = !form.hasPercentage || (malePct + femalePct === 100 && malePct > 0 && femalePct > 0);
 
   const addCategory = async () => {
     const name = newCat.trim();
@@ -150,7 +172,19 @@ export function FinanceExpensesPage() {
         { value: 'مرفوض', label: ui('مرفوض') },
       ],
     },
+    {
+      key: 'genderScope',
+      label: ui('النطاق'),
+      type: 'select',
+      options: GENDER_OPTIONS.filter((o) => o.value !== '').map((o) => ({ value: o.value, label: ui(o.label) })),
+    },
   ];
+
+  const genderLabel = (scope: 'male' | 'female' | null | undefined) => {
+    if (scope === 'male') return ui('رجالي');
+    if (scope === 'female') return ui('حريمي');
+    return '—';
+  };
 
   const columns = useMemo<ColumnDef<ExpenseRow>[]>(
     () => [
@@ -165,7 +199,18 @@ export function FinanceExpensesPage() {
       {
         accessorKey: 'amount',
         header: ui('المبلغ'),
-        cell: ({ getValue }) => <span className="nums">{toArabicDigits((getValue() as number).toFixed(2))}</span>,
+        cell: ({ row }) => {
+          const r = row.original;
+          const amt = r.nesba != null && r.mainValue != null
+            ? `${toArabicDigits(r.amount.toFixed(2))} (${toArabicDigits(String(r.nesba))}%)`
+            : toArabicDigits(r.amount.toFixed(2));
+          return <span className="nums">{amt}</span>;
+        },
+      },
+      {
+        id: 'genderScope',
+        header: ui('النطاق'),
+        cell: ({ row }) => genderLabel(row.original.genderScope),
       },
       { accessorKey: 'paymentMethod', header: ui('طريقة الدفع') },
       { accessorKey: 'paymentStatus', header: ui('حالة الدفع') },
@@ -218,11 +263,21 @@ export function FinanceExpensesPage() {
               size="icon"
               onClick={() => {
                 setEditId(row.original.id);
+                const isSplit = row.original.nesba != null && row.original.mainValue != null;
+                // nesba = نسبة هذا الصف نفسه؛ اشتقاق نسبة الرجالي دائماً بشكل صحيح
+                // سواء تم الضغط على تعديل من صف الرجالي أو صف الحريمي
+                const malePct = isSplit
+                  ? (row.original.genderScope === 'female'
+                      ? 100 - (row.original.nesba ?? 0)
+                      : (row.original.nesba ?? 60))
+                  : 60;
                 setForm({
                   expenseDate: row.original.expenseDate?.slice(0, 10) ?? '',
                   category: row.original.category,
                   subCategory: row.original.subCategory ?? '',
-                  amount: String(row.original.amount),
+                  amount: row.original.mainValue != null
+                    ? String(row.original.mainValue)
+                    : String(row.original.amount),
                   paymentMethod: row.original.paymentMethod,
                   paymentStatus: row.original.paymentStatus,
                   description: row.original.description ?? '',
@@ -232,6 +287,10 @@ export function FinanceExpensesPage() {
                   taxAmount: row.original.taxAmount != null ? String(row.original.taxAmount) : '',
                   notes: row.original.notes ?? '',
                   branchId: row.original.branchId != null ? String(row.original.branchId) : '',
+                  genderScope: isSplit ? '' : (row.original.genderScope ?? ''),
+                  hasPercentage: isSplit,
+                  malePercentage: isSplit ? String(malePct) : '60',
+                  femalePercentage: isSplit ? String(100 - malePct) : '40',
                 });
                 setOpen(true);
               }}
@@ -282,7 +341,7 @@ export function FinanceExpensesPage() {
 
   const openCreate = () => {
     setEditId(null);
-    setForm({ ...EMPTY_FORM, expenseDate: localToday(), branchId: String(branches?.[0]?.id ?? '') });
+    setForm({ ...EMPTY_FORM, expenseDate: localToday(), branchId: String(receptionOnly ? user?.branch ?? '' : branches?.[0]?.id ?? '') });
     setOpen(true);
   };
 
@@ -300,6 +359,11 @@ export function FinanceExpensesPage() {
       toast.error(ui('المبلغ يجب أن يكون رقماً موجباً'));
       return;
     }
+    if (form.hasPercentage && !percentageValid) {
+      toast.error(ui('مجموع نسبة الرجال والحريم يجب أن يساوي 100'));
+      return;
+    }
+
     const payload: ExpenseFormPayload = {
       expenseDate: form.expenseDate,
       category: form.category,
@@ -314,15 +378,24 @@ export function FinanceExpensesPage() {
       taxAmount: form.taxAmount ? Number(form.taxAmount) : undefined,
       notes: form.notes || undefined,
       branchId: form.branchId ? Number(form.branchId) : undefined,
+      ...(form.hasPercentage
+        ? {
+            hasPercentage: true,
+            malePercentage: Number(form.malePercentage),
+            femalePercentage: Number(form.femalePercentage),
+          }
+        : {
+            genderScope: form.genderScope || undefined,
+          }),
     };
     setSaving(true);
     try {
       if (editId != null) {
         await api.put(`/expenses/${editId}`, payload);
-        toast.success(ui('تم تحديث المصروف'));
+        toast.success(ui(form.hasPercentage ? 'تم تحديث الصفين (رجالي وحريمي)' : 'تم تحديث المصروف'));
       } else {
         await api.post('/expenses', payload);
-        toast.success(ui('تم إنشاء المصروف'));
+        toast.success(ui(form.hasPercentage ? 'تم إنشاء صفين: رجالي وحريمي حسب النسبة' : 'تم إنشاء المصروف'));
       }
       setOpen(false);
       void refetch();
@@ -334,7 +407,7 @@ export function FinanceExpensesPage() {
   };
 
   return (
-    <FinancePageShell title={ui('إدارة المصروفات')} description={ui('تسجيل ومتابعة واعتماد المصروفات')}>
+    <FinancePageShell title={ui('إدارة المصروفات')} description={receptionOnly ? `مصروفات اليوم ${localToday()} — ${user?.branch_name ?? 'فرعك'}` : ui('تسجيل ومتابعة واعتماد المصروفات')}>
       <div className="mb-4 flex justify-end gap-2">
         <Button variant="outline" onClick={() => setCatOpen(true)}>
           <Tag className="ms-1 h-4 w-4" />
@@ -345,7 +418,7 @@ export function FinanceExpensesPage() {
           {ui('مصروف جديد')}
         </Button>
       </div>
-      <FilterBar fields={filters} searchPlaceholder={ui('بحث في المصروفات…')} />
+      <FilterBar fields={receptionOnly ? filters.filter((field) => field.key !== 'branchId') : filters} searchPlaceholder={ui('بحث في المصروفات…')} />
       <DataTable
         columns={columns}
         data={data?.data ?? []}
@@ -373,6 +446,7 @@ export function FinanceExpensesPage() {
                 <Input
                   className="nums"
                   type="date"
+                  readOnly={receptionOnly}
                   value={form.expenseDate}
                   onChange={(e) => setForm((f) => ({ ...f, expenseDate: e.target.value }))}
                 />
@@ -455,6 +529,116 @@ export function FinanceExpensesPage() {
                 </select>
               </div>
             </div>
+
+            {/* ── Gender Scope ── */}
+            <div className="grid grid-cols-2 gap-3 items-end">
+              <div className="grid gap-1">
+                <Label>{ui('نطاق الجنس')}</Label>
+                <select
+                  className="rounded-md border bg-background px-3 py-2 text-sm"
+                  value={form.hasPercentage ? '' : form.genderScope}
+                  disabled={form.hasPercentage}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, genderScope: e.target.value as '' | 'male' | 'female' }))
+                  }
+                >
+                  {GENDER_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {ui(o.label)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-2 pb-1">
+                <input
+                  id="has-percentage"
+                  type="checkbox"
+                  className="h-4 w-4 cursor-pointer"
+                  checked={form.hasPercentage}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      hasPercentage: e.target.checked,
+                      genderScope: '',
+                    }))
+                  }
+                />
+                <Label htmlFor="has-percentage" className="cursor-pointer font-normal">
+                  {ui('توزيع بالنسب (رجالي / حريمي)')}
+                </Label>
+              </div>
+            </div>
+
+            {/* ── Percentage Split ── */}
+            {form.hasPercentage && (
+              <div className="rounded-lg border p-3 bg-muted/30">
+                <p className="mb-2 text-xs text-muted-foreground">
+                  {ui('يتم إنشاء سجلين منفصلين: واحد للرجالي وآخر للحريمي حسب النسبة المحددة')}
+                </p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-1">
+                    <Label className="text-sm">{ui('نسبة الرجالي')} (%)</Label>
+                    <Input
+                      className="nums"
+                      type="number"
+                      min={1}
+                      max={99}
+                      step={1}
+                      value={form.malePercentage}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const n = Number(v);
+                        setForm((f) => ({
+                          ...f,
+                          malePercentage: v,
+                          femalePercentage: Number.isFinite(n) && n > 0 && n < 100
+                            ? String(100 - n)
+                            : f.femalePercentage,
+                        }));
+                      }}
+                    />
+                  </div>
+                  <div className="grid gap-1">
+                    <Label className="text-sm">{ui('نسبة الحريمي')} (%)</Label>
+                    <Input
+                      className="nums"
+                      type="number"
+                      min={1}
+                      max={99}
+                      step={1}
+                      value={form.femalePercentage}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        const n = Number(v);
+                        setForm((f) => ({
+                          ...f,
+                          femalePercentage: v,
+                          malePercentage: Number.isFinite(n) && n > 0 && n < 100
+                            ? String(100 - n)
+                            : f.malePercentage,
+                        }));
+                      }}
+                    />
+                  </div>
+                </div>
+                {form.amount && (
+                  <div className="mt-2 flex gap-4 text-xs text-muted-foreground">
+                    <span>
+                      {ui('الرجالي')}: {((Number(form.amount) * malePct) / 100).toFixed(2)}
+                    </span>
+                    <span>
+                      {ui('الحريمي')}: {((Number(form.amount) * femalePct) / 100).toFixed(2)}
+                    </span>
+                    {!percentageValid && (
+                      <span className="text-destructive font-medium">
+                        {ui('المجموع يجب أن يساوي 100%')}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
                 <Label>{ui('المورد')}</Label>
@@ -482,7 +666,7 @@ export function FinanceExpensesPage() {
             <Button variant="outline" onClick={() => setOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()} disabled={saving}>
+            <Button onClick={() => void save()} disabled={saving || (form.hasPercentage && !percentageValid)}>
               {ui('حفظ')}
             </Button>
           </DialogFooter>

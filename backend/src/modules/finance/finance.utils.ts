@@ -57,6 +57,8 @@ export function computeRevenueAmounts(
 }
 
 /** Transaction-safe EXP-YYYY-###### / REV-YYYY-###### document numbers. */
+export const REFUND_EXPENSE_CATEGORY = 'مردودات اشتراكات الجيم';
+
 export async function nextFinDocNumber(
   prisma: PrismaService | Prisma.TransactionClient,
   table: "fin_expenses" | "fin_revenues",

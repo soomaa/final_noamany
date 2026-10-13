@@ -20,6 +20,12 @@ export const FITNESS_ROUTES = {
     search: '/club/fitness/trainer-search',
     ratings: '/club/fitness/trainer-ratings',
     settings: '/club/fitness/trainer-settings',
+    targets: '/club/fitness/trainer-targets',
+    evaluations: '/club/fitness/trainer-evaluations',
+    evaluationCriteria: '/club/fitness/trainer-evaluation-criteria',
+    branchAnalysis: '/club/fitness/branch-analysis',
+    receptionAnalysis: '/club/fitness/reception-analysis',
+    shiftAnalysis: '/club/fitness/shift-analysis',
   },
   facilities: {
     list: '/club/fitness/facilities',

@@ -18,11 +18,10 @@ import { SubscriptionReportsService } from './subscription-reports.service';
 import { PrivateSubscriptionsController } from './private-subscriptions.controller';
 import { PrivateSubscriptionsService } from './private-subscriptions.service';
 import { ClubDiscountCodesModule } from './club-discount-codes.module';
-import { ClubSubscriptionLifecycleService } from './club-subscription-lifecycle.service';
-import { ClubSubscriptionRenewalService } from './club-subscription-renewal.service';
+import { ClubPointsModule } from '../club-points/club-points.module';
 
 @Module({
-  imports: [AccountingModule, GymOpsModule, ClubDiscountCodesModule],
+  imports: [AccountingModule, GymOpsModule, ClubDiscountCodesModule, ClubPointsModule],
   controllers: [
     ClubSubscriptionsController,
     ClubSubscriptionTypesController,
@@ -42,17 +41,12 @@ import { ClubSubscriptionRenewalService } from './club-subscription-renewal.serv
     ClubSubscriptionAccountingService,
     ClubSubscriptionStatusCron,
     PrivateSubscriptionsService,
-    ClubSubscriptionLifecycleService,
-    ClubSubscriptionRenewalService,
   ],
   exports: [
     ClubSubscriptionsService,
     ClubReceiptsService,
-    ClubSubscriptionAccountingService,
     ClubReceiptsCrudService,
     ClubSubscriptionRefundsService,
-    ClubSubscriptionLifecycleService,
-    ClubSubscriptionRenewalService,
   ],
 })
 export class ClubSubscriptionsModule {}

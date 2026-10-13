@@ -1,21 +1,18 @@
 import {
   Bell,
+  Cake,
   CalendarDays,
   Clock3,
-  CornerDownLeft,
   LogOut,
   Menu,
-  ScanBarcode,
-  Search,
   User,
-  X,
 } from "lucide-react";
 import { format } from "date-fns";
 import { ar, enUS } from "date-fns/locale";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { PreferenceToggles } from "@/components/layout/preference-toggles";
-import { usePersistentScanner } from "@/components/club/persistent-scanner";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import {
@@ -31,13 +28,14 @@ import {
   useNotifications,
 } from "@/hooks/use-notifications";
 import { useMenu } from "@/hooks/use-menu";
-import { findOwningDepartment } from "@/lib/menu-nav";
 import { formatTime } from "@/lib/formatters";
-import { resolveRoute } from "@/lib/routes";
 import { formatDigits, initials } from "@/lib/utils";
 import { userAvatarUrl } from "@/components/employees/use-uploads";
+import { api } from "@/lib/api";
+import { useBranches } from "@/hooks/use-branches";
 import { useAuth } from "@/store/auth";
 import { useLocale } from "@/store/locale";
+import type { MenuNode } from "@/types";
 
 function getGreetingKey(hour: number) {
   if (hour < 12) return "greeting.morning";
@@ -69,7 +67,7 @@ function DateTimePill() {
 
   return (
     <div className="hidden h-14 items-stretch overflow-hidden rounded-2xl border border-brand-200/80 bg-card shadow-[0_10px_28px_-18px_rgba(237,28,36,.35)] ring-1 ring-brand-100/70 dark:border-brand-500/20 dark:ring-brand-500/10 lg:flex">
-      <div className="hidden items-center gap-2.5 border-e border-brand-200/70 bg-gradient-to-br from-brand-50/95 to-card px-4 text-muted-foreground dark:border-brand-500/15 dark:from-brand-500/10 dark:to-transparent 2xl:flex">
+      <div className="hidden items-center gap-2.5 border-e border-brand-200/70 bg-gradient-to-br from-brand-50/95 to-card px-4 text-muted-foreground dark:border-brand-500/15 dark:from-brand-500/10 dark:to-transparent lg:flex">
         <span className="flex size-8 items-center justify-center rounded-xl bg-brand-100 text-brand-700 ring-1 ring-brand-200/80 dark:bg-brand-500/15 dark:text-brand-300 dark:ring-brand-400/25">
           <CalendarDays className="size-4 shrink-0" />
         </span>
@@ -96,25 +94,193 @@ function DateTimePill() {
   );
 }
 
-interface SearchItem {
-  id: string;
-  title: string;
-  path: string;
-  breadcrumb: string;
-  searchable: string;
+type BirthdayMember = {
+  id: number;
+  memberCode: string;
+  name: string;
+  phone: string | null;
+  gender: 'male' | 'female';
+  branchId: number;
+  dateOfBirth: string;
+};
+
+function calcAge(dob: string): number {
+  const d = new Date(dob);
+  const t = new Date();
+  let age = t.getFullYear() - d.getFullYear();
+  if (t.getMonth() < d.getMonth() || (t.getMonth() === d.getMonth() && t.getDate() < d.getDate())) age--;
+  return age;
 }
 
-function normalizeSearch(value: string) {
-  return value
-    .normalize("NFKD")
-    .replace(/[\u064B-\u065F\u0670]/g, "")
-    .replace(/[أإآٱ]/g, "ا")
-    .replace(/ى/g, "ي")
-    .replace(/ة/g, "ه")
-    .replace(/ـ/g, "")
-    .toLocaleLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
+function toWaPhone(phone: string | null): string | null {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, '');
+  if (digits.startsWith('20')) return digits;
+  if (digits.startsWith('0')) return '2' + digits;
+  return digits;
+}
+
+function BirthdayDropdown() {
+  const { user } = useAuth();
+  const { locale } = useLocale();
+  const isAdmin = user?.level === 1;
+  const [selectedBranch, setSelectedBranch] = useState('');
+  const [contacted, setContacted] = useState<Set<number>>(new Set());
+  const { data: branches = [] } = useBranches();
+
+  const branchMap = useMemo(
+    () => Object.fromEntries(branches.map(b => [b.id, b.name])),
+    [branches],
+  );
+
+  const { data: allBirthdays = [] } = useQuery<BirthdayMember[]>({
+    queryKey: ['birthdays-today', selectedBranch],
+    queryFn: () =>
+      api
+        .get('/club-members/birthdays-today', { params: selectedBranch ? { branchId: selectedBranch } : {} })
+        .then((r: any) => r.data),
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 10 * 60 * 1000,
+  });
+
+  const birthdays = allBirthdays.filter(m => !contacted.has(m.id));
+  const count = birthdays.length;
+
+  const handleContacted = (member: BirthdayMember) => {
+    window.alert('تم التواصل');
+    setContacted(prev => new Set([...prev, member.id]));
+  };
+
+  const openWhatsApp = (member: BirthdayMember) => {
+    const wa = toWaPhone(member.phone);
+    if (!wa) return;
+    const msg = encodeURIComponent(`مرحباً ${member.name}، كل عام وأنت بخير بمناسبة عيد ميلادك 🎂🎉`);
+    window.open(`https://wa.me/${wa}?text=${msg}`, '_blank');
+  };
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative size-11 rounded-xl border border-transparent bg-muted/40 hover:border-pink-300/40 hover:bg-pink-500/10"
+          aria-label="أعياد الميلاد"
+        >
+          <Cake className="size-[18px] text-pink-500/90" />
+          {count > 0 && (
+            <span className="absolute -end-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-pink-500 text-[10px] font-bold text-white ring-2 ring-card">
+              {formatDigits(count > 9 ? '9+' : count, locale)}
+            </span>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-[480px] overflow-hidden p-0">
+        {/* Header */}
+        <div className="flex items-center gap-2.5 border-b border-border/60 bg-gradient-to-r from-pink-500/10 to-purple-500/10 px-4 py-3">
+          <span className="text-xl">🎂</span>
+          <div className="flex-1">
+            <p className="text-sm font-bold text-foreground">أعياد الميلاد اليوم</p>
+            <p className="text-[11px] text-muted-foreground">
+              {count > 0 ? `${formatDigits(count, locale)} عضو` : 'لا توجد أعياد ميلاد'}
+            </p>
+          </div>
+        </div>
+        {/* Branch filter — admin only */}
+        {isAdmin && branches.length > 0 && (
+          <div className="border-b border-border/40 px-3 py-2">
+            <select
+              className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
+              value={selectedBranch}
+              onChange={e => setSelectedBranch(e.target.value)}
+            >
+              <option value="">جميع الفروع</option>
+              {branches.map(b => (
+                <option key={b.id} value={String(b.id)}>{b.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        {/* Table header */}
+        {birthdays.length > 0 && (
+          <div className="grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-2 border-b border-border/50 bg-muted/30 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <span>الكود</span>
+            <span>العضو</span>
+            <span>الميلاد</span>
+            <span>الفرع</span>
+            <span />
+          </div>
+        )}
+        {/* List */}
+        <div className="max-h-[22rem] overflow-y-auto">
+          {birthdays.length === 0 ? (
+            <div className="px-4 py-10 text-center">
+              <p className="mb-2 text-4xl">🎉</p>
+              <p className="text-sm text-muted-foreground">لا توجد أعياد ميلاد اليوم</p>
+            </div>
+          ) : (
+            birthdays.map(m => (
+              <div
+                key={m.id}
+                className="grid grid-cols-[auto_1fr_auto_auto_auto] items-center gap-2 border-b border-border/30 px-3 py-2.5 last:border-0 transition-colors hover:bg-pink-50/40 dark:hover:bg-pink-950/20"
+              >
+                {/* Code */}
+                <span className="nums rounded bg-pink-100/60 px-1.5 py-0.5 text-[10px] font-bold text-pink-700 dark:bg-pink-900/30 dark:text-pink-300">
+                  {m.memberCode}
+                </span>
+                {/* Name + phone */}
+                <div className="min-w-0">
+                  <p className="truncate text-[13px] font-semibold text-foreground">{m.name}</p>
+                  <p className="nums text-[11px] text-muted-foreground">{m.phone ?? '—'}</p>
+                </div>
+                {/* DOB + age */}
+                <div className="text-end">
+                  <p className="nums text-[11px] text-foreground/80">{formatDigits(m.dateOfBirth, locale)}</p>
+                  <p className="text-[10px] text-muted-foreground">{formatDigits(calcAge(m.dateOfBirth), locale)} سنة</p>
+                </div>
+                {/* Branch */}
+                <span className="max-w-[70px] truncate rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {branchMap[m.branchId] ?? m.branchId}
+                </span>
+                {/* Actions */}
+                <div className="flex items-center gap-1">
+                  <button
+                    title="واتساب"
+                    disabled={!m.phone}
+                    onClick={() => openWhatsApp(m)}
+                    className="flex size-7 items-center justify-center rounded-lg bg-[#25D366] text-white transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-30"
+                  >
+                    <svg viewBox="0 0 24 24" className="size-3.5 fill-current">
+                      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413Z" />
+                    </svg>
+                  </button>
+                  <button
+                    title="تم التواصل"
+                    onClick={() => handleContacted(m)}
+                    className="flex h-7 items-center rounded-lg bg-emerald-500 px-2 text-[10px] font-bold text-white transition-opacity hover:opacity-80"
+                  >
+                    ✓ تواصل
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function findOwningDepartment(
+  menu: MenuNode[],
+  pathname: string,
+  _search: string,
+): MenuNode | null {
+  function nodeMatches(node: MenuNode): boolean {
+    if (node.link && (node.link === pathname || pathname.startsWith(node.link + '/'))) return true;
+    return node.children.some(nodeMatches);
+  }
+  return menu.find(nodeMatches) ?? null;
 }
 
 export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
@@ -125,14 +291,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const { data: menu } = useMenu();
   const { data: count = 0 } = useNotificationCount();
   const { data: notifications } = useNotifications();
-  const scanner = usePersistentScanner();
   const unreadPreview = notifications?.filter((n) => !n.read).slice(0, 5) ?? [];
-  const [search, setSearch] = useState("");
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [activeResult, setActiveResult] = useState(0);
-  const searchRootRef = useRef<HTMLDivElement>(null);
-  const searchInputRef = useRef<HTMLInputElement>(null);
-
   const greeting = useMemo(() => t(getGreetingKey(new Date().getHours())), [t]);
   const activeUnit = useMemo(
     () =>
@@ -145,103 +304,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
     user?.job_title?.trim() ||
     (user?.level != null ? t(`levels.${user.level}`) : "");
   const avatarSrc = userAvatarUrl(user?.image);
-  const hasEmployeeSelfService = user?.emp_code != null && user.level !== 1;
 
-  const searchItems = useMemo<SearchItem[]>(() => {
-    const items: SearchItem[] = [];
-    const seen = new Set<string>();
-    const add = (title: string, path: string, parents: string[] = []) => {
-      if (!path || path === "#" || seen.has(path)) return;
-      seen.add(path);
-      const routeTranslation =
-        locale === "en" ? t(`nav.routes.${path.split("?")[0]}`) : title;
-      const translatedTitle = routeTranslation.startsWith("nav.routes.")
-        ? ui(title)
-        : routeTranslation;
-      const displayTitle = translatedTitle || title;
-      const breadcrumb = parents.map((label) => ui(label)).join(" / ");
-      items.push({
-        id: path,
-        title: displayTitle,
-        path,
-        breadcrumb,
-        searchable: normalizeSearch(
-          [
-            title,
-            ui(title),
-            displayTitle,
-            breadcrumb,
-            path.replace(/[/?=&_-]/g, " "),
-          ].join(" "),
-        ),
-      });
-    };
-    const walk = (nodes: NonNullable<typeof menu>, parents: string[] = []) => {
-      nodes.forEach((node) => {
-        const path = resolveRoute(node.link);
-        if (path !== "#") add(node.title, path, parents);
-        if (node.children.length) walk(node.children, [...parents, node.title]);
-      });
-    };
-    if (menu) walk(menu);
-    add(t("nav.dashboard"), "/dashboard");
-    add(t("common.profile"), "/profile");
-    add(t("common.notifications"), "/notifications");
-    return items;
-  }, [locale, menu, t, ui]);
-
-  const searchResults = useMemo(() => {
-    const query = normalizeSearch(search);
-    if (!query) return searchItems.slice(0, 8);
-    const terms = query.split(" ");
-    return searchItems
-      .filter((item) => terms.every((term) => item.searchable.includes(term)))
-      .map((item) => {
-        const title = normalizeSearch(item.title);
-        const score =
-          title === query
-            ? 0
-            : title.startsWith(query)
-              ? 1
-              : title.includes(query)
-                ? 2
-                : 3;
-        return { item, score };
-      })
-      .sort(
-        (a, b) =>
-          a.score - b.score || a.item.title.localeCompare(b.item.title, locale),
-      )
-      .slice(0, 10)
-      .map(({ item }) => item);
-  }, [locale, search, searchItems]);
-
-  const goToSearchResult = (item: SearchItem) => {
-    navigate(item.path);
-    setSearch("");
-    setSearchOpen(false);
-  };
-
-  useEffect(() => setActiveResult(0), [search]);
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      if (!searchRootRef.current?.contains(event.target as Node))
-        setSearchOpen(false);
-    };
-    const onShortcut = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        searchInputRef.current?.focus();
-        setSearchOpen(true);
-      }
-    };
-    document.addEventListener("pointerdown", onPointerDown);
-    document.addEventListener("keydown", onShortcut);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown);
-      document.removeEventListener("keydown", onShortcut);
-    };
-  }, []);
 
   const handleLogout = async () => {
     await logout();
@@ -287,121 +350,14 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
           </div>
         </div>
 
-        <div
-          ref={searchRootRef}
-          className="relative hidden min-w-0 flex-1 md:block md:max-w-xl xl:max-w-3xl 2xl:max-w-4xl"
-        >
-          <div className="pointer-events-none absolute inset-0 rounded-xl bg-gradient-to-r from-primary/10 via-transparent to-brand-400/10 opacity-60" />
-          <Search className="pointer-events-none absolute end-3 top-1/2 z-10 size-4 -translate-y-1/2 text-primary/60" />
-          <input
-            ref={searchInputRef}
-            value={search}
-            onChange={(event) => {
-              setSearch(event.target.value);
-              setSearchOpen(true);
-            }}
-            onFocus={() => setSearchOpen(true)}
-            onKeyDown={(event) => {
-              if (event.key === "ArrowDown") {
-                event.preventDefault();
-                setActiveResult((value) =>
-                  Math.min(value + 1, searchResults.length - 1),
-                );
-              } else if (event.key === "ArrowUp") {
-                event.preventDefault();
-                setActiveResult((value) => Math.max(value - 1, 0));
-              } else if (event.key === "Enter" && searchResults[activeResult]) {
-                event.preventDefault();
-                goToSearchResult(searchResults[activeResult]);
-              } else if (event.key === "Escape") {
-                setSearchOpen(false);
-                event.currentTarget.blur();
-              }
-            }}
-            role="combobox"
-            aria-expanded={searchOpen}
-            aria-controls="global-search-results"
-            aria-autocomplete="list"
-            className="relative h-[3.25rem] w-full rounded-2xl border border-primary/15 bg-background/80 pe-11 ps-5 text-[15px] text-foreground shadow-sm outline-none transition-all placeholder:text-muted-foreground focus:border-primary/40 focus:bg-background focus:ring-2 focus:ring-primary/15 dark:text-white dark:placeholder:text-white/55"
-            placeholder={t("common.searchPlaceholder")}
-          />
-          {search && (
-            <button
-              type="button"
-              onClick={() => {
-                setSearch("");
-                searchInputRef.current?.focus();
-              }}
-              className="absolute end-9 top-1/2 z-20 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-              aria-label={t("shared.clear")}
-            >
-              <X className="size-3.5" />
-            </button>
-          )}
-          {searchOpen && (
-            <div
-              id="global-search-results"
-              role="listbox"
-              className="absolute inset-x-0 top-[calc(100%+0.5rem)] z-50 max-h-[min(26rem,70vh)] overflow-y-auto rounded-xl border border-border bg-popover p-1.5 text-popover-foreground shadow-xl"
-            >
-              {searchResults.length ? (
-                searchResults.map((item, index) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    role="option"
-                    aria-selected={index === activeResult}
-                    onMouseEnter={() => setActiveResult(index)}
-                    onClick={() => goToSearchResult(item)}
-                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-start transition-colors ${index === activeResult ? "bg-accent text-accent-foreground" : "hover:bg-accent/60"}`}
-                  >
-                    <Search className="size-4 shrink-0 text-primary" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-semibold">
-                        {item.title}
-                      </span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {item.breadcrumb || item.path}
-                      </span>
-                    </span>
-                    {index === activeResult && (
-                      <CornerDownLeft className="size-3.5 shrink-0 text-muted-foreground" />
-                    )}
-                  </button>
-                ))
-              ) : (
-                <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  {t("shared.noResults")}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        <div className="flex-1" />
 
         <div className="flex flex-1 items-center justify-end gap-1.5 md:flex-none md:gap-2">
           <DateTimePill />
 
-          {scanner.available ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              permissionAction={null}
-              className="relative size-11 rounded-xl border border-transparent bg-muted/40 hover:border-primary/15 hover:bg-primary/5"
-              aria-label={ui(scanner.open ? 'إغلاق السكانر المستمر' : 'فتح السكانر المستمر')}
-              aria-pressed={scanner.open}
-              title={ui(scanner.open ? 'إغلاق السكانر المستمر' : 'فتح السكانر المستمر')}
-              onClick={scanner.toggle}
-            >
-              <ScanBarcode className="size-[18px] text-primary/80" />
-              <span
-                className={`absolute end-1.5 top-1.5 size-2 rounded-full ring-2 ring-card ${scanner.open ? 'bg-emerald-500' : 'bg-muted-foreground/35'}`}
-                aria-hidden
-              />
-            </Button>
-          ) : null}
-
           <PreferenceToggles />
+
+          <BirthdayDropdown />
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -488,10 +444,6 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
               <DropdownMenuItem onClick={() => navigate("/profile")}>
                 <User /> {t("common.profile")}
               </DropdownMenuItem>
-              {hasEmployeeSelfService && <>
-                <DropdownMenuItem onClick={() => navigate("/me/evaluations")}>تقييماتي</DropdownMenuItem>
-                <DropdownMenuItem onClick={() => navigate("/me/permissions")}>أذوناتي</DropdownMenuItem>
-              </>}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 onClick={handleLogout}

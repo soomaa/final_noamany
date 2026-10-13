@@ -7,16 +7,19 @@ import {
   Building2,
   Calculator,
   CalendarDays,
+  ClipboardCheck,
   Coffee,
   CreditCard,
   Dumbbell,
   FileText,
   Fingerprint,
   HandCoins,
+  Headphones,
   Lock,
   Mail,
   type LucideIcon,
   Scale,
+  ScanLine,
   Settings,
   SlidersHorizontal,
   Smartphone,
@@ -35,6 +38,7 @@ import { PORTAL_ROUTES as PR } from '@/lib/portal-routes';
 
 export interface NavItem {
   to: string;
+  label?: string;
 }
 
 /** A collapsible sub-group nested inside a top-level section (3rd level). */
@@ -124,13 +128,22 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: CR.members.reception },
           { to: CR.members.quickServices },
           { to: CR.members.management },
-          { to: CR.members.barcodeManagement },
-          { to: CR.members.barcodePrintRange },
+          { to: CR.members.measurements, label: 'قياسات الأعضاء' },
+          { to: CR.members.attendance },
+        ],
+      },
+      {
+        id: 'club-barcode-management',
+        icon: ScanLine,
+        items: [
+          { to: CR.members.barcodeMemberCheckIn },
           { to: CR.members.barcodeSpaCheckIn },
           { to: CR.members.barcodeClassesCheckIn },
+          { to: CR.members.barcodeManagement },
+          { to: CR.members.barcodePrintRange },
           { to: CR.members.barcodeSpaAttendance },
           { to: CR.members.barcodeClassesAttendance },
-          { to: CR.members.attendance },
+          { to: CR.members.barcodeScanTimes },
         ],
       },
       {
@@ -139,8 +152,9 @@ export const NAV_SECTIONS: NavSection[] = [
         items: [
           { to: CR.packages.settings },
           { to: CR.subscriptions.list },
+          { to: CR.subscriptions.memberTransfer },
+          { to: CR.subscriptions.online, label: 'اشتراكات الأونلاين' },
           { to: CR.subscriptions.new },
-          { to: CR.subscriptions.online },
           { to: CR.subscriptions.special },
           { to: CR.subscriptions.dailyCashier },
           { to: CR.subscriptions.reports },
@@ -155,22 +169,61 @@ export const NAV_SECTIONS: NavSection[] = [
         ],
       },
       {
+        id: 'club-points',
+        icon: HandCoins,
+        items: [
+          { to: CR.points.earnSettings },
+          { to: CR.points.conversionSettings },
+          { to: CR.points.memberHistory },
+          { to: CR.points.earnedReport },
+          { to: CR.points.activeMembersReport },
+        ],
+      },
+      {
+        id: 'club-discount-codes',
+        icon: HandCoins,
+        items: [
+          { to: CR.discountCodes.create },
+          { to: CR.discountCodes.captainAllocations },
+          { to: CR.discountCodes.memberGrants },
+          { to: CR.discountCodes.memberSearch },
+          { to: CR.discountCodes.memberReport },
+          { to: CR.discountCodes.captainCodes },
+          { to: CR.discountCodes.usageReport },
+        ],
+      },
+      {
         id: 'club-lockers-mgmt',
         icon: Lock,
         items: [
           { to: CR.lockers.list },
           { to: CR.lockers.new },
           { to: CR.lockers.settings },
+          { to: CR.lockers.inventory },
+          { to: CR.lockers.inventoryReports },
         ],
       },
       {
         id: 'club-fitness-trainers',
         icon: Users,
         items: [
+          { to: FIT.trainers.list },
           { to: FIT.trainers.payments },
           { to: FIT.trainers.search },
           { to: FIT.trainers.ratings },
           { to: FIT.trainers.settings },
+          { to: FIT.trainers.targets },
+          { to: FIT.trainers.evaluations },
+          { to: FIT.trainers.evaluationCriteria },
+        ],
+      },
+      {
+        id: 'club-fitness-analysis',
+        icon: BarChart3,
+        items: [
+          { to: FIT.trainers.branchAnalysis },
+          { to: FIT.trainers.receptionAnalysis },
+          { to: FIT.trainers.shiftAnalysis },
         ],
       },
       {
@@ -194,6 +247,8 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: FR.revenueReports },
           { to: FR.analysis },
           { to: FR.profitLoss },
+          { to: FR.dailyClosing },
+          { to: FR.targetReport },
         ],
       },
     ],
@@ -208,6 +263,8 @@ export const NAV_SECTIONS: NavSection[] = [
         items: [
           { to: CR.cafe.pos },
           { to: CR.cafe.drafts },
+          { to: GS.sales.invoices },
+          { to: GS.sales.revenue },
           { to: GS.sales.shifts },
           { to: GS.sales.treasury },
           { to: GS.sales.settlements },
@@ -234,16 +291,19 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: CR.cafe.gymIssue },
           { to: CR.cafe.stockTaking },
           { to: CR.cafe.movements },
-          { to: CR.cafe.managementWithdrawals },
         ],
       },
       {
         id: 'gym-sales-procurement',
         icon: HandCoins,
         items: [
-          { to: CR.cafe.suppliers },
-          { to: CR.cafe.purchases },
-          { to: CR.cafe.supplierPayments },
+          { to: GS.procurement.requisitions },
+          { to: GS.procurement.purchaseOrders },
+          { to: GS.procurement.goodsReceipts },
+          { to: GS.procurement.invoices },
+          { to: GS.procurement.returns },
+          { to: GS.procurement.dashboard },
+          { to: GS.procurement.settings },
         ],
       },
     ],
@@ -411,10 +471,22 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    id: 'evaluation-management',
+    icon: ClipboardCheck,
+    items: [
+      { to: '/evaluation-management/categories' },
+      { to: '/evaluation-management/items' },
+      { to: '/evaluation-management/add' },
+      { to: '/evaluation-management/report' },
+    ],
+  },
+  {
     id: 'settings',
     icon: Settings,
     items: [
       { to: '/org/branches' },
+      { to: '/club/branch-groups' },
+      { to: '/settings/payment-methods' },
       { to: '/admin/roles' },
       { to: '/admin/exceptions' },
       { to: '/users' },
@@ -429,11 +501,20 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
+    id: 'customer-service',
+    icon: Headphones,
+    items: [
+      { to: '/customer-service/questions' },
+      { to: '/customer-service/add-feedback' },
+      { to: '/customer-service/reports' },
+    ],
+  },
+  {
     id: 'portal-management',
     icon: Globe2,
     groups: [
-      { id: 'portal-management-basics', icon: Settings, items: [{ to: PR.company }, { to: PR.paymentMethods }, { to: PR.sliders }, { to: PR.partners }, { to: PR.policies }] },
-      { id: 'portal-management-subdata', icon: SlidersHorizontal, items: [{ to: PR.sectionSettings }, { to: PR.stats }, { to: PR.services }, { to: PR.classShowcase }, { to: PR.aboutFeatures }, { to: PR.coachFeatures }] },
+      { id: 'portal-management-basics', icon: Settings, items: [{ to: PR.company }, { to: PR.sliders }, { to: PR.partners }, { to: PR.policies }] },
+      { id: 'portal-management-subdata', icon: SlidersHorizontal, items: [{ to: PR.sectionSettings }, { to: PR.stats }, { to: PR.ticker }, { to: PR.services }, { to: PR.classShowcase }, { to: PR.aboutFeatures }, { to: PR.coachFeatures }, { to: PR.membershipPlans }] },
       { id: 'portal-management-about', icon: FileText, items: [{ to: PR.about }] },
       { id: 'portal-management-media', icon: FileText, items: [{ to: PR.photos }, { to: PR.videos }, { to: PR.heroVideos }] },
       { id: 'portal-management-branches', icon: Building2, items: [{ to: PR.branches }, { to: PR.trainers }, { to: PR.classes }] },

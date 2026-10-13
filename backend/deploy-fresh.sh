@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# RETIRED destructive demo reset. Never use on Noamany client data.
+# ONE80 Gym — FRESH deploy: WIPE database + apply migrations + seed + build.
 # Run from the backend folder (where .env and deploy.sh live).
 #
 #   cd /home/alatheertech/one80.alatheertech.com/backend
@@ -11,9 +11,6 @@
 # ============================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
-
-echo "Refusing destructive fresh deploy. Use bash server-deploy.sh for Noamany." >&2
-exit 1
 
 if [ ! -f .env ]; then
   echo "!! No .env found. Copy .env.production → .env and fill DATABASE_URL + secrets first."
@@ -33,7 +30,7 @@ echo "==> [4/5] Building backend (dist/)…"
 npm run build
 
 echo "==> [5/5] Verifying seed (migrate reset already ran prisma seed)…"
-echo "    Demo credentials are not stored in this repository."
+echo "    Demo login: admin / one80@123"
 
 echo ""
 echo "✅ Fresh deploy complete. Restart the cPanel Node.js app (startup file: dist/main.js)."

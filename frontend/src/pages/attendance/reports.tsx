@@ -89,7 +89,7 @@ export function AttendanceReportsPage() {
   const query = usePaginatedList<Row>(`attendance/reports/${kind}`, params);
   const { data: employees = [] } = useQuery({
     queryKey: ['attendance', 'report-employee-options'],
-    queryFn: () => fetchAllReportRows<EmployeeListItem>('/employees', { status: 1 }, 200),
+    queryFn: async () => (await api.get<EmployeeListItem[]>('/employees/pos-options')).data,
     staleTime: 60_000,
   });
   const { data: branches = [] } = useBranches();

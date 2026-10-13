@@ -21,16 +21,10 @@ import { PosInvoiceTemplatesService, PosPaymentMethodsService } from './pos-admi
 import { PosNotificationRulesService, PosReportTemplatesService, PosSettingsService } from './pos-admin/pos-reports-notifications.service';
 import { BillingStatementsController } from './billing-statements.controller';
 import { BillingStatementsService } from './billing-statements.service';
-import { PosEmployeeOptionsController } from './pos-employee-options.controller';
-import {
-  CAFE_PAYROLL_ALLOCATION_ADAPTER,
-  DeferredCafePayrollAllocationAdapter,
-} from './cafe-payroll-allocation.adapter';
 
 @Module({
   imports: [InventoryModule, AccountingModule, AuthModule],
   controllers: [
-    PosEmployeeOptionsController,
     QuickSalesController,
     ShiftsController,
     ShiftSessionsController,
@@ -44,10 +38,6 @@ import {
     BillingStatementsController,
   ],
   providers: [
-    {
-      provide: CAFE_PAYROLL_ALLOCATION_ADAPTER,
-      useClass: DeferredCafePayrollAllocationAdapter,
-    },
     QuickSalesService,
     ShiftsService,
     ShiftSessionsService,

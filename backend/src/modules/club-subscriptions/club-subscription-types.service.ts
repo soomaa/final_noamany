@@ -302,10 +302,10 @@ export class ClubSubscriptionTypesService {
     } as const;
   }
 
-  async listActive(isSpecialOffer?: string, user?: JwtUser, requestedBranchId?: number) {
+  async listActive(isSpecialOffer?: string, user?: JwtUser, requestedBranchId?: number, includeInactive?: boolean) {
     const scopedBranches = this.branchScope.resolveListFilter(user, requestedBranchId ?? null);
     const where: Prisma.club_subscription_typesWhereInput = {
-      is_active: true,
+      ...(!includeInactive ? { is_active: true } : {}),
       ...subscriptionTypeBranchWhere(scopedBranches),
     };
     if (isSpecialOffer === 'true' || isSpecialOffer === '1') where.is_special_offer = true;
@@ -432,30 +432,8 @@ export class ClubSubscriptionTypesService {
   }
 
   async remove(id: number) {
-    const type = await this.findOne(id);
-    const inUse = await this.prisma.club_subscriptions.count({ where: { subscription_type_id: id } });
-    if (inUse > 0) {
-      await this.prisma.club_subscription_types.update({ where: { id }, data: { is_active: false } });
-      return {
-        success: true,
-        retired: true,
-        affectedSubscriptions: inUse,
-        message: `تم إيقاف الباقة "${type.name}" — ${inUse} اشتراك قائم سيكمل مدته، ولن تظهر بعد الآن عند تسجيل اشتراك جديد أو التجديد.`,
-      };
-    }
-    await this.prisma.club_subscription_types.delete({ where: { id } });
-    return { success: true, retired: false, affectedSubscriptions: 0 };
-  }
-
-  async usage(id: number) {
-    const type = await this.findOne(id);
-    const subscriptions = await this.prisma.club_subscriptions.count({ where: { subscription_type_id: id } });
-    return { id, name: type.name, subscriptions, willRetire: subscriptions > 0 };
-  }
-
-  async setActive(id: number, isActive: boolean) {
     await this.findOne(id);
-    await this.prisma.club_subscription_types.update({ where: { id }, data: { is_active: isActive } });
-    return { success: true, isActive };
+    await this.prisma.club_subscription_types.delete({ where: { id } });
+    return { success: true };
   }
 }

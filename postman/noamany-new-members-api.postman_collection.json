@@ -1,0 +1,1464 @@
+{
+  "info": {
+    "_postman_id": "a3a5e003-8695-4ed5-a49c-879dd40a056a",
+    "name": "Noamany Members API — Flutter Test Kit",
+    "description": "دليل Postman مبسط لمهندس Flutter: الإضافات الخاصة بتطبيق الأعضاء فقط (الاشتراكات والمتجر). ابدأ بـ Login by member phone؛ الحساب الجاهز 01000000027 وكلمة المرور 123456. ستُحفظ بيانات الدخول والعضو تلقائيًا. طلبات الاشتراك والمتجر حقيقية وحالتها pending؛ أرفق paymentProof عند اختيار vodafone_cash أو instapay.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://final.noamanycenter.com/Api/members",
+      "type": "string"
+    },
+    {
+      "key": "memberApiBaseUrl",
+      "value": "https://final.noamanycenter.com/api/member",
+      "type": "string"
+    },
+    {
+      "key": "publicPortalBaseUrl",
+      "value": "https://final.noamanycenter.com/api/public/portal",
+      "type": "string"
+    },
+    {
+      "key": "testPhone",
+      "value": "01000000027",
+      "type": "string"
+    },
+    {
+      "key": "testPassword",
+      "value": "123456",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "newPassword",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "memberApiToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "communityPostId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "notificationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "runDestructiveTests",
+      "value": "NO",
+      "type": "string"
+    },
+    {
+      "key": "sendOnlineSubscriptionRequest",
+      "value": "YES",
+      "type": "string"
+    },
+    {
+      "key": "onlineSubscriptionTypeId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "onlinePaymentMethodId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "onlineMemberCode",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "onlineCustomerName",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "onlineStartDate",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "guestBranchId",
+      "value": "3",
+      "type": "string"
+    },
+    {
+      "key": "storePaymentMethod",
+      "value": "vodafone_cash",
+      "type": "string"
+    },
+    {
+      "key": "storeGovernorate",
+      "value": "القاهرة",
+      "type": "string"
+    },
+    {
+      "key": "storeAddress",
+      "value": "مدينة نصر - عنوان اختبار Flutter",
+      "type": "string"
+    },
+    {
+      "key": "categoryId",
+      "value": "1006",
+      "type": "string"
+    },
+    {
+      "key": "trainerId",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "offerId",
+      "value": "0",
+      "type": "string"
+    },
+    {
+      "key": "newsId",
+      "value": "1001",
+      "type": "string"
+    },
+    {
+      "key": "basicSubscriptionId",
+      "value": "1033",
+      "type": "string"
+    },
+    {
+      "key": "privateSubscriptionId",
+      "value": "4",
+      "type": "string"
+    },
+    {
+      "key": "lockerSubscriptionId",
+      "value": "1007",
+      "type": "string"
+    },
+    {
+      "key": "productId",
+      "value": "23",
+      "type": "string"
+    },
+    {
+      "key": "storeOrderId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "calorieGender",
+      "value": "male",
+      "type": "string"
+    },
+    {
+      "key": "calorieAge",
+      "value": "25",
+      "type": "string"
+    },
+    {
+      "key": "calorieHeightCm",
+      "value": "175",
+      "type": "string"
+    },
+    {
+      "key": "calorieCurrentWeightKg",
+      "value": "80",
+      "type": "string"
+    },
+    {
+      "key": "calorieTargetWeightKg",
+      "value": "75",
+      "type": "string"
+    },
+    {
+      "key": "calorieActivityLevel",
+      "value": "moderate",
+      "type": "string"
+    },
+    {
+      "key": "calorieGoal",
+      "value": "lose_weight_build_muscle",
+      "type": "string"
+    },
+    {
+      "key": "expectedBmr",
+      "value": "1774",
+      "type": "string"
+    },
+    {
+      "key": "expectedMaintenanceCalories",
+      "value": "2749",
+      "type": "string"
+    },
+    {
+      "key": "expectedTargetCalories",
+      "value": "2249",
+      "type": "string"
+    },
+    {
+      "key": "testInvitationPhone",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "exec": [
+          "pm.test('HTTP response is successful', () => pm.expect(pm.response.code).to.be.oneOf([200, 201]));",
+          "const isLegacyMemberRequest = pm.request.url.toString().includes('/Api/members/');",
+          "if (isLegacyMemberRequest) { const body = pm.response.json(); pm.test('legacy response envelope is present', () => pm.expect(body).to.have.property('status')); pm.test('legacy status is numeric', () => pm.expect(body.status).to.be.a('number')); const dataDependentRequests = new Set(['Trainer details', 'Offer details', 'Basic package details', 'Private package details', 'Validate coupon']); pm.test('application result matches the local test-data expectation', () => pm.expect(body.status).to.be.oneOf(dataDependentRequests.has(pm.info.requestName) ? [200, 400] : [200])); if (body.status === 400) pm.test('no-data response explains the condition', () => pm.expect(body.message).to.be.a('string').and.not.empty); }"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "01 - Authentication (run in order)",
+      "item": [
+        {
+          "name": "1. Login by member phone",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('HTTP 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('member login succeeded', () => pm.expect(body.status).to.eql(200));",
+                  "pm.collectionVariables.set('accessToken', body.data.access_token);",
+                  "pm.collectionVariables.set('memberApiToken', body.data.access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{testPhone}}\",\n  \"user_pass\": \"{{testPassword}}\"\n}"
+            },
+            "url": "{{baseUrl}}/login_app"
+          }
+        },
+        {
+          "name": "2. Change password (set newPassword first)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const nextPassword = pm.environment.get('newPassword');",
+                  "if (pm.environment.get('runDestructiveTests') !== 'YES' || !nextPassword || nextPassword.length < 6) {",
+                  "  console.warn('Password change skipped. Set newPassword (at least 6 characters) and runDestructiveTests = YES to execute it.');",
+                  "  pm.execution.skipRequest();",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('password change succeeded', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('password change returned application success', () => pm.expect(body.status).to.eql(200));",
+                  "if (body.status === 200) { pm.environment.set('testPassword', pm.environment.get('newPassword')); pm.environment.unset('newPassword'); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"current_password\": \"{{testPassword}}\",\n  \"new_password\": \"{{newPassword}}\"\n}"
+            },
+            "url": "{{baseUrl}}/update_pass"
+          }
+        },
+        {
+          "name": "3. Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('logout succeeded', () => pm.expect(pm.response.code).to.eql(200));",
+                  "pm.test('logout returned application success', () => pm.expect(pm.response.json().status).to.eql(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/logout_app"
+          }
+        },
+        {
+          "name": "4. Login with the saved (new) password",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('login after logout succeeded', () => pm.expect(pm.response.code).to.eql(200));",
+                  "const body = pm.response.json();",
+                  "pm.test('new password is accepted', () => pm.expect(body.status).to.eql(200));",
+                  "if (body.status === 200) { pm.environment.set('accessToken', body.data.access_token); pm.environment.set('memberApiToken', body.data.access_token); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phone\": \"{{testPhone}}\",\n  \"user_pass\": \"{{testPassword}}\"\n}"
+            },
+            "url": "{{baseUrl}}/login_app"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Member profile and app",
+      "item": [
+        {
+          "name": "Profile",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('profile includes a CODE128 barcode for Flutter rendering', () => { pm.expect(body.data).to.include.keys('memberCode', 'barcode', 'barcodeFormat', 'fullName'); pm.expect(body.data.barcode).to.eql(body.data.memberCode); pm.expect(body.data.barcodeFormat).to.eql('CODE128'); });",
+                  "if (body.status === 200) { pm.collectionVariables.set('onlineMemberCode', body.data.memberCode); pm.collectionVariables.set('onlineCustomerName', body.data.fullName); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/getProfile"
+          },
+          "description": "Flutter يرسم data.barcode كـ CODE128، وهو نفس شكل بطاقة الباركود في لوحة الإدارة. كما يحفظ كود واسم العضو لطلب الاشتراك الأونلاين."
+        },
+        {
+          "name": "Send invitation (requires runDestructiveTests = YES)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "if (pm.environment.get('runDestructiveTests') !== 'YES') { console.warn('Invitation skipped: set runDestructiveTests = YES to create real data.'); pm.execution.skipRequest(); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipient_name\": \"ضيف اختبار API\",\n  \"recipient_phone\": \"{{testInvitationPhone}}\",\n  \"recipient_email\": \"member-api-test@example.invalid\"\n}"
+            },
+            "url": "{{baseUrl}}/Add_invitation"
+          }
+        },
+        {
+          "name": "About app",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/getAppinfo"
+          }
+        },
+        {
+          "name": "Privacy policy",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/getAppPolicy"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fitness content",
+      "item": [
+        {
+          "name": "InBody history",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/All_Inbody"
+          }
+        },
+        {
+          "name": "Exercises",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/All_Tmareen"
+          }
+        },
+        {
+          "name": "Exercise categories",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/All_Cats"
+          }
+        },
+        {
+          "name": "Exercises by category",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/Exercises_By_Category?category_id={{categoryId}}"
+          }
+        },
+        {
+          "name": "Trainers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/All_Captains"
+          }
+        },
+        {
+          "name": "Trainer details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/Captain_Details?trainer_id={{trainerId}}"
+          }
+        },
+        {
+          "name": "Classes - men",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/Get_Classes?audience=men"
+          }
+        },
+        {
+          "name": "Classes - women",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/Get_Classes?audience=women"
+          }
+        },
+        {
+          "name": "Classes - kids",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/Get_Classes?audience=kids"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Calorie calculator",
+      "item": [
+        {
+          "name": "Calculate daily calories",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('calorie calculation returns the expected form values', () => pm.expect(body.data).to.include({ bmr: Number(pm.variables.replaceIn('{{expectedBmr}}')), maintenanceCalories: Number(pm.variables.replaceIn('{{expectedMaintenanceCalories}}')), targetCalories: Number(pm.variables.replaceIn('{{expectedTargetCalories}}')), goal: pm.variables.replaceIn('{{calorieGoal}}') }));",
+                  "pm.test('calorie calculation splits the target into macros', () => { const macros = body.data.macros; pm.expect(macros).to.have.keys('protein', 'fat', 'carbohydrates'); ['protein', 'fat', 'carbohydrates'].forEach((key) => pm.expect(macros[key]).to.include.keys('grams', 'calories', 'percent')); const total = macros.protein.calories + macros.fat.calories + macros.carbohydrates.calories; pm.expect(total).to.eql(body.data.targetCalories); });",
+                  "pm.test('calorie calculation includes an estimate disclaimer', () => pm.expect(body.data.note).to.be.a('string').and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"gender\": \"{{calorieGender}}\",\n  \"age\": {{calorieAge}},\n  \"height_cm\": {{calorieHeightCm}},\n  \"current_weight_kg\": {{calorieCurrentWeightKg}},\n  \"target_weight_kg\": {{calorieTargetWeightKg}},\n  \"activity_level\": \"{{calorieActivityLevel}}\",\n  \"goal\": \"{{calorieGoal}}\"\n}"
+            },
+            "url": "{{baseUrl}}/calculate_calories"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Payment methods",
+      "item": [
+        {
+          "name": "Active payment methods",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('payment methods is an array', () => pm.expect(body.data).to.be.an('array'));",
+                  "pm.test('each payment method has member-safe display fields', () => body.data.forEach(method => pm.expect(method).to.include.keys('id', 'name', 'number', 'username', 'image')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/payment_methods"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Offers",
+      "item": [
+        {
+          "name": "Offers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/All_Offers"
+          }
+        },
+        {
+          "name": "Offer details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/Offer_Details?offer_id={{offerId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "News",
+      "item": [
+        {
+          "name": "News types",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/News_Types"
+          }
+        },
+        {
+          "name": "All published news",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/All_News"
+          }
+        },
+        {
+          "name": "News by type",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/All_News?news_type=nutrition"
+          }
+        },
+        {
+          "name": "News details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/News_Details?news_id={{newsId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Subscriptions",
+      "item": [
+        {
+          "name": "All package types",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/Subs_List"
+          }
+        },
+        {
+          "name": "Subscription tabs",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/get_subscriptions_tabs"
+          }
+        },
+        {
+          "name": "Basic package details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/Basic_Subscription_Details?subscription_id={{basicSubscriptionId}}"
+          }
+        },
+        {
+          "name": "Private package details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/Private_Subscription_Details?subscription_id={{privateSubscriptionId}}"
+          }
+        },
+        {
+          "name": "Locker package details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/Locker_Subscription_Details?subscription_id={{lockerSubscriptionId}}"
+          }
+        },
+        {
+          "name": "My subscriptions",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/My_subs"
+          }
+        },
+        {
+          "name": "Freeze history",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/get_member_stop_details"
+          }
+        },
+        {
+          "name": "Points history (points management ledger)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('points ledger request succeeded', () => pm.expect(body.status).to.eql(200));",
+                  "pm.test('points ledger has balance and transaction history', () => { pm.expect(body.data).to.include.keys('balance', 'totalEarned', 'totalRedeemed', 'history'); pm.expect(body.data.balance).to.be.a('number'); pm.expect(body.data.history).to.be.an('array'); });",
+                  "pm.test('each point transaction has the Flutter display fields', () => body.data.history.forEach(item => pm.expect(item).to.include.keys('id', 'type', 'points', 'balanceAfter', 'reason', 'date')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/get_member_points_history"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Online subscriptions — pending requests",
+      "description": "بالترتيب: Login ثم Profile ثم الطلب الأول هنا. الطلب الأول يملأ تلقائيًا كود واسم العضو وأول باقة متاحة لفرعه وأول طريقة دفع عامة صالحة. الطلب الثالث ينشئ طلب اشتراك حقيقيًا بحالة pending بعد اختيار صورة الدفع والضغط على Send.",
+      "item": [
+        {
+          "name": "1. Online subscription options for the member",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('online options include an available plan', () => pm.expect(body.plans).to.be.an('array').and.not.empty);",
+                  "pm.test('online options include a general payment method', () => pm.expect(body.paymentMethods).to.be.an('array').and.not.empty);",
+                  "if (body.plans?.[0] && body.paymentMethods?.[0]) { pm.collectionVariables.set('onlineSubscriptionTypeId', String(body.plans[0].id)); pm.collectionVariables.set('onlinePaymentMethodId', String(body.paymentMethods[0].id)); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"memberCode\": \"{{onlineMemberCode}}\",\n  \"customerName\": \"{{onlineCustomerName}}\"\n}"
+            },
+            "url": "{{publicPortalBaseUrl}}/online-subscription-options"
+          }
+        },
+        {
+          "name": "2. General payment accounts from Settings (reference only)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('payment methods is an array', () => pm.expect(body).to.be.an('array'));",
+                  "pm.test('each payment method has member-safe display fields', () => body.forEach(method => pm.expect(method).to.include.keys('id', 'name', 'number', 'username', 'image')));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{publicPortalBaseUrl}}/payment-methods"
+          },
+          "description": "طرق الدفع هنا عامة للعرض فقط. عند إرسال الاشتراك، يستخدم الملف المعرّف الذي أعاده الطلب الأول لأن هذا هو المعرف المقبول لطلب الاشتراك الأونلاين."
+        },
+        {
+          "name": "3. Save online subscription as pending",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const required = ['onlineSubscriptionTypeId', 'onlinePaymentMethodId', 'onlineMemberCode', 'onlineCustomerName']; const missing = required.filter((key) => !pm.collectionVariables.get(key)); if (missing.length) console.warn(`Online subscription may be rejected by the API. Missing: ${missing.join(', ')}.`);",
+                  "const proof = pm.request.body?.formdata?.find((entry) => entry.key === 'paymentProof'); if (!proof?.src) console.warn('Online subscription may be rejected by the API because paymentProof is missing.');",
+                  "const supplied = pm.collectionVariables.get('onlineStartDate'); pm.collectionVariables.set('onlineStartDateResolved', supplied || new Date().toISOString().slice(0, 10));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('online subscription request was accepted', () => { pm.expect(pm.response.code).to.be.oneOf([200, 201]); pm.expect(body.success).to.eql(true); });",
+                  "pm.test('online subscription response confirms submission', () => pm.expect(body.message).to.eql('تم إرسال طلب الاشتراك بنجاح'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "subscriptionTypeId",
+                  "value": "{{onlineSubscriptionTypeId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "paymentMethodId",
+                  "value": "{{onlinePaymentMethodId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "memberCode",
+                  "value": "{{onlineMemberCode}}",
+                  "type": "text"
+                },
+                {
+                  "key": "customerName",
+                  "value": "{{onlineCustomerName}}",
+                  "type": "text"
+                },
+                {
+                  "key": "startDate",
+                  "value": "{{onlineStartDateResolved}}",
+                  "type": "text"
+                },
+                {
+                  "key": "notes",
+                  "value": "طلب اشتراك أونلاين من اختبار Flutter",
+                  "type": "text"
+                },
+                {
+                  "key": "paymentProof",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": "{{publicPortalBaseUrl}}/online-subscriptions",
+            "description": "قبل Send: اختر ملف PNG أو JPG في paymentProof (بحد أقصى 5MB). الاستجابة الناجحة تؤكد الإرسال؛ الحالة pending محفوظة في النظام ولا تُعاد ضمن الاستجابة. لا يوجد Authorization لهذا المسار العام."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Public — Subscriptions by branch (no token)",
+      "description": "مسارات عامة لعرض أنواع الباقات وتبويباتها حسب الفرع بدون توكن عضو. أرسل branch_id في query string.",
+      "item": [
+        {
+          "name": "Subscription tabs by branch (أساسي / برايفت / لوكر)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('response status is 200', () => pm.expect(body.status).to.eql(200));",
+                  "pm.test('tabs array is returned', () => pm.expect(body.data).to.be.an('array').and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/get_subscriptions_tabs?branch_id={{guestBranchId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "get_subscriptions_tabs"
+              ],
+              "query": [
+                {
+                  "key": "branch_id",
+                  "value": "{{guestBranchId}}",
+                  "description": "رقم الفرع للضيف؛ غيّر guestBranchId من متغيرات الـ Collection"
+                }
+              ]
+            },
+            "description": "يعيد تبويبات الاشتراك (أساسي / برايفت / لوكر) بحسب الفرع. لا يحتاج توكن عضو."
+          }
+        },
+        {
+          "name": "All package types by branch",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('response status is 200', () => pm.expect(body.status).to.eql(200));",
+                  "pm.test('data is returned', () => pm.expect(body.data).to.exist);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/Subs_List?branch_id={{guestBranchId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "Subs_List"
+              ],
+              "query": [
+                {
+                  "key": "branch_id",
+                  "value": "{{guestBranchId}}",
+                  "description": "رقم الفرع للضيف؛ غيّر guestBranchId من متغيرات الـ Collection"
+                }
+              ]
+            },
+            "description": "يعيد قائمة الباقات المتاحة للفرع بدون توكن عضو."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Community",
+      "description": "هذه المسارات تستخدم API الحديث. شغّل Login by member phone أولًا؛ سيُنسخ التوكن تلقائيًا إلى memberApiToken.",
+      "item": [
+        {
+          "name": "1. Community categories",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('community categories are returned', () => { pm.expect(body.data).to.be.an('array').and.not.empty; pm.expect(body.data[0]).to.include.keys('value', 'label'); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberApiToken}}"
+              }
+            ],
+            "url": "{{memberApiBaseUrl}}/community/categories"
+          }
+        },
+        {
+          "name": "2. List approved community posts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('community post list has the expected page structure', () => pm.expect(body).to.be.an('object'));",
+                  "const rows = body.data || body.items || body.posts || [];",
+                  "if (Array.isArray(rows) && rows[0]) pm.environment.set('communityPostId', rows[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberApiToken}}"
+              }
+            ],
+            "url": "{{memberApiBaseUrl}}/community/posts?page=1&pageSize=20"
+          },
+          "description": "يعيد المنشورات المعتمدة فقط. إن وُجد منشور، يُحفظ أول communityPostId تلقائيًا للطلبات التالية."
+        },
+        {
+          "name": "3. Community post details",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "if (!pm.environment.get('communityPostId')) { console.warn('Post details skipped: run List approved community posts first, or set communityPostId.'); pm.execution.skipRequest(); }"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberApiToken}}"
+              }
+            ],
+            "url": "{{memberApiBaseUrl}}/community/posts/{{communityPostId}}"
+          }
+        },
+        {
+          "name": "4. Create community post",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test('community post was created', () => pm.expect(pm.response.code).to.eql(201));",
+                  "const body = pm.response.json();",
+                  "if (body.id) pm.environment.set('communityPostId', body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberApiToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"category\": \"question\",\n  \"title\": \"سؤال اختبار Flutter\",\n  \"description\": \"منشور اختبار؛ يحتاج موافقة الإدارة قبل ظهوره في قائمة المنشورات المعتمدة.\"\n}"
+            },
+            "url": "{{memberApiBaseUrl}}/community/posts"
+          },
+          "description": "ينشئ منشورًا حقيقيًا عند الضغط على Send. يُحفظ communityPostId تلقائيًا من الاستجابة."
+        },
+        {
+          "name": "5. Set Like",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberApiToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"reactionType\": \"like\" }"
+            },
+            "url": "{{memberApiBaseUrl}}/community/posts/{{communityPostId}}/reaction"
+          }
+        },
+        {
+          "name": "6. Set Loved It",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberApiToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"reactionType\": \"love\" }"
+            },
+            "url": "{{memberApiBaseUrl}}/community/posts/{{communityPostId}}/reaction"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Member notifications",
+      "description": "قائمة إشعارات العضو، وعدد غير المقروء، وطلبات تغيير حالة القراءة تعمل مباشرة على البيانات الحقيقية.",
+      "item": [
+        {
+          "name": "1. List notifications",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('notification list has the Flutter fields', () => { pm.expect(body).to.include.keys('notifications', 'unreadCount'); pm.expect(body.notifications).to.be.an('array'); });",
+                  "if (body.notifications[0]) pm.environment.set('notificationId', body.notifications[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberApiToken}}"
+              }
+            ],
+            "url": "{{memberApiBaseUrl}}/notifications?limit=50"
+          },
+          "description": "يُحفظ notificationId تلقائيًا من أحدث إشعار إن وُجد."
+        },
+        {
+          "name": "2. Unread notification count",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "pm.test('unread count is numeric', () => pm.expect(body.unreadCount).to.be.a('number'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberApiToken}}"
+              }
+            ],
+            "url": "{{memberApiBaseUrl}}/notifications/unread-count"
+          }
+        },
+        {
+          "name": "3. Mark one notification read",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberApiToken}}"
+              }
+            ],
+            "url": "{{memberApiBaseUrl}}/notifications/{{notificationId}}/read"
+          }
+        },
+        {
+          "name": "4. Mark all notifications read",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{memberApiToken}}"
+              }
+            ],
+            "url": "{{memberApiBaseUrl}}/notifications/read-all"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Store",
+      "description": "لمبرمج Flutter: شغّل Login أولاً، ثم Products (سيحفظ أول productId متاح). استخدم Store payment methods لعرض وسائل التحويل، وبعدها Create store order. الطلب يحفظ pending وتُرسل الملاحظات وطريقة الدفع وصورة التحويل عند الدفع الإلكتروني.",
+      "item": [
+        {
+          "name": "Store categories and products",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/store"
+          }
+        },
+        {
+          "name": "Products",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const products = body.data?.items || body.data || [];",
+                  "pm.test('products loaded', () => pm.expect(body.status).to.eql(200));",
+                  "if (products[0]?.id) pm.collectionVariables.set('productId', String(products[0].id));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/products"
+          }
+        },
+        {
+          "name": "Store payment methods",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/payment_methods",
+            "description": "يعيد حسابات التحويل الفعلية المعروضة للمستخدم. في الإنتاج الحالي: فودافون كاش وأورانج كاش."
+          }
+        },
+        {
+          "name": "Product details",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": "{{baseUrl}}/product_detail?product_id={{productId}}"
+          }
+        },
+        {
+          "name": "Validate coupon",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"coupon_code\": \"TEST10\",\n  \"items\": [{ \"product_id\": {{productId}}, \"quantity\": 1 }]\n}"
+            },
+            "url": "{{baseUrl}}/validate_coupon_code"
+          }
+        },
+        {
+          "name": "Create store order — payment, notes and optional transfer proof",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const method = pm.collectionVariables.get('storePaymentMethod') || 'cod';",
+                  "const proof = pm.request.body?.formdata?.find((entry) => entry.key === 'paymentProof');",
+                  "if (method !== 'cod' && !proof?.src) console.warn('اختر صورة التحويل في paymentProof قبل إرسال طلب دفع إلكتروني.');"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const body = pm.response.json();",
+                  "const result = body.data || body;",
+                  "pm.test('store order saved as pending', () => { pm.expect(pm.response.code).to.be.oneOf([200, 201]); pm.expect(body.status).to.eql(200); pm.expect(result.success).to.eql(true); pm.expect(result.status).to.eql('pending'); });",
+                  "pm.test('pending review message returned', () => pm.expect(result.message || body.message).to.include('قيد المراجعة'));",
+                  "if (result.orderId) pm.collectionVariables.set('storeOrderId', String(result.orderId));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "governorate",
+                  "value": "{{storeGovernorate}}",
+                  "type": "text"
+                },
+                {
+                  "key": "city_street",
+                  "value": "{{storeAddress}}",
+                  "type": "text"
+                },
+                {
+                  "key": "payment_method",
+                  "value": "{{storePaymentMethod}}",
+                  "type": "text"
+                },
+                {
+                  "key": "notes",
+                  "value": "طلب متجر من تطبيق Flutter — يرجى المراجعة",
+                  "type": "text"
+                },
+                {
+                  "key": "items",
+                  "value": "[{\"product_id\":{{productId}},\"quantity\":1}]",
+                  "type": "text"
+                },
+                {
+                  "key": "paymentProof",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "url": "{{baseUrl}}/process_order",
+            "description": "طلب حقيقي يحفظ بحالة pending ويعيد الرسالة: تم إرسال الطلب، وهو قيد المراجعة وسوف يتم الرد عليك. اختر cod بدون صورة، أو vodafone_cash / instapay مع صورة paymentProof."
+          }
+        }
+      ]
+    }
+  ]
+}

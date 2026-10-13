@@ -4,7 +4,6 @@ import {
   IsArray,
   IsIn,
   IsInt,
-  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
@@ -37,8 +36,14 @@ export class ProcessClubPaymentDto {
   payments?: ClubReceiptPaymentDto[];
 }
 
-/** Server-owned inputs for a current-price renewal quote. Package and dates are never client inputs. */
-export class QuoteClubSubscriptionRenewalDto {
+/** Body of `PATCH /club-subscriptions/:id/renew`. */
+export class RenewClubSubscriptionDto {
+  @IsOptional()
+  @Transform(({ value }) => (value != null ? Number(value) : undefined))
+  @IsInt()
+  @Min(1)
+  renewalDays?: number;
+
   @IsOptional()
   @Transform(({ value }) => (value != null ? Number(value) : undefined))
   @IsNumber()
@@ -58,9 +63,24 @@ export class QuoteClubSubscriptionRenewalDto {
   payments?: ClubReceiptPaymentDto[];
 }
 
-/** Quote acceptance for `PATCH /club-subscriptions/:id/renew`. */
-export class RenewClubSubscriptionDto extends QuoteClubSubscriptionRenewalDto {
+/** Body of `POST/PATCH /club-subscriptions/:id/freeze`. */
+export class FreezeClubSubscriptionDto {
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
-  quoteVersion!: string;
+  freezeStartDate?: string;
+
+  @IsOptional()
+  @IsString()
+  freezeEndDate?: string;
+
+  /** Kept for callers using the previous duration-based endpoint. */
+  @IsOptional()
+  @Transform(({ value }) => (value != null ? Number(value) : undefined))
+  @IsInt()
+  @Min(1)
+  days?: number;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }

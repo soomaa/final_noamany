@@ -7,8 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { ErrorState } from '@/components/common/states';
-import { api, apiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '@/pages/gym-sales/shell';
@@ -80,15 +79,12 @@ export function CafeItemFeedbackReportPage() {
   const user = useAuth((state) => state.user);
   const { data: branches = [] } = useBranches();
   const [branchId, setBranchId] = useState('');
-  const [gender, setGender] = useState('');
-  const lockedGender = user?.man_women_type === 0 ? 'male' : user?.man_women_type === 1 ? 'female' : '';
-  const effectiveGender = lockedGender || gender;
   const effectiveBranchId = branchId || (user?.branch && user.branch > 0 ? String(user.branch) : '') || String(branches[0]?.id ?? '');
 
-  const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['cafe-item-feedback-report', from, to, effectiveBranchId, effectiveGender],
+  const { data, isLoading } = useQuery({
+    queryKey: ['cafe-item-feedback-report', from, to, effectiveBranchId],
     queryFn: async () => (await api.get<ItemFeedbackReport>('/cafe-products/reports/item-feedback', {
-      params: { dateFrom: from, dateTo: to, branchId: effectiveBranchId || undefined, gender: effectiveGender || undefined },
+      params: { dateFrom: from, dateTo: to, branchId: effectiveBranchId || undefined },
     })).data,
     enabled: !!effectiveBranchId,
   });
@@ -139,18 +135,10 @@ export function CafeItemFeedbackReportPage() {
             <Input className="w-40" type="date" value={to} min={from} onChange={(event) => setTo(event.target.value)} />
           </>}
           <select className="h-9 min-w-40 rounded-md border bg-background px-3 text-sm" value={effectiveBranchId} onChange={(event) => setBranchId(event.target.value)} disabled={branches.length <= 1}>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
-          <select aria-label="القسم" className="h-9 min-w-32 rounded-md border bg-background px-3 text-sm" value={effectiveGender} onChange={(event) => setGender(event.target.value)} disabled={!!lockedGender}><option value="">كل الأقسام</option><option value="male">رجال</option><option value="female">سيدات</option></select>
           <Badge variant="secondary" className="ms-auto nums">{toArabicDigits(from)} — {toArabicDigits(to)}</Badge>
         </CardContent>
       </Card>
 
-      {isError ? (
-        <ErrorState
-          inline
-          message={apiError(error, ui('تعذر تحميل تقييمات المنتجات. تحقق من نطاق الفرع والقسم ثم أعد المحاولة.'))}
-          onRetry={() => void refetch()}
-        />
-      ) : <>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric icon={MessageSquareText} label={ui('إجمالي التقييمات')} value={toArabicDigits(data?.totalRatings ?? 0)} />
         <Metric icon={Star} label={ui('متوسط التقييم')} value={`${toArabicDigits((data?.averageRating ?? 0).toFixed(1))} / ٥`} tone="amber" />
@@ -219,7 +207,6 @@ export function CafeItemFeedbackReportPage() {
           {!isLoading && (data?.recent ?? []).filter((row) => row.comment).length === 0 && <Empty text={ui('لا توجد ملاحظات مكتوبة في هذه الفترة')} />}
         </CardContent>
       </Card>
-      </>}
     </GymSalesPageShell>
   );
 }

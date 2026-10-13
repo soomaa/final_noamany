@@ -7,9 +7,10 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { MemberModule } from '../member/member.module';
+import { UploadsModule } from '../uploads/uploads.module';
 
 @Module({
-  imports: [ConfigModule, PassportModule, JwtModule.register({}), forwardRef(() => MemberModule)],
+  imports: [ConfigModule, PassportModule, JwtModule.register({}), forwardRef(() => MemberModule), UploadsModule],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, FlexibleAuthGuard],
   exports: [AuthService],

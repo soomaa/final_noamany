@@ -2,6 +2,23 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 
+const auditDetailType = Prisma.dmmf.datamodel.models
+  .find((model) => model.name === 'rbac_audit_log')?.fields
+  .find((field) => field.name === 'detail')?.type;
+
+function encodeAuditDetail(value: unknown): unknown {
+  if (value == null) return undefined;
+  if (auditDetailType === 'String') {
+    return JSON.stringify(value);
+  }
+  return value;
+}
+
+function decodeAuditDetail(value: unknown): unknown {
+  if (auditDetailType !== 'String' || typeof value !== 'string') return value;
+  try { return JSON.parse(value); } catch { return value; }
+}
+
 /** Thin wrapper for writing RBAC administrative changes to rbac_audit_log. */
 @Injectable()
 export class RbacAuditService {
@@ -20,7 +37,7 @@ export class RbacAuditService {
         action: opts.action,
         target_type: opts.targetType ?? null,
         target_id: opts.targetId != null ? String(opts.targetId) : null,
-        detail: (opts.detail ?? undefined) as Prisma.InputJsonValue | undefined,
+        detail: encodeAuditDetail(opts.detail) as Prisma.InputJsonValue | undefined,
       },
     });
   }
@@ -46,7 +63,7 @@ export class RbacAuditService {
         actorName: r.actor_user_id != null ? actorMap.get(r.actor_user_id) ?? null : null,
         targetType: r.target_type,
         targetId: r.target_id,
-        detail: r.detail,
+        detail: decodeAuditDetail(r.detail),
         createdAt: r.created_at,
       })),
       total,

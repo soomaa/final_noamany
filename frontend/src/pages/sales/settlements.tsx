@@ -26,7 +26,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useBranches } from "@/hooks/use-branches";
-import { usePermission } from "@/hooks/use-permission";
 import { usePosEmployeeOptions } from "@/hooks/use-pos-employee-options";
 import { api, apiError } from "@/lib/api";
 import { localToday } from "@/lib/formatters";
@@ -87,9 +86,6 @@ function firstDayOfMonth(date: string) {
 
 export function SalesSettlementsPage() {
   const { ui } = useLocale();
-  const { can } = usePermission();
-  const canCreate = can('gym-sales.sales.settlements:create');
-  const canUpdate = can('gym-sales.sales.settlements:update');
   const qc = useQueryClient();
   const today = localToday();
   const { data: branches = [] } = useBranches();
@@ -271,7 +267,7 @@ export function SalesSettlementsPage() {
   };
 
   const createStatement = async () => {
-    if (!canCreate || !preview?.sales.length || !selected.length || creating) return;
+    if (!preview?.sales.length || !selected.length || creating) return;
     setCreating(true);
     try {
       await api.post("/billing-statements", {
@@ -296,7 +292,7 @@ export function SalesSettlementsPage() {
   };
 
   const settle = async () => {
-    if (!canUpdate || !settleTarget || settling) return;
+    if (!settleTarget || settling) return;
     setSettling(true);
     try {
       await api.post(`/billing-statements/${settleTarget.id}/settle`, {
@@ -309,9 +305,6 @@ export function SalesSettlementsPage() {
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["billing-statements"] }),
         qc.invalidateQueries({ queryKey: ["billing-account-sales"] }),
-        qc.invalidateQueries({ queryKey: ["quick-sales"] }),
-        qc.invalidateQueries({ queryKey: ["shift-sessions"] }),
-        qc.invalidateQueries({ queryKey: ["shift-close-report"] }),
       ]);
     } catch (error) {
       toast.error(apiError(error));
@@ -649,15 +642,14 @@ export function SalesSettlementsPage() {
                       </label>
                     ))}
                   </div>
-                  {canCreate ? <Button
-                    permissionAction="create"
+                  <Button
                     className="mt-4 w-full"
                     onClick={() => void createStatement()}
                     disabled={creating || !selected.length}
                   >
                     <FileStack className="me-2 size-4" />
                     {creating ? ui("جاري الإصدار…") : ui("إصدار كشف مجمع")}
-                  </Button> : null}
+                  </Button>
                 </>
               ) : (
                 <div className="grid min-h-44 place-items-center rounded-xl border border-dashed text-center text-muted-foreground">
@@ -752,9 +744,8 @@ export function SalesSettlementsPage() {
                       ) : null}
                     </td>
                     <td className="p-2 text-center">
-                      {canUpdate && statement.status === "issued" ? (
+                      {statement.status === "issued" ? (
                         <Button
-                          permissionAction="update"
                           size="sm"
                           onClick={() => {
                             setSettleTarget(statement);
@@ -788,7 +779,7 @@ export function SalesSettlementsPage() {
       ) : null}
 
       <Dialog
-        open={canUpdate && Boolean(settleTarget)}
+        open={Boolean(settleTarget)}
         onOpenChange={(open) => !open && setSettleTarget(null)}
       >
         <DialogContent>
@@ -812,14 +803,17 @@ export function SalesSettlementsPage() {
                 }
               >
                 <option value="direct_payment">{ui("دفع مباشر")}</option>
-                {settleTarget?.accountType !== "employee" && (
+                {settleTarget?.accountType === "employee" ? (
+                  <option value="payroll_deduction">
+                    {ui("خصم من الراتب")}
+                  </option>
+                ) : (
                   <option value="profit_share_deduction">
                     {ui("خصم من نسبة أرباح الشريك")}
                   </option>
                 )}
               </select>
             </div>
-            {settleTarget?.accountType === 'employee' && <p className="text-sm leading-6 text-muted-foreground">{ui('خصم الحساب من المرتب بيتحدد من صفحة المرتبات الشهرية داخل بيانات الموظف. هنا للتحصيل المباشر فقط.')}</p>}
             {settlementMethod === "direct_payment" ? (
               <div>
                 <Label>{ui("وسيلة الدفع")}</Label>
@@ -844,7 +838,7 @@ export function SalesSettlementsPage() {
             <Button variant="outline" onClick={() => setSettleTarget(null)}>
               {ui("إلغاء")}
             </Button>
-            <Button permissionAction="update" onClick={() => void settle()} disabled={settling}>
+            <Button onClick={() => void settle()} disabled={settling}>
               {settling ? ui("جاري الترحيل…") : ui("اعتماد التسوية")}
             </Button>
           </DialogFooter>

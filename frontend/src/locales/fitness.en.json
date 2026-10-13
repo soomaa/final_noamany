@@ -51,7 +51,20 @@
     "uploadReport": "Upload report",
     "uploading": "Uploading…",
     "viewReport": "View report",
-    "reportHint": "Shown to the member in the mobile app"
+    "reportHint": "Shown to the member in the mobile app",
+    "memberMeasurementsTitle": "Member measurements",
+    "memberMeasurementsDescription": "Add and store members' InBody measurement files.",
+    "addMemberMeasurement": "Add member measurement",
+    "editMemberMeasurement": "Edit member measurement",
+    "fileNumber": "File number",
+    "file": "File",
+    "details": "Details",
+    "viewFile": "View file",
+    "fileLabel": "File",
+    "selectMemberFirst": "Select a member first",
+    "uploadFileFirst": "Upload the measurement file first",
+    "measurementDateRequired": "Measurement date is required",
+    "determiningFileNumber": "Determining number…"
   },
   "assessments": { "title": "Physical assessments", "assessor": "Assessor", "scores": "Scores" },
   "scheduling": {

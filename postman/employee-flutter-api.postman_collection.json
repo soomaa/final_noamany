@@ -1,0 +1,260 @@
+{
+  "info": {
+    "_postman_id": "6b3cf339-4f2e-4bb0-85a5-employee-flutter-api",
+    "name": "Noamany Employee Flutter App — Legacy /Api",
+    "description": "Collection for the installed employee app shown in the طلباتي screen. Base URL is the live server. Put credentials only in a local Postman environment. Requests that write real HR data are blocked unless allowWrites is exactly true.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "accessToken", "value": "", "type": "string" },
+    { "key": "messageId", "value": "", "type": "string" },
+    { "key": "permissionId", "value": "13522", "type": "string" },
+    { "key": "leaveId", "value": "6393", "type": "string" },
+    { "key": "loanId", "value": "", "type": "string" },
+    { "key": "taskId", "value": "", "type": "string" },
+    { "key": "circularId", "value": "", "type": "string" },
+    { "key": "warningId", "value": "", "type": "string" },
+    { "key": "requestId", "value": "", "type": "string" },
+    { "key": "initiativeId", "value": "", "type": "string" },
+    { "key": "activityId", "value": "", "type": "string" },
+    { "key": "visitId", "value": "", "type": "string" },
+    { "key": "correspondenceId", "value": "", "type": "string" },
+    { "key": "shiftId", "value": "", "type": "string" },
+    { "key": "leaveTypeId", "value": "19", "type": "string" },
+    { "key": "evaluationId", "value": "", "type": "string" },
+    { "key": "lawId", "value": "", "type": "string" },
+    { "key": "siteId", "value": "", "type": "string" },
+    { "key": "siteName", "value": "", "type": "string" }
+  ],
+  "auth": { "type": "bearer", "bearer": [{ "key": "token", "value": "{{accessToken}}", "type": "string" }] },
+  "event": [{
+    "listen": "prerequest",
+    "script": { "type": "text/javascript", "exec": [
+      "const writeActions = ['register_device_token', 'insert_update_token', 'Add_Agaza', 'Add_Agazax', 'Edit_Agaza', 'Delete_agaza', 'Egraa_agaza', 'Add_Ezn', 'Edit_Ezn', 'Delete_ezn', 'Egraa_ezn', 'Add_Solfa', 'Egraa_solfa', 'Delete_solfa', 'Add_Task', 'Delete_task', 'SendMessage', 'SeenMessage', 'DeleteMessage', 'SeenTa3mem', 'SeenEnzar', 'SeenLayha', 'Add_mosala_response', 'Add_Talab', 'Delete_Talab_order', 'Add_Mobadra', 'Delete_Mobadra', 'add_nashat', 'Delete_Nashat', 'Add_location_basma', 'Delete_zeyara', 'update_pass', 'update_pass_past', 'update_profile_image', 'Add_signature', 'Add_Screen_action', 'add_hdor_ensraf', 'add_hdor_ensraf_asly', 'attendance_new', 'attendance', 'add_sheft_edafi', 'add_hours_edafi'];",
+      "const requestUrl = pm.request.url.toString();",
+      "if (writeActions.some((action) => requestUrl.includes(`/Api/${action}`)) && pm.environment.get('allowWrites') !== 'true') pm.execution.skipRequest();"
+    ] }
+  }, {
+    "listen": "test",
+    "script": { "type": "text/javascript", "exec": [
+      "pm.test('HTTP response is successful', function () { pm.expect(pm.response.code).to.equal(200); });",
+      "const contentType = pm.response.headers.get('Content-Type') || '';",
+      "if (contentType.includes('application/json')) {",
+      "  const body = pm.response.json();",
+      "  pm.test('Legacy API response status is 200', function () { pm.expect(body.status).to.equal(200); });",
+      "}"
+    ] }
+  }],
+  "item": [
+    {
+      "name": "01 Authentication",
+      "item": [{
+        "name": "Login employee app",
+        "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+          "const body = pm.response.json();",
+          "pm.test('Returns employee access token', function () { pm.expect(body.data.access_token).to.be.a('string').and.not.empty; });",
+          "pm.collectionVariables.set('accessToken', body.data.access_token);"
+        ] } }],
+        "request": {
+          "auth": { "type": "noauth" }, "method": "POST",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": { "mode": "raw", "raw": "{\n  \"phone\": \"{{employeeLogin}}\",\n  \"user_pass\": \"{{employeePassword}}\"\n}" },
+          "url": "{{baseUrl}}/Api/login_app"
+        }
+      }, {
+        "name": "Verify employee account exists",
+        "request": {
+          "auth": { "type": "noauth" }, "method": "POST",
+          "header": [{ "key": "Content-Type", "value": "application/json" }],
+          "body": { "mode": "raw", "raw": "{\n  \"emp_option\": \"mob\",\n  \"emp_value\": \"{{employeeLogin}}\"\n}" },
+          "url": "{{baseUrl}}/Api/Check_Option"
+        }
+      }]
+    },
+    {
+      "name": "02 Public application content",
+      "item": [
+        { "name": "App information", "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{baseUrl}}/Api/getAppinfo" } },
+        { "name": "Privacy policy", "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{baseUrl}}/Api/getAppPolicy" } },
+        { "name": "Splash screens", "request": { "auth": { "type": "noauth" }, "method": "GET", "url": "{{baseUrl}}/Api/SplashScreens" } }
+      ]
+    },
+    {
+      "name": "03 Home, profile and notifications — READ",
+      "item": [
+        { "name": "Profile", "request": { "method": "GET", "url": "{{baseUrl}}/Api/getProfile" } },
+        { "name": "My evaluations", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const body = pm.response.json();", "pm.test('My evaluations response succeeds', () => pm.expect(body.status).to.equal(200));", "const row = body.data?.items?.[0];", "if (row) pm.collectionVariables.set('evaluationId', row.evaluation_id ?? '');"] } }], "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_My_Evaluations?page=1&per_page=20" } },
+        { "name": "My evaluation details", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('evaluationId')) pm.execution.skipRequest();"] } }, { "listen": "test", "script": { "type": "text/javascript", "exec": ["const body = pm.response.json();", "pm.test('My evaluation details response succeeds', () => pm.expect(body.status).to.equal(200));"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"evaluation_id\": \"{{evaluationId}}\" }" }, "url": "{{baseUrl}}/Api/Get_My_Evaluation_data" } },
+        { "name": "Notifications", "request": { "method": "GET", "url": "{{baseUrl}}/Api/today_notification" } },
+        { "name": "Application services", "request": { "method": "GET", "url": "{{baseUrl}}/Api/AppServices" } },
+        { "name": "Employee directory", "request": { "method": "GET", "url": "{{baseUrl}}/Api/AllEmplyees?page=1&per_page=20" } },
+        { "name": "Legal files", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_lawa2h_list?page=1&per_page=20" } },
+        { "name": "Months", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Months_List" } },
+        { "name": "Employee range types", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Ntaqat_types" } },
+        { "name": "Employee range", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_emp_ntaq" } },
+        { "name": "Request types", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Talabat_types" } },
+        { "name": "Employee statistics", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_emp_ehsaeyat" } },
+        { "name": "Manager statistics", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_mangar_ehsaeyat" } },
+        { "name": "Sliders", "request": { "method": "GET", "url": "{{baseUrl}}/Api/All_sliders" } },
+        { "name": "Branches", "request": { "method": "GET", "url": "{{baseUrl}}/Api/get_branches" } },
+        { "name": "Alert-screen state", "request": { "method": "GET", "url": "{{baseUrl}}/Api/show_screen_alert" } },
+        { "name": "Alert-screen items", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Alert_Screen" } }
+      ]
+    },
+    {
+      "name": "04 Messages — all APIs",
+      "item": [
+        { "name": "Inbox", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const row = pm.response.json().data?.[0];", "if (row) pm.collectionVariables.set('messageId', row.id ?? row.msg_id ?? '');"] } }], "request": { "method": "GET", "url": "{{baseUrl}}/Api/InboxMessages?page=1&per_page=20" } },
+        { "name": "Sent messages", "request": { "method": "GET", "url": "{{baseUrl}}/Api/SentMessages?page=1&per_page=20" } },
+        { "name": "Message details", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('messageId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"msg_id\": \"{{messageId}}\" }" }, "url": "{{baseUrl}}/Api/ViewMessage" } },
+        { "name": "Send message", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"to_user_ids\": [{{recipientUserId}}], \"subject\": \"{{testTitle}}\", \"message\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/SendMessage" } },
+        { "name": "Mark message read", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('messageId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"msg_id\": \"{{messageId}}\" }" }, "url": "{{baseUrl}}/Api/SeenMessage" } },
+        { "name": "Delete message", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('messageId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"msg_id\": \"{{messageId}}\" }" }, "url": "{{baseUrl}}/Api/DeleteMessage" } }
+      ]
+    },
+    {
+      "name": "05 Permissions — all APIs",
+      "item": [
+        { "name": "Permission types", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Ozonat_types" } },
+        { "name": "My permissions", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const row = pm.response.json().data?.[0];", "if (row) pm.collectionVariables.set('permissionId', row.id ?? row.ezn_id ?? '');"] } }], "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_Ezn_List?page=1&per_page=20" } },
+        { "name": "Incoming permissions", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_Wared_Ezn_List?page=1&per_page=20&status=wared" } },
+        { "name": "Permission details", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('permissionId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ezn_id\": \"{{permissionId}}\" }" }, "url": "{{baseUrl}}/Api/Get_Ezn_data" } },
+        { "name": "Add permission", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ezn_type_id\": \"1\", \"ezn_date\": \"{{requestDate}}\", \"from_time\": \"10:00 AM\", \"to_time\": \"11:00 AM\", \"reason\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_Ezn" } },
+        { "name": "Edit permission", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('permissionId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ezn_id\": \"{{permissionId}}\", \"ezn_type_id\": \"1\", \"from_time\": \"10:00 AM\", \"to_time\": \"11:00 AM\", \"reason\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Edit_Ezn" } },
+        { "name": "Delete permission", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('permissionId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ezn_id\": \"{{permissionId}}\" }" }, "url": "{{baseUrl}}/Api/Delete_ezn" } },
+        { "name": "Manager action on permission", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (pm.environment.get('allowWorkflowActions') !== 'true' || !pm.collectionVariables.get('permissionId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{managerAccessToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ezn_id\": \"{{permissionId}}\", \"action_option\": \"{{workflowAction}}\", \"reason\": \"{{actionReason}}\" }" }, "url": "{{baseUrl}}/Api/Egraa_ezn" } }
+      ]
+    },
+    {
+      "name": "06 Leaves — all APIs",
+      "item": [
+        { "name": "Leave types", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const types = pm.response.json().data ?? [];", "const type = types.find((item) => item.isActive !== false && item.agazaTtype !== 1) ?? types[0];", "if (type) pm.collectionVariables.set('leaveTypeId', type.id);"] } }], "request": { "method": "GET", "url": "{{baseUrl}}/Api/Agazat_types?page=1&per_page=100" } },
+        { "name": "My leaves", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const row = pm.response.json().data?.[0];", "if (row) pm.collectionVariables.set('leaveId', row.id ?? row.agaza_id ?? '');"] } }], "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_agaza_List?page=1&per_page=20" } },
+        { "name": "Leave details", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('leaveId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"agaza_id\": \"{{leaveId}}\" }" }, "url": "{{baseUrl}}/Api/Get_Agaza_data" } },
+        { "name": "Add leave", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"no3_agaza_id\": \"{{leaveTypeId}}\", \"from_date\": \"{{leaveStartDate}}\", \"to_date\": \"{{leaveEndDate}}\", \"reason\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_Agaza" } },
+        { "name": "Add leave (legacy alias)", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"no3_agaza_id\": \"{{leaveTypeId}}\", \"from_date\": \"{{leaveStartDate}}\", \"to_date\": \"{{leaveEndDate}}\", \"reason\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_Agazax" } },
+        { "name": "Edit leave", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('leaveId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"agaza_id\": \"{{leaveId}}\", \"no3_agaza_id\": \"{{leaveTypeId}}\", \"from_date\": \"{{leaveStartDate}}\", \"to_date\": \"{{leaveEndDate}}\", \"reason\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Edit_Agaza" } },
+        { "name": "Delete leave", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('leaveId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"agaza_id\": \"{{leaveId}}\" }" }, "url": "{{baseUrl}}/Api/Delete_agaza" } },
+        { "name": "Manager action on leave", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (pm.environment.get('allowWorkflowActions') !== 'true' || !pm.collectionVariables.get('leaveId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{managerAccessToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"agaza_id\": \"{{leaveId}}\", \"action_option\": \"{{workflowAction}}\", \"reason\": \"{{actionReason}}\" }" }, "url": "{{baseUrl}}/Api/Egraa_agaza" } }
+      ]
+    },
+    {
+      "name": "07 Attendance and shifts — all APIs",
+      "item": [
+        { "name": "Attendance today", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Basma_Today?page=1&per_page=50" } },
+        { "name": "Attendance report", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Report_Basma?page=1&per_page=50&date_from={{dateFrom}}&date_to={{dateTo}}" } },
+        { "name": "Shift operation types", "request": { "method": "GET", "url": "{{baseUrl}}/Api/sheft_types" } },
+        { "name": "Shift templates", "request": { "method": "GET", "url": "{{baseUrl}}/Api/dwam_types?page=1&per_page=100" } },
+        { "name": "Shift changes report", "request": { "method": "GET", "url": "{{baseUrl}}/Api/report_tabdel_sheft?page=1&per_page=20&date_from={{dateFrom}}&date_to={{dateTo}}" } },
+        { "name": "Overtime report", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Report_hours_edafi?page=1&per_page=20&date_from={{dateFrom}}&date_to={{dateTo}}" } },
+        { "name": "Punch attendance", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"lat\": \"{{latitude}}\", \"long\": \"{{longitude}}\" }" }, "url": "{{baseUrl}}/Api/add_hdor_ensraf" } },
+        { "name": "Punch attendance (original alias)", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"lat\": \"{{latitude}}\", \"long\": \"{{longitude}}\" }" }, "url": "{{baseUrl}}/Api/add_hdor_ensraf_asly" } },
+        { "name": "Punch attendance (new alias)", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"lat\": \"{{latitude}}\", \"long\": \"{{longitude}}\" }" }, "url": "{{baseUrl}}/Api/attendance_new" } },
+        { "name": "Punch attendance (short alias)", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"lat\": \"{{latitude}}\", \"long\": \"{{longitude}}\" }" }, "url": "{{baseUrl}}/Api/attendance" } },
+        { "name": "Add shift change", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ttype\": \"1\", \"dwam_id_fk\": \"{{shiftId}}\", \"sheft_date\": \"{{requestDate}}\" }" }, "url": "{{baseUrl}}/Api/add_sheft_edafi" } },
+        { "name": "Add overtime request", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"num_hours\": \"1\", \"edafa_date\": \"{{requestDate}}\" }" }, "url": "{{baseUrl}}/Api/add_hours_edafi" } }
+      ]
+    },
+    {
+      "name": "08 Circulars, warnings, laws and correspondence — all APIs",
+      "item": [
+        { "name": "Warnings", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const row = pm.response.json().data?.[0];", "if (row) pm.collectionVariables.set('warningId', row.id ?? row.enzar_id_fk ?? '');"] } }], "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_Enzarat_list?page=1&per_page=20" } },
+        { "name": "Warning details", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('warningId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"enzar_id_fk\": \"{{warningId}}\" }" }, "url": "{{baseUrl}}/Api/Get_enzar_data" } },
+        { "name": "Circulars", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const row = pm.response.json().data?.[0];", "if (row) pm.collectionVariables.set('circularId', row.ta3mem_id_fk ?? row.id ?? '');"] } }], "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_ta3mem_list?page=1&per_page=20" } },
+        { "name": "Circular details", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('circularId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ta3mem_id_fk\": \"{{circularId}}\" }" }, "url": "{{baseUrl}}/Api/Get_ta3mem_data" } },
+        { "name": "Administrative correspondence", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_mosalat_list?page=1&per_page=20" } },
+        { "name": "Mark circular read", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('circularId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ta3mem_id_fk\": \"{{circularId}}\" }" }, "url": "{{baseUrl}}/Api/SeenTa3mem" } },
+        { "name": "Mark warning read", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('warningId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"enzar_id_fk\": \"{{warningId}}\" }" }, "url": "{{baseUrl}}/Api/SeenEnzar" } },
+        { "name": "Confirm legal file read", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"layha_id\": \"{{lawId}}\" }" }, "url": "{{baseUrl}}/Api/SeenLayha" } },
+        { "name": "Reply to correspondence", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('correspondenceId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"mosala_id\": \"{{correspondenceId}}\", \"answer_reasons\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_mosala_response" } }
+      ]
+    },
+    {
+      "name": "09 Loans, tasks, requests, activities and visits — all APIs",
+      "item": [
+        { "name": "Loan metadata", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Solaf_meta" } },
+        { "name": "My loans", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const row = pm.response.json().data?.[0];", "if (row) pm.collectionVariables.set('loanId', row.id ?? row.solfa_id ?? row.loan_id ?? '');"] } }], "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_Solaf_List?page=1&per_page=20" } },
+        { "name": "Loan details", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('loanId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"solfa_id\": \"{{loanId}}\" }" }, "url": "{{baseUrl}}/Api/Get_Solfa_data" } },
+        { "name": "Daily tasks", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_Tasks_List?page=1&per_page=20" } },
+        { "name": "My requests", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const row = pm.response.json().data?.[0];", "if (row) pm.collectionVariables.set('requestId', row.id ?? row.order_id ?? '');"] } }], "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_Talabat_List?page=1&per_page=20" } },
+        { "name": "Request details", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('requestId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"order_id\": \"{{requestId}}\" }" }, "url": "{{baseUrl}}/Api/Get_Talab_data" } },
+        { "name": "Initiatives", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_Mobadarat_List?page=1&per_page=20" } },
+        { "name": "Activities", "request": { "method": "GET", "url": "{{baseUrl}}/Api/Get_Nashat_List?page=1&per_page=20" } },
+        { "name": "My visits", "request": { "method": "GET", "url": "{{baseUrl}}/Api/get_employee_visits?page=1&per_page=20" } },
+        { "name": "Add loan", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"qemt_solaf\": 1, \"sadad_solfa\": 1, \"qst_num\": 1, \"solaf_reason\": \"{{testReason}}\", \"khsm_form_date_m\": \"{{loanDeductionDate}}\" }" }, "url": "{{baseUrl}}/Api/Add_Solfa" } },
+        { "name": "Manager action on loan", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (pm.environment.get('allowWorkflowActions') !== 'true' || !pm.collectionVariables.get('loanId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{managerAccessToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"solfa_id\": \"{{loanId}}\", \"action_option\": \"{{workflowAction}}\", \"reason\": \"{{actionReason}}\" }" }, "url": "{{baseUrl}}/Api/Egraa_solfa" } },
+        { "name": "Delete loan", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('loanId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"solfa_id\": \"{{loanId}}\" }" }, "url": "{{baseUrl}}/Api/Delete_solfa" } },
+        { "name": "Add task", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"title\": \"{{testTitle}}\", \"notes\": \"{{testReason}}\", \"status\": \"done\" }" }, "url": "{{baseUrl}}/Api/Add_Task" } },
+        { "name": "Delete task", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('taskId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"task_id\": \"{{taskId}}\" }" }, "url": "{{baseUrl}}/Api/Delete_task" } },
+        { "name": "Add employee request", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"talab_type_id\": \"{{requestTypeId}}\", \"notes\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_Talab" } },
+        { "name": "Delete employee request", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('requestId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"order_id\": \"{{requestId}}\" }" }, "url": "{{baseUrl}}/Api/Delete_Talab_order" } },
+        { "name": "Add initiative", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"title\": \"{{testTitle}}\", \"notes\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_Mobadra" } },
+        { "name": "Delete initiative", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('initiativeId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"mobadra_id\": \"{{initiativeId}}\" }" }, "url": "{{baseUrl}}/Api/Delete_Mobadra" } },
+        { "name": "Add activity", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"title\": \"{{testTitle}}\", \"notes\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/add_nashat" } },
+        { "name": "Delete activity", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('activityId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"main_id\": \"{{activityId}}\" }" }, "url": "{{baseUrl}}/Api/Delete_Nashat" } },
+        { "name": "Add employee visit", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"site_id\": \"{{siteId}}\", \"lat\": \"{{latitude}}\", \"long\": \"{{longitude}}\", \"site_name\": \"{{siteName}}\", \"notes\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_location_basma" } },
+        { "name": "Delete employee visit", "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (!pm.collectionVariables.get('visitId')) pm.execution.skipRequest();"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"zeyara_id\": \"{{visitId}}\" }" }, "url": "{{baseUrl}}/Api/Delete_zeyara" } }
+      ]
+    },
+    {
+      "name": "10 Profile, device and alert actions — all APIs",
+      "item": [
+        { "name": "Register device token (primary)", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"device_token\": \"{{deviceToken}}\" }" }, "url": "{{baseUrl}}/Api/register_device_token" } },
+        { "name": "Register device token (legacy alias)", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"device_token\": \"{{deviceToken}}\" }" }, "url": "{{baseUrl}}/Api/insert_update_token" } },
+        { "name": "Update password", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"user_pass\": \"{{newPassword}}\", \"confirm_user_pass\": \"{{newPassword}}\" }" }, "url": "{{baseUrl}}/Api/update_pass" } },
+        { "name": "Update password with current password", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"current_pass\": \"{{employeePassword}}\", \"user_pass\": \"{{newPassword}}\", \"confirm_user_pass\": \"{{newPassword}}\" }" }, "url": "{{baseUrl}}/Api/update_pass_past" } },
+        { "name": "Update profile image", "request": { "method": "POST", "body": { "mode": "formdata", "formdata": [{ "key": "m_image", "type": "file", "src": "" }] }, "url": "{{baseUrl}}/Api/update_profile_image" } },
+        { "name": "Add signature", "request": { "method": "POST", "body": { "mode": "formdata", "formdata": [{ "key": "m_image", "type": "file", "src": "" }] }, "url": "{{baseUrl}}/Api/Add_signature" } },
+        { "name": "Alert screen action", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"eqrar_id\": \"{{alertId}}\" }" }, "url": "{{baseUrl}}/Api/Add_Screen_action" } }
+      ]
+    },
+    {
+      "name": "11 Quick mutation shortcuts — disabled unless allowWrites=true",
+      "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+        "if (pm.environment.get('allowWrites') !== 'true') pm.execution.skipRequest();"
+      ] } }],
+      "item": [
+        { "name": "Register device token", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"device_token\": \"{{deviceToken}}\" }" }, "url": "{{baseUrl}}/Api/register_device_token" } },
+        { "name": "Create permission", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ezn_type_id\": \"1\", \"ezn_date\": \"{{requestDate}}\", \"from_time\": \"10:00 AM\", \"to_time\": \"11:00 AM\", \"reason\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_Ezn" } },
+        { "name": "Edit permission", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ezn_id\": \"{{permissionId}}\", \"ezn_type_id\": \"1\", \"from_time\": \"10:00 AM\", \"to_time\": \"11:00 AM\", \"reason\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Edit_Ezn" } },
+        { "name": "Delete permission", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ezn_id\": \"{{permissionId}}\" }" }, "url": "{{baseUrl}}/Api/Delete_ezn" } },
+        { "name": "Create leave", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"no3_agaza_id\": \"{{leaveTypeId}}\", \"from_date\": \"{{leaveStartDate}}\", \"to_date\": \"{{leaveEndDate}}\", \"reason\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_Agaza" } },
+        { "name": "Delete leave", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"agaza_id\": \"{{leaveId}}\" }" }, "url": "{{baseUrl}}/Api/Delete_agaza" } },
+        { "name": "Create daily task", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"title\": \"{{testTitle}}\", \"notes\": \"{{testReason}}\", \"status\": \"done\" }" }, "url": "{{baseUrl}}/Api/Add_Task" } },
+        { "name": "Delete daily task", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"task_id\": \"{{taskId}}\" }" }, "url": "{{baseUrl}}/Api/Delete_task" } },
+        { "name": "Send message", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"to_user_ids\": [{{recipientUserId}}], \"subject\": \"{{testTitle}}\", \"message\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/SendMessage" } },
+        { "name": "Mark message read", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"msg_id\": \"{{messageId}}\" }" }, "url": "{{baseUrl}}/Api/SeenMessage" } },
+        { "name": "Create shift change", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ttype\": \"1\", \"dwam_id_fk\": \"{{shiftId}}\", \"sheft_date\": \"{{requestDate}}\" }" }, "url": "{{baseUrl}}/Api/add_sheft_edafi" } },
+        { "name": "Create overtime request", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"num_hours\": \"1\", \"edafa_date\": \"{{requestDate}}\" }" }, "url": "{{baseUrl}}/Api/add_hours_edafi" } },
+        { "name": "Create employee request", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"talab_type_id\": \"{{requestTypeId}}\", \"notes\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_Talab" } },
+        { "name": "Create initiative", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"title\": \"{{testTitle}}\", \"notes\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_Mobadra" } },
+        { "name": "Create activity", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"title\": \"{{testTitle}}\", \"notes\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/add_nashat" } },
+        { "name": "Create loan", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"qemt_solaf\": 1, \"sadad_solfa\": 1, \"qst_num\": 1, \"solaf_reason\": \"{{testReason}}\", \"khsm_form_date_m\": \"{{requestDate}}\" }" }, "url": "{{baseUrl}}/Api/Add_Solfa" } },
+        { "name": "Punch attendance", "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"lat\": \"{{latitude}}\", \"long\": \"{{longitude}}\" }" }, "url": "{{baseUrl}}/Api/add_hdor_ensraf" } }
+      ]
+    },
+    {
+      "name": "12 Authorized live workflows — employee submissions",
+      "description": "These requests write real pending employee requests. Run only with allowWrites=true and an authorized employee account. The response IDs are retained only in the active Postman session.",
+      "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (pm.environment.get('allowWrites') !== 'true') pm.execution.skipRequest();"] } }],
+      "item": [
+        { "name": "Load eligible live leave type", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const types = pm.response.json().data ?? [];", "const start = new Date(`${pm.environment.get('leaveStartDate')}T12:00:00`);", "const end = new Date(`${pm.environment.get('leaveEndDate')}T12:00:00`);", "const days = Math.floor((end - start) / 86400000) + 1;", "const type = types.find((item) => item.isActive !== false && item.agazaTtype !== 1 && Number(item.minDays ?? 0) <= days && (!item.maxDays || Number(item.maxDays) >= days));", "pm.test('An eligible leave type is available for the requested duration', () => pm.expect(type?.id).to.exist);", "pm.collectionVariables.set('leaveTypeId', type.id);"] } }], "request": { "method": "GET", "url": "{{baseUrl}}/Api/Agazat_types?page=1&per_page=100" } },
+        { "name": "Create real permission request", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const id = pm.response.json().data?.id;", "pm.test('Permission request ID is returned', () => pm.expect(id).to.exist);", "pm.collectionVariables.set('permissionId', id);"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ezn_type_id\": \"1\", \"ezn_date\": \"{{requestDate}}\", \"from_time\": \"10:00 AM\", \"to_time\": \"11:00 AM\", \"reason\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_Ezn" } },
+        { "name": "Create real leave request", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const id = pm.response.json().data?.id;", "pm.test('Leave request ID is returned', () => pm.expect(id).to.exist);", "pm.collectionVariables.set('leaveId', id);"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"no3_agaza_id\": \"{{leaveTypeId}}\", \"from_date\": \"{{leaveStartDate}}\", \"to_date\": \"{{leaveEndDate}}\", \"reason\": \"{{testReason}}\" }" }, "url": "{{baseUrl}}/Api/Add_Agaza" } },
+        { "name": "Create real loan request", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const id = pm.response.json().data?.id;", "pm.test('Loan request ID is returned', () => pm.expect(id).to.exist);", "pm.collectionVariables.set('loanId', id);"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"qemt_solaf\": 1, \"sadad_solfa\": 1, \"qst_num\": 1, \"solaf_reason\": \"{{testReason}}\", \"khsm_form_date_m\": \"{{loanDeductionDate}}\" }" }, "url": "{{baseUrl}}/Api/Add_Solfa" } }
+      ]
+    },
+    {
+      "name": "13 Authorized workflow actions — manager approval or rejection",
+      "description": "Use only with an authorized manager account and request IDs that are currently addressed to that manager. Set allowWrites=true, allowWorkflowActions=true, and workflowAction to accept or reject. The folder applies exactly one selected action to the supplied permissionId and leaveId.",
+      "event": [{ "listen": "prerequest", "script": { "type": "text/javascript", "exec": ["if (pm.environment.get('allowWrites') !== 'true' || pm.environment.get('allowWorkflowActions') !== 'true' || !['accept', 'reject'].includes(pm.environment.get('workflowAction'))) pm.execution.skipRequest();"] } }],
+      "item": [
+        { "name": "Login manager for workflow action", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const body = pm.response.json();", "pm.test('Manager login succeeded', () => pm.expect(body.status).to.equal(200));", "pm.test('Manager token is returned', () => pm.expect(body.data?.access_token).to.exist);", "pm.collectionVariables.set('managerAccessToken', body.data.access_token);"] } }], "request": { "method": "POST", "header": [{ "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"phone\": \"{{managerLogin}}\", \"user_pass\": \"{{managerPassword}}\" }" }, "url": "{{baseUrl}}/Api/login_app" } },
+        { "name": "Permission details for manager", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{managerAccessToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ezn_id\": \"{{permissionId}}\" }" }, "url": "{{baseUrl}}/Api/Get_Ezn_data" } },
+        { "name": "Apply selected action to permission", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const body = pm.response.json();", "pm.test('Permission action succeeded', () => pm.expect(body.status).to.equal(200));"] } }], "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{managerAccessToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"ezn_id\": \"{{permissionId}}\", \"action_option\": \"{{workflowAction}}\", \"reason\": \"{{actionReason}}\" }" }, "url": "{{baseUrl}}/Api/Egraa_ezn" } },
+        { "name": "Leave details for manager", "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{managerAccessToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"agaza_id\": \"{{leaveId}}\" }" }, "url": "{{baseUrl}}/Api/Get_Agaza_data" } },
+        { "name": "Apply selected action to leave", "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": ["const body = pm.response.json();", "pm.test('Leave action succeeded', () => pm.expect(body.status).to.equal(200));"] } }], "request": { "method": "POST", "header": [{ "key": "Authorization", "value": "Bearer {{managerAccessToken}}" }, { "key": "Content-Type", "value": "application/json" }], "body": { "mode": "raw", "raw": "{ \"agaza_id\": \"{{leaveId}}\", \"action_option\": \"{{workflowAction}}\", \"reason\": \"{{actionReason}}\" }" }, "url": "{{baseUrl}}/Api/Egraa_agaza" } }
+      ]
+    }
+  ]
+}

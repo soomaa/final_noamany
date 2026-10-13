@@ -45,15 +45,6 @@ export class InventoryTransactionsController {
     return this.service.create(body, user);
   }
 
-  @Post('management-withdrawals')
-  @RequiresPermission('gym-sales.inventory.gym_issue:create')
-  createManagementWithdrawal(
-    @Body() body: UpsertInventoryTransactionDto,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.service.createManagementWithdrawal(body, user);
-  }
-
   @Put(':id')
   @RequiresPermission('gym-sales.inventory.gym_issue:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertInventoryTransactionDto>, @CurrentUser() user: JwtUser) {

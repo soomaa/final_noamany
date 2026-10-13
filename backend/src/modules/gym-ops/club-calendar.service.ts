@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
-import { csvRows } from '../../common/export/csv.util';
 
 function timeToMinutes(t: string): number {
   const [h, m] = t.split(':').map(Number);
@@ -300,13 +299,13 @@ export class ClubCalendarService {
   async exportMembersCsv(branchId?: number, user?: JwtUser): Promise<string> {
     if (branchId) this.assertBranchAccess(user, branchId);
     const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
-    const gender = this.branchScope.memberGenderFilter(user);
+    const audience = this.branchScope.memberGenderFilter(user);
     const rows = await this.prisma.club_members.findMany({
       where: {
         is_deleted: false,
         ...(branchId ? { branch_id: branchId } : {}),
         ...(scope !== null ? { branch_id: { in: scope } } : {}),
-        ...(gender ? { gender } : {}),
+        ...(audience ? { gender: audience } : {}),
       },
       orderBy: { id: 'asc' },
       select: {
@@ -322,11 +321,11 @@ export class ClubCalendarService {
       },
     });
 
-    return csvRows([
-      ['member_code', 'name', 'phone', 'email', 'gender', 'card_number', 'branch_id', 'is_active', 'created_at'],
-      ...rows.map((r) => [
+    const header = 'member_code,name,phone,email,gender,card_number,branch_id,is_active,created_at';
+    const lines = rows.map((r) =>
+      [
         r.member_code,
-        r.name,
+        `"${r.name.replace(/"/g, '""')}"`,
         r.phone ?? '',
         r.email ?? '',
         r.gender,
@@ -334,19 +333,20 @@ export class ClubCalendarService {
         r.branch_id,
         r.is_active,
         r.created_at.toISOString(),
-      ]),
-    ]);
+      ].join(','),
+    );
+    return [header, ...lines].join('\n');
   }
 
   async exportSubscriptionsCsv(branchId?: number, user?: JwtUser): Promise<string> {
     if (branchId) this.assertBranchAccess(user, branchId);
     const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
-    const gender = this.branchScope.memberGenderFilter(user);
+    const audience = this.branchScope.memberGenderFilter(user);
     const rows = await this.prisma.club_subscriptions.findMany({
       where: {
         ...(branchId ? { branch_id: branchId } : {}),
         ...(scope !== null ? { branch_id: { in: scope } } : {}),
-        ...(gender ? { gender } : {}),
+        ...(audience ? { gender: audience } : {}),
       },
       orderBy: { id: 'desc' },
       take: 10_000,
@@ -364,11 +364,12 @@ export class ClubCalendarService {
       },
     });
 
-    return csvRows([
-      ['subscription_number', 'customer_name', 'subscription_type', 'start_date', 'end_date', 'value', 'paid', 'remaining', 'status', 'branch_id'],
-      ...rows.map((r) => [
+    const header =
+      'subscription_number,customer_name,subscription_type,start_date,end_date,value,paid,remaining,status,branch_id';
+    const lines = rows.map((r) =>
+      [
         r.subscription_number,
-        r.customer_name ?? '',
+        `"${(r.customer_name ?? '').replace(/"/g, '""')}"`,
         r.subscription_type ?? '',
         r.subscription_start_date,
         r.subscription_end_date,
@@ -377,7 +378,32 @@ export class ClubCalendarService {
         Number(r.remaining_amount),
         r.status,
         r.branch_id,
-      ]),
-    ]);
+      ].join(','),
+    );
+    return [header, ...lines].join('\n');
+  }
+
+  async exportAttendanceCsv(branchId?: number, user?: JwtUser): Promise<string> {
+    if (branchId) this.assertBranchAccess(user, branchId);
+    const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
+    const audience = this.branchScope.memberGenderFilter(user);
+    const rows = await this.prisma.club_attendance.findMany({
+      where: { ...(branchId ? { branch_id: branchId } : {}), ...(scope !== null ? { branch_id: { in: scope } } : {}), ...(audience ? { member: { gender: audience } } : {}) },
+      orderBy: { id: 'desc' }, take: 10_000,
+      select: { member_code: true, member_name: true, branch_id: true, attendance_date: true, check_in_time: true, check_out_time: true, status: true },
+    });
+    return ['member_code,member_name,branch_id,attendance_date,check_in,check_out,status', ...rows.map((r) => [r.member_code, `"${r.member_name.replace(/"/g, '""')}"`, r.branch_id, r.attendance_date, r.check_in_time.toISOString(), r.check_out_time?.toISOString() ?? '', r.status].join(','))].join('\n');
+  }
+
+  async exportReceiptsCsv(branchId?: number, user?: JwtUser): Promise<string> {
+    if (branchId) this.assertBranchAccess(user, branchId);
+    const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
+    const audience = this.branchScope.memberGenderFilter(user);
+    const rows = await this.prisma.club_receipts.findMany({
+      where: { ...(branchId ? { branch_id: branchId } : {}), ...(scope !== null ? { branch_id: { in: scope } } : {}), ...(audience ? { member: { gender: audience } } : {}) },
+      orderBy: { id: 'desc' }, take: 10_000,
+      select: { receipt_number: true, member_name: true, branch_id: true, amount: true, payment_method: true, receipt_date: true, status: true },
+    });
+    return ['receipt_number,member_name,branch_id,amount,payment_method,receipt_date,status', ...rows.map((r) => [r.receipt_number, `"${r.member_name.replace(/"/g, '""')}"`, r.branch_id ?? '', Number(r.amount), r.payment_method ?? '', r.receipt_date, r.status].join(','))].join('\n');
   }
 }

@@ -22,9 +22,6 @@ describe('ClubSubscriptionsService.renew history safety', () => {
     },
   };
   const prisma = {
-    club_members: {
-      findUnique: jest.fn(),
-    },
     club_subscriptions: {
       findUnique: jest.fn(),
     },
@@ -51,7 +48,6 @@ describe('ClubSubscriptionsService.renew history safety', () => {
   };
   const branchScope = {
     isBranchAllowed: jest.fn(),
-    memberGenderFilter: jest.fn(() => null),
   };
   const permissions = {
     isSuperAdmin: jest.fn(),
@@ -66,6 +62,7 @@ describe('ClubSubscriptionsService.renew history safety', () => {
     branchScope as unknown as BranchScopeService,
     permissions as unknown as PermissionEngineService,
     { resolveDiscount: jest.fn() } as unknown as import('./club-discount-codes.service').ClubDiscountCodesService,
+    {} as never,
   );
 
   const today = localDateString();
@@ -114,7 +111,6 @@ describe('ClubSubscriptionsService.renew history safety', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     branchScope.isBranchAllowed.mockReturnValue(true);
-    prisma.club_members.findUnique.mockResolvedValue({ gender: 'male', is_deleted: false });
     prisma.club_subscriptions.findUnique.mockResolvedValue(oldSubscription);
     prisma.club_subscription_freezes.findFirst.mockResolvedValue(null);
     prisma.$transaction.mockImplementation(async (fn: (client: typeof tx) => unknown) => fn(tx));
@@ -156,7 +152,6 @@ describe('ClubSubscriptionsService.renew history safety', () => {
         member_id: 9,
         paid_amount: 300,
         sessions_used: 0,
-        gender: 'male',
       }),
     });
     expect(receipts.createForSubscription).toHaveBeenCalledWith(

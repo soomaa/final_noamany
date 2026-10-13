@@ -16,12 +16,7 @@ import { PaginationDto } from '../../../common/dto/pagination.dto';
 export const CLUB_PAYMENT_METHODS = [
   'cash',
   'card',
-  'bank',
-  'online',
-  'visa',
   'transfer',
-  'wallet',
-  'instapay',
 ] as const;
 
 export type ClubPaymentMethodValue = (typeof CLUB_PAYMENT_METHODS)[number];
@@ -43,7 +38,9 @@ export class ListClubReceiptsDto extends PaginationDto {
   @Transform(({ value }) => (value != null ? parseInt(value, 10) : 50))
   @IsInt()
   @Min(1)
-  @Max(200)
+  // The subscriptions workspace loads its receipt history in one request.
+  // Keep this aligned with the shared frontend request limit.
+  @Max(500)
   override pageSize: number = 50;
 
   @IsOptional()

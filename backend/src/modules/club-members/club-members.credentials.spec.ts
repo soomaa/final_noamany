@@ -14,14 +14,8 @@ describe('ClubMembersService app credentials', () => {
     {} as never,
   );
 
-  it('generates a unique password instead of the shared legacy default', () => {
-    const first = (service as any).defaultAppPassword();
-    const second = (service as any).defaultAppPassword();
-
-    expect(first).not.toBe('000000');
-    expect(second).not.toBe('000000');
-    expect(first).not.toBe(second);
-    expect(first.length).toBeGreaterThanOrEqual(12);
+  it('uses the member phone as the initial app password', () => {
+    expect((service as any).defaultAppPassword('01012345678')).toBe('01012345678');
   });
 
   it('does not attach an existing orphan login to a newly created member', async () => {

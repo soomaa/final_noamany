@@ -15,6 +15,7 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { ClubWellnessService } from './club-wellness.service';
 import { ListClubFitnessDto } from './dto/list-club-fitness.dto';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-inbody-services')
@@ -63,31 +64,36 @@ export class ClubInbodyMeasurementsController {
   constructor(private readonly service: ClubWellnessService) {}
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listInbodyMeasurements(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listInbodyMeasurements(query, user);
+  }
+
+  @Get('next-file-number')
+  nextFileNumber() {
+    return this.service.nextInbodyFileNumber().then((nextFileNumber) => ({ nextFileNumber }));
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findInbodyMeasurement(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findInbodyMeasurement(id, user);
   }
 
   @Post()
   @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>) {
-    return this.service.createInbodyMeasurement(body);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createInbodyMeasurement(body, user);
   }
 
   @Put(':id')
   @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateInbodyMeasurement(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateInbodyMeasurement(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeInbodyMeasurement(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeInbodyMeasurement(id, user);
   }
 }
 
@@ -99,8 +105,8 @@ export class AdminInbodyController {
 
   @Post('inbody')
   @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>) {
-    return this.service.createInbodyMeasurement(body);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createInbodyMeasurement(body, user);
   }
 }
 

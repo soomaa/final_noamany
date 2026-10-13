@@ -9,9 +9,8 @@ import helmet from 'helmet';
 import { existsSync } from 'fs';
 import { isAbsolute, join } from 'path';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { AppModule } from './app.module';
 import { PrismaService } from './common/prisma/prisma.service';
-import { sensitiveUploadMounts } from './common/utils/sensitive-upload-path.util';
+import { AppModule } from './app.module';
 
 // Legacy BigInt columns (e.g. employees.card_num) must serialize as strings in JSON.
 (BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function () {
@@ -24,6 +23,7 @@ async function bootstrap() {
   // exists, leaving /Api/:action able to capture lowercase /api/* requests.
   const expressServer = express();
   expressServer.set('case sensitive routing', true);
+
   const app = await NestFactory.create<NestExpressApplication>(
     AppModule,
     new ExpressAdapter(expressServer),
@@ -97,12 +97,8 @@ async function bootstrap() {
   const uploadDir = isAbsolute(configuredUploadDir)
     ? configuredUploadDir
     : join(process.cwd(), configuredUploadDir);
-  const publicUploadBase = config.get<string>('publicUploadBase') ?? '/uploads';
-  for (const mount of sensitiveUploadMounts(publicUploadBase)) {
-    app.use(mount, (_req: Request, response: Response) => response.status(404).end());
-  }
   app.useStaticAssets(uploadDir, {
-    prefix: publicUploadBase,
+    prefix: config.get<string>('publicUploadBase') ?? '/uploads',
   });
 
   // Unified single-origin deployment:
@@ -142,9 +138,6 @@ async function bootstrap() {
       const requestPath = req.originalUrl.split('?')[0];
       if (requestPath.startsWith('/api') || requestPath.startsWith('/uploads')) return next();
       if (!req.headers.accept?.includes('text/html')) return next();
-      // Public membership journeys use clean URLs; route them before the generic admin SPA fallback.
-      if (requestPath.match(/^\/memberships\/\d+$/)) return res.sendFile(join(publicDir, 'membership.html'));
-      if (requestPath === '/membership-checkout') return res.sendFile(join(publicDir, 'membership-checkout.html'));
       if (requestPath === '/') return res.sendFile(siteIndexHtml);
       return res.sendFile(existsSync(systemIndexHtml) ? systemIndexHtml : siteIndexHtml);
     });
@@ -159,7 +152,7 @@ async function bootstrap() {
     });
     if (superAdmins === 0) {
       console.warn(
-        '\n⚠️  No super-admin user found. Run `npm run db:seed:rbac` to synchronize roles ' +
+        '\n⚠️  No super-admin user found. Run `npm run db:seed` to assign roles ' +
           '(by users.level) before going live — otherwise all users are locked out.\n',
       );
     }

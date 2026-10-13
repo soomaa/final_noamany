@@ -21,7 +21,6 @@ import {
   syncAllEmployeeUserRoles,
 } from '../src/modules/rbac/job-title-role.util';
 import { defaultPermissionCellsForJobTitle } from '../src/modules/rbac/job-title-defaults';
-import { SALES_MEMBER_VIEWER_ROLE } from '../src/modules/rbac/sales-member-viewer-role';
 
 const prisma = new PrismaClient();
 
@@ -32,7 +31,6 @@ const HR_MANAGER_MODULES = ['hr', 'club', 'gym-sales'];
 
 /** Starter matrices (module-level grants inherit down). super_admin needs none (bypass). */
 const ROLE_MATRICES: Record<string, Cell[]> = {
-  [SALES_MEMBER_VIEWER_ROLE.key]: SALES_MEMBER_VIEWER_ROLE.cells,
   trainer: [
     { resourceKey: 'trainer.portal', actionKey: 'view', effect: 'allow' },
   ],
@@ -83,14 +81,6 @@ const ROLES: Array<{
   { key: 'hr_manager', nameAr: 'مدير الموارد البشرية', nameEn: 'HR Manager', description: 'صلاحيات تشغيلية واسعة على وحدات الموارد البشرية', isSystem: false, isSuperAdmin: false },
   { key: 'branch_manager', nameAr: 'مدير فرع/إدارة', nameEn: 'Branch Manager', description: 'عرض واعتماد طلبات فرعه', isSystem: false, isSuperAdmin: false },
   { key: 'employee', nameAr: 'موظف', nameEn: 'Employee', description: 'خدمة ذاتية محدودة', isSystem: false, isSuperAdmin: false },
-  {
-    key: SALES_MEMBER_VIEWER_ROLE.key,
-    nameAr: SALES_MEMBER_VIEWER_ROLE.nameAr,
-    nameEn: SALES_MEMBER_VIEWER_ROLE.nameEn,
-    description: SALES_MEMBER_VIEWER_ROLE.description,
-    isSystem: true,
-    isSuperAdmin: false,
-  },
   { key: 'trainer', nameAr: 'صلاحيات المدربين', nameEn: 'Trainer Permissions', description: 'وصول المدرب إلى جدوله وحضوره ومستحقاته فقط', isSystem: true, isSuperAdmin: false },
 ];
 
@@ -286,13 +276,13 @@ async function seedClubPermissions(
     },
     {
       roleKey: 'branch_manager',
-      cells: (['club', 'club.members', 'club.dashboard', 'club.subscriptions', 'club.lockers', 'club.fitness'] as const).flatMap((r) =>
-        (['view', 'export', 'print'] as ActionKey[]).map((actionKey) => ({
-          resourceKey: r,
-          actionKey,
-          effect: 'allow' as const,
-        })),
-      ),
+      cells: [
+        ...(['club', 'club.members', 'club.dashboard', 'club.subscriptions', 'club.lockers', 'club.fitness'] as const).flatMap((r) =>
+          (['view', 'export', 'print'] as ActionKey[]).map((actionKey) => ({ resourceKey: r, actionKey, effect: 'allow' as const })),
+        ),
+        // A branch manager records monthly trainer scores, but cannot change the rubric or targets.
+        { resourceKey: 'club.fitness.trainer_evaluations', actionKey: 'update' as ActionKey, effect: 'allow' as const },
+      ],
     },
   ];
 
@@ -591,8 +581,12 @@ export async function seedRbac() {
   const cafeJob = await prisma.department_jobs.findFirst({ where: { name: 'إدارة الكافيه' }, select: { id: true } });
   if (cafeJob) {
     const cafeRole = await prisma.rbac_roles.findUnique({ where: { key: jobTitleRoleKey(cafeJob.id) }, select: { id: true } });
+    const cafeResources = await prisma.rbac_resources.findMany({
+      where: { OR: [{ key: { startsWith: 'gym-sales' } }, { key: { startsWith: 'club.cafe' } }] },
+      select: { id: true },
+    });
     const cafeActions = await prisma.rbac_resource_actions.findMany({
-      where: { resource: { OR: [{ key: { startsWith: 'gym-sales' } }, { key: { startsWith: 'club.cafe' } }] } },
+      where: { resource_id: { in: cafeResources.map((resource) => resource.id) } },
       select: { resource_id: true, action_id: true },
     });
     if (cafeRole && cafeActions.length) {

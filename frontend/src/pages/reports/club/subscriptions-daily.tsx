@@ -7,7 +7,6 @@ import { StatusBadge } from '@/components/common/status-badge';
 import { ReportShell, downloadCsv } from '@/components/reports/report-shell';
 import { DateRangeFilter, firstOfMonth, todayLocal } from '@/components/reports/date-range-filter';
 import { BranchFilter, normalizeBranchParam } from '@/components/reports/branch-filter';
-import { ReportAudienceFilter, useReportAudience } from '@/components/reports/audience-filter';
 import { fetchAllReportRows } from '@/lib/report-fetch';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
@@ -21,17 +20,17 @@ export function ClubSubscriptionsReportPage() {
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
   const [branch, setBranch] = useState('all');
-  const audience = useReportAudience();
+  const [gender, setGender] = useState('all');
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-subs-daily', startDate, endDate, branch, audience.gender],
+    queryKey: ['reports', 'club-subs-daily', startDate, endDate, branch, gender],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const data = await fetchAllReportRows<ClubSubscriptionListItem>('/club-subscriptions', {
         startDateFrom: startDate,
         startDateTo: endDate,
         ...(branchId ? { branch: String(branchId) } : {}),
-        ...(audience.gender ? { gender: audience.gender } : {}),
+        ...(gender !== 'all' ? { gender } : {}),
       });
       return { data, total: data.length };
     },
@@ -51,6 +50,8 @@ export function ClubSubscriptionsReportPage() {
       { accessorKey: 'subscriptionNumber', header: ui('رقم الاشتراك') },
       { accessorKey: 'customerName', header: ui('العميل'), cell: ({ getValue }) => getValue() ?? '—' },
       { accessorKey: 'subscriptionType', header: ui('النوع'), cell: ({ getValue }) => getValue() ?? '—' },
+      { accessorKey: 'branchName', header: ui('الفرع'), cell: ({ getValue }) => getValue() ?? '—' },
+      { id: 'category', header: ui('الفئة'), cell: ({ row }) => row.original.gender === 'female' ? ui('حريمي') : row.original.gender === 'male' ? ui('رجالي') : '—' },
       { accessorKey: 'subscriptionStartDate', header: ui('البداية'), cell: ({ getValue }) => toArabicDigits(String(getValue() ?? '')) },
       { accessorKey: 'subscriptionEndDate', header: ui('النهاية'), cell: ({ getValue }) => toArabicDigits(String(getValue() ?? '')) },
       { accessorKey: 'subscriptionValue', header: ui('القيمة'), cell: ({ getValue }) => toArabicDigits(getValue() as number) },
@@ -70,11 +71,13 @@ export function ClubSubscriptionsReportPage() {
 
   const exportCsv = () => {
     downloadCsv(`subscriptions-${startDate}-to-${endDate}`, [
-      [ui('رقم الاشتراك'), ui('العميل'), ui('النوع'), ui('البداية'), ui('النهاية'), ui('القيمة'), ui('المدفوع'), ui('المتبقي'), ui('الحالة')],
+      [ui('رقم الاشتراك'), ui('العميل'), ui('النوع'), ui('الفرع'), ui('الفئة'), ui('البداية'), ui('النهاية'), ui('القيمة'), ui('المدفوع'), ui('المتبقي'), ui('الحالة')],
       ...rows.map((r) => [
         r.subscriptionNumber ?? '',
         r.customerName ?? '',
         r.subscriptionType ?? '',
+        r.branchName ?? '',
+        r.gender === 'female' ? ui('حريمي') : r.gender === 'male' ? ui('رجالي') : '',
         String(r.subscriptionStartDate ?? ''),
         String(r.subscriptionEndDate ?? ''),
         Number(r.subscriptionValue ?? 0),
@@ -95,10 +98,7 @@ export function ClubSubscriptionsReportPage() {
           endDate={endDate}
           onStartChange={setStartDate}
           onEndChange={setEndDate}
-          extra={<>
-            <BranchFilter value={branch} onChange={setBranch} />
-            <ReportAudienceFilter value={audience.value} onChange={audience.setValue} locked={audience.locked} />
-          </>}
+          extra={<><BranchFilter value={branch} onChange={setBranch} /><select aria-label={ui('الفئة')} value={gender} onChange={(event) => setGender(event.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm"><option value="all">{ui('الكل')}</option><option value="male">{ui('رجالي')}</option><option value="female">{ui('حريمي')}</option></select></>}
         />
       }
       stats={

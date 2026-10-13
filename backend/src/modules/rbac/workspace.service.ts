@@ -16,6 +16,8 @@ export class WorkspaceService {
   ) {}
 
   async getWorkspace(userId: number): Promise<WorkspaceConfig> {
+    const eff = await this.engine.getEffective(userId);
+    const hasAdministrativeAccess = eff.superAdmin || eff.keys.size > 0;
     const user = await this.prisma.users.findUnique({
       where: { user_id: userId },
       select: { emp_code: true },
@@ -25,7 +27,10 @@ export class WorkspaceService {
         where: { employee_id: user.emp_code },
         select: { is_active: true, is_deleted: true },
       });
-      if (trainer?.is_active && !trainer.is_deleted) {
+      // Keep the dedicated portal as the home only for trainers who do not
+      // have an administrative role. Trainers with granted pages use the
+      // normal workspace and can still open their portal from the sidebar.
+      if (trainer?.is_active && !trainer.is_deleted && !hasAdministrativeAccess) {
         return {
           homeRoute: '/trainer',
           roleHint: 'trainer',
@@ -33,7 +38,6 @@ export class WorkspaceService {
         };
       }
     }
-    const eff = await this.engine.getEffective(userId);
     const canView = (key: string) => eff.superAdmin || eff.keys.has(`${key}:view`);
     const canCreate = (key: string) => eff.superAdmin || eff.keys.has(`${key}:create`);
 
@@ -49,25 +53,32 @@ export class WorkspaceService {
     // role to least. `club.dashboard:view` is the BROADEST club signal (many roles are granted
     // club view for reference), so it must be the LAST landing before /profile — otherwise an HR
     // manager who happens to have club view lands on the club dashboard instead of the HR hub.
-    if (canView('sales.portal')) {
+    if (canCreate('club.members')) {
+      const widgets: string[] = [];
+      if (canView('club.subscriptions.daily_cashier')) widgets.push('treasury_today');
+      if (canView('club.members.attendance')) widgets.push('recent_checkins');
+      if (canView('club.subscriptions.list')) widgets.push('expiring_subscriptions');
+      if (canView('club.subscriptions.outstanding')) widgets.push('outstanding_balances');
       return {
-        homeRoute: '/sales-portal?tab=today',
-        roleHint: 'sales',
-        widgets: ['sales_today', 'sales_followups', 'sales_renewals', 'sales_results'],
+        homeRoute: '/workspace',
+        roleHint: 'reception',
+        widgets,
       };
     }
 
-    if (canCreate('club.members')) {
+    if (canView('club.subscriptions.new') && canCreate('club.subscriptions.new')) {
+      const widgets = ['my_subscriptions_today'];
+      if (canView('club.subscriptions.daily_cashier')) widgets.push('treasury_today');
       return {
-        homeRoute: '/club/reception',
-        roleHint: 'reception',
-        widgets: ['treasury_today', 'recent_checkins', 'expiring_subscriptions', 'outstanding_balances'],
+        homeRoute: '/workspace',
+        roleHint: 'subscriptions',
+        widgets,
       };
     }
 
     if (canView('gym-sales.sales.new_receipt')) {
       return {
-        homeRoute: '/sales/new',
+        homeRoute: '/workspace',
         roleHint: 'cafe',
         widgets: ['pos_shift', 'today_sales', 'low_stock_alerts'],
       };
@@ -75,7 +86,7 @@ export class WorkspaceService {
 
     if (canView('gym-sales.sales')) {
       return {
-        homeRoute: '/sales',
+        homeRoute: '/workspace',
         roleHint: 'sales',
         widgets: ['pos_shift', 'today_sales', 'low_stock_alerts'],
       };
@@ -83,7 +94,7 @@ export class WorkspaceService {
 
     if (canView('accounting.dashboard')) {
       return {
-        homeRoute: '/accounting',
+        homeRoute: '/workspace',
         roleHint: 'accountant',
         widgets: ['trial_balance', 'pending_journal', 'cash_position'],
       };
@@ -91,7 +102,7 @@ export class WorkspaceService {
 
     if (canView('financial-reports.dashboard')) {
       return {
-        homeRoute: '/finance',
+        homeRoute: '/workspace',
         roleHint: 'finance',
         widgets: ['revenue_summary', 'expense_summary', 'sync_status'],
       };
@@ -99,33 +110,33 @@ export class WorkspaceService {
 
     if (canView('hr.hub') || canView('hr')) {
       return {
-        homeRoute: '/hub/hr',
+        homeRoute: '/workspace',
         roleHint: 'hr',
-        widgets: ['notifications', 'quick_links'],
+        widgets: [],
       };
     }
 
     if (canView('admin.hub') || canView('admin')) {
       return {
-        homeRoute: '/hub/settings',
+        homeRoute: '/workspace',
         roleHint: 'settings',
-        widgets: ['notifications', 'quick_links'],
+        widgets: [],
       };
     }
 
     // Club manager (only club access, no more specific department home) → club dashboard.
     if (canView('club.dashboard')) {
       return {
-        homeRoute: '/club',
+        homeRoute: '/workspace',
         roleHint: 'club_manager',
         widgets: ['club_kpis', 'pending_renewals', 'attendance_rate', 'treasury_today'],
       };
     }
 
     return {
-      homeRoute: '/profile',
+      homeRoute: '/workspace',
       roleHint: 'staff',
-      widgets: ['notifications', 'quick_links'],
+      widgets: [],
     };
   }
 }

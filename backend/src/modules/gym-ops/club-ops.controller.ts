@@ -2,6 +2,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  Inject,
   Param,
   ParseIntPipe,
   Patch,
@@ -26,6 +27,8 @@ import { BranchesService } from "../branches/branches.service";
 import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import type { JwtUser } from "../../common/types/jwt-user";
+import { canonicalClubMemberBranchId } from "../club-members/club-branch-groups";
+import { ClubBranchGroupService, ClubBranchGroupReader } from '../../common/branch-groups/club-branch-group.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller("club")
@@ -39,6 +42,7 @@ export class ClubOpsController {
     private readonly gymPolicies: ClubGymPoliciesService,
     private readonly branchesService: BranchesService,
     private readonly branchScope: BranchScopeService,
+    @Inject(ClubBranchGroupService) private readonly branchGroups: Pick<ClubBranchGroupReader, 'siblingBranchIds'> = { siblingBranchIds: async (id) => [id] },
   ) {}
 
   /** Reception is an operational desk: employees are always locked to their exact login branch. */
@@ -47,19 +51,22 @@ export class ClubOpsController {
     requested?: number,
   ): number[] | null {
     if (!user) return [];
-    if (user.level === 1) return requested != null ? [requested] : null;
+    if (user.level === 1) {
+      return requested != null ? [canonicalClubMemberBranchId(requested)] : null;
+    }
     const ownBranch = Number(user.branch ?? 0);
     if (!ownBranch) return [];
     if (requested != null && requested !== ownBranch) {
       throw new ForbiddenException("لا تملك صلاحية الوصول لبيانات هذا الفرع");
     }
-    return [ownBranch];
+    return [canonicalClubMemberBranchId(ownBranch)];
   }
 
   @Get("branch-options")
   @RequiresPermission(
     "club.packages.settings:view",
     "club.subscriptions:view",
+    "club.subscriptions.member_transfer:view",
     "club.members:view",
     "club.reception:view",
     "org.branches:view",
@@ -80,14 +87,18 @@ export class ClubOpsController {
 
   @Get("search")
   @RequiresPermission("club.members:view", "club.reception:view")
-  universalSearch(
+  async universalSearch(
     @Query("q") q: string,
     @Query("branchId") branchId?: string,
     @Query("withEntitlement") withEntitlement?: string,
     @CurrentUser() user?: JwtUser,
   ) {
     const bid = branchId && branchId !== "all" ? Number(branchId) : undefined;
-    const scopedBranchIds = this.receptionBranchIds(user, bid);
+    let scopedBranchIds = this.receptionBranchIds(user, bid);
+    if (user && user.level !== 1 && scopedBranchIds?.length) {
+      const siblings = await this.branchGroups.siblingBranchIds(Number(user.branch));
+      scopedBranchIds = [...new Set([...scopedBranchIds, ...siblings.map(canonicalClubMemberBranchId)])];
+    }
     if (withEntitlement === "true" || withEntitlement === "1") {
       return this.search.searchWithEntitlement(q ?? "", scopedBranchIds);
     }
@@ -332,6 +343,24 @@ export class ClubOpsController {
       "Content-Disposition",
       'attachment; filename="subscriptions-export.csv"',
     );
+    res.send("\uFEFF" + csv);
+  }
+
+  @Get("backup/attendance.csv")
+  @RequiresPermission("admin.audit:export")
+  async exportAttendanceCsv(@Res() res: Response, @Query("branchId") branchId?: string, @CurrentUser() user?: JwtUser) {
+    const csv = await this.calendar.exportAttendanceCsv(branchId && branchId !== "all" ? Number(branchId) : undefined, user);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="attendance-export.csv"');
+    res.send("\uFEFF" + csv);
+  }
+
+  @Get("backup/receipts.csv")
+  @RequiresPermission("admin.audit:export")
+  async exportReceiptsCsv(@Res() res: Response, @Query("branchId") branchId?: string, @CurrentUser() user?: JwtUser) {
+    const csv = await this.calendar.exportReceiptsCsv(branchId && branchId !== "all" ? Number(branchId) : undefined, user);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", 'attachment; filename="receipts-export.csv"');
     res.send("\uFEFF" + csv);
   }
 }

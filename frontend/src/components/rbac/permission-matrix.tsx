@@ -30,6 +30,7 @@ import {
   flattenForDisplay,
   resolveCell,
 } from '@/lib/rbac-resolve';
+import { orderRbacCatalogForSidebar } from '@/lib/rbac-nav-order';
 import type { Effect, RbacCatalog, RbacNode, TriState } from '@/types/rbac';
 import { TriStateCell } from './tri-state-cell';
 import { useLocale } from '@/store/locale';
@@ -92,31 +93,26 @@ export interface PermissionMatrixProps {
 
 export function PermissionMatrix({ catalog, mode, draft, onChange, baseline, editable }: PermissionMatrixProps) {
   const { ui } = useLocale();
-  const modules = catalog.tree;
+  const orderedCatalog = useMemo(() => orderRbacCatalogForSidebar(catalog), [catalog]);
+  const modules = orderedCatalog.tree;
   const [activeKey, setActiveKey] = useState<string>(modules[0]?.key ?? '');
   useEffect(() => {
     if (!modules.some((m) => m.key === activeKey) && modules[0]) setActiveKey(modules[0].key);
   }, [modules, activeKey]);
 
+  // Keep the real catalog ancestry for resolution. The displayed tree has
+  // presentation-only sidebar groups, which must not change inherited grants.
   const ancestry = useMemo(() => buildAncestry(catalog.tree), [catalog.tree]);
   const nameMap = useMemo(() => {
     const m = new Map<string, string>();
     const walk = (nodes: RbacNode[]) => nodes.forEach((n) => { m.set(n.key, n.nameAr); if (n.children) walk(n.children); });
     walk(catalog.tree);
     return m;
-  }, [catalog.tree]);
+  }, [orderedCatalog.tree]);
 
-  // Sub-groups (e.g. HR sections) collapsed by default.
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
-    const s = new Set<string>();
-    const walk = (nodes: RbacNode[]) =>
-      nodes.forEach((n) => {
-        if (n.type === 'group') s.add(n.key);
-        if (n.children) walk(n.children);
-      });
-    walk(catalog.tree);
-    return s;
-  });
+  // Show the full sidebar tree when selecting a department; groups can still be folded manually.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
+  useEffect(() => setCollapsed(new Set()), [activeKey]);
 
   const actionOrder = useMemo(() => new Map(catalog.actions.map((a, i) => [a.key, i])), [catalog.actions]);
   const actionByKey = useMemo(() => new Map(catalog.actions.map((a) => [a.key, a])), [catalog.actions]);
@@ -204,7 +200,11 @@ export function PermissionMatrix({ catalog, mode, draft, onChange, baseline, edi
   const toggleRowAll = (node: RbacNode) => {
     if (!editable) return;
     const map = new Map(draft);
-    const targets = mode === 'exception' ? collectSubtree(node) : [node];
+    const targets = node.actions.length === 0
+      ? collectSubtree(node).filter((item) => item.actions.length > 0)
+      : mode === 'exception'
+        ? collectSubtree(node)
+        : [node];
     const allAllowed = targets.every((n) =>
       n.actions.every((a) => effectiveOf(n.key, a).effective === 'allow'),
     );
@@ -306,8 +306,11 @@ export function PermissionMatrix({ catalog, mode, draft, onChange, baseline, edi
               {rows.map(({ node, depth, hasChildren }) => {
                 const RowIcon = TYPE_ICON[node.type];
                 const applicable = new Set(node.actions);
-                const rowAllAllowed = node.actions.length > 0
-                  && node.actions.every((a) => effectiveOf(node.key, a).effective === 'allow');
+                const bulkTargets = node.actions.length === 0
+                  ? collectSubtree(node).filter((item) => item.actions.length > 0)
+                  : [node];
+                const rowAllAllowed = bulkTargets.length > 0
+                  && bulkTargets.every((item) => item.actions.every((a) => effectiveOf(item.key, a).effective === 'allow'));
                 return (
                   <tr key={node.key} className={cn('border-b border-border/60 hover:bg-accent/40', DEPTH_BG[Math.min(depth, 2)])}>
                     <td className="sticky start-0 z-[1] px-3 py-1.5" style={{ paddingInlineStart: 12 + depth * 18 }}>

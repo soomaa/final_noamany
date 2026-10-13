@@ -1,6 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { defaultPermissionCellsForJobTitle } from './job-title-defaults';
 
 export const JOB_TITLE_ROLE_PREFIX = 'job_title_';
 
@@ -12,10 +11,7 @@ export function isJobTitleRoleKey(key: string): boolean {
   return key.startsWith(JOB_TITLE_ROLE_PREFIX);
 }
 
-type PrismaLike = Pick<
-  PrismaClient,
-  'department_jobs' | 'rbac_roles' | 'rbac_user_roles' | 'rbac_resources' | 'rbac_actions' | 'rbac_role_permissions'
->;
+type PrismaLike = Pick<PrismaClient, 'department_jobs' | 'rbac_roles' | 'rbac_user_roles'>;
 
 /** Ensure every job title has a matching RBAC role (1:1 by stable key). */
 export async function syncAllJobTitleRoles(prisma: PrismaLike) {
@@ -30,8 +26,7 @@ export async function ensureRoleForJobTitle(
   job: { id: number; name: string },
 ) {
   const key = jobTitleRoleKey(job.id);
-  const existing = await prisma.rbac_roles.findUnique({ where: { key }, select: { id: true } });
-  const role = await prisma.rbac_roles.upsert({
+  return prisma.rbac_roles.upsert({
     where: { key },
     create: {
       key,
@@ -46,44 +41,6 @@ export async function ensureRoleForJobTitle(
       description: `صلاحيات المسمى الوظيفي: ${job.name}`,
     },
   });
-  const existingCells = existing
-    ? await prisma.rbac_role_permissions.count({ where: { role_id: existing.id } })
-    : 0;
-  if (!existing || existingCells === 0) {
-    await seedJobTitleRolePermissions(prisma, role.id, job.name);
-  }
-  return role;
-}
-
-export async function seedJobTitleRolePermissions(
-  prisma: PrismaLike,
-  roleId: number,
-  jobTitleName: string,
-): Promise<number> {
-  const cells = defaultPermissionCellsForJobTitle(jobTitleName);
-  if (!cells.length) return 0;
-  const [resources, actions] = await Promise.all([
-    prisma.rbac_resources.findMany({
-      where: { key: { in: [...new Set(cells.map((cell) => cell.resourceKey))] } },
-      select: { id: true, key: true },
-    }),
-    prisma.rbac_actions.findMany({
-      where: { key: { in: [...new Set(cells.map((cell) => cell.actionKey))] } },
-      select: { id: true, key: true },
-    }),
-  ]);
-  const resourceIds = new Map(resources.map((row) => [row.key, row.id]));
-  const actionIds = new Map(actions.map((row) => [row.key, row.id]));
-  const data = cells.flatMap((cell) => {
-    const resource_id = resourceIds.get(cell.resourceKey);
-    const action_id = actionIds.get(cell.actionKey);
-    return resource_id == null || action_id == null
-      ? []
-      : [{ role_id: roleId, resource_id, action_id, effect: cell.effect }];
-  });
-  if (!data.length) return 0;
-  await prisma.rbac_role_permissions.createMany({ data, skipDuplicates: true });
-  return data.length;
 }
 
 export async function removeRoleForJobTitle(prisma: PrismaLike, jobTitleId: number) {

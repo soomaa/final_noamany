@@ -39,7 +39,8 @@ import { ClubClassTypesController } from './club-class-types.controller';
 import { ClubClassTypesService } from './club-class-types.service';
 import { TrainerPortalController } from './trainer-portal.controller';
 import { TrainerPortalService } from './trainer-portal.service';
-import { ClubTrainerTargetPeriodsService } from './club-trainer-target-periods.service';
+import { TrainerPerformanceController } from './trainer-performance.controller';
+import { TrainerPerformanceService } from './trainer-performance.service';
 
 @Module({
   imports: [GymOpsModule, AccountingModule],
@@ -47,6 +48,7 @@ import { ClubTrainerTargetPeriodsService } from './club-trainer-target-periods.s
     ClubTrainersController,
     TrainerPortalController,
     ClubTrainerSalariesController,
+    TrainerPerformanceController,
     ClubClassesController,
     ClubClassTypesController,
     ClubHallsController,
@@ -71,6 +73,7 @@ import { ClubTrainerTargetPeriodsService } from './club-trainer-target-periods.s
   providers: [
     ClubTrainersService,
     TrainerPortalService,
+    TrainerPerformanceService,
     ClubClassesService,
     ClubClassTypesService,
     ClubHallsService,
@@ -79,7 +82,6 @@ import { ClubTrainerTargetPeriodsService } from './club-trainer-target-periods.s
     ClubFacilitiesService,
     ClubFitnessLedgerService,
     ClubClassStatusCron,
-    ClubTrainerTargetPeriodsService,
   ],
   exports: [ClubTrainersService, ClubClassesService, ClubHallsService],
 })

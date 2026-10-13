@@ -28,7 +28,7 @@ export function AttendanceAdjustmentsPage() {
   const extras = usePaginatedList<ExtraRow>('attendance/extra-hours', params);
   const { data: employees = [] } = useQuery({
     queryKey: ['attendance', 'employee-options'],
-    queryFn: () => fetchAllReportRows<EmployeeListItem>('/employees', { status: 1 }, 200),
+    queryFn: async () => (await api.get<EmployeeListItem[]>('/employees/pos-options')).data,
     staleTime: 60_000,
   });
   const { data: shifts = [] } = useQuery({

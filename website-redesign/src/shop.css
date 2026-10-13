@@ -53,9 +53,7 @@ body{background:#151213}.shop-header{background:rgba(20,17,18,.96);color:#fff;bo
 .shop-header::before{content:"";position:absolute;inset:auto 0 -1px;height:2px;background:linear-gradient(90deg,transparent 4%,rgba(237,28,36,.2) 28%,#f32d36 50%,rgba(237,28,36,.2) 72%,transparent 96%);box-shadow:0 0 18px rgba(237,28,36,.42);pointer-events:none}
 .shop-header::after{content:"";position:absolute;right:4%;top:0;width:360px;height:100%;background:radial-gradient(ellipse at top,rgba(237,28,36,.12),transparent 68%);pointer-events:none}
 .shop-header .nav-row{position:relative;z-index:1;height:100%;gap:42px}
-
-.shop-header .shop-logo{width:128px;height:60px;padding:5px;background:linear-gradient(145deg,rgba(48,20,24,.92),rgba(12,8,9,.78))!important;border:1px solid rgba(255,255,255,.38)!important;border-radius:11px!important;box-shadow:0 13px 35px rgba(0,0,0,.4),0 0 0 1px rgba(237,28,36,.08),0 0 25px rgba(237,28,36,.08)!important;transition:transform .3s,box-shadow .3s}
-.shop-header .shop-logo:hover{transform:translateY(-2px);box-shadow:0 17px 42px rgba(0,0,0,.5),0 0 0 1px rgba(237,28,36,.25),0 0 30px rgba(237,28,36,.14)!important}.shop-header .shop-logo img{filter:contrast(1.06) saturate(1.12)}
+.shop-header .shop-logo{width:128px;height:60px;padding:5px;background:linear-gradient(145deg,rgba(255,250,246,.98),rgba(230,219,217,.95))!important;border:1px solid rgba(255,255,255,.38)!important;border-radius:11px!important;box-shadow:0 13px 35px rgba(0,0,0,.4),0 0 0 1px rgba(237,28,36,.08),0 0 25px rgba(237,28,36,.08)!important;transition:transform .3s,box-shadow .3s}.shop-header .shop-logo:hover{transform:translateY(-2px);box-shadow:0 17px 42px rgba(0,0,0,.5),0 0 0 1px rgba(237,28,36,.25),0 0 30px rgba(237,28,36,.14)!important}.shop-header .shop-logo img{filter:contrast(1.06) saturate(1.12)}
 .shop-header nav{gap:34px!important}.shop-header nav a{padding:10px 2px;color:#d9d0d2!important;font-size:14px;font-weight:700;transition:color .25s,text-shadow .25s}.shop-header nav a:hover{color:#fff!important;text-shadow:0 0 22px rgba(255,255,255,.25)}.shop-header nav .active{color:#ff5158!important}.shop-header nav .active::after{right:50%;left:auto;bottom:0;width:30px;height:2px;transform:translateX(50%);border-radius:4px;background:linear-gradient(90deg,transparent,#ff3038,transparent)!important;box-shadow:0 0 13px rgba(237,28,36,.8)}
 .shop-header .shop-cart-button{min-height:48px;display:flex;align-items:center;gap:10px;padding:0 18px;border:1px solid rgba(255,255,255,.13)!important;border-radius:10px;background:linear-gradient(145deg,rgba(255,255,255,.07),rgba(255,255,255,.025))!important;color:#f4edef!important;font-weight:800;box-shadow:inset 0 1px rgba(255,255,255,.07);transition:.25s}.shop-header .shop-cart-button:hover{border-color:rgba(237,28,36,.48)!important;background:rgba(237,28,36,.1)!important;transform:translateY(-2px)}.shop-header .shop-cart-button span{width:25px;height:25px;margin:0;border:1px solid rgba(255,255,255,.22);background:linear-gradient(145deg,#ff313a,#b90b13);box-shadow:0 6px 15px rgba(237,28,36,.25)}
 @media(max-width:900px){.shop-header nav{top:86px!important;background:rgba(21,13,15,.98)!important;border-top:1px solid rgba(255,255,255,.07)!important;box-shadow:0 24px 55px rgba(0,0,0,.55)!important;backdrop-filter:blur(22px)}.shop-header nav a{padding:12px 5px}.shop-header .shop-menu{color:#fff!important}}
@@ -200,31 +198,3 @@ body{background:#151213}.shop-header{background:rgba(20,17,18,.96);color:#fff;bo
 .shop-hero-actions{padding-bottom:3px}.shop-proof{justify-content:flex-start!important}
 @media(max-width:900px){.shop-hero-copy{padding:34px 30px!important;border-radius:28px 10px 28px 10px!important}}
 @media(max-width:650px){.shop-hero-copy{padding:28px 22px 25px!important;border-radius:24px 8px 24px 8px!important}.shop-hero-copy::after{width:42px!important;height:42px!important;left:12px!important;top:12px!important}.shop-hero-copy h1::after{margin-top:13px}}
-
-/* Narrow phones: keep the long English store kicker inside the hero card. */
-@media(max-width:360px){
-  html,body{max-width:100%;overflow-x:clip}
-  .shop-hero-kicker{
-    width:100%;
-    max-width:100%;
-    gap:6px;
-    padding-inline:9px;
-    font-size:7px!important;
-    letter-spacing:1px!important;
-    white-space:normal;
-    overflow-wrap:anywhere;
-  }
-  .shop-hero-kicker i{width:24px;flex:none}
-}
-
-/* A translated fixed drawer still contributes negative overflow to full-page
-   captures in Chromium. Remove closed content from layout/paint entirely. */
-.cart-drawer:not(.open){display:none;visibility:hidden;pointer-events:none}
-.cart-drawer.open{display:block;visibility:visible}
-@media(max-width:420px){.shop-header::after{right:0;width:100%}}
-
-.product-state-badges{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 2px}.product-state-badges span{display:inline-flex;align-items:center;min-height:24px;padding:4px 9px;border:1px solid rgba(237,28,36,.32);border-radius:999px;background:rgba(237,28,36,.1);color:#ff7379;font-size:10px;font-weight:900}
-
-/* Persisted product badges and the honest unassigned-preview specimen */
-.product-badge{position:absolute;z-index:5;top:14px;right:14px;max-width:calc(100% - 28px);display:inline-flex;align-items:center;gap:6px;padding:7px 11px;border:1px solid rgba(255,255,255,.58);border-radius:999px;background:var(--badge-bg,#b90e16);color:var(--badge-fg,#fff);box-shadow:0 9px 26px rgba(0,0,0,.28);font-size:10px;font-weight:900;line-height:1.2;text-shadow:0 1px 2px rgba(0,0,0,.38)}.product-badge small{padding-inline-start:6px;border-inline-start:1px solid currentColor;font-size:8px;opacity:.88}.badge-preview-specimen{width:min(560px,calc(100% - 30px));margin:28px auto 0;padding:18px 20px;border:1px solid rgba(237,28,36,.32);border-radius:16px;background:linear-gradient(135deg,#211719,#120e0f);color:#fff}.badge-preview-specimen[hidden]{display:none}.badge-preview-specimen>span{display:block;color:#ff646a;font-size:11px;font-weight:900}.badge-preview-specimen>div{position:relative;min-height:48px;margin-block:12px}.badge-preview-specimen>div .product-badge{top:0;right:0}.badge-preview-specimen>p{margin:0;color:#c7bdc0;font-size:12px}.shop-product-image{position:relative}
-@media(max-width:390px){.product-badge{top:10px;right:10px;max-width:calc(100% - 20px)}.badge-preview-specimen{padding:16px}}

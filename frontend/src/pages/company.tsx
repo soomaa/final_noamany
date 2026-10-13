@@ -23,8 +23,6 @@ const schema = z.object({
   phone: z.string().optional(),
   email: z.string().email(uiStatic('بريد إلكتروني غير صالح')).optional().or(z.literal('')),
   address: z.string().optional(),
-  slogan: z.string().max(200, uiStatic('الشعار طويل جدًا')).optional(),
-  footer: z.string().max(255, uiStatic('نص التذييل طويل جدًا')).optional(),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -48,8 +46,6 @@ export function CompanyPage() {
         phone: data.telepon ?? data.hp ?? '',
         email: data.email ?? '',
         address: data.address ?? '',
-        slogan: data.slogan ?? '',
-        footer: data.footer ?? '',
       });
     }
   }, [data, reset]);
@@ -62,8 +58,6 @@ export function CompanyPage() {
         telepon: values.phone,
         email: values.email,
         address: values.address,
-        slogan: values.slogan,
-        footer: values.footer,
       }),
     { success: ui('تم حفظ بيانات الشركة'), invalidate: ['settings/company'] },
   );
@@ -128,22 +122,6 @@ export function CompanyPage() {
               <div className="col-span-full">
                 <FieldWrapper label={ui('العنوان')} error={errors.address?.message}>
                   <Textarea {...register('address')} rows={3} />
-                </FieldWrapper>
-              </div>
-              <div className="col-span-full">
-                <FieldWrapper
-                  label={ui('الجملة التعريفية (تظهر في بيانات التواصل بتذييل الموقع)')}
-                  error={errors.slogan?.message}
-                >
-                  <Input {...register('slogan')} maxLength={200} />
-                </FieldWrapper>
-              </div>
-              <div className="col-span-full">
-                <FieldWrapper
-                  label={ui('نص تذييل الموقع (الفقرة الظاهرة أسفل الشعار في تذييل الموقع)')}
-                  error={errors.footer?.message}
-                >
-                  <Textarea {...register('footer')} rows={2} maxLength={255} />
                 </FieldWrapper>
               </div>
             </form>

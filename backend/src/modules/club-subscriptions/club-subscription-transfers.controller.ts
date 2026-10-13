@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -6,6 +6,8 @@ import { JwtUser } from '../../common/types/jwt-user';
 import { ClubSubscriptionTransfersService } from './club-subscription-transfers.service';
 import { TransferSubscriptionToMemberDto } from './dto/transfer-subscription-to-member.dto';
 import { TransferSubscriptionPlanDto } from './dto/transfer-subscription-plan.dto';
+import { UpdateMemberSubscriptionTransferDto } from './dto/update-member-subscription-transfer.dto';
+import { ClubGroupOperation } from '../../common/branch-groups/club-operation-scope';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-subscription-transfers')
@@ -28,12 +30,34 @@ export class ClubSubscriptionTransfersController {
   }
 
   @Get('member-transfers')
+  @ClubGroupOperation()
+  @RequiresPermission('club.subscriptions:view', 'club.subscriptions.list:view', 'club.reception:view', 'club.subscriptions.member_transfer:view')
   listMemberTransfers(@CurrentUser() user: JwtUser) {
     return this.service.listMemberTransfers(user);
   }
 
+  @Patch('member-transfers/:id')
+  @ClubGroupOperation()
+  @RequiresPermission('club.subscriptions:update', 'club.subscriptions.list:update', 'club.reception:update', 'club.subscriptions.member_transfer:update')
+  updateMemberTransfer(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: UpdateMemberSubscriptionTransferDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.updateMemberTransfer(id, body, user);
+  }
+
+  @Delete('member-transfers/:id')
+  @ClubGroupOperation()
+  @RequiresPermission('club.subscriptions:delete', 'club.subscriptions.list:delete', 'club.subscriptions.member_transfer:delete')
+  deleteMemberTransfer(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.deleteMemberTransfer(id, user);
+  }
+
   @Post('to-member')
+  @ClubGroupOperation()
   @RequiresPermission(
+    'club.subscriptions.member_transfer:create',
     'club.subscriptions:update',
     'club.subscriptions.list:update',
     'club.reception:update',

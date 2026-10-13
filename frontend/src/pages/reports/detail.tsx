@@ -1,22 +1,36 @@
 import type { ColumnDef } from '@tanstack/react-table';
+import { Download } from 'lucide-react';
 import { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { DataTable } from '@/components/common/data-table';
 import { FilterBar } from '@/components/common/filter-bar';
 import { PageHeader } from '@/components/common/page-header';
 import { NotImplementedState } from '@/components/common/states';
-import { BranchFilter } from '@/components/reports/branch-filter';
-import { ReportAudienceFilter, type ReportAudience } from '@/components/reports/audience-filter';
+import { Button } from '@/components/ui/button';
 import { isNotImplemented, usePaginatedList } from '@/lib/api-hooks';
 import { getReportKeys } from '@/lib/i18n-constants';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
-import { useAuth } from '@/store/auth';
 
 interface ReportRow {
   id: number;
   [key: string]: unknown;
+}
+
+function csvCell(value: unknown) {
+  const text = value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function downloadReportCsv(rows: ReportRow[], columns: string[], key: string) {
+  const csv = [columns.map(csvCell).join(','), ...rows.map((row) => columns.map((column) => csvCell(row[column])).join(','))].join('\n');
+  const url = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${key}-report.csv`;
+  anchor.click();
+  URL.revokeObjectURL(url);
 }
 
 export function ReportDetailPage() {
@@ -24,13 +38,6 @@ export function ReportDetailPage() {
   const { key } = useParams<{ key: string }>();
   const meta = useMemo(() => getReportKeys(t).find((r) => r.key === key), [t, key]);
   const { params, setParams } = useListQuery();
-  const user = useAuth((state) => state.user);
-  const lockedAudience: ReportAudience | null =
-    user?.man_women_type === 0 ? 'male' : user?.man_women_type === 1 ? 'female' : null;
-  const selectedAudience = params.filters.gender === 'male' || params.filters.gender === 'female'
-    ? params.filters.gender
-    : 'all';
-  const audience = lockedAudience ?? selectedAudience;
 
   const { data, isLoading, isError, error, refetch } = usePaginatedList<ReportRow>(
     `reports/${key}`,
@@ -38,11 +45,22 @@ export function ReportDetailPage() {
     !!key,
   );
 
-  const columns: ColumnDef<ReportRow>[] = [
-    { accessorKey: 'id', header: ui('م'), cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1) },
-    { accessorKey: 'name', header: ui('الاسم') },
-    { accessorKey: 'value', header: ui('القيمة') },
-  ];
+  const exportColumns = useMemo(() => {
+    const rows = data?.data ?? [];
+    return [...new Set(rows.flatMap((row) => Object.keys(row)))].filter((column) => column !== 'id').slice(0, 12);
+  }, [data?.data]);
+
+  const columns: ColumnDef<ReportRow>[] = useMemo(() => [
+    { id: 'serial', header: ui('م'), cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1) },
+    ...exportColumns.map<ColumnDef<ReportRow>>((column) => ({
+      accessorKey: column,
+      header: column.replace(/_/g, ' '),
+      cell: ({ getValue }) => {
+        const value = getValue();
+        return value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+      },
+    })),
+  ], [exportColumns, params.page, params.pageSize, ui]);
 
   if (!meta) {
     return <NotImplementedState title={ui('تقرير غير معروف')} />;
@@ -59,23 +77,17 @@ export function ReportDetailPage() {
 
   return (
     <div>
-      <PageHeader title={meta.title} description={ui('تقرير')} />
-      <FilterBar
-        searchPlaceholder={ui('بحث في التقرير…')}
-        extra={
-          <div className="flex flex-wrap gap-3">
-            <BranchFilter
-              value={params.filters.branchId ?? 'all'}
-              onChange={(branchId) => setParams({ filters: { branchId: branchId === 'all' ? '' : branchId }, page: 1 })}
-            />
-            <ReportAudienceFilter
-              value={audience}
-              onChange={(gender) => setParams({ filters: { gender: gender === 'all' ? '' : gender }, page: 1 })}
-              locked={lockedAudience !== null}
-            />
-          </div>
+      <PageHeader
+        title={meta.title}
+        description={ui('تقرير')}
+        actions={
+          <Button variant="outline" disabled={exportColumns.length === 0} onClick={() => downloadReportCsv(data?.data ?? [], exportColumns, key ?? 'report')}>
+            <Download className="me-2 size-4" />
+            {ui('تصدير CSV')}
+          </Button>
         }
       />
+      <FilterBar searchPlaceholder={ui('بحث في التقرير…')} />
       <DataTable
         columns={columns}
         data={data?.data ?? []}

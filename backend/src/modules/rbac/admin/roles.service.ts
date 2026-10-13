@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { flattenCatalog, permKey } from '../catalog/rbac.catalog';
-import { ensureRoleForJobTitle, syncAllEmployeeUserRoles, syncAllJobTitleRoles, isJobTitleRoleKey } from '../job-title-role.util';
+import { ensureRoleForJobTitle, isJobTitleRoleKey } from '../job-title-role.util';
 import { PermissionEngineService } from '../engine/permission-engine.service';
 import { effectiveForRole, StoredCell } from '../engine/permission-resolver';
 import { RbacAuditService } from './audit.service';
@@ -29,9 +29,8 @@ export class RbacRolesService {
   // ---- list / CRUD --------------------------------------------------------------------
 
   async list() {
-    await syncAllJobTitleRoles(this.prisma);
-    const syncedUserIds = await syncAllEmployeeUserRoles(this.prisma);
-    if (syncedUserIds.length) await this.engine.invalidateUsers(syncedUserIds);
+    // Reading the permissions screen must not replace employee role assignments.
+    // Job-title provisioning belongs to explicit job/employee changes, not GET.
     const [allRoles, counts] = await Promise.all([
       this.prisma.rbac_roles.findMany({ orderBy: [{ id: 'asc' }] }),
       this.prisma.rbac_user_roles.groupBy({ by: ['role_id'], _count: { _all: true } }),

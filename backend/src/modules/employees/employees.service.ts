@@ -11,6 +11,7 @@ import {
   resolveRoleIdForJobTitleId,
 } from '../rbac/job-title-role.util';
 import { syncEmployeeTrainer } from '../club-fitness/trainer-sync.util';
+import { PutWeeklyScheduleDto, WeeklyScheduleSlotDto } from './dto/weekly-schedule.dto';
 import { resolveSettingsIdsToTitles, resolveSettingsTitlesToIds } from './employees.lookup-resolver';
 import {
   isMarketingRepJobTitle,
@@ -38,6 +39,77 @@ export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+  private async normalizeWeeklyScheduleSlots(slots: WeeklyScheduleSlotDto[]) {
+    const days = slots.map((slot) => Number(slot.weekday));
+    if (slots.length !== 7 || new Set(days).size !== 7 || days.some((day) => day < 0 || day > 6)) {
+      throw new BadRequestException('يجب تحديد أيام الأسبوع السبعة بدون تكرار');
+    }
+    for (const slot of slots) {
+      const hasBranch = slot.branchId != null;
+      const hasShift = slot.shiftId != null;
+      if (hasBranch !== hasShift) throw new BadRequestException('يوم الدوام يجب أن يحتوي على فرع ودوام معًا');
+    }
+    const branchIds = [...new Set(slots.flatMap((slot) => slot.branchId == null ? [] : [Number(slot.branchId)]))];
+    const shiftIds = [...new Set(slots.flatMap((slot) => slot.shiftId == null ? [] : [Number(slot.shiftId)]))];
+    const [branches, shifts] = await Promise.all([
+      branchIds.length ? this.prisma.tbl_branches.findMany({ where: { branch_id: { in: branchIds } }, select: { branch_id: true } }) : [],
+      shiftIds.length ? this.prisma.tbl_hdodr_setting.findMany({ where: { id: { in: shiftIds } }, select: { id: true } }) : [],
+    ]);
+    if (branches.length !== branchIds.length) throw new BadRequestException('الفرع المحدد غير موجود');
+    if (shifts.length !== shiftIds.length) throw new BadRequestException('الدوام المحدد غير موجود');
+    return [...slots].sort((a, b) => a.weekday - b.weekday).map((slot) => ({
+      weekday: slot.weekday,
+      branch_id: slot.branchId ?? null,
+      shift_id: slot.shiftId ?? null,
+    }));
+  }
+
+  async getWeeklySchedule(id: number, date?: string) {
+    const employee = await this.prisma.employees.findUnique({ where: { id }, select: { id: true } });
+    if (!employee) throw new NotFoundException('الموظف غير موجود');
+    const when = (date ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
+    const schedule = await this.prisma.employee_weekly_schedules.findFirst({
+      where: { employee_id: id, status: 'active', effective_from: { lte: when }, OR: [{ effective_to: null }, { effective_to: { gte: when } }] },
+      orderBy: { effective_from: 'desc' }, include: { slots: { orderBy: { weekday: 'asc' } } },
+    });
+    return schedule ? { id: schedule.id, effectiveFrom: schedule.effective_from, effectiveTo: schedule.effective_to, slots: schedule.slots.map((slot) => ({ weekday: slot.weekday, branchId: slot.branch_id, shiftId: slot.shift_id })) } : { slots: [] };
+  }
+
+  async validateWeeklySchedule(id: number, dto: PutWeeklyScheduleDto) {
+    const employee = await this.prisma.employees.findUnique({ where: { id }, select: { id: true } });
+    if (!employee) throw new NotFoundException('الموظف غير موجود');
+    await this.normalizeWeeklyScheduleSlots(dto.slots);
+    return { valid: true, errors: [] as string[] };
+  }
+
+  async putWeeklySchedule(id: number, dto: PutWeeklyScheduleDto, userId?: number) {
+    await this.validateWeeklySchedule(id, dto);
+    const slots = await this.normalizeWeeklyScheduleSlots(dto.slots);
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.employee_weekly_schedules.findFirst({ where: { employee_id: id, status: 'active', effective_to: null }, orderBy: { effective_from: 'desc' } });
+      // Saving again for the same effective date is an edit, not a conflicting
+      // second schedule. This is needed while the administrator is setting up
+      // every employee before activating the weekly-schedule rollout.
+      if (existing?.effective_from === dto.effectiveFrom) {
+        const schedule = await tx.employee_weekly_schedules.update({
+          where: { id: existing.id },
+          data: {
+            created_by: userId ?? existing.created_by,
+            slots: { deleteMany: {}, create: slots },
+          },
+          include: { slots: { orderBy: { weekday: 'asc' } } },
+        });
+        return { employeeId: id, id: schedule.id, effectiveFrom: schedule.effective_from, slots: schedule.slots.map((slot) => ({ weekday: slot.weekday, branchId: slot.branch_id, shiftId: slot.shift_id })) };
+      }
+      if (existing) {
+        const previous = new Date(`${dto.effectiveFrom}T12:00:00Z`); previous.setUTCDate(previous.getUTCDate() - 1);
+        await tx.employee_weekly_schedules.update({ where: { id: existing.id }, data: { effective_to: previous.toISOString().slice(0, 10), status: 'archived' } });
+      }
+      const schedule = await tx.employee_weekly_schedules.create({ data: { employee_id: id, effective_from: dto.effectiveFrom, status: 'active', created_by: userId, slots: { create: slots } }, include: { slots: { orderBy: { weekday: 'asc' } } } });
+      return { employeeId: id, id: schedule.id, effectiveFrom: schedule.effective_from, slots: schedule.slots.map((slot) => ({ weekday: slot.weekday, branchId: slot.branch_id, shiftId: slot.shift_id })) };
+    });
+  }
 
   /**
    * Read the legacy employee row without asking Prisma to project every column
@@ -103,6 +175,18 @@ export class EmployeesService {
 
   /** Minimal active-employee directory for POS account sales; no HR-sensitive fields. */
   async posOptions() {
+    return this.prisma.employees.findMany({
+      where: {
+        employee_type: 1,
+        OR: [{ leave_emp: null }, { leave_emp: 0 }],
+      },
+      select: { id: true, employee: true, emp_code: true },
+      orderBy: [{ employee: 'asc' }, { emp_code: 'asc' }],
+    });
+  }
+
+  /** Active employees that may be assigned to ordinary club subscriptions. */
+  async subscriptionOptions() {
     return this.prisma.employees.findMany({
       where: {
         employee_type: 1,
@@ -322,6 +406,10 @@ export class EmployeesService {
     for (const [field, label] of required) {
       if (str(body[field]) === '') throw new BadRequestException(`${label} حقل مطلوب`);
     }
+    const empType = Number(str(body.emp_type));
+    if (![1, 2, 3].includes(empType)) {
+      throw new BadRequestException('النوع يجب أن يكون رجالى أو حريمى أو الكل');
+    }
     // Phone format: Egyptian mobile (01xxxxxxxxx) or international digits (9–15).
     const phone = str(body.jwal);
     if (phone !== '' && !/^\+?\d{9,15}$/.test(phone.replace(/[\s-]/g, ''))) {
@@ -515,7 +603,11 @@ export class EmployeesService {
     const resolvedBody = await this.applyJobTitle(await resolveSettingsIdsToTitles(this.prisma, body));
     const data = formToData(resolvedBody);
     delete data.emp_code; // never reassign the business key on edit
-    await this.prisma.employees.update({
+    // Legacy MySQL rows can contain an empty string in a YesNo column. Prisma
+    // can write the requested fields, then throws while deserializing that
+    // unchanged legacy value from the returned row. updateMany returns only a
+    // count, so it persists the edit without reading unrelated legacy fields.
+    await this.prisma.employees.updateMany({
       where: { id },
       data: { ...data, ...this.dualDateStamps(userId) },
     });

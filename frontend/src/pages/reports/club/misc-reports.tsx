@@ -7,7 +7,6 @@ import { StatusBadge } from '@/components/common/status-badge';
 import { ReportShell, downloadCsv } from '@/components/reports/report-shell';
 import { DateRangeFilter, firstOfMonth, todayLocal } from '@/components/reports/date-range-filter';
 import { BranchFilter, normalizeBranchParam } from '@/components/reports/branch-filter';
-import { ReportAudienceFilter, useReportAudience } from '@/components/reports/audience-filter';
 import { fetchAllReportRows } from '@/lib/report-fetch';
 import { api } from '@/lib/api';
 import { formatMoney, formatTimeFromDate } from '@/lib/formatters';
@@ -20,9 +19,8 @@ import { useLocale } from '@/store/locale';
 export function ClubSubscriptionSessionsReportPage() {
   const { ui } = useLocale();
   const [branch, setBranch] = useState('all');
-  const audience = useReportAudience();
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-sub-sessions', branch, audience.gender],
+    queryKey: ['reports', 'club-sub-sessions', branch],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const data = await fetchAllReportRows<{
@@ -32,10 +30,7 @@ export function ClubSubscriptionSessionsReportPage() {
         subscriptionType: string | null;
         sessionsCount: number;
         isLinkedToSessions: boolean;
-      }>('/club-subscriptions', {
-        ...(branchId ? { branch: String(branchId) } : {}),
-        ...(audience.gender ? { gender: audience.gender } : {}),
-      });
+      }>('/club-subscriptions', branchId ? { branch: String(branchId) } : {});
       return { data, total: data.length };
     },
   });
@@ -62,10 +57,7 @@ export function ClubSubscriptionSessionsReportPage() {
     <ReportShell
       title={ui('تقرير حصص الاشتراكات')}
       description={ui('الاشتراكات المرتبطة بعدد حصص محدد')}
-      filters={<>
-        <BranchFilter value={branch} onChange={setBranch} />
-        <ReportAudienceFilter value={audience.value} onChange={audience.setValue} locked={audience.locked} />
-      </>}
+      filters={<BranchFilter value={branch} onChange={setBranch} />}
       stats={<ClubStatCard label={ui('العدد')} value={rows.length} />}
       onExport={exportCsv}
     >
@@ -94,7 +86,6 @@ export function ClubSalesStaffReportPage() {
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
   const [branch, setBranch] = useState('all');
-  const audience = useReportAudience();
   const [userId, setUserId] = useState('all');
   const [search, setSearch] = useState('');
   const [summaryPage, setSummaryPage] = useState(1);
@@ -144,7 +135,7 @@ export function ClubSalesStaffReportPage() {
   };
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-sales-staff', startDate, endDate, branch, audience.gender],
+    queryKey: ['reports', 'club-sales-staff', startDate, endDate, branch],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const response = await api.get<UserAnalyticsResponse>('/club-subscriptions/user-analytics', {
@@ -152,7 +143,6 @@ export function ClubSalesStaffReportPage() {
           startDate,
           endDate,
           ...(branchId ? { branch: String(branchId) } : {}),
-          ...(audience.gender ? { gender: audience.gender } : {}),
         },
       });
       return response.data;
@@ -345,7 +335,6 @@ export function ClubSalesStaffReportPage() {
           extra={
             <>
               <BranchFilter value={branch} onChange={(value) => { setBranch(value); setSummaryPage(1); setDetailPage(1); }} />
-              <ReportAudienceFilter value={audience.value} onChange={audience.setValue} locked={audience.locked} />
               {userFilter}
             </>
           }
@@ -436,10 +425,9 @@ export function ClubAttendanceReportPage() {
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
   const [branch, setBranch] = useState('all');
-  const audience = useReportAudience();
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-attendance', startDate, endDate, branch, audience.gender],
+    queryKey: ['reports', 'club-attendance', startDate, endDate, branch],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const data = await fetchAllReportRows<{
@@ -452,10 +440,9 @@ export function ClubAttendanceReportPage() {
         status: string;
         duration: number | null;
       }>('/club-attendance', {
-        startDate,
-        endDate,
+        dateFrom: startDate,
+        dateTo: endDate,
         ...(branchId ? { branch: String(branchId) } : {}),
-        ...(audience.gender ? { gender: audience.gender } : {}),
       });
       return { data, total: data.length };
     },
@@ -519,10 +506,7 @@ export function ClubAttendanceReportPage() {
           endDate={endDate}
           onStartChange={setStartDate}
           onEndChange={setEndDate}
-          extra={<>
-            <BranchFilter value={branch} onChange={setBranch} />
-            <ReportAudienceFilter value={audience.value} onChange={audience.setValue} locked={audience.locked} />
-          </>}
+          extra={<BranchFilter value={branch} onChange={setBranch} />}
         />
       }
       stats={<ClubStatCard label={ui('عدد السجلات')} value={rows.length} />}
@@ -551,9 +535,8 @@ export function ClubAttendanceReportPage() {
 export function ClubTrainersReportPage() {
   const { ui } = useLocale();
   const [branch, setBranch] = useState('all');
-  const audience = useReportAudience();
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-trainers', branch, audience.gender],
+    queryKey: ['reports', 'club-trainers', branch],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const data = await fetchAllReportRows<{
@@ -563,10 +546,7 @@ export function ClubTrainersReportPage() {
         rating: number | null;
         activeClients: number | null;
         isActive: boolean;
-      }>('/club-trainers', {
-        ...(branchId ? { branch: String(branchId) } : {}),
-        ...(audience.gender ? { gender: audience.gender } : {}),
-      });
+      }>('/club-trainers', branchId ? { branch: String(branchId) } : {});
       return { data, total: data.length };
     },
   });
@@ -606,10 +586,7 @@ export function ClubTrainersReportPage() {
     <ReportShell
       title={ui('تقرير المدربين')}
       description={ui('قائمة كاملة بالمدربين والتخصصات وحالة العمل')}
-      filters={<>
-        <BranchFilter value={branch} onChange={setBranch} />
-        <ReportAudienceFilter value={audience.value} onChange={audience.setValue} locked={audience.locked} />
-      </>}
+      filters={<BranchFilter value={branch} onChange={setBranch} />}
       stats={
         <>
           <ClubStatCard label={ui('إجمالي المدربين')} value={rows.length} />
@@ -643,25 +620,26 @@ export function ClubLockersReportPage() {
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
   const [branch, setBranch] = useState('all');
-  const audience = useReportAudience();
+  const [gender, setGender] = useState('all');
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-lockers', startDate, endDate, branch, audience.gender],
+    queryKey: ['reports', 'club-lockers', startDate, endDate, branch, gender],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const data = await fetchAllReportRows<{
         id: number;
-        subscriptionNumber: string;
+        lockerNumber: string;
         customerName: string | null;
         subscriptionStartDate: string | null;
         subscriptionEndDate: string | null;
-        paidAmount: number | null;
+        subscriptionValue: number | null;
+        gender: 'male' | 'female' | null;
         status: string;
       }>('/club-locker-subscriptions', {
-        startDate,
-        endDate,
+        dateFrom: startDate,
+        dateTo: endDate,
         ...(branchId ? { mainBranchId: String(branchId) } : {}),
-        ...(audience.gender ? { gender: audience.gender } : {}),
+        ...(gender !== 'all' ? { gender } : {}),
       });
       return { data, total: data.length };
     },
@@ -671,11 +649,12 @@ export function ClubLockersReportPage() {
 
   const columns = useMemo<ColumnDef<(typeof rows)[number]>[]>(
     () => [
-      { accessorKey: 'subscriptionNumber', header: ui('رقم اشتراك اللوكر') },
+      { accessorKey: 'lockerNumber', header: ui('رقم اللوكر') },
       { accessorKey: 'customerName', header: ui('العضو'), cell: ({ getValue }) => getValue() ?? '—' },
+      { accessorKey: 'gender', header: 'الفئة', cell: ({ getValue }) => getValue() === 'female' ? 'حريمي' : getValue() === 'male' ? 'رجالي' : '—' },
       { accessorKey: 'subscriptionStartDate', header: ui('البداية'), cell: ({ getValue }) => toArabicDigits(String(getValue() ?? '—')) },
       { accessorKey: 'subscriptionEndDate', header: ui('النهاية'), cell: ({ getValue }) => toArabicDigits(String(getValue() ?? '—')) },
-      { accessorKey: 'paidAmount', header: ui('المدفوع'), cell: ({ getValue }) => (getValue() != null ? toArabicDigits(Number(getValue())) : '—') },
+      { accessorKey: 'subscriptionValue', header: ui('الرسوم'), cell: ({ getValue }) => (getValue() != null ? toArabicDigits(Number(getValue())) : '—') },
       {
         accessorKey: 'status',
         header: ui('الحالة'),
@@ -688,12 +667,12 @@ export function ClubLockersReportPage() {
     [ui],
   );
 
-  const totalFees = rows.reduce((s, r) => s + Number(r.paidAmount ?? 0), 0);
+  const totalFees = rows.reduce((s, r) => s + Number(r.subscriptionValue ?? 0), 0);
 
   const exportCsv = () =>
     downloadCsv(`lockers-${startDate}-${endDate}`, [
-      [ui('رقم اللوكر'), ui('العضو'), ui('البداية'), ui('النهاية'), ui('الرسوم'), ui('الحالة')],
-      ...rows.map((r) => [r.subscriptionNumber, r.customerName ?? '', r.subscriptionStartDate ?? '', r.subscriptionEndDate ?? '', r.paidAmount ?? 0, r.status]),
+      [ui('رقم اللوكر'), ui('العضو'), 'الفئة', ui('البداية'), ui('النهاية'), ui('الرسوم'), ui('الحالة')],
+      ...rows.map((r) => [r.lockerNumber, r.customerName ?? '', r.gender === 'female' ? 'حريمي' : r.gender === 'male' ? 'رجالي' : '', r.subscriptionStartDate ?? '', r.subscriptionEndDate ?? '', r.subscriptionValue ?? 0, r.status]),
     ]);
 
   return (
@@ -706,10 +685,7 @@ export function ClubLockersReportPage() {
           endDate={endDate}
           onStartChange={setStartDate}
           onEndChange={setEndDate}
-          extra={<>
-            <BranchFilter value={branch} onChange={setBranch} />
-            <ReportAudienceFilter value={audience.value} onChange={audience.setValue} locked={audience.locked} />
-          </>}
+          extra={<div className="flex gap-2"><BranchFilter value={branch} onChange={setBranch} /><select className="h-10 rounded-md border bg-background px-3 text-sm" value={gender} onChange={(event) => setGender(event.target.value)}><option value="all">كل الفئات</option><option value="male">رجالي</option><option value="female">حريمي</option></select></div>}
         />
       }
       stats={

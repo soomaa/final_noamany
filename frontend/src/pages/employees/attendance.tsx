@@ -8,6 +8,7 @@ import { ErrorState } from '@/components/common/states';
 import { Time12Input } from '@/components/common/time-12-input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -19,7 +20,10 @@ import { queryClient } from '@/lib/query';
 import { fetchAllReportRows } from '@/lib/report-fetch';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
-import type { DwamData } from '@/types/employees';
+
+type WeeklySlot = { weekday: number; branchId: number | null; shiftId: number | null };
+type WeeklySchedule = { effectiveFrom?: string; slots: WeeklySlot[] };
+const WEEKDAYS = ['السبت', 'الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'];
 
 interface EmployeeIdentity {
   emp_code?: string | number;
@@ -86,13 +90,19 @@ export function EmployeeAttendancePage() {
   const { ui } = useLocale();
   const { id } = useParams<{ id: string }>();
   const { data: employee, isLoading: employeeLoading, isError, refetch } = useResource<EmployeeIdentity>('employees', id, 'identity');
-  const { data: dwam, isLoading: dwamLoading } = useResource<DwamData>('employees', id, 'dwam');
+  const { data: weekly, isLoading: weeklyLoading } = useQuery({
+    queryKey: ['employees', id, 'weekly-schedule'],
+    queryFn: async () => (await api.get<WeeklySchedule>(`/employees/${id}/weekly-schedule`)).data,
+    enabled: Boolean(id),
+  });
   const { data: branches } = useBranches();
   const { data: shifts = [] } = useQuery({
     queryKey: ['attendance', 'shifts', 'employee-assignment'],
     queryFn: () => fetchAllReportRows<ShiftRow>('/attendance/shifts', {}, 100),
   });
   const [form, setForm] = useState<AttendanceForm>(EMPTY_FORM);
+  const [slots, setSlots] = useState<Record<number, WeeklySlot>>({});
+  const [selectedDays, setSelectedDays] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -101,6 +111,11 @@ export function EmployeeAttendancePage() {
       ? current
       : { ...current, branchId: String(employee.branch_id_fk ?? '') });
   }, [employee]);
+
+  useEffect(() => {
+    if (!weekly?.slots) return;
+    setSlots(Object.fromEntries(weekly.slots.map((slot) => [slot.weekday, slot])));
+  }, [weekly]);
 
   const selectShift = (shiftId: string) => {
     const shift = shifts.find((item) => String(item.id) === shiftId);
@@ -116,19 +131,34 @@ export function EmployeeAttendancePage() {
     }));
   };
 
+  const addSelectedDays = (rest = false) => {
+    if (!rest && (!form.shiftId || !form.branchId || form.branchId === 'all')) {
+      toast.error(ui('اختر الفرع والدوام أولاً'));
+      return;
+    }
+    if (!selectedDays.length) return toast.error(ui('اختر يومًا واحدًا على الأقل'));
+    setSlots((current) => ({ ...current, ...Object.fromEntries(selectedDays.map((weekday) => [weekday, {
+      weekday,
+      branchId: rest ? null : Number(form.branchId),
+      shiftId: rest ? null : Number(form.shiftId),
+    }])) }));
+    setSelectedDays([]);
+  };
+
   const save = async () => {
     if (!id) return;
-    const missing = !form.shiftId || !form.branchId || TIME_FIELDS.some((field) => !form[field.key]);
-    if (missing) {
-      toast.error(ui('يرجى استكمال اسم الدوام والتوقيتات والفرع'));
+    if (Object.keys(slots).length !== 7) {
+      toast.error(ui('يجب تحديد دوام أو راحة لكل أيام الأسبوع'));
       return;
     }
     setSaving(true);
     try {
-      await api.put(`/employees/${id}/dwam`, form);
-      toast.success(ui('تمت إضافة الدوام للموظف'));
-      void queryClient.invalidateQueries({ queryKey: ['employees', id, 'dwam'] });
-      setForm((current) => ({ ...EMPTY_FORM, branchId: current.branchId }));
+      await api.put(`/employees/${id}/weekly-schedule`, {
+        effectiveFrom: weekly?.effectiveFrom ?? new Date().toISOString().slice(0, 10),
+        slots: Object.values(slots),
+      });
+      toast.success(ui('تم حفظ الجدول الأسبوعي للموظف'));
+      void queryClient.invalidateQueries({ queryKey: ['employees', id, 'weekly-schedule'] });
     } catch (error) {
       toast.error(apiError(error));
     } finally {
@@ -136,19 +166,8 @@ export function EmployeeAttendancePage() {
     }
   };
 
-  const removeAssignment = async (assignmentId: number) => {
-    if (!id) return;
-    try {
-      await api.delete(`/employees/${id}/dwam/${assignmentId}`);
-      toast.success(ui('تم حذف ربط الدوام'));
-      void queryClient.invalidateQueries({ queryKey: ['employees', id, 'dwam'] });
-    } catch (error) {
-      toast.error(apiError(error));
-    }
-  };
-
   if (isError) return <ErrorState onRetry={() => void refetch()} />;
-  if (employeeLoading || dwamLoading) return <Skeleton className="h-72 w-full" />;
+  if (employeeLoading || weeklyLoading) return <Skeleton className="h-72 w-full" />;
 
   const employeeName = employee?.emp_name ?? employee?.employee ?? '—';
 
@@ -184,21 +203,24 @@ export function EmployeeAttendancePage() {
             </div>
           </div>
 
-          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-            {TIME_FIELDS.map((field) => (
-              <div key={field.key} className="space-y-2">
-                <Label>{ui(field.label)}</Label>
-                <Time12Input disabled value={form[field.key]} onValueChange={(value) => setForm((current) => ({ ...current, [field.key]: value }))} />
-              </div>
-            ))}
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {WEEKDAYS.map((day, weekday) => {
+              const used = Boolean(slots[weekday]);
+              return <label key={day} className="flex items-center gap-2 rounded border p-3 text-sm">
+                <Checkbox checked={selectedDays.includes(weekday)} disabled={used} onCheckedChange={(checked) => setSelectedDays((current) => checked ? [...current, weekday] : current.filter((value) => value !== weekday))} />
+                {ui(day)} {used ? `(${slots[weekday].shiftId == null ? ui('راحة') : ui('محدد')})` : ''}
+              </label>;
+            })}
           </div>
-
-          <p className="text-xs text-muted-foreground">{ui('المواعيد تُعرض من إعدادات الدوام، ويمكن تعديلها من شاشة إعدادات الدوام')}</p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={() => addSelectedDays()}><Plus className="size-4" />{ui('إضافة للأيام المختارة')}</Button>
+            <Button type="button" variant="outline" onClick={() => addSelectedDays(true)}>{ui('تحديد راحة')}</Button>
+          </div>
 
           <div className="flex justify-end border-t pt-6">
             <Button variant="brand" onClick={() => void save()} disabled={saving}>
               {saving ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
-              {ui('إضافة الدوام')}
+              {ui('حفظ الجدول الأسبوعي')}
             </Button>
           </div>
         </CardContent>
@@ -207,46 +229,41 @@ export function EmployeeAttendancePage() {
       <Card>
         <CardContent className="pt-6">
           <div className="mb-5">
-            <h2 className="text-lg font-bold">{ui('الدوامات المرتبط بها الموظف')}</h2>
-            <p className="text-sm text-muted-foreground">{ui('يمكن ربط الموظف بأكثر من دوام وفرع')}</p>
+            <h2 className="text-lg font-bold">{ui('جدول الدوام الأسبوعي')}</h2>
+            <p className="text-sm text-muted-foreground">{ui('لا يمكن اختيار اليوم أكثر من مرة')}</p>
           </div>
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>{ui('اليوم')}</TableHead>
                 <TableHead>{ui('اسم الدوام')}</TableHead>
                 <TableHead>{ui('الفرع')}</TableHead>
-                <TableHead>{ui('فترة الحضور')}</TableHead>
-                <TableHead>{ui('فترة الانصراف')}</TableHead>
                 <TableHead className="w-20">{ui('الإجراء')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
-              {(dwam?.assignments ?? []).map((assignment) => (
-                <TableRow key={assignment.id}>
-                  <TableCell className="font-semibold">{assignment.shiftName ?? assignment.shiftId}</TableCell>
-                  <TableCell>{assignment.branchId === 'all' ? ui('إدارة') : (assignment.branchName ?? assignment.branchId)}</TableCell>
-                  <TableCell className="nums">{assignment.hdoorFromTime} – {assignment.hdoorToTime}</TableCell>
-                  <TableCell className="nums">{assignment.ensrafFromTime} – {assignment.ensrafToTime}</TableCell>
+              {WEEKDAYS.map((day, weekday) => {
+                const slot = slots[weekday];
+                const shift = shifts.find((item) => item.id === slot?.shiftId);
+                const branch = (branches ?? []).find((item) => item.id === slot?.branchId);
+                return <TableRow key={day}>
+                  <TableCell>{ui(day)}</TableCell>
+                  <TableCell className="font-semibold">{slot ? (slot.shiftId == null ? ui('راحة') : (shift?.title ?? slot.shiftId)) : '—'}</TableCell>
+                  <TableCell>{slot?.branchId == null ? '—' : (branch?.name ?? slot.branchId)}</TableCell>
                   <TableCell>
                     <Button
                       size="icon"
                       variant="ghost"
                       className="text-destructive hover:text-destructive"
                       aria-label={ui('حذف')}
-                      onClick={() => void removeAssignment(assignment.id)}
+                      disabled={!slot}
+                      onClick={() => setSlots((current) => { const next = { ...current }; delete next[weekday]; return next; })}
                     >
                       <Trash2 className="size-4" />
                     </Button>
                   </TableCell>
-                </TableRow>
-              ))}
-              {!dwam?.assignments?.length ? (
-                <TableRow>
-                  <TableCell colSpan={5} className="py-10 text-center text-muted-foreground">
-                    {ui('لا توجد دوامات مرتبطة بالموظف حتى الآن')}
-                  </TableCell>
-                </TableRow>
-              ) : null}
+                </TableRow>;
+              })}
             </TableBody>
           </Table>
         </CardContent>

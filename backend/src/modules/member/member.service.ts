@@ -7,7 +7,6 @@ import { ConfigService } from "@nestjs/config";
 import {
   AmInvitationStatus,
   ClubClassAudience,
-  ClubFitnessClassStatus,
   Prisma,
 } from "@prisma/client";
 import { PrismaService } from "../../common/prisma/prisma.service";
@@ -84,6 +83,7 @@ export class MemberService {
       memberCode: member.member_code,
       memberId: member.id,
       barcode: member.member_code,
+      barcodeFormat: "CODE128",
       termsAndConditions: about.termsOfService,
       privacyPolicy: about.privacyPolicy,
       isActive: member.is_active,
@@ -144,56 +144,15 @@ export class MemberService {
   }
 
   /**
-   * Trainers available in the member's JWT branch. A trainer belongs to a branch when they have
-   * a real class, an active class/default schedule, or a linked employee whose home branch matches.
-   * The branch argument is supplied only by MemberController from the verified member token.
+   * This member's subscriptions only (`member_id` from the JWT — never another member).
+   * `status` / `activePlan` use the same session-aware rules as gym check-in entitlement.
    */
   async listTrainers(branchId: number) {
     const trainers = await this.prisma.club_trainers.findMany({
       where: { is_active: true, is_deleted: false },
       orderBy: { name: 'asc' },
     });
-    if (!trainers.length) return [];
-
-    const trainerIds = trainers.map((trainer) => trainer.id);
-    const employeeIds = trainers
-      .map((trainer) => trainer.employee_id)
-      .filter((id): id is number => id != null);
-    const [classes, classSlots, trainerSlots, employees] = await Promise.all([
-      this.prisma.club_classes.findMany({
-        where: { branch_id: branchId, trainer_id: { in: trainerIds }, is_deleted: false },
-        select: { trainer_id: true },
-        distinct: ['trainer_id'],
-      }),
-      this.prisma.club_class_schedule_slots.findMany({
-        where: { branch_id: branchId, trainer_id: { in: trainerIds }, is_active: true },
-        select: { trainer_id: true },
-        distinct: ['trainer_id'],
-      }),
-      this.prisma.club_trainer_schedule_slots.findMany({
-        where: { branch_id: branchId, trainer_id: { in: trainerIds }, is_active: true },
-        select: { trainer_id: true },
-        distinct: ['trainer_id'],
-      }),
-      employeeIds.length
-        ? this.prisma.employees.findMany({
-            where: { id: { in: employeeIds }, branch_id_fk: branchId },
-            select: { id: true },
-          })
-        : [],
-    ]);
-
-    const employeeSet = new Set(employees.map((employee) => employee.id));
-    const allowed = new Set<number>([
-      ...classes.map((entry) => entry.trainer_id),
-      ...classSlots.flatMap((entry) => entry.trainer_id == null ? [] : [entry.trainer_id]),
-      ...trainerSlots.map((entry) => entry.trainer_id),
-      ...trainers
-        .filter((trainer) => trainer.employee_id != null && employeeSet.has(trainer.employee_id))
-        .map((trainer) => trainer.id),
-    ]);
-
-    return trainers.filter((trainer) => allowed.has(trainer.id)).map((trainer) => ({
+    return trainers.map((trainer) => ({
       id: trainer.id,
       employeeId: trainer.employee_id,
       name: trainer.name,
@@ -206,10 +165,6 @@ export class MemberService {
     }));
   }
 
-  /**
-   * This member's subscriptions only (`member_id` from the JWT — never another member).
-   * `status` / `activePlan` use the same session-aware rules as gym check-in entitlement.
-   */
   async listSubscriptions(memberId: number) {
     const rows = await this.prisma.club_subscriptions.findMany({
       where: { member_id: memberId },
@@ -439,65 +394,69 @@ export class MemberService {
   // ── Classes (الكلاسات: رجال / سيدات / أطفال) ────────────────────────────────
 
   /**
-   * Upcoming classes in the member's branch, grouped by audience (men / women / kids / mixed).
-   * Pass `audience` to return only that bucket. Each class carries the member's own
-   * enrollment flag and live capacity.
+   * Portal-managed classes for the member's branch, grouped by audience.
+   * Only branch and the requested audience are filtered; newest portal rows come first.
    */
   async listClasses(branchId: number, memberId: number, audience?: string) {
-    const today = new Date().toISOString().slice(0, 10);
-    const where: Prisma.club_classesWhereInput = {
-      branch_id: branchId,
-      is_deleted: false,
-      is_active: true,
-      class_date: { gte: today },
-      status: {
-        in: [ClubFitnessClassStatus.scheduled, ClubFitnessClassStatus.ongoing],
-      },
-    };
-
     let audienceFilter: ClubClassAudience | undefined;
     if (audience && audience !== "all") {
       if (!AUDIENCE_ORDER.includes(audience as ClubClassAudience)) {
         throw new BadRequestException("نوع الكلاس غير صحيح");
       }
       audienceFilter = audience as ClubClassAudience;
-      where.audience = audienceFilter;
     }
 
-    const rows = await this.prisma.club_classes.findMany({
-      where,
-      orderBy: [{ class_date: "asc" }, { start_time: "asc" }],
-      include: {
-        trainer: { select: { name: true } },
-        hall: { select: { name: true } },
-        enrollments: {
-          where: { attendance_status: { not: "cancelled" } },
-          select: { member_id: true },
-        },
-      },
-    });
+    const portalClassTypeByAudience: Record<ClubClassAudience, number> = {
+      men: 1,
+      women: 2,
+      kids: 3,
+      mixed: 0,
+    };
+    const portalAudienceByClassType: Record<number, ClubClassAudience> = {
+      0: "mixed",
+      1: "men",
+      2: "women",
+      3: "kids",
+    };
+    const filter = audienceFilter
+      ? " AND class_type = ?"
+      : "";
+    const params = audienceFilter
+      ? [branchId, portalClassTypeByAudience[audienceFilter]]
+      : [branchId];
+    const rows = await this.prisma.$queryRawUnsafe<Array<{
+      id: number;
+      class_title: string;
+      branch_id: number;
+      class_type: number;
+      price: Prisma.Decimal | number | string | null;
+      day: string | null;
+      time: string | null;
+      date: Date | string | null;
+    }>>(
+      `SELECT id, class_title, branch_id, class_type, price, day, time, date
+       FROM design_web_classes
+       WHERE branch_id = ?${filter}
+       ORDER BY id DESC
+       LIMIT 20`,
+      ...params,
+    );
 
-    const items = rows.map((r) => {
-      const enrolledCount = r.enrollments.length;
-      return {
-        id: r.id,
-        className: r.class_name,
-        description: r.description,
-        audience: r.audience,
-        audienceLabel: AUDIENCE_LABELS[r.audience],
-        classDate: r.class_date,
-        startTime: r.start_time,
-        endTime: r.end_time,
-        trainerName: r.trainer?.name ?? null,
-        hallName: r.hall?.name ?? null,
-        maxCapacity: r.max_capacity,
-        enrolledCount,
-        availableSpots: Math.max(r.max_capacity - enrolledCount, 0),
-        isFull: enrolledCount >= r.max_capacity,
-        price: toNum(r.price),
-        status: r.status,
-        isEnrolled: r.enrollments.some((e) => e.member_id === memberId),
-      };
+    const items = rows.flatMap((row) => {
+      const rowAudience = portalAudienceByClassType[Number(row.class_type)];
+      if (!rowAudience) return [];
+      return [{
+        id: Number(row.id),
+        className: row.class_title,
+        branchId: Number(row.branch_id),
+        classType: Number(row.class_type),
+        audience: rowAudience,
+        audienceLabel: AUDIENCE_LABELS[rowAudience],
+        classDate: row.date,
+        day: row.day,
+        startTime: row.time,
+        price: toNum(row.price),
+      }];
     });
 
     const buckets = audienceFilter ? [audienceFilter] : AUDIENCE_ORDER;
@@ -551,7 +510,8 @@ export class MemberService {
       let totalRedeemed = 0;
       const chronological = ledger.map((entry) => {
         const points = Math.abs(entry.points);
-        const isEarn = entry.transaction_type === "earn";
+        const isEarn = entry.transaction_type === "earn"
+          || (entry.transaction_type === "manual_adjustment" && entry.points > 0);
         if (isEarn) totalEarned += points;
         else totalRedeemed += points;
         balance += isEarn ? points : -points;

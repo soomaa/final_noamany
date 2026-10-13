@@ -16,10 +16,8 @@ import { JwtUser } from '../../common/types/jwt-user';
 import { isDryRun } from '../../common/preview';
 import {
   CreateQuickSaleDto,
-  EditCompletedQuickSaleDto,
   InvoiceFeedbackDto,
   InvoiceItemFeedbackDto,
-  ListCafeCustomersDto,
   ListQuickSalesDto,
   UpdateQuickSaleDto,
 } from './dto/quick-sales.dto';
@@ -56,70 +54,9 @@ export class QuickSalesController {
     return this.service.summary(query, user);
   }
 
-  @Get('customers')
-  @RequiresPermission('club.cafe.customers:view')
-  customers(@Query() query: ListCafeCustomersDto, @CurrentUser() user: JwtUser) {
-    return this.service.customers(query, user);
-  }
-
-  @Get('customers/lookup')
-  @RequiresPermission('gym-sales.sales.new_receipt:view')
-  customerLookup(
-    @Query('branchId', ParseIntPipe) branchId: number,
-    @Query('phone') phone: string,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.service.customerLookup(branchId, phone, user);
-  }
-
-  @Get('customers/member-search')
-  @RequiresPermission('gym-sales.sales.new_receipt:view')
-  customerMemberSearch(
-    @Query('branchId', ParseIntPipe) branchId: number,
-    @Query('query') query: string,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.service.customerMemberSearch(branchId, query, user);
-  }
-
-  @Get('customers/member-lookup')
-  @RequiresPermission('gym-sales.sales.new_receipt:view')
-  customerMemberLookup(
-    @Query('branchId', ParseIntPipe) branchId: number,
-    @Query('code') code: string,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.service.customerMemberLookup(branchId, code, user);
-  }
-
-  @Get('customers/:kind/:key')
-  @RequiresPermission('club.cafe.customers:view')
-  customerDetail(
-    @Param('kind') kind: string,
-    @Param('key') key: string,
-    @Query('branchId', ParseIntPipe) branchId: number,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.service.customerDetail(branchId, kind, key, user);
-  }
-
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
     return this.service.findOne(id, user);
-  }
-
-  @Get('employees/:employeeId/benefits')
-  async employeeBenefits(
-    @Param('employeeId', ParseIntPipe) employeeId: number,
-    @Query('branchId', ParseIntPipe) branchId: number,
-    @Query('draftId') draftId: string | undefined,
-    @Query('editId') editId: string | undefined,
-    @CurrentUser() user: JwtUser,
-  ) {
-    const draft = draftId || editId ? await this.service.findOne(Number(editId || draftId), user) : null;
-    const editing = draft?.status === (editId ? 'completed' : 'draft') && draft.employeeId === employeeId && draft.branchId === branchId;
-    return this.service.employeeBenefits(employeeId, branchId, user, editing ? draft.id : undefined,
-      editing && editId ? draft.employeeBenefitDate || draft.saleDate : undefined);
   }
 
   @Post()
@@ -132,12 +69,6 @@ export class QuickSalesController {
   @RequiresPermission('gym-sales.sales.drafts:update', 'gym-sales.sales.new_receipt:update')
   reviseDraft(@Param('id', ParseIntPipe) id: number, @Body() body: CreateQuickSaleDto, @CurrentUser() user: JwtUser) {
     return this.service.reviseDraft(id, body, user.sub, false, user);
-  }
-
-  @Put(':id/completed')
-  @RequiresPermission('gym-sales.sales.drafts:update')
-  editCompleted(@Param('id', ParseIntPipe) id: number, @Body() body: EditCompletedQuickSaleDto, @CurrentUser() user: JwtUser) {
-    return this.service.editCompleted(id, body, user.sub, user);
   }
 
   @Post(':id/finalize')
@@ -215,4 +146,3 @@ export class QuickSalesController {
     return this.service.markPrinted(id, user);
   }
 }
-

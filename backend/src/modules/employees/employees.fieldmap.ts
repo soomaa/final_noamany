@@ -167,7 +167,11 @@ export function rowToForm(row: Record<string, unknown>): Record<string, string> 
   const out: Record<string, string> = {};
   for (const [formKey, col] of Object.entries(FIELD_MAP)) {
     const v = row[col];
-    out[formKey] = v == null ? '' : String(v);
+    // An edit form submits every registered field. Legacy rows can have NULL
+    // enum values, which React previously turned into '' and Prisma rejects.
+    // Keep the form payload valid by using the same canonical YesNo value that
+    // the write mapper uses for an unset checkbox/radio field.
+    out[formKey] = YESNO_COLS.has(col) ? normalizeYesNo(v) : v == null ? '' : String(v);
   }
   // Imported rows may store the Gregorian date only in the legacy column.
   if (!out.birth_date && out.birthdate) out.birth_date = out.birthdate;

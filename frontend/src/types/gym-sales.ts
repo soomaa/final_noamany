@@ -33,20 +33,16 @@ export interface PurchaseReturnRow {
   }>;
 }
 
-export interface InvoicePaymentAmount { key: string; method: string; label: string; amount: number }
-export interface InvoicePaymentSummary { payments: InvoicePaymentAmount[]; total: number; collected: number; outstanding: number }
-
 export interface QuickSaleRow {
   id: number;
   saleNumber: string;
   dailyNumber: number;
   customerName: string;
   customerPhone?: string | null;
+  gender?: 'male' | 'female' | null;
+  cafeCategoryId?: number | null;
   saleType?: 'customer' | 'employee' | 'partner';
   employeeId?: number | null;
-  employeeName?: string | null;
-  employeeFreeDrinks?: number;
-  employeeBenefitDate?: string | null;
   partnerId?: number | null;
   branchId: number;
   shiftSessionId?: number | null;
@@ -59,22 +55,8 @@ export interface QuickSaleRow {
   taxPercentage?: number;
   totalAmount: number;
   paymentMethod: string;
-  collectedAmount?: number;
-  paymentBreakdown?: InvoicePaymentAmount[];
-  payments?: Array<{
-    id: number;
-    method: string;
-    amount: number;
-    reference?: string | null;
-    catalogPaymentMethodId?: number | null;
-    methodCode?: string | null;
-    methodName?: string | null;
-  }>;
   status: string;
   receiptPrinted: boolean;
-  editRevision?: number;
-  billingCycle?: 'immediate' | 'daily' | 'monthly' | null;
-  inventoryPosted?: boolean;
   receiptComment?: string | null;
   notes?: string | null;
   feedback?: { rating: number; comment?: string | null; date: string; invoiceId: number } | null;
@@ -91,7 +73,6 @@ export interface QuickSaleRow {
     quantity: number;
     unitPrice: number;
     lineTotal: number;
-    freeQuantity?: number;
     feedback?: { rating: number; comment?: string | null; date: string } | null;
   }>;
 }
@@ -202,7 +183,7 @@ export interface PurchaseOrderRow {
   branchId: number;
   expectedDeliveryDate?: string | null;
   paymentTerms?: string | null;
-  items?: Array<{ id: number; name: string; quantity: number; price: number; total: number }>;
+  items?: Array<{ id: number; productId?: number | null; name: string; quantity: number; price: number; total: number }>;
 }
 
 export interface GoodsReceiptRow {

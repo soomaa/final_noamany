@@ -7,17 +7,6 @@ import { LedgerLineInput, LedgerService } from "./ledger.service";
 
 type Tx = Prisma.TransactionClient;
 
-interface QuickSaleEditAccountingSnapshot {
-  subtotal: number;
-  discountAmount: number;
-  taxAmount: number;
-  totalAmount: number;
-  collectedAmount: number;
-  paymentMethod: SalesPaymentMethod;
-  payments: { method: SalesPaymentMethod; amount: number }[];
-  cogsAmount: number;
-}
-
 @Injectable()
 export class ModuleLedgerService {
   constructor(
@@ -154,60 +143,6 @@ export class ModuleLedgerService {
       },
       tx,
     );
-  }
-
-  /** Post only the balanced account deltas while preserving the original sale journal. */
-  async postQuickSaleEdit(
-    input: {
-      saleNumber: string;
-      revision: number;
-      branchId: number;
-      saleDate: string;
-      createdBy: number;
-      before: QuickSaleEditAccountingSnapshot;
-      after: QuickSaleEditAccountingSnapshot;
-    },
-    tx?: Tx,
-  ): Promise<void> {
-    const balances = new Map<string, number>();
-    const add = (account: string, amount: number) => {
-      balances.set(account, roundMoney((balances.get(account) ?? 0) + amount));
-    };
-    for (const [snapshot, sign] of [[input.before, -1], [input.after, 1]] as const) {
-      const collected = roundMoney(snapshot.collectedAmount);
-      const payments = snapshot.payments.length
-        ? snapshot.payments
-        : collected > 0
-          ? [{ method: snapshot.paymentMethod, amount: collected }]
-          : [];
-      for (const payment of payments) {
-        add(this.paymentKeyFromSalesMethod(payment.method), sign * roundMoney(payment.amount));
-      }
-      add('accounts_receivable', sign * roundMoney(snapshot.totalAmount - collected));
-      add('sales_discount', sign * roundMoney(snapshot.discountAmount));
-      add('sales_revenue', -sign * roundMoney(snapshot.subtotal));
-      add('vat_output', -sign * roundMoney(snapshot.taxAmount));
-      add('cost_of_goods_sold', sign * roundMoney(snapshot.cogsAmount));
-      add('inventory', -sign * roundMoney(snapshot.cogsAmount));
-    }
-    const lines: LedgerLineInput[] = [...balances].flatMap(([accountCode, amount]) =>
-      amount === 0
-        ? []
-        : [{ accountCode, debit: Math.max(0, amount), credit: Math.max(0, -amount) }],
-    );
-    if (!lines.length) return;
-    await this.ensureChart();
-    await this.ledger.postEntry({
-      sourceModule: 'sales',
-      sourceDocType: 'quick_sale_edit',
-      sourceDocId: `${input.saleNumber}:edit:${input.revision}`,
-      branchId: input.branchId,
-      date: input.saleDate,
-      description: `تعديل فاتورة ${input.saleNumber} — المراجعة ${input.revision}`,
-      lines,
-      createdBy: input.createdBy,
-      entryPrefix: 'A',
-    }, tx);
   }
 
   async postDrawerMovement(
@@ -569,10 +504,12 @@ export class ModuleLedgerService {
       sourceDocType: string;
       lines: LedgerLineInput[];
       createdBy?: number;
+      /** Caller prepared the chart before opening its own database transaction. */
+      chartReady?: boolean;
     },
     tx?: Tx,
   ): Promise<void> {
-    await this.ensureChart();
+    if (!input.chartReady) await this.ensureChart();
     await this.ledger.postEntry(
       {
         sourceModule: "club",

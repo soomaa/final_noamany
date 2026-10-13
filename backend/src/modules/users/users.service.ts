@@ -98,7 +98,11 @@ export class UsersService {
 
   /** POST /users — faithful to User::adduser + User_m::add. */
   async create(dto: CreateUserDto) {
-    await this.assertUsernameUnique(dto.username);
+    const link = dto.level === 1 ? null : await this.resolveEmployeeLink(dto.empCode!);
+    const existingEmployeeUser = link
+      ? await this.prisma.users.findFirst({ where: { emp_code: link.emp_code }, select: { user_id: true } })
+      : null;
+    await this.assertUsernameUnique(dto.username, existingEmployeeUser?.user_id);
 
     const password = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
 
@@ -113,11 +117,26 @@ export class UsersService {
 
     if (dto.level === 1) {
       data.name = dto.fullname ?? null;
-    } else {
-      const link = await this.resolveEmployeeLink(dto.empCode!);
+    } else if (link) {
       data.name = link.name;
       data.branch_id_fk = link.branch_id_fk;
       data.emp_code = link.emp_code;
+    }
+
+    if (existingEmployeeUser) {
+      let user = await this.prisma.users.update({
+        where: { user_id: existingEmployeeUser.user_id },
+        data: data as never,
+        select: USER_PUBLIC_FIELDS,
+      });
+      if (user.emp_code != null) {
+        await syncEmployeeUserRole(this.prisma, user.emp_code);
+        user = await this.prisma.users.findUniqueOrThrow({
+          where: { user_id: user.user_id },
+          select: USER_PUBLIC_FIELDS,
+        });
+      }
+      return { ...user, level_label: LEVEL_LABELS[user.level ?? 0] ?? '' };
     }
 
     let user = await this.prisma.users.create({
@@ -255,7 +274,7 @@ export class UsersService {
   async getPermissions(userId: number) {
     const user = await this.prisma.users.findUnique({
       where: { user_id: userId },
-      select: { user_id: true, username: true, name: true, level: true, emp_code: true, branch_id_fk: true },
+      select: { user_id: true, username: true, name: true },
     });
     if (!user) throw new NotFoundException('المستخدم غير موجود');
 
@@ -267,56 +286,32 @@ export class UsersService {
       }),
     ]);
 
-    const employee = user.emp_code != null
-      ? await this.prisma.employees.findUnique({ where: { id: user.emp_code }, select: { branch_id_fk: true, emp_type: true } })
-      : null;
-    const gender = employee?.emp_type === 1 ? 'male' : employee?.emp_type === 2 ? 'female' : null;
     return {
       userId: user.user_id,
       username: user.username ?? undefined,
       fullName: user.name ?? undefined,
       tree,
       permissions: perms.map((p) => String(p.page_id_fk)),
-      scope: {
-        branchId: employee?.branch_id_fk ?? user.branch_id_fk ?? null,
-        gender,
-        editable: user.level !== 1 && user.emp_code != null,
-      },
     };
   }
 
-  async putPermissions(userId: number, body: { permissions?: string[]; scope?: { branchId?: number; gender?: 'male' | 'female' } }) {
+  async putPermissions(userId: number, body: { permissions?: string[] }) {
     const user = await this.prisma.users.findUnique({ where: { user_id: userId } });
     if (!user) throw new NotFoundException('المستخدم غير موجود');
 
     const pageIds = [...new Set((body.permissions ?? []).map((id) => parseInt(id, 10)).filter((id) => !Number.isNaN(id)))];
 
-    let scope: { branchId: number; gender: 'male' | 'female' } | null = null;
-    if (body.scope != null) {
-      if (user.level === 1 || user.emp_code == null) {
-        throw new BadRequestException('لا يمكن تحديد نطاق الفرع/القسم لهذا المستخدم');
-      }
-      const branchId = Number(body.scope.branchId);
-      const gender = body.scope.gender;
-      if (!Number.isInteger(branchId) || branchId <= 0 || (gender !== 'male' && gender !== 'female')) {
-        throw new BadRequestException('حدد فرعًا وقسمًا صالحين للمستخدم');
-      }
-      const branch = await this.prisma.tbl_branches.findUnique({ where: { branch_id: branchId }, select: { branch_id: true } });
-      if (!branch) throw new BadRequestException('الفرع المحدد غير موجود');
-      scope = { branchId, gender };
-    }
-    const scopeUserWrite = scope
-      ? this.prisma.users.update({ where: { user_id: userId }, data: { branch_id_fk: scope.branchId } })
-      : null;
-    const employeeScopeWrite = scope
-      ? this.prisma.employees.update({ where: { id: user.emp_code! }, data: { branch_id_fk: scope.branchId, emp_type: scope.gender === 'male' ? 1 : 2 } })
-      : null;
     await this.prisma.$transaction([
       this.prisma.permissions.deleteMany({ where: { user_id: userId } }),
-      ...(pageIds.length ? [this.prisma.permissions.createMany({ data: pageIds.map((page_id_fk) => ({ user_id: userId, page_id_fk, page_level: 0 })) })] : []),
-      ...(scopeUserWrite ? [scopeUserWrite] : []),
-      ...(employeeScopeWrite ? [employeeScopeWrite] : []),
+      ...(pageIds.length
+        ? [
+            this.prisma.permissions.createMany({
+              data: pageIds.map((page_id_fk) => ({ user_id: userId, page_id_fk, page_level: 0 })),
+            }),
+          ]
+        : []),
     ]);
-    return { userId, count: pageIds.length, scope };
+
+    return { userId, count: pageIds.length };
   }
 }

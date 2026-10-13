@@ -69,8 +69,8 @@ export class AppManagementController {
 
   @Put('invitations/:id')
   @RequiresPermission('app-management.invitations:update')
-  updateInvitation(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateInvitationDto) {
-    return this.service.updateInvitation(id, body);
+  updateInvitation(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateInvitationDto, @CurrentUser() user: import('../../common/types/jwt-user').JwtUser) {
+    return this.service.updateInvitation(id, body, user.sub);
   }
 
   @Put('invitations/:id/status')
@@ -78,11 +78,12 @@ export class AppManagementController {
   updateInvitationStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { status: AmInvitationStatus; rejectionReason?: string },
+    @CurrentUser() user: import('../../common/types/jwt-user').JwtUser,
   ) {
     return this.service.updateInvitation(id, {
       status: body.status,
       rejectionReason: body.rejectionReason,
-    });
+    }, user.sub);
   }
 
   @Get('offers')

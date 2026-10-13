@@ -2,6 +2,7 @@
 import { ClubMembersPage } from './members';
 import { ClubSubscriptionsPage } from './subscriptions';
 import { ClubLockersPage } from './lockers';
+export { ClubLockerInventoryPage } from './locker-inventory';
 import { ClubSubscriptionRefundsPage } from './subscription-refunds';
 import { SpecialClassesPage } from './special-classes';
 
@@ -19,6 +20,7 @@ export { ClubDiscountsPage } from './discounts';
 export { ClubTimeBasedSubscriptionsPage } from './time-based';
 export { ClubCustomerSourcesPage } from './customer-sources';
 export { ClubPackageSettingsPage } from './package-settings';
+export { default as ClubBranchGroupsPage } from './branch-groups';
 export { SpecialClassesPage };
 
 export function ClubSubscriptionsListPage() {

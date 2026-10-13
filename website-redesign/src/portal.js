@@ -24,20 +24,10 @@ export async function api(path, options = {}) {
 
 export function assetUrl(path) {
   if (!path) return '';
-  path = String(path).trim();
-  if (/[\u0000-\u001f\u007f]/.test(path) || (/^[a-z][a-z\d+.-]*:/i.test(path) && !/^https?:\/\//i.test(path))) return '';
   if (/^https?:\/\//i.test(path)) return path;
   const cleaned = String(path).replace(/^\/+/, '');
   if (cleaned.startsWith('assets/')) return `/${cleaned}`;
   return cleaned.startsWith('uploads/') ? `/${cleaned}` : `/uploads/${cleaned}`;
-}
-
-export function safeLink(value, fallback = '#') {
-  const path = String(value || '').trim();
-  if (!path || /[\u0000-\u001f\u007f\\]/.test(path) || path.startsWith('//')) return fallback;
-  if (/^(https?:\/\/|tel:|mailto:)/i.test(path)) return path;
-  if (/^[a-z][a-z\d+.-]*:/i.test(path)) return fallback;
-  return path;
 }
 
 export function productImageUrl(path) {
@@ -67,7 +57,6 @@ export function saveCart(cart) {
 }
 
 export function addToCart(product, quantity = 1) {
-  if (!Number.isInteger(quantity) || quantity < 1) throw new Error('اختر كمية صحيحة لا تقل عن قطعة واحدة');
   if (!product || product.stockStatus === 'out_of_stock' || Number(product.stock) < 1) throw new Error('المنتج غير متوفر حاليًا');
   const cart = getCart();
   const existing = cart.find((item) => item.productId === Number(product.id));
@@ -115,9 +104,6 @@ export function showToast(message, kind = 'success') {
     toast.className = 'site-toast';
     document.body.appendChild(toast);
   }
-  toast.setAttribute('role', 'status');
-  toast.setAttribute('aria-live', kind === 'error' ? 'assertive' : 'polite');
-  toast.setAttribute('aria-atomic', 'true');
   toast.textContent = message;
   toast.dataset.kind = kind;
   toast.classList.add('show');
@@ -130,4 +116,3 @@ export function installGlobalCartLinks() {
   paint();
   window.addEventListener('noamany:cart', (event) => paint(event.detail));
 }
-import './responsive-ui.js';

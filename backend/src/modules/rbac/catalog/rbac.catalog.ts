@@ -1,3 +1,5 @@
+import { addSidebarPages } from './sidebar-pages';
+
 /**
  * RBAC CATALOG — the single source of truth for the permissionable resource tree
  * and the standard action set. Derived from the new React app's navigation
@@ -224,7 +226,8 @@ export const RESOURCE_TREE: ResourceNode[] = [
           page('affairs.site_visits', 'الزيارات الميدانية', '/sites/visits', LIST, 'Site visits'),
           page('affairs.action_screen', 'شاشة الإجراءات', '/hr/action-screen', ['view', 'execute', 'audit'], 'Action screen'),
           page('affairs.gym_rates', 'إعدادات نسب الجيم', '/hr/gym-rates', SETTINGS, 'Gym rate settings'),
-        ], 'Employee affairs'),
+          page('hr.mobile-content', 'محتوى تطبيق الموظفين', '/hr/mobile-content', SETTINGS, 'HR mobile content'),
+      ], 'Employee affairs'),
       {
         key: 'termination',
         nameAr: 'إنهاء الخدمة',
@@ -251,6 +254,20 @@ export const RESOURCE_TREE: ResourceNode[] = [
     ],
   },
   {
+    key: 'evaluation-management',
+    nameAr: 'إدارة التقييمات',
+    nameEn: 'Evaluation Management',
+    type: 'module',
+    icon: 'ClipboardCheck',
+    actions: ALL,
+    children: [
+      page('evaluation-management.categories', 'فئات التقييم', '/evaluation-management/categories', LIST, 'Evaluation categories'),
+      page('evaluation-management.items', 'بنود التقييم', '/evaluation-management/items', LIST, 'Evaluation items'),
+      page('evaluation-management.add_evaluation', 'إضافة تقييم', '/evaluation-management/add', LIST, 'Add evaluation'),
+      page('evaluation-management.report', 'تقرير التقييمات', '/evaluation-management/report', LIST, 'Evaluation report'),
+    ],
+  },
+  {
     key: 'club',
     nameAr: 'إدارة النادي الرياضي',
     nameEn: 'Club',
@@ -272,13 +289,15 @@ export const RESOURCE_TREE: ResourceNode[] = [
         page('club.members', 'إدارة العضوية', '/club/members', LIST, 'Members'),
         page('club.members.barcode_management', 'إدارة الباركود', '/club/members/barcode-management', LIST, 'Barcode management'),
         page('club.members.attendance', 'حضور الأعضاء', '/club/members/attendance', LIST, 'Member attendance'),
-        page('club.customer_service', 'خدمة العملاء', '/club/customer-service', LIST, 'Customer service'),
+        page('club.members.groups', 'المجموعات والفئات', '/club/members/groups', LIST, 'Groups'),
+        page('club.members.surveys', 'الاستبيانات', '/club/members/surveys', LIST, 'Surveys'),
+        { key: 'sales.portal', nameAr: 'بوابة المبيعات', nameEn: 'Sales portal', type: 'page', actions: ['view', 'update'] },
       ], 'Membership'),
       group('club.subscriptions', 'إدارة الاشتراكات والمدفوعات', 'CreditCard', [
         page('club.packages.settings', 'الباقات والأسعار', '/club/packages/settings', SETTINGS, 'Packages'),
         page('club.subscriptions.list', 'الاشتراكات', '/club/subscriptions', APPROVAL, 'Subscriptions'),
+        page('club.subscriptions.member_transfer', 'تحويلات الاشتراكات', '/club/subscriptions/member-transfer', ['view', 'create', 'update', 'delete', 'export'], 'Subscription transfers'),
         page('club.subscriptions.new', 'إضافة اشتراك جديد', '/club/subscriptions/new', APPROVAL, 'New subscription'),
-        page('club.subscriptions.online', 'الاشتراكات الأونلاين', '/club/subscriptions/online', APPROVAL, 'Online subscriptions'),
         page('club.subscriptions.special', 'الاشتراكات الخاصة والحصص', '/club/subscriptions/special', APPROVAL, 'Special classes'),
         page(
           'club.subscriptions.daily_cashier',
@@ -290,6 +309,7 @@ export const RESOURCE_TREE: ResourceNode[] = [
         // Keep the existing permission key so current roles automatically retain access while
         // the former user-only analytics screen becomes the unified subscription reports page.
         page('club.subscriptions.user_analytics', 'تقارير الاشتراكات', '/club/subscriptions/reports', REPORT, 'Subscription reports'),
+        { key: 'club.subscriptions.reports', nameAr: 'صلاحية تقارير الاشتراكات', nameEn: 'Subscription reports permission', type: 'page', actions: REPORT },
         page('club.subscriptions.receipts', 'الإيصالات', '/club/subscriptions/receipts', APPROVAL, 'Receipts'),
         // SPA + InBody paid invoices — relocated here (they already count in revenue). Keys kept
         // under club.fitness.* so existing permissions/guards (club.fitness:*) keep working.
@@ -300,23 +320,26 @@ export const RESOURCE_TREE: ResourceNode[] = [
         page('club.subscriptions.unified_treasury', 'الخزينة الموحدة', '/club/unified-treasury', APPROVAL, 'Unified treasury'),
         page('club.subscriptions.refunds', 'المستردات', '/club/subscriptions/refunds', APPROVAL, 'Refunds'),
         page('club.subscriptions.customer_sources', 'مصادر العملاء', '/club/subscriptions/customer-sources', LIST, 'Customer sources'),
-        page('club.subscriptions.discounts', 'إدارة النقاط وأكواد الخصم', '/club/subscriptions/discounts', LIST, 'Points and discount codes'),
       ], 'Subscriptions'),
       group('club.lockers', 'إدارة اللوكر', 'Lock', [
         page('club.lockers.list', 'قائمة اللوكر', '/club/lockers', LIST, 'Lockers'),
-        page('club.lockers.inventory', 'جرد اللوكر', '/club/lockers?tab=inventory', APPROVAL, 'Locker inventory'),
         page('club.lockers.new', 'إضافة لوكر', '/club/lockers/new', LIST, 'New locker'),
         page('club.lockers.settings', 'إعدادات اللوكر', '/club/lockers/settings', SETTINGS, 'Locker settings'),
       ], 'Lockers'),
       group('club.fitness', 'اللياقة والتدريب', 'Dumbbell', [
-        page('club.targets', 'تقرير التارجت', '/club/targets', REPORT, 'Targets report'),
         page('club.fitness.room_bookings', 'حجوزات القاعات', '/club/fitness/room-bookings', LIST, 'Room bookings'),
         page('club.fitness.personal_sessions', 'المواعيد الشخصية', '/club/fitness/personal-sessions', LIST, 'Personal sessions'),
         page('club.fitness.trainers', 'إدارة المدربين', '/club/fitness/trainers', LIST, 'Trainers'),
-        page('club.fitness.trainer_payments', 'مستحقات المدربين', '/club/fitness/trainer-payments', LIST, 'Trainer payments'),
+        page('club.fitness.trainer_payments', 'أجور المدربين', '/club/fitness/trainer-payments', LIST, 'Trainer payments'),
         page('club.fitness.trainer_search', 'بحث عن المدرب', '/club/fitness/trainer-search', LIST, 'Trainer search'),
         page('club.fitness.trainer_ratings', 'تقييمات المدربين', '/club/fitness/trainer-ratings', LIST, 'Trainer ratings'),
         page('club.fitness.trainer_settings', 'إعدادات المدربين', '/club/fitness/trainer-settings', SETTINGS, 'Trainer settings'),
+        page('club.fitness.trainer_targets', 'تارجت المدربين', '/club/fitness/trainer-targets', SETTINGS, 'Trainer targets'),
+        page('club.fitness.trainer_evaluations', 'تقييم المدربين الشهري', '/club/fitness/trainer-evaluations', LIST, 'Trainer evaluations'),
+        page('club.fitness.trainer_evaluation_criteria', 'بنود تقييم المدربين', '/club/fitness/trainer-evaluation-criteria', SETTINGS, 'Trainer evaluation criteria'),
+        page('club.fitness.branch_analysis', 'تحليل الفروع', '/club/fitness/branch-analysis', REPORT, 'Branch analysis'),
+        page('club.fitness.reception_analysis', 'تحليل الريسيبشن', '/club/fitness/reception-analysis', REPORT, 'Reception analysis'),
+        page('club.fitness.shift_analysis', 'تحليل الشِفتات', '/club/fitness/shift-analysis', REPORT, 'Shift analysis'),
         page('club.fitness.facilities', 'إدارة المرافق', '/club/fitness/facilities', LIST, 'Facilities'),
         page('club.fitness.equipment', 'جرد المعدات', '/club/fitness/equipment', LIST, 'Equipment'),
         page('club.fitness.equipment_maintenance', 'صيانة المعدات', '/club/fitness/equipment-maintenance', LIST, 'Maintenance'),
@@ -355,16 +378,6 @@ export const RESOURCE_TREE: ResourceNode[] = [
     children: [],
   },
   {
-    key: 'sales.portal',
-    nameAr: 'بوابة المبيعات',
-    nameEn: 'Sales Portal',
-    type: 'module',
-    icon: 'Target',
-    route: '/sales-portal',
-    actions: ['view', 'update'],
-    children: [],
-  },
-  {
     key: 'gym-sales',
     nameAr: 'إدارة الكافيه والمخزون',
     nameEn: 'Cafe & Inventory',
@@ -373,32 +386,38 @@ export const RESOURCE_TREE: ResourceNode[] = [
     actions: ALL,
     children: [
       group('gym-sales.sales', 'إدارة البيع', 'Receipt', [
-        page('gym-sales.sales.bookings', 'حجوزات المبيعات', '/sales/bookings', LIST, 'Sales bookings'),
         page('gym-sales.sales.new_receipt', 'إيصال بيع جديد', '/sales/new', LIST, 'New receipt'),
-        page('gym-sales.sales.drafts', 'فواتير اليوم', '/sales/drafts', LIST, "Today's invoices"),
+        page('gym-sales.sales.drafts', 'فواتير اليوم', '/sales/drafts', APPROVAL, "Today's invoices"),
+        page('gym-sales.sales.invoices', 'فواتير البيع', '/sales/invoices', LIST, 'Sales invoices'),
+        page('gym-sales.sales.revenue', 'إيرادات المبيعات', '/sales/revenue', REPORT, 'Sales revenue'),
         page('gym-sales.sales.shifts', 'الورديات', '/sales/shifts', ALL, 'Shifts'),
         page('gym-sales.sales.treasury', 'الخزينة والدرج', '/sales/treasury', ALL, 'Cash drawer'),
         page('gym-sales.sales.settlements', 'تسويات الموظفين والشركاء', '/sales/settlements', ALL, 'Employee & partner settlements'),
         page('gym-sales.sales.pos_admin', 'إعدادات نقطة البيع', '/sales/pos-admin', ALL, 'POS admin'),
       ], 'Sales'),
       group('gym-sales.cafe', 'الكافيه', 'Coffee', [
-        page('club.cafe.dashboard', 'لوحة الكافيه', '/club/cafe/dashboard', REPORT, 'Cafe dashboard'),
         page('club.cafe.categories', 'فئات الكافيه', '/club/cafe/categories', LIST, 'Cafe categories'),
         page('club.cafe.products', 'منتجات الكافيه', '/club/cafe/products', LIST, 'Cafe products'),
         page('club.cafe.price_list', 'قائمة الأسعار', '/inventory/price-list', ['view', 'update', 'export', 'print', 'audit'], 'Price list'),
-        page('club.cafe.waste', 'الهالك والفاقد', '/club/cafe/waste', ['view', 'create', 'update', 'export', 'print', 'audit'], 'Waste and loss'),
         page('club.cafe.reports', 'تقارير الكافيه', '/club/cafe/reports', REPORT, 'Cafe reports'),
-        page('club.cafe.customers', 'إدارة العملاء', '/club/cafe/customers', REPORT, 'Customer management'),
         page('club.cafe.feedback_reports', 'تقييمات منتجات الكافيه', '/club/cafe/reports/feedback', REPORT, 'Cafe product feedback'),
       ], 'Cafe'),
       group('gym-sales.inventory', 'إدارة الخامات والمخزون', 'Database', [
         page('gym-sales.inventory.dashboard', 'لوحة تحكم المخزون', '/inventory/dashboard', REPORT, 'Inventory dashboard'),
         page('gym-sales.inventory.raw_materials', 'خامات الكافيه', '/club/cafe/raw-materials', APPROVAL, 'Cafe raw materials'),
-        page('gym-sales.inventory.gym_issue', 'مسحوبات الإدارة', '/club/cafe/inventory', APPROVAL, 'Management withdrawals'),
+        page('gym-sales.inventory.gym_issue', 'صرف مخزون داخل الجيم', '/inventory/gym-issue', APPROVAL, 'Gym internal issue'),
         page('gym-sales.inventory.stock_taking', 'الجرد', '/club/cafe/stock-taking', APPROVAL, 'Stock taking'),
         page('gym-sales.inventory.movement_log', 'الحركات المخزنية', '/club/cafe/movements', REPORT, 'Inventory movements'),
       ], 'Inventory'),
       group('gym-sales.procurement', 'إدارة المشتريات', 'ShoppingCart', [
+        page('gym-sales.procurement.requisitions', 'طلبات الشراء', '/procurement/requisitions', APPROVAL, 'Purchase requisitions'),
+        page('gym-sales.procurement.purchase_orders', 'أوامر الشراء', '/procurement/purchase-orders', APPROVAL, 'Purchase orders'),
+        page('gym-sales.procurement.goods_receipts', 'استلام المشتريات', '/procurement/goods-receipts', APPROVAL, 'Goods receipts'),
+        page('gym-sales.procurement.invoices', 'فواتير الموردين', '/procurement/invoices', APPROVAL, 'Supplier invoices'),
+        page('gym-sales.procurement.returns', 'مرتجعات المشتريات', '/procurement/returns', APPROVAL, 'Purchase returns'),
+        page('gym-sales.procurement.dashboard', 'لوحة تحكم المشتريات', '/procurement/dashboard', REPORT, 'Procurement dashboard'),
+        page('gym-sales.procurement.settings', 'إعدادات المشتريات', '/procurement/settings', SETTINGS, 'Procurement settings'),
+        // Legacy operational pages remain permissionable until their screens are retired.
         page('gym-sales.procurement.suppliers', 'موردو الكافيه', '/club/cafe/suppliers', APPROVAL, 'Cafe suppliers'),
         page('gym-sales.procurement.cafe_purchases', 'مشتريات الكافيه', '/club/cafe/purchases', APPROVAL, 'Cafe purchases'),
         page('gym-sales.procurement.supplier_payments', 'سداد مديونية الموردين', '/club/cafe/supplier-payments', APPROVAL, 'Supplier payments'),
@@ -414,6 +433,7 @@ export const RESOURCE_TREE: ResourceNode[] = [
     actions: ALL,
     children: [
       page('accounting.hub', 'لوحة التحكم', '/hub/accounting', REPORT, 'Dashboard'),
+      page('accounting.payment_methods', 'طرق الدفع', '/settings/payment-methods', LIST, 'Payment methods'),
       page('accounting.dashboard', 'لوحة التحكم', '/accounting', REPORT, 'Accounting dashboard'),
       group('accounting.ledger', 'القيود والحسابات', 'BookOpen', [
         page('accounting.journal', 'القيود المحاسبية', '/accounting/journal-entries', APPROVAL, 'Journal entries'),
@@ -440,7 +460,6 @@ export const RESOURCE_TREE: ResourceNode[] = [
     children: [
       page('portal-management.hub', 'لوحة التحكم', '/hub/portal-management', REPORT, 'Dashboard'),
       group('portal-management.basics', 'البيانات الأساسية', 'Settings2', [
-        page('portal.payment-methods', 'طرق الدفع الأونلاين', '/portal/payment-methods', LIST, 'Online payment methods'),
         page('portal-management.company', 'بيانات البرنامج', '/portal/company', RECORD, 'Company details'),
         page('portal-management.sliders', 'الاسلايدر', '/portal/sliders', LIST, 'Sliders'),
         page('portal-management.partners', 'التعاقدات', '/portal/partners', LIST, 'Partners'),
@@ -472,7 +491,7 @@ export const RESOURCE_TREE: ResourceNode[] = [
         page('portal-management.captain-discounts', 'كودات خصم الكباتن للمتجر', '/portal/captain-discounts', LIST, 'Captain discounts'),
         page('portal-management.categories', 'إدارة الأقسام', '/portal/categories', LIST, 'Categories'),
         page('portal-management.products', 'إدارة المنتجات', '/portal/products', LIST, 'Products'),
-        page('portal-management.orders', 'طلبات الموقع', '/portal/orders', LIST, 'Website orders'),
+        page('portal-management.orders', 'بيع الأونلاين', '/portal/orders', LIST, 'Online sales'),
         page('portal-management.customers', 'حسابات العملاء', '/portal/customers', LIST, 'Customers'),
         page('portal-management.sales-report', 'تقرير مبيعات المتجر عن طريق الكباتن', '/portal/captain-sales-report', REPORT, 'Captain sales report'),
       ], 'Store'),
@@ -533,7 +552,25 @@ export const RESOURCE_TREE: ResourceNode[] = [
       page('admin.insurance', 'إعدادات التأمين', '/settings/insurance', SETTINGS, 'Insurance settings'),
     ],
   },
+  {
+    key: 'customer-service',
+    nameAr: 'خدمة العملاء',
+    nameEn: 'Customer Service',
+    type: 'module',
+    icon: 'Headphones',
+    actions: ALL,
+    children: [
+      // Retaining this parent key keeps every existing direct grant effective.
+      group('affairs.customer_service', 'خدمة العملاء', 'Headphones', [
+        page('customer-service.questions', 'أسئلة المتابعة', '/customer-service/questions', LIST, 'Follow-up questions'),
+        page('customer-service.feedback', 'إضافة متابعة', '/customer-service/add-feedback', LIST, 'Add feedback'),
+        page('customer-service.reports', 'تقارير خدمة العملاء', '/customer-service/reports', REPORT, 'Customer service reports'),
+      ], 'Customer service'),
+    ],
+  },
 ];
+
+addSidebarPages(RESOURCE_TREE);
 
 // ---------------------------------------------------------------------------------------
 //  Derived helpers (pure)

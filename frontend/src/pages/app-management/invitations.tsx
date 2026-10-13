@@ -36,6 +36,10 @@ interface InvitationRow {
   sentDate: string;
   acceptedDate: string | null;
   rejectedDate: string | null;
+  acceptedByUserId: number | null;
+  rejectedByUserId: number | null;
+  acceptedByName: string | null;
+  rejectedByName: string | null;
   attendanceDate: string | null;
   rejectionReason: string | null;
 }
@@ -104,8 +108,10 @@ function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
       {
         accessorKey: 'sentDate',
         header: uiStatic('تاريخ الإرسال'),
-        cell: ({ getValue }) => <span className="nums">{String(getValue()).slice(0, 10)}</span>,
+        cell: ({ getValue }) => <span className="nums">{new Date(String(getValue())).toLocaleString('ar-EG')}</span>,
       },
+      ...(statusKey === 'accepted' ? [{ id: 'acceptedInfo', header: uiStatic('تاريخ وموظف القبول'), cell: ({ row }: any) => <span className="nums">{row.original.acceptedDate ? `${new Date(row.original.acceptedDate).toLocaleString('ar-EG')} — ${row.original.acceptedByName ?? '—'}` : '—'}</span> }] : []),
+      ...(statusKey === 'rejected' ? [{ id: 'rejectedInfo', header: uiStatic('تاريخ وموظف الرفض'), cell: ({ row }: any) => <span className="nums">{row.original.rejectedDate ? `${new Date(row.original.rejectedDate).toLocaleString('ar-EG')} — ${row.original.rejectedByName ?? '—'}` : '—'}</span> }] : []),
       {
         id: 'actions',
         header: uiStatic('إجراءات'),

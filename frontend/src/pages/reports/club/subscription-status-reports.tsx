@@ -6,7 +6,6 @@ import { ClubStatCard } from '@/components/club/stat-card';
 import { StatusBadge } from '@/components/common/status-badge';
 import { ReportShell, downloadCsv } from '@/components/reports/report-shell';
 import { BranchFilter, normalizeBranchParam } from '@/components/reports/branch-filter';
-import { ReportAudienceFilter, useReportAudience } from '@/components/reports/audience-filter';
 import { fetchAllReportRows } from '@/lib/report-fetch';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
@@ -14,7 +13,7 @@ import type { ClubSubscriptionListItem } from '@/types/club';
 
 type StatusFilter = 'expired' | 'active' | 'expiring';
 
-function useSubs(status: StatusFilter, branch: string, gender?: 'male' | 'female') {
+function useSubs(status: StatusFilter, branch: string, gender: string) {
   return useQuery({
     queryKey: ['reports', 'club-subs-status', status, branch, gender],
     queryFn: async () => {
@@ -24,7 +23,7 @@ function useSubs(status: StatusFilter, branch: string, gender?: 'male' | 'female
       if (status === 'expiring') params.expiresWithinDays = 7;
       const branchId = normalizeBranchParam(branch);
       if (branchId) params.branch = String(branchId);
-      if (gender) params.gender = gender;
+      if (gender !== 'all') params.gender = gender;
       const data = await fetchAllReportRows<ClubSubscriptionListItem>('/club-subscriptions', params);
       return { data, total: data.length };
     },
@@ -34,8 +33,8 @@ function useSubs(status: StatusFilter, branch: string, gender?: 'male' | 'female
 function StatusReport({ status, title, description }: { status: StatusFilter; title: string; description: string }) {
   const { ui } = useLocale();
   const [branch, setBranch] = useState('all');
-  const audience = useReportAudience();
-  const { data, isLoading, isError, refetch } = useSubs(status, branch, audience.gender);
+  const [gender, setGender] = useState('all');
+  const { data, isLoading, isError, refetch } = useSubs(status, branch, gender);
   const rows = data?.data ?? [];
 
   const columns = useMemo<ColumnDef<ClubSubscriptionListItem>[]>(
@@ -43,6 +42,8 @@ function StatusReport({ status, title, description }: { status: StatusFilter; ti
       { accessorKey: 'subscriptionNumber', header: ui('رقم الاشتراك') },
       { accessorKey: 'customerName', header: ui('العميل'), cell: ({ getValue }) => getValue() ?? '—' },
       { accessorKey: 'subscriptionType', header: ui('النوع'), cell: ({ getValue }) => getValue() ?? '—' },
+      { accessorKey: 'branchName', header: ui('الفرع'), cell: ({ getValue }) => getValue() ?? '—' },
+      { id: 'category', header: ui('الفئة'), cell: ({ row }) => row.original.gender === 'female' ? ui('حريمي') : row.original.gender === 'male' ? ui('رجالي') : '—' },
       {
         accessorKey: 'subscriptionEndDate',
         header: ui('تاريخ الانتهاء'),
@@ -63,11 +64,13 @@ function StatusReport({ status, title, description }: { status: StatusFilter; ti
 
   const exportCsv = () => {
     downloadCsv(`subs-${status}`, [
-      [ui('رقم الاشتراك'), ui('العميل'), ui('النوع'), ui('تاريخ الانتهاء'), ui('المتبقي')],
+      [ui('رقم الاشتراك'), ui('العميل'), ui('النوع'), ui('الفرع'), ui('الفئة'), ui('تاريخ الانتهاء'), ui('المتبقي')],
       ...rows.map((r) => [
         r.subscriptionNumber ?? '',
         r.customerName ?? '',
         r.subscriptionType ?? '',
+        r.branchName ?? '',
+        r.gender === 'female' ? ui('حريمي') : r.gender === 'male' ? ui('رجالي') : '',
         String(r.subscriptionEndDate ?? ''),
         Number(r.remainingAmount ?? 0),
       ]),
@@ -78,10 +81,7 @@ function StatusReport({ status, title, description }: { status: StatusFilter; ti
     <ReportShell
       title={title}
       description={description}
-      filters={<>
-        <BranchFilter value={branch} onChange={setBranch} />
-        <ReportAudienceFilter value={audience.value} onChange={audience.setValue} locked={audience.locked} />
-      </>}
+      filters={<div className="flex gap-2"><BranchFilter value={branch} onChange={setBranch} /><select aria-label={ui('الفئة')} value={gender} onChange={(event) => setGender(event.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm"><option value="all">{ui('الكل')}</option><option value="male">{ui('رجالي')}</option><option value="female">{ui('حريمي')}</option></select></div>}
       stats={<ClubStatCard label={ui('العدد')} value={rows.length} />}
       onExport={exportCsv}
     >

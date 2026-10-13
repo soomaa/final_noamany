@@ -73,10 +73,6 @@ export class UpsertCafeProductDto {
   productType?: 'ready' | 'prepared' | 'internal';
 
   @IsOptional()
-  @IsIn(['protein', 'bar'])
-  businessClassification?: 'protein' | 'bar';
-
-  @IsOptional()
   @Transform(({ value }) => (value != null && value !== '' ? Number(value) : undefined))
   @IsInt()
   inventoryProductId?: number;

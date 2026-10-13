@@ -91,12 +91,9 @@ export class CafeProductsController {
     @Query('dateFrom') dateFrom: string | undefined,
     @Query('dateTo') dateTo: string | undefined,
     @Query('branchId') branchId: string | undefined,
-    @Query('shiftSessionId') shiftSessionId: string | undefined,
-    @Query('section') section: 'protein' | 'bar' | 'management_withdrawals' | undefined,
-    @Query('gender') gender: 'male' | 'female' | undefined,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.service.reports(dateFrom, dateTo, branchId, user, shiftSessionId, section, gender);
+    return this.service.reports(dateFrom, dateTo, branchId, user);
   }
 
   @Get('reports/item-feedback')
@@ -105,10 +102,9 @@ export class CafeProductsController {
     @Query('dateFrom') dateFrom: string | undefined,
     @Query('dateTo') dateTo: string | undefined,
     @Query('branchId') branchId: string | undefined,
-    @Query('gender') gender: 'male' | 'female' | undefined,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.service.itemFeedbackReport(dateFrom, dateTo, branchId, user, gender);
+    return this.service.itemFeedbackReport(dateFrom, dateTo, branchId, user);
   }
 
   @Get(':id')

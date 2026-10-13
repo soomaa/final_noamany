@@ -21,6 +21,7 @@ import { seedGymSales } from './seed/30-gymsales';
 import { seedPosAdmin } from './seed/35-pos-admin';
 import { seedAccountingApp } from './seed/40-accounting-app';
 import { seedCafe } from './seed/50-cafe';
+import { seedWebsite } from './seed/55-website';
 import { seedReferenceCatalogs } from './seed/05-reference-catalogs';
 import { clearFakeFitnessCafeData } from './scripts/clear-fake-fitness-cafe-data';
 import { clearPayrollDemoData } from './scripts/clear-payroll-demo-data';
@@ -115,6 +116,7 @@ async function main() {
   await seedPosAdmin();
   await seedAccountingApp();
   await seedCafe();
+  await seedWebsite();
   await seedReferenceCatalogs();
 
   // Operational cafe/fitness screens start empty by default. Set this only when a developer

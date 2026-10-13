@@ -3,20 +3,29 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
-  Optional,
 } from '@nestjs/common';
 import { ClubGender, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { paginated } from '../../common/dto/list-result';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
+import { loadLegacySubscriptionStaff } from './legacy-subscription-staff.util';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { Inject } from '@nestjs/common';
+import {
+  ClubBranchGroupReader,
+  ClubBranchGroupService,
+} from '../../common/branch-groups/club-branch-group.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
+import { assertClubOperationBranch, clubOperationBranchIds } from '../../common/branch-groups/club-operation-scope';
 import { assertDateOrder } from '../../common/validators';
 import { assertMemberExists, localDateString } from '../club-members/club-member.utils';
+import { shareClubMemberIdentity } from '../club-members/club-branch-groups';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
 import { AutomationEngineService } from '../gym-ops/automation-engine.service';
 import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
 import { ClubDiscountCodesService } from './club-discount-codes.service';
+import { ClubPointsService } from '../club-points/club-points.service';
 import { ClubSubscriptionAccountingService } from './club-subscription-accounting.service';
 import { ClubReceiptsService } from './club-receipts.service';
 import {
@@ -40,9 +49,6 @@ import {
 import { ListClubSubscriptionsDto } from './dto/list-club-subscriptions.dto';
 import { UpsertClubSubscriptionDto } from './dto/upsert-club-subscription.dto';
 import { isSubscriptionTypeAvailableAtBranch } from './subscription-type-branch-scope';
-import { ClubSubscriptionLifecycleService } from './club-subscription-lifecycle.service';
-import { assertClubAccountingDayOpen } from './daily-close-lock.util';
-import { receiptMemberAudienceWhere } from './receipt-business-scope';
 
 @Injectable()
 export class ClubSubscriptionsService {
@@ -55,15 +61,25 @@ export class ClubSubscriptionsService {
     private readonly branchScope: BranchScopeService,
     private readonly permissions: PermissionEngineService,
     private readonly discountCodes: ClubDiscountCodesService,
-    @Optional() private readonly lifecycle?: ClubSubscriptionLifecycleService,
+    private readonly points: ClubPointsService,
+    @Inject(ClubBranchGroupService)
+    private readonly branchGroups: Pick<
+      ClubBranchGroupReader,
+      'sharesGroup' | 'siblingBranchIds'
+    > = {
+      sharesGroup: async () => false,
+      siblingBranchIds: async (id) => [id],
+    },
   ) {}
 
   private mapSub(
     row: Record<string, unknown>,
     extras?: {
       salesName?: string | null;
+      assignedStaffName?: string | null;
       createdByName?: string | null;
       freezeCreatedByName?: string | null;
+      branchName?: string | null;
     },
   ) {
     const start = row.subscription_start_date as string;
@@ -95,7 +111,10 @@ export class ClubSubscriptionsService {
       subscriptionNumber: row.subscription_number,
       registrationDate: row.registration_date,
       branchId: row.branch_id,
+      branchName: extras?.branchName ?? null,
       memberId: row.member_id,
+      memberCode: (row.member as { member_code?: string } | undefined)?.member_code ?? null,
+      memberPhone: (row.member as { phone?: string | null } | undefined)?.phone ?? null,
       customerName: row.customer_name,
       subscriptionTypeId: row.subscription_type_id,
       specialClassTypeId: row.special_class_type_id,
@@ -110,13 +129,15 @@ export class ClubSubscriptionsService {
       discountCodeId: row.discount_code_id ?? null,
       discountPercentage: row.discount_percentage != null ? toNum(row.discount_percentage) : null,
       discountValue: toNum(row.discount_value),
+      pointsRedeemed: row.points_redeemed ?? 0,
       paidAmount: toNum(row.paid_amount),
       waivedAmount: toNum(row.waived_amount),
       transferredCreditAmount: toNum(row.transferred_credit_amount),
       settledAmount: roundMoney(toNum(row.paid_amount) + toNum(row.transferred_credit_amount)),
       remainingAmount: toNum(row.remaining_amount),
-      gender: row.gender,
+      gender: row.gender ?? (row.member as { gender?: ClubGender | null } | undefined)?.gender ?? null,
       employeeId: row.employee_id,
+      assignedStaffName: extras?.assignedStaffName ?? null,
       salesId: row.sales_id,
       salesName: extras?.salesName ?? null,
       paymentMethod: row.payment_method,
@@ -153,18 +174,32 @@ export class ClubSubscriptionsService {
     };
   }
 
-  private async enrichSubNames(rows: Array<{ sales_id: number | null; created_by: number | null }>) {
-    const salesIds = [...new Set(rows.map((r) => r.sales_id).filter((id): id is number => id != null))];
+  private async enrichSubNames(rows: Array<{
+    id?: number;
+    subscription_number?: string;
+    sales_id: number | null;
+    employee_id: number | null;
+    private_trainer_id: number | null;
+    created_by: number | null;
+  }>) {
+    const employeeIds = [...new Set(rows.flatMap((r) => [r.sales_id, r.employee_id]).filter((id): id is number => id != null))];
+    const trainerIds = [...new Set(rows.map((r) => r.private_trainer_id).filter((id): id is number => id != null))];
     const userIds = [...new Set(rows.flatMap((r) => [
       r.created_by,
       ...((r as typeof r & { freezes?: Array<{ created_by: number | null }> }).freezes ?? [])
         .map((freeze) => freeze.created_by),
     ]).filter((id): id is number => id != null))];
-    const [salesEmps, users] = await Promise.all([
-      salesIds.length
+    const [employees, trainers, users, legacyStaffBySubId] = await Promise.all([
+      employeeIds.length
         ? this.prisma.employees.findMany({
-            where: { id: { in: salesIds } },
+            where: { id: { in: employeeIds } },
             select: { id: true, employee: true },
+          })
+        : [],
+      trainerIds.length
+        ? this.prisma.club_trainers.findMany({
+            where: { id: { in: trainerIds } },
+            select: { id: true, name: true },
           })
         : [],
       userIds.length
@@ -173,10 +208,15 @@ export class ClubSubscriptionsService {
             select: { user_id: true, name: true },
           })
         : [],
+      loadLegacySubscriptionStaff(this.prisma, rows),
     ]);
     return {
-      salesNameById: new Map<number, string | null>(
-        salesEmps.map((e) => [e.id, e.employee ?? null] as const),
+      legacyStaffBySubId,
+      employeeNameById: new Map<number, string | null>(
+        employees.map((e) => [e.id, e.employee ?? null] as const),
+      ),
+      trainerNameById: new Map<number, string | null>(
+        trainers.map((trainer) => [trainer.id, trainer.name ?? null] as const),
       ),
       userNameById: new Map<number, string | null>(
         users.map((u) => [u.user_id, u.name ?? null] as const),
@@ -188,6 +228,21 @@ export class ClubSubscriptionsService {
     return {
       OR: [{ is_special: true }, { type: { is_special_offer: true } }],
     };
+  }
+
+  private categoryFilter(gender: ClubGender): Prisma.club_subscriptionsWhereInput {
+    return {
+      OR: [
+        { gender },
+        { gender: null, member: { is: { gender } } },
+      ],
+    };
+  }
+
+  /** Applies the authenticated employee's men/women section as a server-side audience. */
+  private subscriptionAudienceFilter(user?: JwtUser): Prisma.club_subscriptionsWhereInput | null {
+    const gender = this.branchScope.memberGenderFilter(user);
+    return gender ? this.categoryFilter(gender) : null;
   }
 
   /**
@@ -208,28 +263,6 @@ export class ClubSubscriptionsService {
     if (!this.branchScope.isBranchAllowed(user, branchId)) {
       throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
     }
-  }
-
-  private audience(user?: JwtUser): ClubGender | null {
-    return this.branchScope.memberGenderFilter(user) as ClubGender | null;
-  }
-
-  private async assertSubscriptionAccess(
-    user: JwtUser | undefined,
-    subscription: { branch_id: number; member_id: number | null; gender: ClubGender | null },
-  ) {
-    this.assertBranchAccess(user, subscription.branch_id);
-    const audience = this.audience(user);
-    const member = subscription.member_id == null
-      ? null
-      : await this.prisma.club_members.findUnique({
-          where: { id: subscription.member_id },
-          select: { gender: true, is_deleted: true },
-        });
-    if (audience && (!member || member.is_deleted || member.gender !== audience)) {
-      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
-    }
-    return member?.gender ?? subscription.gender;
   }
 
   /** Prevent a member from holding the same live package/class entitlement twice. */
@@ -280,10 +313,49 @@ export class ClubSubscriptionsService {
     }
   }
 
-  async list(q: ListClubSubscriptionsDto, user?: JwtUser) {
+  async listTransferSources(q: ListClubSubscriptionsDto, user: JwtUser) {
+    return this.list(Object.assign(new ListClubSubscriptionsDto(), q, { status: 'active', isSpecial: 'false' }), user, true);
+  }
+
+  async listRefundSources(q: ListClubSubscriptionsDto, user: JwtUser) {
+    return this.list(Object.assign(new ListClubSubscriptionsDto(), q, { status: 'active' }), user, false, true);
+  }
+
+  async operationBranchOptions(user: JwtUser) {
+    const allowed = await clubOperationBranchIds(this.branchScope, this.branchGroups, user);
+    const rows = await this.prisma.tbl_branches.findMany({
+      where: allowed === null ? {} : { branch_id: { in: allowed } },
+      select: { branch_id: true, branch_name: true },
+      orderBy: { branch_id: 'asc' },
+    });
+    return rows.map((row) => ({ id: row.branch_id, name: row.branch_name }));
+  }
+
+  async operationSubscription(id: number, user: JwtUser) {
+    const row = await this.prisma.club_subscriptions.findUnique({ where: { id }, include: { member: true } });
+    if (!row || row.member?.is_deleted) throw new NotFoundException('الاشتراك غير موجود');
+    await assertClubOperationBranch(this.branchScope, this.branchGroups, user, row.branch_id);
+    if (!this.branchScope.isMemberGenderAllowed(user, row.gender ?? row.member?.gender)) throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
+    return this.mapSub(row);
+  }
+
+  async list(q: ListClubSubscriptionsDto, user?: JwtUser, transferSources = false, refundSources = false) {
     const and: Prisma.club_subscriptionsWhereInput[] = [
       this.visibleMemberSubscriptionFilter(),
     ];
+    if (refundSources) and.push({ member_id: { not: null }, paid_amount: { gt: 0 } });
+
+    if (transferSources) {
+      and.push({ member_id: { not: null }, private_package_id: null, remaining_amount: { lte: 0.009 } });
+      and.push({ OR: [{ subscription_type: null }, { AND: [
+        { subscription_type: { not: { contains: 'private' } } },
+        { subscription_type: { not: { contains: 'برايفت' } } },
+      ] }] });
+      and.push({ OR: [
+        { is_linked_to_sessions: false },
+        { sessions_used: { lt: this.prisma.club_subscriptions.fields.sessions_count } },
+      ] });
+    }
 
     if (q.search?.trim()) {
       const s = q.search.trim();
@@ -293,20 +365,24 @@ export class ClubSubscriptionsService {
           { subscription_number: { contains: s } },
           { subscription_type: { contains: s } },
           { receipt_number: { contains: s } },
+          { member: { is: { OR: [
+            { member_code: { contains: s } },
+            { phone: { contains: s } },
+            { name: { contains: s } },
+          ] } } },
         ],
       });
     }
     if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
     // Default a branch-scoped user to their allowed branches (intersects any explicit filter).
-    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    const scope = transferSources || refundSources
+      ? await clubOperationBranchIds(this.branchScope, this.branchGroups, user)
+      : this.branchScope.resolveListFilter(user, q.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
     if (q.subscriptionType) and.push({ subscription_type: { contains: q.subscriptionType } });
-    const audience = this.audience(user);
-    if (audience) {
-      and.push({ member: { is: { is_deleted: false, gender: audience } } });
-    } else if (q.gender === 'male' || q.gender === 'female') {
-      and.push({ member: { is: { is_deleted: false, gender: q.gender as ClubGender } } });
-    }
+    const audience = this.subscriptionAudienceFilter(user);
+    if (audience) and.push(audience);
+    else if (q.gender === 'male' || q.gender === 'female') and.push(this.categoryFilter(q.gender as ClubGender));
     if (q.memberId) and.push({ member_id: Number(q.memberId) });
     if (q.memberName) and.push({ customer_name: { contains: q.memberName } });
     if (q.receiptNumber) and.push({ receipt_number: { contains: q.receiptNumber } });
@@ -321,10 +397,14 @@ export class ClubSubscriptionsService {
     }
     if (q.hasDiscount === 'true' || q.hasDiscount === '1') and.push({ discount_enabled: true });
     if (q.isTimeBased === 'true' || q.isTimeBased === '1') and.push({ is_time_based: true });
+    if (q.isLinkedToSessions === 'true' || q.isLinkedToSessions === '1') and.push({ is_linked_to_sessions: true });
+    if (q.isLinkedToSessions === 'false' || q.isLinkedToSessions === '0') and.push({ is_linked_to_sessions: false });
     if (q.endDateFrom) and.push({ subscription_end_date: { gte: q.endDateFrom } });
     if (q.endDateTo) and.push({ subscription_end_date: { lte: q.endDateTo } });
     if (q.startDateFrom) and.push({ subscription_start_date: { gte: q.startDateFrom } });
     if (q.startDateTo) and.push({ subscription_start_date: { lte: q.startDateTo } });
+    if (q.registrationDateFrom) and.push({ registration_date: { gte: q.registrationDateFrom } });
+    if (q.registrationDateTo) and.push({ registration_date: { lte: q.registrationDateTo } });
     if (q.expiresWithinDays) {
       const days = Number(q.expiresWithinDays);
       if (Number.isFinite(days) && days >= 0) {
@@ -363,6 +443,7 @@ export class ClubSubscriptionsService {
       this.prisma.club_subscriptions.findMany({
         where,
         include: {
+          member: { select: { gender: true, member_code: true, phone: true } },
           freezes: {
             where: { is_active: true },
             orderBy: { id: 'desc' },
@@ -376,11 +457,25 @@ export class ClubSubscriptionsService {
       this.prisma.club_subscriptions.count({ where }),
     ]);
 
-    const { salesNameById, userNameById } = await this.enrichSubNames(rows);
+    const branchIds = [...new Set(rows.map((row) => row.branch_id))];
+    const branches = branchIds.length
+      ? await this.prisma.tbl_branches.findMany({
+          where: { branch_id: { in: branchIds } },
+          select: { branch_id: true, branch_name: true },
+        })
+      : [];
+    const branchNameById = new Map(branches.map((branch) => [branch.branch_id, branch.branch_name ?? null] as const));
+    const { employeeNameById, trainerNameById, userNameById, legacyStaffBySubId } = await this.enrichSubNames(rows);
     const data = rows.map((r) =>
       this.mapSub(r, {
-        salesName: r.sales_id ? salesNameById.get(r.sales_id) ?? null : null,
-        createdByName: r.created_by ? userNameById.get(r.created_by) ?? null : null,
+        salesName: r.sales_id ? employeeNameById.get(r.sales_id) ?? null : null,
+        assignedStaffName: (r.private_trainer_id
+          ? trainerNameById.get(r.private_trainer_id) ?? null
+          : r.employee_id
+            ? employeeNameById.get(r.employee_id) ?? null
+            : null) ?? legacyStaffBySubId.get(r.id)?.employeeName ?? null,
+        createdByName: (r.created_by ? userNameById.get(r.created_by) ?? null : null) ?? legacyStaffBySubId.get(r.id)?.creatorName ?? null,
+        branchName: branchNameById.get(r.branch_id) ?? null,
         freezeCreatedByName: r.freezes[0]?.created_by
           ? userNameById.get(r.freezes[0].created_by) ?? null
           : null,
@@ -392,7 +487,7 @@ export class ClubSubscriptionsService {
   async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.club_subscriptions.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('الاشتراك غير موجود');
-    await this.assertSubscriptionAccess(user, row);
+    this.assertBranchAccess(user, row.branch_id);
     return this.mapSub(row);
   }
 
@@ -416,7 +511,6 @@ export class ClubSubscriptionsService {
     const allowedBranchIds = isSystemAdmin
       ? null
       : this.branchScope.resolveListFilter(user, null);
-    const audience = this.audience(user);
 
     const subscriptionWhere: Prisma.club_subscriptionsWhereInput = {
       registration_date: today,
@@ -424,20 +518,19 @@ export class ClubSubscriptionsService {
       transferred_credit_amount: 0,
       ...(selectedUserId != null ? { created_by: selectedUserId } : {}),
       ...(allowedBranchIds ? { branch_id: { in: allowedBranchIds } } : {}),
-      ...(audience ? { member: { is: { is_deleted: false, gender: audience } } } : {}),
     };
     const receiptWhere: Prisma.club_receiptsWhereInput = {
       receipt_date: today,
       status: { in: ['مدفوعة', 'paid'] },
       ...(selectedUserId != null ? { created_by: selectedUserId } : {}),
-      subscription: {
-        is: {
-          ...(allowedBranchIds ? { branch_id: { in: allowedBranchIds } } : {}),
-          ...(audience
-            ? { member: { is: { is_deleted: false, gender: audience } } }
-            : {}),
-        },
-      },
+      ...(allowedBranchIds
+        ? {
+            OR: [
+              { branch_id: { in: allowedBranchIds } },
+              { subscription: { is: { branch_id: { in: allowedBranchIds } } } },
+            ],
+          }
+        : {}),
     };
 
     const [subscriptions, receipts, accounts] = await Promise.all([
@@ -511,7 +604,7 @@ export class ClubSubscriptionsService {
    * or renewal may be collected by a different user than the one who opened the subscription.
    */
   async userAnalytics(
-    q: { startDate?: string; endDate?: string; branch?: string; gender?: string },
+    q: { startDate?: string; endDate?: string; branch?: string },
     user?: JwtUser,
   ) {
     const today = localDateString();
@@ -520,32 +613,20 @@ export class ClubSubscriptionsService {
     assertDateOrder(startDate, endDate);
 
     const branchIds = this.branchScope.resolveListFilter(user, q.branch ?? null);
-    if (q.gender && q.gender !== 'male' && q.gender !== 'female') {
-      throw new BadRequestException('القسم غير صحيح');
-    }
-    const lockedAudience = this.audience(user);
-    if (lockedAudience && q.gender && q.gender !== lockedAudience) {
-      throw new BadRequestException('لا يمكن تغيير قسم البيانات المسموح به');
-    }
-    const audience = lockedAudience ?? (q.gender as ClubGender | undefined);
     const subscriptionWhere: Prisma.club_subscriptionsWhereInput = {
       created_by: { not: null },
       registration_date: { gte: startDate, lte: endDate },
       // Keep non-cash member-to-member transfers out of sales/user-performance metrics.
       transferred_credit_amount: 0,
       ...(branchIds ? { branch_id: { in: branchIds } } : {}),
-      ...(audience ? { member: { is: { is_deleted: false, gender: audience } } } : {}),
     };
-    const receiptAnd: Prisma.club_receiptsWhereInput[] = [];
-    if (branchIds) receiptAnd.push({ subscription: { is: { branch_id: { in: branchIds } } } });
-    if (audience) {
-      receiptAnd.push(receiptMemberAudienceWhere(audience));
-    }
     const receiptWhere: Prisma.club_receiptsWhereInput = {
       created_by: { not: null },
       receipt_date: { gte: startDate, lte: endDate },
       status: { in: ['مدفوعة', 'paid'] },
-      ...(receiptAnd.length ? { AND: receiptAnd } : {}),
+      subscription: {
+        is: branchIds ? { branch_id: { in: branchIds } } : {},
+      },
     };
 
     const [subscriptionGroups, receiptGroups, subscriptionDetails, receiptDetails] = await Promise.all([
@@ -830,7 +911,7 @@ export class ClubSubscriptionsService {
 
       data = {
         ...data,
-        branchId: mem?.branch_id ?? data.branchId,
+        branchId: data.branchId ?? mem?.branch_id,
         customerName: data.customerName ?? member.name,
         subscriptionTypeId: undefined,
         subscriptionType: classType.name,
@@ -912,21 +993,14 @@ export class ClubSubscriptionsService {
         employeeId: data.employeeId ?? mem?.employee_id ?? undefined,
         salesId: data.salesId ?? mem?.sales_id ?? undefined,
         isSpecial: false,
+        branchId: data.branchId ?? mem?.branch_id,
       };
-      if (mem) data.branchId = mem.branch_id;
     }
 
     if (!data.branchId || !data.customerName || !data.subscriptionStartDate || !data.subscriptionEndDate) {
       throw new BadRequestException('الحقول المطلوبة: الفرع، اسم العميل، تاريخ البداية والنهاية');
     }
     this.assertBranchAccess(user, data.branchId);
-    const audience = this.audience(user);
-    if (audience) {
-      if (data.gender && data.gender !== audience) {
-        throw new ForbiddenException('لا تملك صلاحية إنشاء اشتراك في هذا القسم');
-      }
-      data.gender = audience;
-    }
 
     if (data.subscriptionTypeId) {
       const assignedType = await this.prisma.club_subscription_types.findUnique({
@@ -960,33 +1034,56 @@ export class ClubSubscriptionsService {
       });
       const memberBranch = await this.prisma.club_members.findUnique({
         where: { id: member.id },
-        select: { branch_id: true, gender: true },
+        select: { branch_id: true },
       });
-      if (!memberBranch || memberBranch.branch_id !== data.branchId) {
+      const sharesSelectedGroup = memberBranch
+        ? await this.branchGroups.sharesGroup(memberBranch.branch_id, data.branchId)
+        : false;
+      if (!memberBranch || !(isSystemAdmin(user) || shareClubMemberIdentity(memberBranch.branch_id, data.branchId) || sharesSelectedGroup)) {
         throw new ForbiddenException('لا يمكن إنشاء اشتراك لعضو تابع لفرع آخر');
       }
-      this.assertBranchAccess(user, memberBranch.branch_id);
-      if (audience && memberBranch.gender !== audience) {
-        throw new ForbiddenException('لا تملك صلاحية إنشاء اشتراك لهذا القسم');
-      }
-      data.gender = memberBranch.gender;
       await this.assertNoDuplicateLiveSubscription(data);
     }
 
-    await assertClubAccountingDayOpen(this.prisma, {
-      date: data.registrationDate ?? localDateString(),
-      branchId: data.branchId,
-      gender: data.gender ?? null,
-    });
-
     const subValue = data.subscriptionValue ?? 0;
-    const resolvedDiscount = await this.discountCodes.resolveDiscount({
-      subscriptionValue: subValue,
-      discountCodeId: data.discountCodeId,
-      discountEnabled: data.discountEnabled,
-      discountValue: data.discountValue,
-      memberId: data.memberId,
-    });
+    const requestedPoints = data.pointsToRedeem ?? null;
+    const memberGrantId = data.memberDiscountGrantId ?? null;
+    if (requestedPoints != null && (
+      data.discountCodeId != null ||
+      data.discountEnabled === true ||
+      (data.discountValue ?? 0) > 0 || memberGrantId != null
+    )) {
+      throw new BadRequestException('اختر خصم النقاط أو كود الخصم أو الخصم اليدوي، وليس أكثر من نوع واحد');
+    }
+    const resolvedDiscount = requestedPoints != null
+      ? await (async () => {
+          if (!data.memberId) throw new BadRequestException('خصم النقاط يتطلب اختيار عضو');
+          const account = await this.points.memberAccount(data.memberId);
+          if (!account.conversion) throw new BadRequestException('إعداد تحويل النقاط غير موجود');
+          const quote = this.points.quoteRedemption({
+            availablePoints: account.points,
+            requestedPoints,
+            subscriptionValue: subValue,
+            conversion: account.conversion,
+          });
+          return {
+            discountEnabled: true,
+            discountCodeId: null,
+            discountPercentage: null,
+            discountValue: quote.value,
+          };
+        })()
+      : memberGrantId != null
+        ? await (async () => {
+            if (!data.memberId || data.discountCodeId != null || data.discountEnabled === true || (data.discountValue ?? 0) > 0) throw new BadRequestException('الكود الممنوح لا يُجمع مع خصم آخر');
+            return this.discountCodes.resolveMemberGrant(memberGrantId, data.memberId, subValue);
+          })()
+        : await this.discountCodes.resolveDiscount({
+          subscriptionValue: subValue,
+          discountCodeId: data.discountCodeId,
+          discountEnabled: data.discountEnabled,
+          discountValue: data.discountValue,
+        });
     const discountEnabled = resolvedDiscount.discountEnabled;
     const discount = resolvedDiscount.discountValue;
     const paid = data.paidAmount ?? 0;
@@ -1016,6 +1113,10 @@ export class ClubSubscriptionsService {
       sessionsUsed: 0,
     });
 
+    // Chart setup is independent from this subscription. Doing it here keeps the write
+    // transaction short: only the subscription, receipt and journal entry are atomic together.
+    if (paid > 0) await this.accounting.prepareForJournal();
+
     const row = await this.prisma.$transaction(async (tx) => {
       const created = await tx.club_subscriptions.create({
         data: {
@@ -1037,6 +1138,7 @@ export class ClubSubscriptionsService {
           discount_code_id: resolvedDiscount.discountCodeId,
           discount_percentage: resolvedDiscount.discountPercentage,
           discount_value: discount,
+          points_redeemed: requestedPoints ?? 0,
           paid_amount: paid,
           remaining_amount: remaining,
           gender: data.gender ?? null,
@@ -1059,6 +1161,49 @@ export class ClubSubscriptionsService {
         },
       });
 
+      let memberCode: string | null = null;
+      if (created.member_id != null) {
+        const memberRows = await tx.$queryRaw<Array<{ member_code: string | null }>>(
+          Prisma.sql`SELECT member_code FROM club_members WHERE id=${created.member_id} LIMIT 1`,
+        );
+        memberCode = memberRows[0]?.member_code ?? null;
+      }
+
+      if (requestedPoints != null && created.member_id != null) {
+        await this.points.redeemForSubscription({
+          memberId: created.member_id,
+          memberCode,
+          subscriptionId: created.id,
+          subscriptionTypeId: created.subscription_type_id,
+          subscriptionTypeName: created.subscription_type,
+          requestedPoints,
+          subscriptionValue: subValue,
+          publisher: userId,
+        }, tx);
+      }
+
+      if (memberGrantId != null && created.member_id != null) {
+        await this.discountCodes.consumeMemberGrant({ grantId: memberGrantId, memberId: created.member_id, memberCode, subscriptionId: created.id, subscriptionValue: subValue, publisher: userId }, tx);
+      }
+
+      if (created.member_id != null && created.subscription_type_id != null) {
+        const packageRow = await tx.club_subscription_types.findUnique({
+          where: { id: created.subscription_type_id },
+          select: { wallet_points: true, name: true },
+        });
+        if ((packageRow?.wallet_points ?? 0) > 0) {
+          await this.points.recordEarnedForSubscription({
+            memberId: created.member_id,
+            memberCode,
+            subscriptionId: created.id,
+            subscriptionTypeId: created.subscription_type_id,
+            subscriptionTypeName: packageRow?.name ?? created.subscription_type,
+            points: packageRow!.wallet_points!,
+            publisher: userId,
+          }, tx);
+        }
+      }
+
       if (paid > 0) {
         const receipt = await this.receipts.createForSubscription(
           created.id,
@@ -1068,6 +1213,7 @@ export class ClubSubscriptionsService {
             memberId: data.memberId,
             paymentMethod: data.paymentMethod,
             payments: paymentSplits,
+            receiptNumber: data.receiptNumber,
             createdBy: userId,
           },
           tx,
@@ -1086,6 +1232,7 @@ export class ClubSubscriptionsService {
             createdBy: userId,
             registrationDate: created.registration_date,
             kind: 'subscription',
+            chartReady: true,
           },
           tx,
         );
@@ -1119,25 +1266,19 @@ export class ClubSubscriptionsService {
   async update(id: number, dto: Partial<UpsertClubSubscriptionDto>, user?: JwtUser) {
     const existing = await this.prisma.club_subscriptions.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الاشتراك غير موجود');
-    const accountingGender = await this.assertSubscriptionAccess(user, existing);
-    await assertClubAccountingDayOpen(this.prisma, {
-      date: existing.registration_date,
-      branchId: existing.branch_id,
-      gender: accountingGender,
-    });
+    this.assertBranchAccess(user, existing.branch_id);
+
+    if (dto.pointsToRedeem !== undefined) {
+      throw new BadRequestException('لا يمكن تعديل النقاط المستبدلة بعد إنشاء الاشتراك');
+    }
 
     if (dto.memberId != null) {
       const member = await this.prisma.club_members.findFirst({
         where: { id: dto.memberId, is_deleted: false },
-        select: { branch_id: true, gender: true },
+        select: { branch_id: true },
       });
       if (!member) throw new NotFoundException('العضو غير موجود');
-      this.assertBranchAccess(user, member.branch_id);
-      const audience = this.audience(user);
-      if (audience && member.gender !== audience) {
-        throw new ForbiddenException('لا تملك صلاحية ربط اشتراك بعضو من هذا القسم');
-      }
-      if (member.branch_id !== existing.branch_id) {
+      if (!isSystemAdmin(user) && !shareClubMemberIdentity(member.branch_id, existing.branch_id)) {
         throw new ForbiddenException('لا يمكن ربط اشتراك بعضو تابع لفرع آخر');
       }
     }
@@ -1272,13 +1413,15 @@ export class ClubSubscriptionsService {
       dto.discountCodeId !== undefined ||
       dto.discountEnabled !== undefined ||
       dto.discountValue !== undefined;
+    if (existing.points_redeemed > 0 && discountChanged) {
+      throw new BadRequestException('لا يمكن استبدال خصم النقاط بخصم آخر بعد إنشاء الاشتراك');
+    }
     const resolvedDiscount = discountChanged
       ? await this.discountCodes.resolveDiscount({
           subscriptionValue: subValue,
           discountCodeId: dto.discountCodeId,
           discountEnabled: dto.discountEnabled,
           discountValue: dto.discountValue,
-          memberId: existing.member_id,
         })
       : {
           discountEnabled: existing.discount_enabled,
@@ -1393,12 +1536,7 @@ export class ClubSubscriptionsService {
   async remove(id: number, user?: JwtUser) {
     const existing = await this.prisma.club_subscriptions.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الاشتراك غير موجود');
-    const accountingGender = await this.assertSubscriptionAccess(user, existing);
-    await assertClubAccountingDayOpen(this.prisma, {
-      date: existing.registration_date,
-      branchId: existing.branch_id,
-      gender: accountingGender,
-    });
+    this.assertBranchAccess(user, existing.branch_id);
 
     // A subscription with financial history (receipts) or an active/completed refund must not be
     // hard-deleted — deleting would orphan GL entries and drop the audit trail. Direct to refund.
@@ -1432,7 +1570,7 @@ export class ClubSubscriptionsService {
   async patchSessions(id: number, sessionsUsed: number, user?: JwtUser) {
     const sub = await this.prisma.club_subscriptions.findUnique({ where: { id } });
     if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-    await this.assertSubscriptionAccess(user, sub);
+    this.assertBranchAccess(user, sub.branch_id);
     const max = sub.sessions_count;
     if (max != null && sessionsUsed > max) {
       throw new BadRequestException('عدد الحصص المستخدمة يتجاوز الحد المسموح');
@@ -1449,23 +1587,14 @@ export class ClubSubscriptionsService {
       data.sessions_count = sessionsFromType;
       data.is_linked_to_sessions = true;
     }
-    const result = await this.prisma.$transaction(async (tx) => {
-      const row = await tx.club_subscriptions.update({ where: { id }, data });
-      const promotion = this.lifecycle && row.sessions_count != null && row.sessions_used >= row.sessions_count
-        ? await this.lifecycle.promoteAfterQuotaExhaustion(id, localDateString(), tx)
-        : null;
-      return { row, promotion };
-    });
-    if (result.promotion?.activatedSubscriptionId) {
-      await this.lifecycle?.syncActivatedMember(result.promotion.activatedSubscriptionId);
-    }
-    return this.mapSub(result.row);
+    const row = await this.prisma.club_subscriptions.update({ where: { id }, data });
+    return this.mapSub(row);
   }
 
   async useSession(id: number, user?: JwtUser) {
     const sub = await this.prisma.club_subscriptions.findUnique({ where: { id } });
     if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-    await this.assertSubscriptionAccess(user, sub);
+    this.assertBranchAccess(user, sub.branch_id);
     if (!sub.is_linked_to_sessions && sub.sessions_count == null) {
       throw new BadRequestException('هذا الاشتراك غير مرتبط بحصص');
     }
@@ -1474,17 +1603,11 @@ export class ClubSubscriptionsService {
     if (max > 0 && used >= max) {
       throw new BadRequestException('لا توجد حصص متبقية');
     }
-    const result = await this.prisma.$transaction(async (tx) => {
-      const row = await tx.club_subscriptions.update({ where: { id }, data: { sessions_used: used + 1, is_linked_to_sessions: true } });
-      const promotion = this.lifecycle && row.sessions_count != null && row.sessions_used >= row.sessions_count
-        ? await this.lifecycle.promoteAfterQuotaExhaustion(id, localDateString(), tx)
-        : null;
-      return { row, promotion };
+    const row = await this.prisma.club_subscriptions.update({
+      where: { id },
+      data: { sessions_used: used + 1, is_linked_to_sessions: true },
     });
-    if (result.promotion?.activatedSubscriptionId) {
-      await this.lifecycle?.syncActivatedMember(result.promotion.activatedSubscriptionId);
-    }
-    return this.mapSub(result.row);
+    return this.mapSub(row);
   }
 
   async processPayment(
@@ -1512,12 +1635,7 @@ export class ClubSubscriptionsService {
         try {
           const sub = await tx.club_subscriptions.findUnique({ where: { id } });
           if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-          const accountingGender = await this.assertSubscriptionAccess(user, sub);
-          await assertClubAccountingDayOpen(tx, {
-            date: localDateString(),
-            branchId: sub.branch_id,
-            gender: accountingGender,
-          });
+          this.assertBranchAccess(user, sub.branch_id);
 
           // Re-read remaining INSIDE the lock so a concurrent payment can't overshoot the balance.
           const prevRemaining = toNum(sub.remaining_amount);
@@ -1621,12 +1739,7 @@ export class ClubSubscriptionsService {
           include: { member: { select: { name: true } } },
         });
         if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-        const accountingGender = await this.assertSubscriptionAccess(user, sub);
-        await assertClubAccountingDayOpen(tx, {
-          date: localDateString(),
-          branchId: sub.branch_id,
-          gender: accountingGender,
-        });
+        this.assertBranchAccess(user, sub.branch_id);
         const remaining = toNum(sub.remaining_amount);
         if (amount > remaining) throw new BadRequestException('مبلغ الإعفاء يتجاوز المبلغ المتبقي');
 
@@ -1698,14 +1811,6 @@ export class ClubSubscriptionsService {
     } else if (user && user.level !== 1 && user.branch > 0) {
       and.push({ subscription: { branch_id: user.branch } });
     }
-    const audience = this.audience(user);
-    if (audience) {
-      and.push({
-        subscription: {
-          member: { is: { is_deleted: false, gender: audience } },
-        },
-      });
-    }
     const where: Prisma.club_subscription_waiversWhereInput = and.length ? { AND: and } : {};
     const [rows, aggregate] = await Promise.all([
       this.prisma.club_subscription_waivers.findMany({
@@ -1752,7 +1857,7 @@ export class ClubSubscriptionsService {
   ) {
     const sub = await this.prisma.club_subscriptions.findUnique({ where: { id } });
     if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-    const accountingGender = await this.assertSubscriptionAccess(opts?.user, sub);
+    this.assertBranchAccess(opts?.user, sub.branch_id);
 
     if (sub.status === 'frozen') {
       throw new BadRequestException('لا يمكن تجديد اشتراك مجمّد — ألغِ التجميد أولاً');
@@ -1766,11 +1871,6 @@ export class ClubSubscriptionsService {
     }
 
     const today = localDateString();
-    await assertClubAccountingDayOpen(this.prisma, {
-      date: today,
-      branchId: sub.branch_id,
-      gender: accountingGender,
-    });
     // If the current period hasn't ended yet (end date is today or later — deriveSubStatus keeps
     // the end date itself an active day), the new period starts the day AFTER the current end so
     // already-paid days aren't confiscated. Only an already-expired subscription restarts today.
@@ -1835,9 +1935,7 @@ export class ClubSubscriptionsService {
             discount,
             paidAmount,
           ),
-          // Keep the legacy snapshot aligned with the canonical linked member so future
-          // audience filters and accounting locks cannot inherit stale historical data.
-          gender: accountingGender,
+          gender: sub.gender,
           employee_id: sub.employee_id,
           sales_id: sub.sales_id,
           payment_method:
@@ -2011,17 +2109,19 @@ export class ClubSubscriptionsService {
     });
   }
 
-  async freeze(id: number, days?: number, reason?: string, userId?: number, user?: JwtUser) {
-    // Optional planned days (legacy). Prefer open-ended freeze: staff unfreezes when ready;
-    // remaining subscription time is preserved by extending the end date on unfreeze.
-    const plannedDays =
-      days != null && Number.isFinite(Number(days)) && Number(days) > 0
-        ? Math.floor(Number(days))
-        : 0;
+  async freeze(
+    id: number,
+    days?: number,
+    reason?: string,
+    userId?: number,
+    user?: JwtUser,
+    freezeStartDate?: string,
+    freezeEndDate?: string,
+  ) {
 
     const sub = await this.prisma.club_subscriptions.findUnique({ where: { id } });
     if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-    await this.assertSubscriptionAccess(user, sub);
+    this.assertBranchAccess(user, sub.branch_id);
 
     if (sub.status === 'frozen') {
       throw new BadRequestException('الاشتراك مجمّد بالفعل');
@@ -2058,12 +2158,29 @@ export class ClubSubscriptionsService {
     }
 
     const today = localDateString();
+    const startDate = freezeStartDate || today;
+    const endDate = freezeEndDate || (
+      days != null && Number.isFinite(Number(days)) && Number(days) > 0
+        ? addDays(startDate, Math.floor(Number(days)))
+        : null
+    );
+    if (!endDate) {
+      throw new BadRequestException('يجب تحديد تاريخ نهاية التجميد');
+    }
+    assertDateOrder(startDate, endDate, 'تاريخ نهاية التجميد يجب أن يكون بعد تاريخ بدايته أو مساويًا له');
+    const plannedDays = daysBetween(startDate, endDate);
+    if (plannedDays < 1) {
+      throw new BadRequestException('مدة التجميد يجب أن تكون يومًا واحدًا على الأقل');
+    }
+    const newEnd = isOpenEndedEndDate(sub.subscription_end_date)
+      ? sub.subscription_end_date
+      : addDays(sub.subscription_end_date, plannedDays);
     const row = await this.prisma.$transaction(async (tx) => {
       await tx.club_subscription_freezes.create({
         data: {
           subscription_id: id,
-          freeze_start_date: today,
-          freeze_end_date: plannedDays > 0 ? addDays(today, plannedDays) : null,
+          freeze_start_date: startDate,
+          freeze_end_date: endDate,
           planned_days: plannedDays,
           original_end_date: sub.subscription_end_date,
           reason: reason ?? null,
@@ -2074,7 +2191,9 @@ export class ClubSubscriptionsService {
       });
       return tx.club_subscriptions.update({
         where: { id },
-        data: { status: 'frozen' },
+        // The extension is posted immediately, so the end date is always correct even while
+        // the subscription is still stopped.
+        data: { status: 'frozen', subscription_end_date: newEnd },
       });
     });
 
@@ -2085,16 +2204,79 @@ export class ClubSubscriptionsService {
       actorUserId: userId,
       branchId: sub.branch_id,
       before: { status: sub.status, subscriptionEndDate: sub.subscription_end_date },
-      after: { status: 'frozen', plannedDays, reason },
+      after: { status: 'frozen', freezeStartDate: startDate, freezeEndDate: endDate, subscriptionEndDate: newEnd, plannedDays, reason },
     });
 
     return this.mapSub(row);
   }
 
+  /** A freeze may be adjusted only while today's date is inside its configured period. */
+  async updateFreeze(id: number, freezeEndDate?: string, reason?: string, userId?: number, user?: JwtUser) {
+    const sub = await this.prisma.club_subscriptions.findUnique({ where: { id } });
+    if (!sub) throw new NotFoundException('الاشتراك غير موجود');
+    this.assertBranchAccess(user, sub.branch_id);
+    const freeze = await this.prisma.club_subscription_freezes.findFirst({
+      where: { subscription_id: id, is_active: true }, orderBy: { id: 'desc' },
+    });
+    if (!freeze) throw new BadRequestException('لا يوجد تجميد نشط لهذا الاشتراك');
+    const today = localDateString();
+    if (!freeze.freeze_end_date || today < freeze.freeze_start_date || today > freeze.freeze_end_date) {
+      throw new BadRequestException('يمكن تعديل التجميد خلال فترة التوقيف فقط');
+    }
+    if (!freezeEndDate) throw new BadRequestException('يجب تحديد تاريخ نهاية التجميد');
+    assertDateOrder(freeze.freeze_start_date, freezeEndDate, 'تاريخ نهاية التجميد يجب أن يكون بعد تاريخ بدايته أو مساويًا له');
+    const newDays = daysBetween(freeze.freeze_start_date, freezeEndDate);
+    if (newDays < 1) throw new BadRequestException('مدة التجميد يجب أن تكون يومًا واحدًا على الأقل');
+    const delta = newDays - freeze.planned_days;
+    const newEnd = isOpenEndedEndDate(sub.subscription_end_date)
+      ? sub.subscription_end_date
+      : addDays(sub.subscription_end_date, delta);
+    const row = await this.prisma.$transaction(async (tx) => {
+      await tx.club_subscription_freezes.update({
+        where: { id: freeze.id },
+        data: { freeze_end_date: freezeEndDate, planned_days: newDays, ...(reason !== undefined ? { reason: reason || null } : {}) },
+      });
+      return tx.club_subscriptions.update({ where: { id }, data: { subscription_end_date: newEnd } });
+    });
+    await this.audit.log({ entityType: 'club_subscription', entityId: id, action: 'freeze_update', actorUserId: userId, branchId: sub.branch_id,
+      before: { freezeEndDate: freeze.freeze_end_date, subscriptionEndDate: sub.subscription_end_date },
+      after: { freezeEndDate, subscriptionEndDate: newEnd, plannedDays: newDays }, });
+    return this.mapSub(row);
+  }
+
+  /** Releases date-based freezes after their final stopped day. Their end-date extension was
+   * already applied at creation, so this only restores the normal subscription status. */
+  async releaseFinishedFreezes() {
+    const today = localDateString();
+    const freezes = await this.prisma.club_subscription_freezes.findMany({
+      where: { is_active: true, freeze_end_date: { lt: today } },
+      include: { subscription: true },
+    });
+    for (const freeze of freezes) {
+      const sub = freeze.subscription;
+      const status = deriveSessionAwareStatus({
+        startDate: sub.subscription_start_date,
+        endDate: sub.subscription_end_date,
+        isLinkedToSessions: sub.is_linked_to_sessions,
+        sessionsCount: sub.sessions_count,
+        sessionsUsed: sub.sessions_used,
+      });
+      await this.prisma.$transaction(async (tx) => {
+        await tx.club_subscription_freezes.update({
+          where: { id: freeze.id },
+          data: { is_active: false, actual_days: freeze.planned_days },
+        });
+        await tx.club_subscriptions.update({ where: { id: sub.id }, data: { status } });
+      });
+      if (sub.member_id) await this.syncMemberProfileFromSubscription({ ...sub, status });
+    }
+    return freezes.length;
+  }
+
   async unfreeze(id: number, userId?: number, user?: JwtUser) {
     const sub = await this.prisma.club_subscriptions.findUnique({ where: { id } });
     if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-    await this.assertSubscriptionAccess(user, sub);
+    this.assertBranchAccess(user, sub.branch_id);
 
     const freeze = await this.prisma.club_subscription_freezes.findFirst({
       where: { subscription_id: id, is_active: true },
@@ -2105,11 +2287,13 @@ export class ClubSubscriptionsService {
     }
 
     const today = localDateString();
-    // Pause the clock: extend end date by the days actually frozen so remaining time is unchanged.
-    // Example: 30 days left → freeze 7 days → unfreeze → still 30 days left.
+    // The full planned duration has already extended the end date at freeze creation. Ending a
+    // freeze early returns only its unused days, preventing a second extension on unfreeze.
     const actualDays = Math.max(0, daysBetween(freeze.freeze_start_date, today));
-    const baseEnd = freeze.original_end_date || sub.subscription_end_date;
-    const newEnd = isOpenEndedEndDate(baseEnd) ? baseEnd : addDays(baseEnd, actualDays);
+    const unusedDays = Math.max(0, freeze.planned_days - actualDays);
+    const newEnd = isOpenEndedEndDate(sub.subscription_end_date)
+      ? sub.subscription_end_date
+      : addDays(sub.subscription_end_date, -unusedDays);
     const newStatus = deriveSessionAwareStatus({
       startDate: sub.subscription_start_date,
       endDate: newEnd,
@@ -2149,13 +2333,8 @@ export class ClubSubscriptionsService {
     ]);
     if (!sub) throw new NotFoundException('الاشتراك غير موجود');
     if (!member) throw new NotFoundException('العضو غير موجود');
-    await this.assertSubscriptionAccess(user, sub);
-    this.assertBranchAccess(user, member.branch_id);
-    const audience = this.audience(user);
-    if (audience && member.gender !== audience) {
-      throw new ForbiddenException('لا تملك صلاحية نقل الاشتراك إلى عضو من هذا القسم');
-    }
-    if (member.branch_id !== sub.branch_id) {
+    this.assertBranchAccess(user, sub.branch_id);
+    if (!isSystemAdmin(user) && !shareClubMemberIdentity(member.branch_id, sub.branch_id)) {
       throw new ForbiddenException('لا يمكن نقل الاشتراك إلى عضو تابع لفرع آخر');
     }
 
@@ -2165,7 +2344,7 @@ export class ClubSubscriptionsService {
 
     const row = await this.prisma.club_subscriptions.update({
       where: { id },
-      data: { member_id: memberId, customer_name: member.name, gender: member.gender },
+      data: { member_id: memberId, customer_name: member.name },
     });
 
     await this.audit.log({
@@ -2180,14 +2359,14 @@ export class ClubSubscriptionsService {
     return this.mapSub(row);
   }
 
-  async statistics(isSpecial?: string, user?: JwtUser) {
+  async statistics(isSpecial?: string, user?: JwtUser, dateFrom?: string, dateTo?: string) {
     const and: Prisma.club_subscriptionsWhereInput[] = [
       this.visibleMemberSubscriptionFilter(),
     ];
     const scope = this.branchScope.resolveListFilter(user, null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
-    const audience = this.audience(user);
-    if (audience) and.push({ member: { is: { is_deleted: false, gender: audience } } });
+    const audience = this.subscriptionAudienceFilter(user);
+    if (audience) and.push(audience);
     if (isSpecial === 'true' || isSpecial === '1') and.push(this.specialSubscriptionFilter());
     if (isSpecial === 'false' || isSpecial === '0') {
       and.push({
@@ -2197,9 +2376,24 @@ export class ClubSubscriptionsService {
         ],
       });
     }
+    if (dateFrom || dateTo) {
+      and.push({ registration_date: { gte: dateFrom, lte: dateTo } });
+    }
 
     const where: Prisma.club_subscriptionsWhereInput = and.length ? { AND: and } : {};
-    const rows = await this.prisma.club_subscriptions.findMany({ where });
+    // The summary needs only these values. Avoid loading every subscription column just to
+    // calculate the dashboard cards; this endpoint is requested when the subscriptions screen opens.
+    const rows = await this.prisma.club_subscriptions.findMany({
+      where,
+      select: {
+        subscription_start_date: true,
+        subscription_end_date: true,
+        subscription_value: true,
+        transferred_credit_amount: true,
+        paid_amount: true,
+        remaining_amount: true,
+      },
+    });
     let total = 0;
     let active = 0;
     let expired = 0;
@@ -2248,8 +2442,8 @@ export class ClubSubscriptionsService {
     if (query.branch && query.branch !== 'all') and.push({ branch_id: Number(query.branch) });
     const scope = this.branchScope.resolveListFilter(user, query.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
-    const audience = this.audience(user);
-    if (audience) and.push({ member: { is: { is_deleted: false, gender: audience } } });
+    const audience = this.subscriptionAudienceFilter(user);
+    if (audience) and.push(audience);
     if (query.search?.trim()) {
       const s = query.search.trim();
       and.push({
@@ -2293,30 +2487,41 @@ export class ClubSubscriptionsService {
     };
   }
 
-  async expiredReport(query: { branch?: string; search?: string }, user?: JwtUser) {
-    const and: Prisma.club_subscriptionsWhereInput[] = [this.visibleMemberSubscriptionFilter()];
+  async expiredReport(query: { branch?: string; search?: string; page?: string; pageSize?: string }, user?: JwtUser) {
+    const and: Prisma.club_subscriptionsWhereInput[] = [
+      // Do this in SQL rather than loading the complete subscription history and filtering it
+      // in Node. The report otherwise competes with new-subscription transactions for DB capacity.
+      { subscription_end_date: { lt: localDateString() } },
+    ];
     if (query.branch && query.branch !== 'all') and.push({ branch_id: Number(query.branch) });
     const scope = this.branchScope.resolveListFilter(user, query.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
-    const audience = this.audience(user);
-    if (audience) and.push({ member: { is: { is_deleted: false, gender: audience } } });
-    const rows = await this.prisma.club_subscriptions.findMany({
-      where: and.length ? { AND: and } : {},
-      orderBy: { subscription_end_date: 'desc' },
-    });
-    type SubRow = ReturnType<ClubSubscriptionsService['mapSub']>;
-    let list: SubRow[] = rows
-      .filter((r) => deriveSubStatus(r.subscription_start_date, r.subscription_end_date) === 'expired')
-      .map((r) => this.mapSub(r));
+    const audience = this.subscriptionAudienceFilter(user);
+    if (audience) and.push(audience);
     if (query.search?.trim()) {
-      const s = query.search.trim().toLowerCase();
-      list = list.filter(
-        (x) =>
-          String(x.customerName ?? '').toLowerCase().includes(s) ||
-          String(x.subscriptionNumber).toLowerCase().includes(s),
-      );
+      const search = query.search.trim();
+      and.push({
+        OR: [
+          { customer_name: { contains: search } },
+          { subscription_number: { contains: search } },
+        ],
+      });
     }
-    return { data: list, count: list.length };
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20));
+    const where = { AND: and };
+    const [rows, count] = await Promise.all([
+      this.prisma.club_subscriptions.findMany({
+        where,
+        orderBy: { subscription_end_date: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+      this.prisma.club_subscriptions.count({ where }),
+    ]);
+    type SubRow = ReturnType<ClubSubscriptionsService['mapSub']>;
+    const list: SubRow[] = rows.map((r) => this.mapSub(r));
+    return { data: list, count, page, pageSize };
   }
 
   async updateExpiredStatuses(): Promise<number> {

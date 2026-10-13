@@ -2,11 +2,11 @@ import { ClubMembersService } from './club-members.service';
 
 describe('ClubMembersService legacy branch member codes', () => {
   const cases = [
-    { branchId: 2, branchCode: 'C', maxNum: 12068, expected: 'C012069' },
-    { branchId: 3, branchCode: 'A', maxNum: 20137, expected: 'A020138' },
-    { branchId: 4, branchCode: 'B', maxNum: 18062, expected: 'B018063' },
-    { branchId: 5, branchCode: 'C', maxNum: 12068, expected: 'C012069' },
-    { branchId: 6, branchCode: 'C', maxNum: 12068, expected: 'C012069' },
+    { branchId: 2, branchCode: 'C', maxNum: 12068, expected: 'C12069' },
+    { branchId: 3, branchCode: 'A', maxNum: 20137, expected: 'A20138' },
+    { branchId: 4, branchCode: 'B', maxNum: 18062, expected: 'B18063' },
+    { branchId: 5, branchCode: 'C', maxNum: 12068, expected: 'C12069' },
+    { branchId: 6, branchCode: 'C', maxNum: 12068, expected: 'C12069' },
   ] as const;
 
   it.each(cases)(

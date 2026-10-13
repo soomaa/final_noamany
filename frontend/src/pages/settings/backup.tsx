@@ -27,13 +27,10 @@ export function BackupSettingsPage() {
 
   const branchParam = branchId && branchId !== 'all' ? `?branchId=${branchId}` : '';
 
-  const runExport = async (kind: 'members' | 'subscriptions') => {
+  const runExport = async (kind: 'members' | 'subscriptions' | 'attendance' | 'receipts') => {
     setLoading(kind);
     try {
-      const path =
-        kind === 'members'
-          ? `/club/backup/members.csv${branchParam}`
-          : `/club/backup/subscriptions.csv${branchParam}`;
+      const path = `/club/backup/${kind}.csv${branchParam}`;
       await downloadCsv(path, `${kind}-export.csv`);
       toast.success(ui('تم التصدير بنجاح'));
     } catch (e) {
@@ -81,6 +78,14 @@ export function BackupSettingsPage() {
             >
               <Download className="me-2 h-4 w-4" />
               {loading === 'members' ? ui('جاري التصدير…') : ui('تصدير الأعضاء CSV')}
+            </Button>
+            <Button variant="outline" disabled={loading !== null} onClick={() => void runExport('attendance')}>
+              <Download className="me-2 h-4 w-4" />
+              {loading === 'attendance' ? ui('جاري التصدير…') : ui('تصدير الحضور CSV')}
+            </Button>
+            <Button variant="outline" disabled={loading !== null} onClick={() => void runExport('receipts')}>
+              <Download className="me-2 h-4 w-4" />
+              {loading === 'receipts' ? ui('جاري التصدير…') : ui('تصدير المدفوعات CSV')}
             </Button>
             <Button
               variant="outline"

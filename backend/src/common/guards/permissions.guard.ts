@@ -6,6 +6,7 @@ import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtUser } from '../types/jwt-user';
 import { PermissionEngineService } from '../../modules/rbac/engine/permission-engine.service';
+import { sidebarApiPermissions } from './sidebar-api-permissions';
 
 /**
  * Two enforcement modes, both opt-in per route (un-decorated routes stay open to any
@@ -32,7 +33,13 @@ export class PermissionsGuard implements CanActivate {
     ]);
     if (isPublic) return true;
 
-    const permKeys = this.reflector.getAllAndOverride<string[]>(REQUIRES_PERMISSION_KEY, [
+    const pageKeys = sidebarApiPermissions(
+      context.getClass().name,
+      context.getHandler().name,
+      context.switchToHttp().getRequest(),
+    );
+    if (pageKeys?.length === 0) throw new ForbiddenException('ليس لديك صلاحية للوصول');
+    const permKeys = pageKeys ?? this.reflector.getAllAndOverride<string[]>(REQUIRES_PERMISSION_KEY, [
       context.getHandler(),
       context.getClass(),
     ]);

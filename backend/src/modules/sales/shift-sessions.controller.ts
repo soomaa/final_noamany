@@ -112,22 +112,6 @@ export class ShiftSessionsController {
     return this.service.findOne(id);
   }
 
-  @Get(':id/close-report')
-  closeReport(@Param('id', ParseIntPipe) id: number) {
-    return this.service.closeReport(id);
-  }
-
-  @Put(':id/close-own')
-  @RequiresPermission('gym-sales.sales:update')
-  closeOwn(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: CloseShiftSessionDto,
-    @CurrentUser('sub') userId: number,
-    @Query('dryRun') dryRun?: string,
-  ) {
-    return this.service.closeOwn(id, body, userId, isDryRun(dryRun));
-  }
-
   @Put(':id/close')
   @RequiresPermission('gym-sales.sales:update')
   close(

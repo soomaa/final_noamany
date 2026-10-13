@@ -22,7 +22,7 @@ import {
   ContactRound,
   ArrowRightLeft,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
@@ -35,6 +35,7 @@ import { ClubStatCard } from '@/components/club/stat-card';
 import { DialogFormGrid, DialogFormSection, DialogFormSummary, FormDialogBody, FormDialogFooter, FormDialogHeader, FORM_DIALOG_CONTENT_CLASS } from '@/components/common/dialog-form-layout';
 import { FieldWrapper } from '@/components/common/form-fields';
 import { MemberSearchCombobox } from '@/components/club/member-search-combobox';
+import { SubscriptionReceiptCreateDialog } from '@/pages/club/subscription-receipt-create-dialog';
 import {
   MemberOnboardingGuide,
   useFirstVisitGuide,
@@ -80,6 +81,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Pagination } from '@/components/ui/pagination';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useBranches } from '@/hooks/use-branches';
 import { useClubT } from '@/hooks/use-club-t';
@@ -134,6 +136,7 @@ interface ReceiptRow extends SubscriptionPaymentReceiptRow {
   memberName: string;
   subscriptionId?: number | null;
   lockerSubscriptionId?: number | null;
+  branchId?: number | null;
 }
 
 interface PlanTransferPreview {
@@ -165,6 +168,7 @@ interface WaiverReportRow {
 }
 
 type SubscriptionKind = 'package' | 'sessions' | 'special' | 'private';
+type WorkspaceSubscriptionAction = 'renew' | 'freeze' | 'unfreeze' | 'transfer';
 
 export interface ClubSubscriptionsPageProps {
   singleView?: ClubSubscriptionsView;
@@ -183,7 +187,7 @@ export function ClubSubscriptionsPage({
 }: ClubSubscriptionsPageProps = {}) {
   const ct = useClubT();
   const { ui, t } = useLocale();
-  const { can } = usePermission();
+  const { can, canRoute } = usePermission();
   const canCreateSubscriptions =
     can('club.subscriptions:create') ||
     can('club.subscriptions.list:create') ||
@@ -197,10 +201,45 @@ export function ClubSubscriptionsPage({
   const canPrintSubscriptions =
     can('club.subscriptions:print') ||
     can('club.subscriptions.list:print');
+  const canCreateRefund =
+    canRoute('/club/subscriptions/refunds') &&
+    (canUpdateSubscriptions || can('club.reception:update'));
+  // Admin can change the stats date filter; reception staff is locked to today
+  const canChangeStatsFilter = can('club.subscriptions:view') || can('club.subscriptions.user_analytics:view');
+  type StatsPreset = 'today' | 'week' | 'month' | 'quarter' | 'custom';
+  const [statsPreset, setStatsPreset] = useState<StatsPreset>(canChangeStatsFilter ? 'month' : 'today');
+  const [statsCustomFrom, setStatsCustomFrom] = useState('');
+  const [statsCustomTo, setStatsCustomTo] = useState('');
+  const statsDateRange = useMemo(() => {
+    const today = localToday();
+    if (statsPreset === 'today') return { dateFrom: today, dateTo: today };
+    if (statsPreset === 'week') {
+      const [y, m, d] = today.split('-').map(Number);
+      const from = new Date(y, (m ?? 1) - 1, (d ?? 1) - 6);
+      const mm = String(from.getMonth() + 1).padStart(2, '0');
+      const dd = String(from.getDate()).padStart(2, '0');
+      return { dateFrom: `${from.getFullYear()}-${mm}-${dd}`, dateTo: today };
+    }
+    if (statsPreset === 'month') {
+      const [y, m] = today.split('-').map(Number);
+      const mm = String(m ?? 1).padStart(2, '0');
+      return { dateFrom: `${y}-${mm}-01`, dateTo: today };
+    }
+    if (statsPreset === 'quarter') {
+      const [y, m] = today.split('-').map(Number);
+      const qStartMonth = Math.floor(((m ?? 1) - 1) / 3) * 3 + 1;
+      const mm = String(qStartMonth).padStart(2, '0');
+      return { dateFrom: `${y}-${mm}-01`, dateTo: today };
+    }
+    // custom
+    return { dateFrom: statsCustomFrom || undefined, dateTo: statsCustomTo || undefined };
+  }, [statsPreset, statsCustomFrom, statsCustomTo]);
   const { user } = useAuth();
   const subscriptionOnboarding = useFirstVisitGuide('subscriptions', user?.sub);
   const qc = useQueryClient();
   const location = useLocation();
+  const workspaceActionHandled = useRef(false);
+  const [workspaceSubscription, setWorkspaceSubscription] = useState<ClubSubscriptionListItem | null>(null);
   const initialFilters: Record<string, string> | undefined = filterSpecial
     ? { isSpecial: 'true' }
     : filterTimeBased
@@ -209,17 +248,35 @@ export function ClubSubscriptionsPage({
   const [tab, setTab] = useState<ClubSubscriptionsView>(
     singleView ?? (reportFocus ? 'reports' : 'subs'),
   );
+  const [expiredPage, setExpiredPage] = useState(1);
+  const expiredPageSize = 20;
   const { params, setParams } = useListQuery(initialFilters ? { filters: initialFilters } : undefined);
-  const subscriptionListParams = useMemo(
-    () => tab === 'frozen'
-      ? { ...params, filters: { ...params.filters, status: 'frozen' } }
-      : params,
-    [params, tab],
-  );
+  const subscriptionListParams = useMemo(() => {
+    const dateFilters = {
+      ...(statsDateRange.dateFrom ? { registrationDateFrom: statsDateRange.dateFrom } : {}),
+      ...(statsDateRange.dateTo ? { registrationDateTo: statsDateRange.dateTo } : {}),
+    };
+    const { kind, ...restFilters } = (params.filters ?? {}) as Record<string, string | undefined>;
+    const kindFilters: Record<string, string> =
+      kind === 'normal' ? { isSpecial: 'false', isLinkedToSessions: 'false' } :
+      kind === 'private' ? { isSpecial: 'true' } :
+      kind === 'sessions' ? { isLinkedToSessions: 'true' } :
+      {};
+    const baseFilters = { ...restFilters, ...dateFilters, ...kindFilters };
+    return tab === 'frozen'
+      ? { ...params, filters: { ...baseFilters, status: 'frozen' } }
+      : { ...params, filters: baseFilters };
+  }, [params, tab, statsDateRange]);
   const { data, isLoading, isError, error, refetch } = usePaginatedList<ClubSubscriptionListItem>(
     'club-subscriptions',
     subscriptionListParams,
   );
+  const availableSubscriptions = useMemo(() => {
+    const current = data?.data ?? [];
+    return workspaceSubscription && !current.some((subscription) => subscription.id === workspaceSubscription.id)
+      ? [workspaceSubscription, ...current]
+      : current;
+  }, [data?.data, workspaceSubscription]);
   const { data: branches } = useBranches();
   const { data: subTypesRaw, refetch: refetchTypes } = useArrayResource<{
     id: number;
@@ -241,23 +298,7 @@ export function ClubSubscriptionsPage({
     queryKey: ['club-trainers', 'private-subscriptions'],
     queryFn: async () => (await api.get<{ data: ClubTrainerRow[] }>('/club-trainers', { params: { page: 1, pageSize: 200, isActive: true } })).data.data,
   });
-  const [walkIn, setWalkIn] = useState(false);
   const [selectedMember, setSelectedMember] = useState<ClubMemberListItem | null>(null);
-  const visiblePrivatePackages = useMemo(() => {
-    const memberBranchId = selectedMember?.branchId;
-    if (!memberBranchId) return privatePackages;
-    return privatePackages.filter((item) => item.branchIds.includes(memberBranchId));
-  }, [privatePackages, selectedMember?.branchId]);
-  const privatePackageOptions = useMemo(() => visiblePrivatePackages.map((item) => ({
-    value: String(item.id),
-    label: item.name,
-    description: item.kind === 'sessions'
-      ? `حصص برايفت · ${toArabicDigits(item.sessionsCount ?? 0)} حصة · ${formatMoney(item.price)}`
-      : `اشتراك برايفت · ${formatMoney(item.price)}`,
-    searchText: item.kind === 'sessions'
-      ? `حصص برايفت ${item.sessionsCount ?? 0} ${item.price}`
-      : `اشتراك برايفت ${item.price}`,
-  })), [visiblePrivatePackages]);
   const showNewSubButton = !singleView || singleView === 'subs';
   const [receiptFilters, setReceiptFilters] = useState({ branchId: '', memberId: '', startDate: '', endDate: '' });
   const { data: receipts = [], refetch: refetchReceipts } = useQuery({
@@ -288,20 +329,28 @@ export function ClubSubscriptionsPage({
   }>('club-subscription-transfers');
 
   const { data: stats } = useQuery({
-    queryKey: ['club-subscriptions', 'statistics', filterSpecial ? 'special' : 'all'],
+    queryKey: ['club-subscriptions', 'statistics', filterSpecial ? 'special' : 'all', statsDateRange.dateFrom, statsDateRange.dateTo],
     queryFn: async () => {
       const { data: s } = await api.get<ClubSubscriptionStatistics>('/club-subscriptions/statistics', {
-        params: filterSpecial ? { isSpecial: 'true' } : undefined,
+        params: {
+          ...(filterSpecial ? { isSpecial: 'true' } : {}),
+          ...(statsDateRange.dateFrom ? { dateFrom: statsDateRange.dateFrom } : {}),
+          ...(statsDateRange.dateTo ? { dateTo: statsDateRange.dateTo } : {}),
+        },
       });
       return s;
     },
   });
 
   const { data: expired } = useQuery({
-    queryKey: ['club-subscriptions', 'expired'],
+    queryKey: ['club-subscriptions', 'expired', expiredPage, expiredPageSize],
+    // The expired report may contain years of history. It is only visible in the reports tab,
+    // so do not make this expensive request while reception is creating a subscription.
+    enabled: tab === 'reports' && (!reportFocus || reportFocus === 'expired'),
     queryFn: async () => {
-      const { data: r } = await api.get<{ data: ClubSubscriptionListItem[]; count: number }>(
+      const { data: r } = await api.get<{ data: ClubSubscriptionListItem[]; count: number; page: number; pageSize: number }>(
         '/club-subscriptions/expired-report',
+        { params: { page: expiredPage, pageSize: expiredPageSize } },
       );
       return r;
     },
@@ -349,10 +398,16 @@ export function ClubSubscriptionsPage({
     { value: 'male', label: ct('common.male') },
     { value: 'female', label: ct('common.female') },
   ];
+  const kindOptions = [
+    { value: 'normal', label: 'اشتراك عادى' },
+    { value: 'private', label: 'برايفت' },
+    { value: 'sessions', label: 'حصص' },
+  ];
   const filters: FilterField[] = [
     { key: 'branch', label: ct('common.branch'), type: 'select', options: branchOptions },
+    { key: 'kind', label: 'فئة الاشتراك', type: 'select', options: kindOptions },
     { key: 'subscriptionType', label: ct('subscriptions.subType'), type: 'select', options: subTypeOptions },
-    { key: 'gender', label: ct('common.gender'), type: 'select', options: genderOptions },
+    { key: 'gender', label: 'الفئة', type: 'select', options: genderOptions },
     { key: 'status', label: ct('common.status'), type: 'select', options: statusOptions },
   ];
 
@@ -389,14 +444,21 @@ export function ClubSubscriptionsPage({
   const [waiverForm, setWaiverForm] = useState({ amount: '', reason: '' });
   const [editRemainingAmount, setEditRemainingAmount] = useState<number | null>(null);
   const [freezeOpen, setFreezeOpen] = useState(false);
-  const [freezeForm, setFreezeForm] = useState({ reason: '' });
+  const [editingFreeze, setEditingFreeze] = useState(false);
+  const [freezeForm, setFreezeForm] = useState({ startDate: localToday(), endDate: localToday(), reason: '' });
   const [renewOpen, setRenewOpen] = useState(false);
-  const [renewQuote, setRenewQuote] = useState<{ grossValue: number; netValue: number; paidAmount: number; remainingAmount: number; quoteVersion: string; startDate: string; endDate: string } | null>(null);
   const [renewForm, setRenewForm] = useState({ paidAmount: '' });
   const [renewRows, setRenewRows] = useState<ClubPaymentSplitRow[]>(singlePaymentRow());
   const [subscriptionKind, setSubscriptionKind] = useState<SubscriptionKind>('package');
+  const { data: subscriptionEmployees = [] } = useQuery({
+    queryKey: ['employees', 'subscription-options'],
+    queryFn: async () => (await api.get<Array<{ id: number; employee: string | null; emp_code: number | null }>>('/employees/subscription-options')).data,
+    enabled: subscriptionKind === 'package',
+  });
   /** Tender rows for the create/edit dialog — one row unless the user splits the payment. */
   const [paymentRows, setPaymentRows] = useState<ClubPaymentSplitRow[]>(singlePaymentRow());
+  const [receiptNumber, setReceiptNumber] = useState('');
+  const [paidAmountEdited, setPaidAmountEdited] = useState(false);
 
   const [form, setForm] = useState({
     branchId: 0,
@@ -407,6 +469,7 @@ export function ClubSubscriptionsPage({
     privatePackageId: '',
     privateTrainerId: '',
     privateDiscountType: '',
+    employeeId: '',
     startDate: localToday(),
     endDate: '',
     subscriptionValue: '',
@@ -419,16 +482,38 @@ export function ClubSubscriptionsPage({
     discountEnabled: false,
     discountMode: 'none' as SubscriptionDiscountMode,
     discountCodeId: '',
+    memberDiscountGrantId: '',
     discountValue: '',
+    pointsToRedeem: '',
     isLinkedToSessions: false,
     sessionsCount: '',
     validityDays: '',
   });
 
-  const formBranchName = useMemo(
-    () => resolveBranchName(branches, form.branchId, user?.branch),
-    [branches, form.branchId, user?.branch],
-  );
+  const subscriptionBranchOptions = useMemo(() => {
+    const allowedUserBranches = user?.level === 1 || !user?.branch ? null : [user.branch];
+    return branchOptions.filter((branch) => {
+      const branchId = Number(branch.value);
+      return allowedUserBranches === null || allowedUserBranches.includes(branchId);
+    });
+  }, [branchOptions, user?.branch, user?.level]);
+
+  const visiblePrivatePackages = useMemo(() => {
+    const subscriptionBranchId = form.branchId || selectedMember?.branchId;
+    if (!subscriptionBranchId) return privatePackages;
+    return privatePackages.filter((item) => item.branchIds.includes(subscriptionBranchId));
+  }, [form.branchId, privatePackages, selectedMember?.branchId]);
+  const privatePackageOptions = useMemo(() => visiblePrivatePackages.map((item) => ({
+    value: String(item.id),
+    label: item.name,
+    description: item.kind === 'sessions'
+      ? `حصص برايفت · ${toArabicDigits(item.sessionsCount ?? 0)} حصة · ${formatMoney(item.price)}`
+      : `اشتراك برايفت · ${formatMoney(item.price)}`,
+    searchText: item.kind === 'sessions'
+      ? `حصص برايفت ${item.sessionsCount ?? 0} ${item.price}`
+      : `اشتراك برايفت ${item.price}`,
+  })), [visiblePrivatePackages]);
+
   const historySubId =
     paymentOpen && selectedId != null
       ? selectedId
@@ -448,17 +533,40 @@ export function ClubSubscriptionsPage({
     enabled: historySubId != null,
   });
 
+  const { data: pointsAccount } = useQuery({
+    queryKey: ['club-points', 'subscription-account', selectedMember?.id],
+    enabled: selectedMember?.id != null && dialogOpen,
+    queryFn: async () => (await api.get<{ points: number; conversion: { points: number; value: number } | null }>(`/club-points/members/${selectedMember!.id}`)).data,
+  });
+  const { data: memberDiscountGrants = [] } = useQuery({
+    queryKey: ['club-discount-codes', 'member-grants', selectedMember?.id],
+    enabled: selectedMember?.id != null && dialogOpen,
+    queryFn: async () => (await api.get<Array<{ id: number; code: string | null; percentage: number; used: boolean; expiresOn: string | null }>>('/club-discount-codes/member-grants', { params: { memberId: selectedMember!.id } })).data
+      .filter((grant) => !grant.used && !!grant.code),
+  });
   const formDiscountValue = useMemo(
     () => calculateSubscriptionDiscount(
       Number(form.subscriptionValue) || 0,
       form.discountMode,
-      discountCodes,
-      form.discountCodeId,
+      form.discountMode === 'code' ? memberDiscountGrants.map((grant) => ({ id: grant.id, code: grant.code ?? '', percentage: grant.percentage, isActive: true, usageCount: 0, createdAt: '', updatedAt: '' })) : discountCodes,
+      form.discountMode === 'code' ? form.memberDiscountGrantId : form.discountCodeId,
       form.discountValue,
+      form.pointsToRedeem,
+      pointsAccount?.conversion ?? null,
     ),
-    [discountCodes, form.discountCodeId, form.discountMode, form.discountValue, form.subscriptionValue],
+    [discountCodes, form.discountCodeId, form.discountMode, form.discountValue, form.memberDiscountGrantId, form.pointsToRedeem, form.subscriptionValue, memberDiscountGrants, pointsAccount?.conversion],
   );
   const formNetValue = Math.max(0, (Number(form.subscriptionValue) || 0) - formDiscountValue);
+  useEffect(() => {
+    if (editSubId || paidAmountEdited) return;
+    const automaticPaidAmount = String(formNetValue);
+    setPaymentRows((rows) => rows.length === 1
+      ? singlePaymentRow(rows[0]?.method ?? 'cash', automaticPaidAmount)
+      : rows);
+    setForm((current) => current.paidAmount === automaticPaidAmount
+      ? current
+      : { ...current, paidAmount: automaticPaidAmount });
+  }, [editSubId, formNetValue, paidAmountEdited]);
   const formRemaining = useMemo(() => {
     const paid = Number(form.paidAmount) || 0;
     return Math.max(0, formNetValue - paid);
@@ -474,7 +582,6 @@ export function ClubSubscriptionsPage({
     ),
     [availableSubTypes, subscriptionKind],
   );
-  const [receiptForm, setReceiptForm] = useState({ memberName: '', amount: '', memberCode: '', subscriptionId: '' });
   const [transferForm, setTransferForm] = useState({
     subscriptionId: '',
     toSubscriptionTypeId: '',
@@ -487,8 +594,8 @@ export function ClubSubscriptionsPage({
   const [transferPreview, setTransferPreview] = useState<PlanTransferPreview | null>(null);
   const [transferPreviewError, setTransferPreviewError] = useState('');
   const transferSource = useMemo(
-    () => (data?.data ?? []).find((item) => item.id === Number(transferForm.subscriptionId)) ?? null,
-    [data?.data, transferForm.subscriptionId],
+    () => availableSubscriptions.find((item) => item.id === Number(transferForm.subscriptionId)) ?? null,
+    [availableSubscriptions, transferForm.subscriptionId],
   );
   const transferAvailableSubTypes = useMemo(
     () => subscriptionTypesForBranch(
@@ -515,7 +622,6 @@ export function ClubSubscriptionsPage({
     if (!prefill) return;
     window.history.replaceState({}, '');
     setEditSubId(null);
-    setWalkIn(false);
     setSelectedMember(prefill);
     const branchId =
       (user?.branch && user.branch > 0 ? user.branch : undefined) ??
@@ -646,6 +752,7 @@ export function ClubSubscriptionsPage({
     void qc.invalidateQueries({ queryKey: ['club-subscriptions'] });
     void qc.invalidateQueries({ queryKey: ['club-subscriptions', 'outstanding'] });
     void qc.invalidateQueries({ queryKey: ['club-private-subscriptions'] });
+    void qc.invalidateQueries({ queryKey: ['club-receipts'] });
   };
 
   const selectSubscriptionKind = (kind: SubscriptionKind) => {
@@ -658,20 +765,22 @@ export function ClubSubscriptionsPage({
       privatePackageId: '',
       privateTrainerId: '',
       privateDiscountType: '',
+      employeeId: '',
       subscriptionValue: '',
       endDate: '',
       paidAmount: kind === 'special' || kind === 'private' ? '' : current.paidAmount,
       discountEnabled: false,
       discountMode: 'none',
       discountCodeId: '',
+      memberDiscountGrantId: '',
       discountValue: kind === 'private' ? '0' : '',
+      pointsToRedeem: '',
       isSpecial: kind === 'special' || kind === 'private',
       isLinkedToSessions: kind === 'sessions',
       sessionsCount: '',
       validityDays: kind === 'special' ? '30' : '',
     }));
     if (kind === 'special' || kind === 'private') {
-      setWalkIn(false);
       if (!form.memberId) setSelectedMember(null);
     }
   };
@@ -690,6 +799,7 @@ export function ClubSubscriptionsPage({
       privatePackageId: '',
       privateTrainerId: '',
       privateDiscountType: '',
+      employeeId: '',
       startDate: localToday(),
       endDate: '',
       subscriptionValue: '',
@@ -702,14 +812,17 @@ export function ClubSubscriptionsPage({
       discountEnabled: false,
       discountMode: 'none',
       discountCodeId: '',
+      memberDiscountGrantId: '',
       discountValue: '',
+      pointsToRedeem: '',
       isLinkedToSessions: false,
       sessionsCount: '',
       validityDays: '',
     });
     setPaymentRows(singlePaymentRow());
+    setReceiptNumber('');
+    setPaidAmountEdited(false);
     setEditRemainingAmount(null);
-    setWalkIn(false);
     setSelectedMember(null);
     setDialogOpen(true);
   };
@@ -719,6 +832,8 @@ export function ClubSubscriptionsPage({
     setEditSubId(row.id);
     setSubscriptionKind(row.specialClassTypeId || row.isSpecial ? 'special' : row.isLinkedToSessions ? 'sessions' : 'package');
     setPaymentRows(singlePaymentRow((row.paymentMethod as ClubPaymentMethod) || 'cash'));
+    setReceiptNumber(row.receiptNumber ?? '');
+    setPaidAmountEdited(true);
     setForm({
       branchId: row.branchId ?? branches?.[0]?.id ?? 0,
       memberId: row.memberId ? String(row.memberId) : '',
@@ -728,6 +843,7 @@ export function ClubSubscriptionsPage({
       privatePackageId: '',
       privateTrainerId: '',
       privateDiscountType: '',
+      employeeId: row.employeeId ? String(row.employeeId) : '',
       startDate: row.subscriptionStartDate,
       endDate: row.subscriptionEndDate,
       subscriptionValue: String(row.subscriptionValue ?? ''),
@@ -740,7 +856,9 @@ export function ClubSubscriptionsPage({
       discountEnabled: !!row.discountEnabled,
       discountMode: row.discountCodeId ? 'code' : row.discountValue > 0 ? 'fixed' : 'none',
       discountCodeId: row.discountCodeId ? String(row.discountCodeId) : '',
+      memberDiscountGrantId: '',
       discountValue: row.discountValue ? String(row.discountValue) : '',
+      pointsToRedeem: '',
       isLinkedToSessions: !!row.isLinkedToSessions,
       sessionsCount: row.sessionsCount ? String(row.sessionsCount) : '',
       validityDays:
@@ -749,7 +867,6 @@ export function ClubSubscriptionsPage({
           : '',
     });
     setEditRemainingAmount(row.remainingAmount);
-    setWalkIn(!row.memberId);
     if (row.memberId) {
       try {
         const { data } = await api.get<ClubMemberListItem>(`/club-members/${row.memberId}`);
@@ -813,8 +930,12 @@ export function ClubSubscriptionsPage({
       toast.error(`عدد الحصص يجب أن يكون من 1 إلى ${selectedSessionPackage?.sessionsCount ?? 1}`);
       return;
     }
-    if (form.discountMode === 'code' && !form.discountCodeId) {
-      toast.error('اختر كود الخصم');
+    if (form.discountMode === 'code' && !form.memberDiscountGrantId) {
+      toast.error('اختر كود خصم ممنوحًا لهذا العضو');
+      return;
+    }
+    if (form.discountMode === 'points' && (!form.memberId || editSubId || !Number.isInteger(Number(form.pointsToRedeem)) || Number(form.pointsToRedeem) < 1)) {
+      toast.error(editSubId ? 'لا يمكن تعديل النقاط المستبدلة بعد إنشاء الاشتراك' : 'اختر عضوًا وأدخل عدد نقاط صحيحًا للاستبدال');
       return;
     }
     const specialValidityDays = Number(form.validityDays);
@@ -834,7 +955,7 @@ export function ClubSubscriptionsPage({
       toast.error(ct('common.branch'));
       return;
     }
-    const employeeId = user?.emp_code ?? selectedMember?.employeeId ?? undefined;
+    const employeeId = subscriptionKind === 'package' ? Number(form.employeeId) || undefined : user?.emp_code ?? selectedMember?.employeeId ?? undefined;
     // Editing never collects money, so only the create paths carry a split to validate.
     const paidNow = editSubId ? 0 : Number(form.paidAmount) || 0;
     const split = buildClubPaymentSplit(paymentRows, paidNow, ct);
@@ -843,11 +964,16 @@ export function ClubSubscriptionsPage({
       return;
     }
     const discountPayload = {
-      discountEnabled: form.discountMode !== 'none',
-      discountCodeId: form.discountMode === 'code' ? Number(form.discountCodeId) : null,
-      discountValue: form.discountMode === 'fixed' ? Number(form.discountValue) || 0 : 0,
+      // Points are resolved on the server from the current balance. Sending a
+      // regular discount flag with them would correctly be rejected as stacking.
+      discountEnabled: form.discountMode !== 'none' && form.discountMode !== 'points',
+      discountCodeId: null,
+      memberDiscountGrantId: form.discountMode === 'code' ? Number(form.memberDiscountGrantId) : undefined,
+      discountValue: form.discountMode === 'fixed' ? Number(form.discountValue) || 0 : form.discountMode === 'percentage' ? formDiscountValue : 0,
+      pointsToRedeem: form.discountMode === 'points' ? Number(form.pointsToRedeem) || 0 : undefined,
     };
     setSaving(true);
+    let newlySavedSub: ClubSubscriptionListItem | null = null;
     try {
       if (subscriptionKind === 'private') {
         await api.post('/club-private-subscriptions/enrollments', {
@@ -886,20 +1012,25 @@ export function ClubSubscriptionsPage({
             subscriptionStartDate: form.startDate,
           });
         } else {
-          await api.post('/club-subscriptions', {
+          const { data: createdSpecial } = await api.post<ClubSubscriptionListItem>('/club-subscriptions', {
             ...specialPayload,
             startDate: form.startDate,
             paidAmount: form.paidAmount ? Number(form.paidAmount) : 0,
           });
+          newlySavedSub = createdSpecial;
         }
       } else if (editSubId) {
+        const selectedType = subTypes?.find((t) => t.id === Number(form.subscriptionTypeId));
+        const datesChanged =
+          !!editOriginal &&
+          (editOriginal.startDate !== form.startDate || editOriginal.typeId !== form.subscriptionTypeId);
         const common = {
           branchId: effectiveBranchId,
           memberId: form.memberId ? Number(form.memberId) : undefined,
           customerName: form.customerName || undefined,
           subscriptionTypeId: form.subscriptionTypeId ? Number(form.subscriptionTypeId) : undefined,
-          paymentMethod: split.payload.paymentMethod,
           gender: form.gender,
+          ...split.payload,
           guardianName: selectedMember?.guardianName || undefined,
           guardianPhone: selectedMember?.guardianPhone || undefined,
           employeeId,
@@ -911,22 +1042,19 @@ export function ClubSubscriptionsPage({
           ...discountPayload,
           isLinkedToSessions: form.isLinkedToSessions,
           sessionsCount: form.isLinkedToSessions && form.sessionsCount ? Number(form.sessionsCount) : undefined,
+          // Always send start date and value so they save even when only those fields change
+          subscriptionStartDate: form.startDate,
+          subscriptionValue: Number(form.subscriptionValue) || undefined,
         };
-        const selectedType = subTypes?.find((t) => t.id === Number(form.subscriptionTypeId));
-        const datesChanged =
-          !!editOriginal &&
-          (editOriginal.startDate !== form.startDate || editOriginal.typeId !== form.subscriptionTypeId);
         await api.put(`/club-subscriptions/${editSubId}`, {
           ...common,
           ...(datesChanged && selectedType
             ? {
-                subscriptionStartDate: form.startDate,
                 subscriptionEndDate: addDaysLocal(
                   form.startDate,
                   selectedType.days > 0 ? selectedType.days : selectedType.isLinkedToSessions ? 30 : 0,
                 ),
                 subscriptionType: selectedType.name,
-                subscriptionValue: Number(form.subscriptionValue) || selectedType.price,
                 isLinkedToSessions: !!selectedType.isLinkedToSessions,
                 sessionsCount: selectedType.isLinkedToSessions
                   ? (Number(form.sessionsCount) || selectedType.sessionsCount || undefined)
@@ -935,12 +1063,11 @@ export function ClubSubscriptionsPage({
             : {}),
         });
       } else {
-        await api.post('/club-subscriptions', {
+        const { data: createdSub } = await api.post<ClubSubscriptionListItem>('/club-subscriptions', {
           branchId: effectiveBranchId,
           memberId: form.memberId ? Number(form.memberId) : undefined,
           customerName: form.customerName || undefined,
           subscriptionTypeId: form.subscriptionTypeId ? Number(form.subscriptionTypeId) : undefined,
-          ...split.payload,
           guardianName: selectedMember?.guardianName || undefined,
           guardianPhone: selectedMember?.guardianPhone || undefined,
           employeeId,
@@ -954,11 +1081,13 @@ export function ClubSubscriptionsPage({
             : undefined,
           isSpecial: filterSpecial || form.isSpecial,
         });
+        newlySavedSub = createdSub;
       }
       toast.success(ct('common.success'));
       setDialogOpen(false);
       setEditSubId(null);
       invalidateAll();
+
     } catch (e) {
       toast.error(apiError(e));
     } finally {
@@ -1050,24 +1179,19 @@ export function ClubSubscriptionsPage({
     }
   };
 
-  const openRenew = async (row: ClubSubscriptionListItem) => {
+  const openRenew = (row: ClubSubscriptionListItem) => {
     setSelectedId(row.id);
-    setRenewQuote(null);
-    let net = subscriptionNetValue(row);
-    try {
-      const { data: quote } = await api.post<typeof renewQuote>(`/club-subscriptions/${row.id}/renewal-quote`, {});
-      if (quote) { setRenewQuote(quote); net = quote.netValue; }
-    } catch (error) { toast.error(apiError(error)); return; }
+    const net = subscriptionNetValue(row);
     setRenewForm({ paidAmount: String(net) });
     setRenewRows(singlePaymentRow((row.paymentMethod as ClubPaymentMethod) || 'cash', net));
     setRenewOpen(true);
   };
 
   const renewSub = useMemo(
-    () => (renewOpen && selectedId != null ? (data?.data ?? []).find((s) => s.id === selectedId) ?? null : null),
-    [renewOpen, selectedId, data?.data],
+    () => (renewOpen && selectedId != null ? availableSubscriptions.find((s) => s.id === selectedId) ?? null : null),
+    [renewOpen, selectedId, availableSubscriptions],
   );
-  const renewNetValue = renewQuote?.netValue ?? (renewSub ? subscriptionNetValue(renewSub) : 0);
+  const renewNetValue = renewSub ? subscriptionNetValue(renewSub) : 0;
   const renewPaidNow = Math.max(0, Number(renewForm.paidAmount) || 0);
   const renewRemaining = Math.max(0, renewNetValue - renewPaidNow);
 
@@ -1101,8 +1225,7 @@ export function ClubSubscriptionsPage({
     }
     setSaving(true);
     try {
-      const { data: quote } = await api.post<typeof renewQuote>(`/club-subscriptions/${selectedId}/renewal-quote`, body);
-      await api.patch(`/club-subscriptions/${selectedId}/renew`, { ...body, quoteVersion: quote?.quoteVersion });
+      await api.patch(`/club-subscriptions/${selectedId}/renew`, body);
       toast.success(ct('common.success'));
       setRenewOpen(false);
       invalidateAll();
@@ -1115,7 +1238,20 @@ export function ClubSubscriptionsPage({
 
   const openFreeze = (id: number) => {
     setSelectedId(id);
-    setFreezeForm({ reason: '' });
+    setEditingFreeze(false);
+    setFreezeForm({ startDate: localToday(), endDate: localToday(), reason: '' });
+    setFreezeOpen(true);
+  };
+
+  const openEditFreeze = (sub: ClubSubscriptionListItem) => {
+    if (!sub.activeFreeze) return;
+    setSelectedId(sub.id);
+    setEditingFreeze(true);
+    setFreezeForm({
+      startDate: sub.activeFreeze.startDate,
+      endDate: sub.activeFreeze.plannedEndDate ?? sub.activeFreeze.startDate,
+      reason: sub.activeFreeze.reason ?? '',
+    });
     setFreezeOpen(true);
   };
 
@@ -1123,9 +1259,18 @@ export function ClubSubscriptionsPage({
     if (!selectedId) return;
     setSaving(true);
     try {
-      await api.post(`/club-subscriptions/${selectedId}/freeze`, {
-        reason: freezeForm.reason.trim() || undefined,
-      });
+      if (editingFreeze) {
+        await api.patch(`/club-subscriptions/${selectedId}/freeze`, {
+          freezeEndDate: freezeForm.endDate,
+          reason: freezeForm.reason.trim() || undefined,
+        });
+      } else {
+        await api.post(`/club-subscriptions/${selectedId}/freeze`, {
+          freezeStartDate: freezeForm.startDate,
+          freezeEndDate: freezeForm.endDate,
+          reason: freezeForm.reason.trim() || undefined,
+        });
+      }
       toast.success(ct('common.success'));
       setFreezeOpen(false);
       invalidateAll();
@@ -1147,6 +1292,43 @@ export function ClubSubscriptionsPage({
       toast.error(apiError(e));
     }
   };
+
+  useEffect(() => {
+    const state = location.state as { workspaceSubscriptionId?: number; workspaceAction?: WorkspaceSubscriptionAction } | null;
+    const subscriptionId = state?.workspaceSubscriptionId;
+    const workspaceAction = state?.workspaceAction;
+    if (workspaceActionHandled.current || !subscriptionId || !workspaceAction) return;
+    workspaceActionHandled.current = true;
+    void (async () => {
+      try {
+        const { data: subscription } = await api.get<ClubSubscriptionListItem>(`/club-subscriptions/${subscriptionId}`);
+        setWorkspaceSubscription(subscription);
+        if (workspaceAction === 'renew') {
+          openRenew(subscription);
+        } else if (workspaceAction === 'freeze') {
+          openFreeze(subscription.id);
+        } else if (workspaceAction === 'unfreeze') {
+          void unfreeze(subscription.id);
+        } else if (workspaceAction === 'transfer') {
+          setTab('transfers');
+          setTransferForm({
+            subscriptionId: String(subscription.id),
+            toSubscriptionTypeId: '',
+            toStartDate: localToday(),
+            reason: '',
+            additionalPaidAmount: '',
+            additionalPaymentMethod: 'cash',
+            refundPaymentMethod: 'cash',
+          });
+          setTransferPreview(null);
+          setTransferPreviewError('');
+          setTransferOpen(true);
+        }
+      } catch (error) {
+        toast.error(apiError(error));
+      }
+    })();
+  }, [location.key]);
 
   const remove = async (id: number) => {
     if (!canDeleteSubscriptions) return;
@@ -1205,59 +1387,23 @@ export function ClubSubscriptionsPage({
     }
   };
 
-  const saveReceipt = async () => {
-    if (!receiptForm.memberName.trim() || !receiptForm.amount) {
-      toast.error(ct('members.fillRequired'));
-      return;
-    }
-    const receiptAmount = Number(receiptForm.amount);
-    if (!Number.isFinite(receiptAmount) || receiptAmount <= 0) {
-      toast.error(ct('subscriptions.invalidAmount'));
-      return;
-    }
-    setSaving(true);
-    try {
-      let memberId: number | undefined;
-      if (receiptForm.memberCode.trim()) {
-        const q = receiptForm.memberCode.trim();
-        const { data: list } = await api.get<{ data: ClubMemberListItem[] }>('/club-members', {
-          params: { search: q, pageSize: 5 },
-        });
-        const exact = list.data.find((m) => m.memberCode === q || m.cardNumber === q);
-        if (!exact) {
-          toast.error(ct('members.noMemberFound'));
-          return;
-        }
-        memberId = exact.id;
-      }
-      await api.post('/club-receipts', {
-        memberName: receiptForm.memberName,
-        amount: receiptAmount,
-        memberId,
-        subscriptionId: receiptForm.subscriptionId ? Number(receiptForm.subscriptionId) : undefined,
-      });
-      toast.success(ct('common.success'));
-      setReceiptOpen(false);
-      invalidateAll();
-    } catch (e) {
-      toast.error(apiError(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const subColumns = useMemo<ColumnDef<ClubSubscriptionListItem>[]>(
     () => [
       { id: 'index', header: ct('common.index'), cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1) },
       { accessorKey: 'subscriptionNumber', header: ct('subscriptions.subNumber') },
+      { accessorKey: 'receiptNumber', header: ct('subscriptions.receiptNumber'), cell: ({ getValue }) => <span className="nums whitespace-nowrap">{(getValue() as string | null) || '—'}</span> },
       { accessorKey: 'customerName', header: ct('subscriptions.customerName'), cell: ({ getValue }) => getValue() ?? '—' },
       { accessorKey: 'subscriptionType', header: ct('subscriptions.subType'), cell: ({ getValue }) => getValue() ?? '—' },
+      { accessorKey: 'branchName', header: 'الفرع', cell: ({ getValue }) => getValue() ?? '—' },
       {
-        accessorKey: 'sessionsCount',
-        header: 'عدد الحصص',
-        cell: ({ row }) => row.original.isLinkedToSessions
-          ? <span className="nums">{toArabicDigits(row.original.sessionsCount ?? 0)}</span>
-          : '—',
+        id: 'category',
+        header: 'الفئة',
+        cell: ({ row }) => row.original.gender === 'female' ? 'حريمي' : row.original.gender === 'male' ? 'رجالي' : '—',
+      },
+      {
+        accessorKey: 'assignedStaffName',
+        header: 'الموظف / الكابتن',
+        cell: ({ getValue }) => getValue() ? <span className="text-sm">{getValue() as string}</span> : <span className="text-muted-foreground">—</span>,
       },
       { accessorKey: 'subscriptionValue', header: 'سعر الاشتراك', cell: ({ getValue }) => <span className="nums">{formatMoney(getValue() as number)}</span> },
       { accessorKey: 'discountValue', header: 'قيمة الخصم', cell: ({ getValue }) => <span className="nums">{formatMoney(getValue() as number)}</span> },
@@ -1268,6 +1414,11 @@ export function ClubSubscriptionsPage({
       },
       { accessorKey: 'paidAmount', header: 'المدفوع نقدًا', cell: ({ getValue }) => <span className="nums text-emerald-700">{formatMoney(getValue() as number)}</span> },
       { accessorKey: 'remainingAmount', header: ct('subscriptions.remaining'), cell: ({ getValue }) => <span className="nums">{formatMoney(getValue() as number)}</span> },
+      {
+        accessorKey: 'createdByName',
+        header: 'القائم بالإضافة',
+        cell: ({ getValue }) => getValue() ? <span className="text-sm">{getValue() as string}</span> : <span className="text-muted-foreground">—</span>,
+      },
       {
         accessorKey: 'status',
         header: ct('common.status'),
@@ -1287,7 +1438,7 @@ export function ClubSubscriptionsPage({
       {
         id: 'actions',
         header: ct('common.actions'),
-        cell: ({ row }) => !canUpdateSubscriptions && !canDeleteSubscriptions && !canPrintSubscriptions ? null : (
+        cell: ({ row }) => !canUpdateSubscriptions && !canDeleteSubscriptions && !canPrintSubscriptions && !canCreateRefund ? null : (
           <DropdownMenu>
             <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal /></Button></DropdownMenuTrigger>
             <DropdownMenuContent align="end">
@@ -1299,6 +1450,13 @@ export function ClubSubscriptionsPage({
               {canPrintSubscriptions ? (
                 <DropdownMenuItem onSelect={() => afterMenuClose(() => setPrintSub(row.original))}>
                   <Printer className="size-4" /> {ct('subscriptions.printInvoice')}
+                </DropdownMenuItem>
+              ) : null}
+              {canCreateRefund && row.original.memberId != null && row.original.status === 'active' && row.original.paidAmount > 0 ? (
+                <DropdownMenuItem asChild>
+                  <Link to={`/club/subscriptions/refunds?memberId=${row.original.memberId}&subscriptionId=${row.original.id}`}>
+                    <Undo2 className="size-4" /> عمل مرتجع
+                  </Link>
                 </DropdownMenuItem>
               ) : null}
               {canUpdateSubscriptions && row.original.remainingAmount > 0 && (
@@ -1313,7 +1471,10 @@ export function ClubSubscriptionsPage({
               )}
               {canUpdateSubscriptions ? <DropdownMenuItem onSelect={() => afterMenuClose(() => openRenew(row.original))}><RefreshCw className="size-4" /> {ct('subscriptions.renew')}</DropdownMenuItem> : null}
               {canUpdateSubscriptions && ((row.original.status as string) === 'frozen' ? (
-                <DropdownMenuItem onSelect={() => void unfreeze(row.original.id)}><Sun className="size-4" /> {ct('subscriptions.unfreeze')}</DropdownMenuItem>
+                <>
+                  {row.original.activeFreeze ? <DropdownMenuItem onSelect={() => afterMenuClose(() => openEditFreeze(row.original))}><Snowflake className="size-4" /> تعديل الإيقاف</DropdownMenuItem> : null}
+                  <DropdownMenuItem onSelect={() => void unfreeze(row.original.id)}><Sun className="size-4" /> {ct('subscriptions.unfreeze')}</DropdownMenuItem>
+                </>
               ) : (
                 (row.original.status as string) === 'active' && (
                   <DropdownMenuItem onSelect={() => afterMenuClose(() => openFreeze(row.original.id))}><Snowflake className="size-4" /> {ct('subscriptions.freeze')}</DropdownMenuItem>
@@ -1332,6 +1493,7 @@ export function ClubSubscriptionsPage({
       canUpdateSubscriptions,
       canDeleteSubscriptions,
       canPrintSubscriptions,
+      canCreateRefund,
     ],
   );
 
@@ -1406,8 +1568,17 @@ export function ClubSubscriptionsPage({
       <PageHeader
         title={ui(pageTitle)}
         description={ct('subscriptions.description')}
-        actions={showNewSubButton && canCreateSubscriptions ? (
-          <Button variant="brand" onClick={openCreate}><Plus className="size-4" /> {ct('subscriptions.newSub')}</Button>
+        actions={showNewSubButton && (canCreateSubscriptions || canCreateRefund) ? (
+          <>
+            {canCreateRefund ? (
+              <Button asChild variant="outline" className="border-primary/40 text-primary hover:bg-primary/10">
+                <Link to="/club/subscriptions/refunds"><Undo2 className="size-4" /> عمل مرتجع اشتراك</Link>
+              </Button>
+            ) : null}
+            {canCreateSubscriptions ? (
+              <Button variant="brand" onClick={openCreate}><Plus className="size-4" /> {ct('subscriptions.newSub')}</Button>
+            ) : null}
+          </>
         ) : undefined}
       />
 
@@ -1422,14 +1593,57 @@ export function ClubSubscriptionsPage({
         />
       )}
 
-      {stats && (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <ClubStatCard label={ct('subscriptions.totalSubs')} value={stats.total} />
-          <ClubStatCard label={ct('common.active')} value={stats.active} />
-          <ClubStatCard label={ct('subscriptions.totalPaid')} value={stats.totalPaid} />
-          <ClubStatCard label={ct('subscriptions.totalRemaining')} value={stats.totalRemaining} />
-        </div>
-      )}
+      <div className="space-y-3">
+        {canChangeStatsFilter && (
+          <div className="flex flex-wrap items-center gap-2">
+            {(
+              [
+                { key: 'today', label: 'اليوم' },
+                { key: 'week', label: 'آخر ٧ أيام' },
+                { key: 'month', label: 'الشهر' },
+                { key: 'quarter', label: 'الربع' },
+                { key: 'custom', label: 'مخصص' },
+              ] as { key: StatsPreset; label: string }[]
+            ).map(({ key, label }) => (
+              <Button
+                key={key}
+                type="button"
+                size="sm"
+                variant={statsPreset === key ? 'default' : 'outline'}
+                onClick={() => setStatsPreset(key)}
+                className="h-8 text-xs"
+              >
+                {label}
+              </Button>
+            ))}
+            {statsPreset === 'custom' && (
+              <>
+                <Input
+                  type="date"
+                  className="h-8 w-36 text-xs"
+                  value={statsCustomFrom}
+                  onChange={(e) => setStatsCustomFrom(e.target.value)}
+                />
+                <span className="text-xs text-muted-foreground">—</span>
+                <Input
+                  type="date"
+                  className="h-8 w-36 text-xs"
+                  value={statsCustomTo}
+                  onChange={(e) => setStatsCustomTo(e.target.value)}
+                />
+              </>
+            )}
+          </div>
+        )}
+        {stats && (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <ClubStatCard label={ct('subscriptions.totalSubs')} value={stats.total} />
+            <ClubStatCard label={ct('common.active')} value={stats.active} />
+            <ClubStatCard label={ct('subscriptions.totalPaid')} value={stats.totalPaid} />
+            <ClubStatCard label={ct('subscriptions.totalRemaining')} value={stats.totalRemaining} />
+          </div>
+        )}
+      </div>
 
       <Tabs
         value={tab}
@@ -1454,10 +1668,7 @@ export function ClubSubscriptionsPage({
         )}
 
         <TabsContent value="subs" className="space-y-4 pt-4">
-          <FilterBar
-            fields={filters}
-            preserveParams={filterSpecial ? ['isSpecial'] : filterTimeBased ? ['isTimeBased'] : []}
-          />
+          <FilterBar fields={filters} hideSearch />
           <DataTable
             columns={subColumns}
             data={data?.data ?? []}
@@ -1479,7 +1690,7 @@ export function ClubSubscriptionsPage({
           <div className="rounded-xl border border-sky-200/70 bg-sky-50/50 p-4 text-sm text-sky-950 dark:border-sky-900 dark:bg-sky-950/20 dark:text-sky-100">
             {ui('تعرض هذه القائمة الاشتراكات الموقوفة مؤقتًا فقط. عند الاستئناف تُمدد نهاية الاشتراك بعدد أيام الإيقاف الفعلية للحفاظ على المدة المتبقية.')}
           </div>
-          <FilterBar fields={filters.filter((field) => field.key !== 'status')} preserveParams={['status']} />
+          <FilterBar fields={filters.filter((field) => field.key !== 'status' && field.key !== 'subscriptionType' && field.key !== 'gender' && field.key !== 'kind')} preserveParams={['status']} />
           <DataTable
             columns={frozenColumns}
             data={data?.data ?? []}
@@ -1499,7 +1710,7 @@ export function ClubSubscriptionsPage({
 
         <TabsContent value="receipts" className="space-y-4 pt-4">
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => { setReceiptForm({ memberName: '', amount: '', memberCode: '', subscriptionId: '' }); setReceiptOpen(true); }}>
+            <Button variant="outline" onClick={() => setReceiptOpen(true)}>
               <Plus className="size-4" /> {ct('subscriptions.newReceipt')}
             </Button>
             <Button variant="outline" onClick={() => window.print()}><Printer className="size-4" /> طباعة النتائج</Button>
@@ -1518,6 +1729,7 @@ export function ClubSubscriptionsPage({
                 <tr>
                   <th className="p-3 text-start">{ct('subscriptions.receiptNumber')}</th>
                   <th className="p-3 text-start">{ct('common.customer')}</th>
+                  <th className="p-3 text-start">{ct('common.branch')}</th>
                   <th className="p-3 text-start">{ct('subscriptions.receiptAmount')}</th>
                   <th className="p-3 text-start">{ct('subscriptions.paymentMethod')}</th>
                   <th className="p-3 text-start">{ct('subscriptions.receiptDate')}</th>
@@ -1525,12 +1737,13 @@ export function ClubSubscriptionsPage({
               </thead>
               <tbody>
                 {(receipts ?? []).length === 0 && (
-                  <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">{ct('common.noData')}</td></tr>
+                  <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">{ct('common.noData')}</td></tr>
                 )}
                 {(receipts ?? []).map((r) => (
                   <tr key={r.id} className="border-t">
                     <td className="p-3 nums">{r.receiptNumber}</td>
                     <td className="p-3">{r.memberName}</td>
+                    <td className="p-3">{resolveBranchName(branches, r.branchId ?? 0, user?.branch)}</td>
                     <td className="p-3 nums">{toArabicDigits(r.amount)}</td>
                     <td className="p-3">{clubPaymentMethodsLabel(ct, r.payments, r.paymentMethod)}</td>
                     <td className="p-3 nums">{toArabicDigits(r.receiptDate)}</td>
@@ -1561,7 +1774,7 @@ export function ClubSubscriptionsPage({
               setTransferPreviewError('');
               setTransferOpen(true);
             }}><Plus className="size-4" /> {ct('subscriptions.newTransfer')}</Button>
-            {canUpdateSubscriptions ? <Button asChild variant="brand"><Link to="/club/subscriptions/member-transfer"><ArrowRightLeft className="size-4" /> تحويل الاشتراك بين الأعضاء</Link></Button> : null}
+            {canRoute('/club/subscriptions/member-transfer') ? <Button asChild variant="brand"><Link to="/club/subscriptions/member-transfer"><ArrowRightLeft className="size-4" /> تحويل الاشتراك بين الأعضاء</Link></Button> : null}
           </div>
           <div className="overflow-x-auto rounded-xl border">
             <table className="w-full text-sm">
@@ -1624,8 +1837,11 @@ export function ClubSubscriptionsPage({
               <table className="w-full text-sm">
                 <thead className="bg-muted/50">
                   <tr>
+                    <th className="p-2 text-start">كود العضو</th>
                     <th className="p-2 text-start">{ct('subscriptions.customerName')}</th>
                     <th className="p-2 text-start">{ct('subscriptions.subType')}</th>
+                    <th className="p-2 text-start">تاريخ البداية</th>
+                    <th className="p-2 text-start">تاريخ النهاية</th>
                     <th className="p-2 text-start">{ct('subscriptions.endDate')}</th>
                   </tr>
                 </thead>
@@ -1698,20 +1914,40 @@ export function ClubSubscriptionsPage({
               <table className="w-full text-sm">
                 <thead className="bg-muted/50">
                   <tr>
+                    <th className="p-2 text-start">كود العضو</th>
                     <th className="p-2 text-start">{ct('subscriptions.customerName')}</th>
                     <th className="p-2 text-start">{ct('subscriptions.subType')}</th>
+                    <th className="p-2 text-start">الفرع</th>
+                    <th className="p-2 text-start">الفئة</th>
+                    <th className="p-2 text-start">من</th>
+                    <th className="p-2 text-start">إلى</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(expired?.data ?? []).map((s) => (
                     <tr key={s.id} className="border-t">
+                      <td className="p-2 nums">{toArabicDigits(s.memberCode ?? '—')}</td>
                       <td className="p-2">{s.customerName}</td>
-                      <td className="p-2">{s.subscriptionType}</td>
+                      <td className="p-2">{s.subscriptionTypeName ?? s.subscriptionType ?? '—'}</td>
+                      <td className="p-2">{s.branchName ?? '—'}</td>
+                      <td className="p-2">{s.gender === 'female' ? 'حريمي' : s.gender === 'male' ? 'رجالي' : '—'}</td>
+                      <td className="p-2 nums whitespace-nowrap">{toArabicDigits(s.subscriptionStartDate)}</td>
+                      <td className="p-2 nums whitespace-nowrap">{toArabicDigits(s.subscriptionEndDate)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+            {(expired?.count ?? 0) > 0 && (
+              <div className="mt-3">
+                <Pagination
+                  page={expired?.page ?? expiredPage}
+                  pageSize={expired?.pageSize ?? expiredPageSize}
+                  total={expired?.count ?? 0}
+                  onPageChange={setExpiredPage}
+                />
+              </div>
+            )}
           </div>
           )}
         </TabsContent>
@@ -1736,12 +1972,11 @@ export function ClubSubscriptionsPage({
                 <p className="font-semibold">نوع الاشتراك</p>
                 <p className="mt-1 text-sm text-muted-foreground">اختر المسار أولًا لإظهار الباقات أو الحصص المطلوبة.</p>
               </div>
-              <div className="mx-auto grid w-full max-w-5xl gap-3 sm:grid-cols-2">
+              <div className="mx-auto grid w-full max-w-5xl gap-3 sm:grid-cols-3">
                 {([
                   { value: 'package', label: 'اشتراك', description: 'الباقات العادية', icon: Package },
-                  { value: 'sessions', label: 'حصص', description: 'باقات الحصص في الباقات والأسعار', icon: Dumbbell },
                   { value: 'private', label: 'اشتراكات برايفت', description: 'اشتراكات وحصص برايفت مع مدرب خاص', icon: ContactRound },
-                  { value: 'special', label: 'اشتراكات خاصة', description: 'عدد حصص ومدة مرتبطة بجدول المدربين', icon: Sparkles },
+                  { value: 'sessions', label: 'حصص', description: 'باقات الحصص في الباقات والأسعار', icon: Dumbbell },
                 ] as const).map((item) => {
                   const Icon = item.icon;
                   const selected = subscriptionKind === item.value;
@@ -1768,42 +2003,36 @@ export function ClubSubscriptionsPage({
             <DialogFormSection title={ct('subscriptions.sectionCustomer')} icon={User}>
               <DialogFormGrid>
                 <FieldWrapper label={ct('common.branch')} required>
-                  <Input className="bg-muted" value={formBranchName} readOnly />
-                </FieldWrapper>
-                <FieldWrapper label={ct('members.registeredBy')}>
-                  <Input className="bg-muted" value={user?.name ?? '—'} readOnly />
-                </FieldWrapper>
-              </DialogFormGrid>
-              {subscriptionKind !== 'special' && subscriptionKind !== 'private' ? <div className="flex flex-wrap items-center justify-end gap-2">
-                <label className="inline-flex cursor-pointer items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-muted/40">
-                  <input
-                    type="checkbox"
-                    className="size-3.5 rounded accent-primary"
-                    checked={walkIn}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setWalkIn(checked);
-                      if (checked) {
-                        setForm((f) => ({ ...f, memberId: '', customerName: f.customerName }));
-                        setSelectedMember(null);
-                      }
+                  <select
+                    className={selectCls}
+                    value={form.branchId || ''}
+                    disabled={!!editSubId}
+                    onChange={(event) => {
+                      const branchId = Number(event.target.value) || 0;
+                      setSelectedMember(null);
+                      setForm((current) => ({
+                        ...current,
+                        branchId,
+                        memberId: '',
+                        customerName: '',
+                        subscriptionTypeId: '',
+                        privatePackageId: '',
+                      }));
                     }}
-                  />
-                  {ct('subscriptions.walkInCustomer')}
-                </label>
-              </div> : null}
-              {walkIn ? (
-                <FieldWrapper label={ct('subscriptions.customerName')} required>
-                  <Input
-                    value={form.customerName}
-                    onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value }))}
-                    placeholder={ct('subscriptions.customerName')}
-                  />
+                  >
+                    <option value="">اختر الفرع</option>
+                    {subscriptionBranchOptions.map((branch) => (
+                      <option key={branch.value} value={branch.value}>{branch.label}</option>
+                    ))}
+                  </select>
                 </FieldWrapper>
-              ) : (
                 <FieldWrapper label={ct('subscriptions.customerName')} required>
                   <MemberSearchCombobox
+                    key={form.branchId}
                     selectedMember={selectedMember}
+                    branchId={form.branchId}
+                    forMembershipOperation
+                    disabled={!form.branchId}
                     onSelect={(member) => {
                       setSelectedMember(member);
                       setForm((f) => ({
@@ -1811,7 +2040,6 @@ export function ClubSubscriptionsPage({
                         memberId: String(member.id),
                         customerName: member.name,
                         gender: member.gender ?? f.gender,
-                        branchId: member.branchId || f.branchId,
                       }));
                     }}
                     onClear={() => {
@@ -1820,8 +2048,55 @@ export function ClubSubscriptionsPage({
                     }}
                   />
                 </FieldWrapper>
-              )}
-              {selectedMember && !walkIn && (
+                <FieldWrapper label="الفئة" required>
+                  <select
+                    className={selectCls}
+                    value={form.gender}
+                    onChange={(event) => setForm((current) => ({
+                      ...current,
+                      gender: event.target.value as 'male' | 'female',
+                    }))}
+                  >
+                    <option value="male">رجالي</option>
+                    <option value="female">حريمي</option>
+                  </select>
+                </FieldWrapper>
+                {subscriptionKind === 'package' ? (
+                  <FieldWrapper label="الموظف">
+                    <Combobox
+                      value={form.employeeId}
+                      onValueChange={(val) => setForm((current) => ({ ...current, employeeId: val }))}
+                      options={[
+                        { value: '', label: 'بدون موظف' },
+                        ...subscriptionEmployees.map((employee) => ({
+                          value: String(employee.id),
+                          label: `${employee.employee ?? `موظف #${employee.id}`}${employee.emp_code ? ` (${employee.emp_code})` : ''}`,
+                        })),
+                      ]}
+                      placeholder="بدون موظف"
+                      searchPlaceholder="ابحث باسم الموظف أو الكود…"
+                      emptyText="لا يوجد موظف مطابق"
+                      className="h-11"
+                    />
+                  </FieldWrapper>
+                ) : subscriptionKind === 'private' ? (
+                  <FieldWrapper label="الكابتن" required>
+                    <Combobox
+                      value={form.privateTrainerId}
+                      onValueChange={(val) => setForm((current) => ({ ...current, privateTrainerId: val }))}
+                      options={privateTrainers.map((trainer) => ({
+                        value: String(trainer.id),
+                        label: trainer.name + (trainer.specialization ? ` — ${trainer.specialization}` : ''),
+                      }))}
+                      placeholder="اختر الكابتن"
+                      searchPlaceholder="ابحث باسم الكابتن أو التخصص…"
+                      emptyText="لا يوجد كابتن مطابق"
+                      className="h-11"
+                    />
+                  </FieldWrapper>
+                ) : null}
+              </DialogFormGrid>
+              {selectedMember && (
                 <div className="rounded-lg border border-primary/20 bg-primary/5 px-3 py-2 text-sm">
                   <span className="font-medium">{selectedMember.name}</span>
                   <span className="nums text-muted-foreground font-mono ms-2">{selectedMember.memberCode}</span>
@@ -1969,8 +2244,6 @@ export function ClubSubscriptionsPage({
                   <FieldWrapper label="مدة الاشتراك من" required><Input type="date" className="nums" dir="ltr" value={form.startDate} onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))} /></FieldWrapper>
                   <FieldWrapper label="مدة الاشتراك إلى"><Input type="date" className="nums bg-muted" dir="ltr" value={form.endDate} readOnly /></FieldWrapper>
                   <FieldWrapper label="قيمة الاشتراك"><Input className="nums bg-muted" value={form.subscriptionValue} readOnly /></FieldWrapper>
-                  <FieldWrapper label="رجالي - حريمي" required><select className={selectCls} value={form.gender} onChange={(event) => setForm((current) => ({ ...current, gender: event.target.value as 'male' | 'female' }))}><option value="male">رجالي</option><option value="female">حريمي</option></select></FieldWrapper>
-                  <FieldWrapper label="الكابتن" required className="sm:col-span-2"><select className={selectCls} value={form.privateTrainerId} onChange={(event) => setForm((current) => ({ ...current, privateTrainerId: event.target.value }))}><option value="">اختر الكابتن</option>{privateTrainers.map((trainer) => <option key={trainer.id} value={trainer.id}>{trainer.name}{trainer.specialization ? ` — ${trainer.specialization}` : ''}</option>)}</select></FieldWrapper>
                   {(() => {
                     const selectedPackage = privatePackages.find((item) => item.id === Number(form.privatePackageId));
                     if (selectedPackage?.kind !== 'sessions') return null;
@@ -2009,13 +2282,42 @@ export function ClubSubscriptionsPage({
             <DialogFormSection title={ct('subscriptions.sectionSubscription')} icon={CalendarDays}>
               <DialogFormGrid>
                 <FieldWrapper label={ct('subscriptions.subType')} required>
-                  <SubscriptionTypeSelect
-                    types={subTypes as ClubSubscriptionType[]}
-                    mode="all"
+                  <Combobox
                     value={form.subscriptionTypeId}
-                    onChange={(typeId) =>
-                      setForm((f) => ({ ...f, subscriptionTypeId: typeId }))
-                    }
+                    onValueChange={(typeId) => {
+                      const selectedType = subTypes?.find((t) => t.id === Number(typeId));
+                      const isStudentSub =
+                        selectedType?.isForStudents ||
+                        (selectedType?.name ?? '').includes('طلب');
+                      if (isStudentSub) {
+                        const dob = selectedMember?.dateOfBirth;
+                        if (!dob) {
+                          toast.error('لا يمكن تحديد عمر العضو — يرجى التأكد من إدخال تاريخ الميلاد');
+                          return;
+                        }
+                        const dobDate = new Date(dob);
+                        const today = new Date();
+                        let age = today.getFullYear() - dobDate.getFullYear();
+                        const monthDiff = today.getMonth() - dobDate.getMonth();
+                        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dobDate.getDate())) {
+                          age--;
+                        }
+                        if (age > 23) {
+                          toast.error('أنت لست طالباً — هذا الاشتراك خاص بالطلبة (23 سنة أو أقل)');
+                          return;
+                        }
+                      }
+                      setForm((f) => ({ ...f, subscriptionTypeId: typeId }));
+                    }}
+                    options={(subTypes ?? []).map((t) => ({
+                      value: String(t.id),
+                      label: t.name,
+                      description: t.price ? `${t.price.toLocaleString('ar-EG')} ج.م` : undefined,
+                    }))}
+                    placeholder="اختر نوع الاشتراك"
+                    searchPlaceholder="ابحث باسم الاشتراك أو السعر…"
+                    emptyText="لا يوجد اشتراك مطابق"
+                    className="h-11"
                   />
                 </FieldWrapper>
                 <FieldWrapper label={ct('subscriptions.startDate')} required>
@@ -2077,15 +2379,20 @@ export function ClubSubscriptionsPage({
                 <DialogFormSection title="كود خصم أو قيمة خصم" icon={Sparkles}>
                   <SubscriptionDiscountFields
                     grossValue={Number(form.subscriptionValue) || 0}
-                    codes={discountCodes}
+                    codes={memberDiscountGrants.map((grant) => ({ id: grant.id, code: grant.code ?? '', percentage: grant.percentage, isActive: true, usageCount: 0, createdAt: '', updatedAt: '' }))}
                     mode={form.discountMode}
-                    codeId={form.discountCodeId}
+                    codeId={form.memberDiscountGrantId}
                     fixedValue={form.discountValue}
+                    pointsToRedeem={form.pointsToRedeem}
+                    pointsBalance={pointsAccount?.points ?? 0}
+                    pointsConversion={pointsAccount?.conversion ?? null}
                     onChange={(discount) => setForm((current) => ({
                       ...current,
                       discountMode: discount.mode,
-                      discountCodeId: discount.codeId,
+                      discountCodeId: '',
+                      memberDiscountGrantId: discount.codeId,
                       discountValue: discount.fixedValue,
+                      pointsToRedeem: discount.pointsToRedeem,
                       discountEnabled: discount.mode !== 'none',
                     }))}
                   />
@@ -2136,20 +2443,24 @@ export function ClubSubscriptionsPage({
                   />
                 </div>
               ) : null}
-              <DialogFormGrid>
+              <div className="grid gap-4 md:grid-cols-3">
                 {editSubId ? (
-                  <FieldWrapper label={ct('subscriptions.paymentMethod')} className="sm:col-span-2">
+                  <FieldWrapper label={ct('subscriptions.paymentMethod')} className="md:col-span-2">
                     <ClubPaymentMethodSelect
                       value={paymentRows[0]?.method ?? 'cash'}
                       onChange={(method) => setPaymentRows(singlePaymentRow(method))}
                     />
                   </FieldWrapper>
                 ) : (
-                  <div className="sm:col-span-2">
+                  <div className="md:col-span-2">
                     <ClubPaymentSplitFields
                       total={formNetValue}
                       rows={paymentRows}
-                      onChange={setPaymentRows}
+                      allowMultipleMethods={false}
+                      onChange={(rows) => {
+                        setPaidAmountEdited(true);
+                        setPaymentRows(rows);
+                      }}
                       onTotalChange={(paidAmount) =>
                         setForm((current) => ({ ...current, paidAmount: String(paidAmount) }))
                       }
@@ -2157,9 +2468,14 @@ export function ClubSubscriptionsPage({
                   </div>
                 )}
                 <FieldWrapper label={ct('subscriptions.receiptNumber')}>
-                  <Input className="nums bg-muted" dir="ltr" value={ct('subscriptions.autoGenerated')} readOnly />
+                  <Input
+                    className="nums"
+                    dir="ltr"
+                    value={editSubId ? receiptNumber : 'يُحدد تلقائيًا عند الحفظ'}
+                    disabled
+                  />
                 </FieldWrapper>
-              </DialogFormGrid>
+                </div>
               {editSubId ? (
                 <SubscriptionPaymentPanel
                   value={formNetValue}
@@ -2225,6 +2541,7 @@ export function ClubSubscriptionsPage({
           <ClubPaymentSplitFields
             total={paymentMaxRemaining}
             rows={installmentRows}
+            allowMultipleMethods={false}
             onChange={setInstallmentRows}
             onTotalChange={(amount) => setPaymentAmount(String(amount))}
           />
@@ -2267,7 +2584,7 @@ export function ClubSubscriptionsPage({
                   }))}
                 >
                   <option value="">اختر الاشتراك النشط</option>
-                  {(data?.data ?? []).filter((item) => item.status === 'active').map((item) => (
+                  {availableSubscriptions.filter((item) => item.status === 'active').map((item) => (
                     <option key={item.id} value={item.id}>
                       {item.subscriptionNumber} — {item.customerName} — {item.subscriptionType}
                     </option>
@@ -2359,26 +2676,17 @@ export function ClubSubscriptionsPage({
         </DialogContent>
       </Dialog>
 
-      <Dialog open={receiptOpen} onOpenChange={setReceiptOpen}>
-        <DialogContent size="sm" aria-describedby={undefined}>
-          <DialogHeader><DialogTitle>{ct('subscriptions.newReceipt')}</DialogTitle></DialogHeader>
-          <div className="grid gap-3">
-            <Input placeholder={ct('subscriptions.customerName')} value={receiptForm.memberName} onChange={(e) => setReceiptForm((f) => ({ ...f, memberName: e.target.value }))} />
-            <Input className="nums" type="number" min={0} step="any" placeholder={ct('common.amount')} value={receiptForm.amount} onChange={(e) => setReceiptForm((f) => ({ ...f, amount: e.target.value }))} />
-            <Input className="font-mono" dir="ltr" placeholder={ct('subscriptions.memberIdOptional')} value={receiptForm.memberCode} onChange={(e) => setReceiptForm((f) => ({ ...f, memberCode: e.target.value }))} />
-            <Input className="nums" placeholder={ct('subscriptions.subscriptionId')} value={receiptForm.subscriptionId} onChange={(e) => setReceiptForm((f) => ({ ...f, subscriptionId: e.target.value }))} />
-          </div>
-          <DialogFooter>
-            <Button variant="brand" onClick={() => void saveReceipt()} disabled={saving}>{ct('common.save')}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <SubscriptionReceiptCreateDialog open={receiptOpen} onOpenChange={setReceiptOpen} />
 
       <Dialog open={freezeOpen} onOpenChange={setFreezeOpen}>
         <DialogContent size="sm" aria-describedby={undefined}>
-          <DialogHeader><DialogTitle>{ct('subscriptions.freezeTitle')}</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editingFreeze ? 'تعديل الإيقاف' : ct('subscriptions.freezeTitle')}</DialogTitle></DialogHeader>
           <div className="grid gap-3">
             <p className="text-sm text-muted-foreground">{ct('subscriptions.freezePreserveHint')}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2"><Label>بداية الإيقاف</Label><Input type="date" className="nums" disabled={editingFreeze} value={freezeForm.startDate} onChange={(e) => setFreezeForm((f) => ({ ...f, startDate: e.target.value }))} /></div>
+              <div className="grid gap-2"><Label>نهاية الإيقاف</Label><Input type="date" className="nums" min={freezeForm.startDate} value={freezeForm.endDate} onChange={(e) => setFreezeForm((f) => ({ ...f, endDate: e.target.value }))} /></div>
+            </div>
             <div className="grid gap-2">
               <Label>{ct('subscriptions.freezeReason')}</Label>
               <Input
@@ -2390,7 +2698,7 @@ export function ClubSubscriptionsPage({
           <DialogFooter>
             <Button variant="outline" onClick={() => setFreezeOpen(false)}>{ct('common.cancel')}</Button>
             <Button variant="brand" onClick={() => void submitFreeze()} disabled={saving}>
-              {saving ? ct('common.saving') : ct('subscriptions.freeze')}
+              {saving ? ct('common.saving') : editingFreeze ? 'حفظ التعديل' : ct('subscriptions.freeze')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2404,8 +2712,8 @@ export function ClubSubscriptionsPage({
               <DialogFormSummary
                 items={[
                   {
-                    label: renewQuote ? 'قيمة الباقة الحالية' : ct('subscriptions.value'),
-                    value: formatMoney(renewQuote?.grossValue ?? renewNetValue),
+                    label: ct('subscriptions.value'),
+                    value: formatMoney(renewNetValue),
                   },
                   {
                     label: ct('subscriptions.paid'),
@@ -2423,6 +2731,7 @@ export function ClubSubscriptionsPage({
             <ClubPaymentSplitFields
               total={renewNetValue}
               rows={renewRows}
+              allowMultipleMethods={false}
               onChange={setRenewRows}
               onTotalChange={(paidAmount) =>
                 setRenewForm({ paidAmount: String(paidAmount) })

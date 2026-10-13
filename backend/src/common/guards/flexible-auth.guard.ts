@@ -39,7 +39,6 @@ export class FlexibleAuthGuard implements CanActivate {
         if (!payload.memberId) throw new UnauthorizedException();
         req.user = payload as MemberJwtUser;
       } else {
-        if (payload.type != null) throw new UnauthorizedException();
         req.user = payload as JwtUser;
       }
       return true;

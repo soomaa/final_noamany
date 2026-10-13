@@ -10,6 +10,7 @@ import { PermissionEngineService } from '../engine/permission-engine.service';
 import { effectiveForRole, StoredCell, unionRoles } from '../engine/permission-resolver';
 import { RbacAuditService } from './audit.service';
 import { AssignRolesDto, SaveMatrixDto } from './dto/role.dto';
+import { AssignOperationalScopeDto, SetSectionExceptionDto } from './dto/operational-scope.dto';
 
 @Injectable()
 export class RbacUsersService {
@@ -104,6 +105,51 @@ export class RbacUsersService {
     await this.audit.log({ actorUserId, action: 'role.assign', targetType: 'user', targetId: userId, detail: { roleIds: filtered } });
     this.engine.invalidateUser(userId);
     return { userId, roleIds: filtered };
+  }
+
+  async getOperationalScope(userId: number) {
+    await this.getUserOrThrow(userId);
+    const store = this.prisma as any;
+    const [assignments, exceptions] = await Promise.all([
+      store.rbac_user_operational_scopes.findMany({ where: { user_id: userId } }),
+      store.rbac_user_section_exceptions.findMany({ where: { user_id: userId }, orderBy: { id: 'desc' } }),
+    ]);
+    return { assignments, exceptions };
+  }
+
+  async setOperationalScope(userId: number, dto: AssignOperationalScopeDto, actorUserId: number) {
+    await this.getUserOrThrow(userId);
+    const store = this.prisma as any;
+    await store.rbac_user_operational_scopes.upsert({
+      where: { user_id_branch_id_section: { user_id: userId, branch_id: dto.branchId, section: dto.section } },
+      update: { created_by: actorUserId },
+      create: { user_id: userId, branch_id: dto.branchId, section: dto.section, created_by: actorUserId },
+    });
+    await this.audit.log({ actorUserId, action: 'scope.assign', targetType: 'user', targetId: userId, detail: dto });
+    this.engine.invalidateUser(userId);
+    return this.getOperationalScope(userId);
+  }
+
+  async setSectionException(userId: number, dto: SetSectionExceptionDto, actorUserId: number) {
+    await this.getUserOrThrow(userId);
+    const store = this.prisma as any;
+    await store.rbac_user_section_exceptions.upsert({
+      where: { user_id_branch_id_section: { user_id: userId, branch_id: dto.branchId, section: dto.section } },
+      update: { reason: dto.reason, expires_at: dto.expiresAt ? new Date(dto.expiresAt) : null, created_by: actorUserId },
+      create: { user_id: userId, branch_id: dto.branchId, section: dto.section, reason: dto.reason, expires_at: dto.expiresAt ? new Date(dto.expiresAt) : null, created_by: actorUserId },
+    });
+    await this.audit.log({ actorUserId, action: 'scope.exception.update', targetType: 'user', targetId: userId, detail: dto });
+    this.engine.invalidateUser(userId);
+    return this.getOperationalScope(userId);
+  }
+
+  async clearSectionException(userId: number, branchId: number, section: 'female' | 'male', actorUserId: number) {
+    await this.getUserOrThrow(userId);
+    const store = this.prisma as any;
+    await store.rbac_user_section_exceptions.deleteMany({ where: { user_id: userId, branch_id: branchId, section } });
+    await this.audit.log({ actorUserId, action: 'scope.exception.clear', targetType: 'user', targetId: userId, detail: { branchId, section } });
+    this.engine.invalidateUser(userId);
+    return this.getOperationalScope(userId);
   }
 
   // ---- exceptions ---------------------------------------------------------------------

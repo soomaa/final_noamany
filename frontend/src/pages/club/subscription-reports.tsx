@@ -1,6 +1,7 @@
 import type { ColumnDef } from '@tanstack/react-table';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { toast } from 'sonner';
 import {
   Activity,
   BarChart3,
@@ -10,7 +11,6 @@ import {
   Download,
   Filter,
   Landmark,
-  LockKeyhole,
   PieChart as PieChartIcon,
   ReceiptText,
   RefreshCw,
@@ -20,7 +20,6 @@ import {
   Users,
   WalletCards,
 } from 'lucide-react';
-import { toast } from 'sonner';
 import {
   Area,
   AreaChart,
@@ -39,7 +38,6 @@ import { DatePresets } from '@/components/common/date-presets';
 import { PageHeader } from '@/components/common/page-header';
 import { firstOfMonth, todayLocal } from '@/components/reports/date-range-filter';
 import { BranchFilter } from '@/components/reports/branch-filter';
-import { ReportAudienceFilter, type ReportAudience } from '@/components/reports/audience-filter';
 import { ClubStatCard } from '@/components/club/stat-card';
 import { clubPaymentMethodLabel, CLUB_PAYMENT_METHODS } from '@/components/club/club-payment-method-select';
 import { Button } from '@/components/ui/button';
@@ -49,12 +47,11 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useClubT } from '@/hooks/use-club-t';
 import { api, apiError } from '@/lib/api';
-import { toCsvWithBom } from '@/lib/csv';
 import { useArrayResource } from '@/lib/api-hooks';
+import { downloadExcel } from '@/lib/export';
 import { formatDateTime, formatMoney } from '@/lib/formatters';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
-import { useAuth } from '@/store/auth';
 
 type DetailDimension = 'payment' | 'sales' | 'user' | 'status' | 'source' | 'subscriptionType';
 
@@ -138,31 +135,6 @@ interface DetailResponse {
   pageSize: number;
 }
 
-interface MonthlyAnalysisResponse {
-  period: { startDate: string; endDate: string };
-  scope: { branchIds: number[] | null; audience: 'male' | 'female' | null; sharedBranchExpenses: boolean };
-  revenues: Array<{ key: string; label: string; amount: number }>;
-  expenses: Array<{ key: string; label: string; amount: number }>;
-  netProfit: { label: string; amount: number };
-}
-
-interface DailyCloseResponse {
-  date: string;
-  branchId: number;
-  audience: 'male' | 'female' | null;
-  state: 'open' | 'reviewed' | 'closed';
-  summary: {
-    subscriptionsCount: number;
-    contractsValue: number;
-    subscriptionPaid: number;
-    remainingAmount: number;
-    receiptsCount: number;
-    expectedAmount: number;
-  };
-  latest: { actor_name?: string | null; created_at?: string; reason?: string | null; after_json?: { declaredAmount?: number; variance?: number } } | null;
-  history: Array<{ id: number; action: string; actor_name?: string | null; created_at: string; reason?: string | null }>;
-}
-
 const CHART_COLORS = ['#ED1C24', '#2fbf87', '#38bdf8', '#8b5cf6', '#ec4899', '#e5736b', '#14b8a6'];
 
 const initialFilters = (): ReportFilters => ({
@@ -236,35 +208,16 @@ function AnalysisCard({
 
 export function ClubSubscriptionReportsPage() {
   const { ui, locale } = useLocale();
-  const user = useAuth((state) => state.user);
-  const lockedGender: 'male' | 'female' | null = user?.man_women_type === 0
-    ? 'male'
-    : user?.man_women_type === 1
-      ? 'female'
-      : null;
   const ct = useClubT();
   const [draft, setDraft] = useState<ReportFilters>(initialFilters);
   const [applied, setApplied] = useState<ReportFilters>(initialFilters);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [tab, setTab] = useState(() => {
-    const requested = new URLSearchParams(window.location.search).get('tab');
-    return ['overview', 'subscriptions', 'payments', 'sales', 'users', 'services', 'monthly-analysis', 'daily-close'].includes(requested ?? '')
-      ? requested!
-      : 'overview';
-  });
-  const [declaredAmount, setDeclaredAmount] = useState('');
-  const [closeReason, setCloseReason] = useState('');
-  const [dailyAction, setDailyAction] = useState<'review' | 'close' | 'reopen' | null>(null);
+  const [tab, setTab] = useState('overview');
   const [detail, setDetail] = useState<{ dimension: DetailDimension; key: string; title: string } | null>(null);
   const [detailPage, setDetailPage] = useState(1);
+  const [exportingDetails, setExportingDetails] = useState(false);
   const detailSectionRef = useRef<HTMLDivElement | null>(null);
   const detailPageSize = 10;
-
-  useEffect(() => {
-    if (!lockedGender) return;
-    setDraft((current) => current.gender === lockedGender ? current : { ...current, gender: lockedGender });
-    setApplied((current) => current.gender === lockedGender ? current : { ...current, gender: lockedGender });
-  }, [lockedGender]);
 
   const { data: subscriptionTypes } = useArrayResource<{ id: number; name: string }>('club-subscription-types');
   const { data: salesReps } = useArrayResource<{ id: number; name: string }>('employees/sales-reps');
@@ -297,36 +250,6 @@ export function ClubSubscriptionReportsPage() {
       return response.data;
     },
   });
-
-  const monthlyQuery = useQuery({
-    queryKey: ['club-subscription-reports', 'monthly-analysis', applied],
-    enabled: tab === 'monthly-analysis',
-    queryFn: async () => (await api.get<MonthlyAnalysisResponse>(
-      '/club-subscriptions/reports/monthly-analysis',
-      { params: cleanParams(applied) },
-    )).data,
-  });
-
-  const dailyCloseNeedsBranch = user?.level === 1 && applied.branch === 'all';
-  const dailyCloseParams = {
-    date: applied.endDate,
-    ...(applied.branch !== 'all' ? { branch: applied.branch } : {}),
-    ...(applied.gender !== 'all' ? { gender: applied.gender } : {}),
-  };
-  const dailyCloseQuery = useQuery({
-    queryKey: ['club-subscription-reports', 'daily-close', dailyCloseParams],
-    enabled: tab === 'daily-close' && !dailyCloseNeedsBranch,
-    queryFn: async () => (await api.get<DailyCloseResponse>(
-      '/club-subscriptions/reports/daily-close',
-      { params: dailyCloseParams },
-    )).data,
-  });
-
-  useEffect(() => {
-    if (dailyCloseQuery.data && declaredAmount === '') {
-      setDeclaredAmount(String(dailyCloseQuery.data.summary.expectedAmount));
-    }
-  }, [dailyCloseQuery.data, declaredAmount]);
 
   const selectDetail = (dimension: DetailDimension, key: string | number, title: string) => {
     const next = { dimension, key: String(key), title };
@@ -443,14 +366,6 @@ export function ClubSubscriptionReportsPage() {
     setDetailPage(1);
   };
 
-  const applyGenderFilter = (gender: ReportAudience) => {
-    if (lockedGender) return;
-    setDraft((current) => ({ ...current, gender }));
-    setApplied((current) => ({ ...current, gender }));
-    setDetail(null);
-    setDetailPage(1);
-  };
-
   const activeFilterCount = Object.entries(applied).filter(
     ([key, value]) => key !== 'startDate' && key !== 'endDate' && value !== '' && value !== 'all',
   ).length;
@@ -476,7 +391,8 @@ export function ClubSubscriptionReportsPage() {
       [ui('مصدر الإيراد'), ui('عدد العمليات'), ui('المبلغ')],
       ...data.services.map((row) => [row.name, row.count, row.amount]),
     ];
-    const blob = new Blob([toCsvWithBom(rows)], { type: 'text/csv;charset=utf-8' });
+    const csv = rows.map((row) => row.join(',')).join('\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
@@ -485,46 +401,62 @@ export function ClubSubscriptionReportsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const exportMonthly = () => {
-    const monthly = monthlyQuery.data;
-    if (!monthly) return;
-    const rows = [
-      [ui('البند'), ui('القيمة')],
-      ...monthly.revenues.map((row) => [row.label, row.amount]),
-      ...monthly.expenses.map((row) => [row.label, row.amount]),
-      [monthly.netProfit.label, monthly.netProfit.amount],
-    ];
-    const blob = new Blob([toCsvWithBom(rows)], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `monthly-analysis-${monthly.period.startDate}-${monthly.period.endDate}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const transitionDailyClose = async (action: 'review' | 'close' | 'reopen') => {
-    if (action !== 'reopen' && (!Number.isFinite(Number(declaredAmount)) || Number(declaredAmount) < 0)) {
-      toast.error(ui('أدخل المبلغ الفعلي الموجود بالخزينة'));
-      return;
-    }
-    if (action === 'reopen' && !closeReason.trim()) {
-      toast.error(ui('اكتب سبب إعادة فتح اليوم'));
-      return;
-    }
-    setDailyAction(action);
+  const exportDetails = async () => {
+    if (!detail || exportingDetails) return;
+    const selected = detail;
+    const filters = { ...applied };
+    setExportingDetails(true);
     try {
-      await api.post(`/club-subscriptions/reports/daily-close/${action}`, {
-        ...(action !== 'reopen' ? { declaredAmount: Number(declaredAmount) } : {}),
-        reason: closeReason.trim() || undefined,
-      }, { params: dailyCloseParams });
-      toast.success(ui(action === 'review' ? 'تمت مراجعة اليوم' : action === 'close' ? 'تم إقفال اليوم' : 'تمت إعادة فتح اليوم'));
-      setCloseReason('');
-      void dailyCloseQuery.refetch();
+      const pageSize = 50;
+      const params = {
+        ...cleanParams(filters),
+        dimension: selected.dimension,
+        key: selected.key,
+        pageSize,
+      };
+      const first = (await api.get<DetailResponse>('/club-subscriptions/reports/details', {
+        params: { ...params, page: 1 },
+      })).data;
+      const rows = [...first.data];
+      for (let page = 2; page <= Math.ceil(first.total / pageSize); page++) {
+        const next = (await api.get<DetailResponse>('/club-subscriptions/reports/details', {
+          params: { ...params, page },
+        })).data;
+        rows.push(...next.data);
+      }
+      await downloadExcel<Record<string, unknown>>(
+        rows.map((row) => ({
+          activity: row.activity,
+          memberName: row.memberName,
+          memberCode: row.memberCode ?? row.phone ?? '',
+          reference: row.reference,
+          category: row.category,
+          date: formatDateTime(row.date, locale),
+          amount: row.amount,
+          collected: row.collected,
+          remaining: row.remaining ?? '',
+          userName: row.userName ?? '',
+        })),
+        [
+          { key: 'activity', header: ui('العملية') },
+          { key: 'memberName', header: ui('العضو') },
+          { key: 'memberCode', header: ui('كود العضو / الهاتف') },
+          { key: 'reference', header: ui('المرجع') },
+          { key: 'category', header: ui('التصنيف') },
+          { key: 'date', header: ui('التاريخ والوقت') },
+          { key: 'amount', header: ui('القيمة') },
+          { key: 'collected', header: ui('المحصل') },
+          { key: 'remaining', header: ui('المتبقي') },
+          { key: 'userName', header: ui('مستخدم النظام') },
+        ],
+        `subscription-report-${selected.dimension}-${selected.key.replace(/[^a-zA-Z0-9_-]/g, '-')}-${filters.startDate}-${filters.endDate}.xlsx`,
+        selected.title,
+      );
+      toast.success(ui('تم تصدير الجدول'));
     } catch (error) {
       toast.error(apiError(error));
     } finally {
-      setDailyAction(null);
+      setExportingDetails(false);
     }
   };
 
@@ -555,7 +487,8 @@ export function ClubSubscriptionReportsPage() {
             isLoading={detailLoading}
             isError={detailError}
             emptyTitle={ui('لا توجد سجلات مطابقة')}
-            enableExport={false}
+            onExportExcel={exportDetails}
+            toolbar={exportingDetails ? <span className="text-xs text-muted-foreground">{ui('جارٍ تصدير كل النتائج…')}</span> : undefined}
           />
         </CardContent>
       </Card>
@@ -585,14 +518,7 @@ export function ClubSubscriptionReportsPage() {
             <ClubStatCard centered label={ui('إجمالي المتبقي')} value={formatMoney(data.overview.remainingAmount, undefined, locale)} icon={Landmark} tone="alert" />
           </div>
 
-          <Tabs value={tab} onValueChange={(value) => {
-            setTab(value);
-            setDetail(null);
-            const url = new URL(window.location.href);
-            if (value === 'overview') url.searchParams.delete('tab');
-            else url.searchParams.set('tab', value);
-            window.history.replaceState({}, '', url);
-          }}>
+          <Tabs value={tab} onValueChange={(value) => { setTab(value); setDetail(null); }}>
             <div className="overflow-x-auto overscroll-x-contain pb-1 [-webkit-overflow-scrolling:touch]">
               <TabsList className="flex h-12 w-max min-w-full flex-nowrap justify-center gap-3 rounded-xl border border-primary/15 bg-card p-1.5 shadow-sm">
                 <TabsTrigger className="border border-border/70 bg-background/60 px-5 data-[state=active]:border-primary/35" value="overview"><TrendingUp className="size-4" /> {ui('نظرة عامة')}</TabsTrigger>
@@ -601,8 +527,6 @@ export function ClubSubscriptionReportsPage() {
                 <TabsTrigger className="border border-border/70 bg-background/60 px-5 data-[state=active]:border-primary/35" value="sales"><UserCheck className="size-4" /> {ui('أخصائي المبيعات')}</TabsTrigger>
                 <TabsTrigger className="border border-border/70 bg-background/60 px-5 data-[state=active]:border-primary/35" value="users"><Users className="size-4" /> {ui('مستخدمو النظام')}</TabsTrigger>
                 <TabsTrigger className="border border-border/70 bg-background/60 px-5 data-[state=active]:border-primary/35" value="services"><Sparkles className="size-4" /> {ui('الخدمات والإيرادات')}</TabsTrigger>
-                <TabsTrigger className="border border-border/70 bg-background/60 px-5 data-[state=active]:border-primary/35" value="monthly-analysis"><BarChart3 className="size-4" /> {ui('التحليل الشهري')}</TabsTrigger>
-                <TabsTrigger className="border border-border/70 bg-background/60 px-5 data-[state=active]:border-primary/35" value="daily-close"><LockKeyhole className="size-4" /> {ui('الإقفال اليومي')}</TabsTrigger>
               </TabsList>
             </div>
 
@@ -691,13 +615,6 @@ export function ClubSubscriptionReportsPage() {
                   <div className="shrink-0 [&_select]:w-44">
                     <BranchFilter value={draft.branch} onChange={(branch) => applyBaseFilters({ branch })} />
                   </div>
-                  <div className="shrink-0 [&_select]:w-36">
-                    <ReportAudienceFilter
-                      value={(lockedGender ?? draft.gender) as ReportAudience}
-                      onChange={applyGenderFilter}
-                      locked={lockedGender !== null}
-                    />
-                  </div>
                 </div>
               </div>
 
@@ -719,6 +636,9 @@ export function ClubSubscriptionReportsPage() {
                           ...(subscriptionTypes ?? []).map((row) => ({ value: String(row.id), label: row.name })),
                         ]}
                       />
+                      <SelectFilter label={ui('النوع')} value={draft.gender} onChange={(gender) => setDraft((current) => ({ ...current, gender }))} options={[
+                        { value: 'all', label: ui('الكل') }, { value: 'male', label: ui('رجال') }, { value: 'female', label: ui('سيدات') },
+                      ]} />
                       <SelectFilter label={ui('حالة الاشتراك')} value={draft.status} onChange={(status) => setDraft((current) => ({ ...current, status }))} options={[
                         { value: 'all', label: ui('كل الحالات') }, { value: 'active', label: ui('نشط') }, { value: 'expiring', label: ui('ينتهي خلال 7 أيام') }, { value: 'expired', label: ui('منتهي') }, { value: 'upcoming', label: ui('قادم') }, { value: 'frozen', label: ui('مجمّد') },
                       ]} />
@@ -993,86 +913,6 @@ export function ClubSubscriptionReportsPage() {
                   <CardDescription>{ui('اختيار أي مصدر يطبّق فلتره على تفاصيل وسائل الدفع، ويمكن الرجوع إلى كل المصادر من شريط الفلاتر.')}</CardDescription>
                 </CardHeader>
               </Card>
-            </TabsContent>
-
-            <TabsContent value="monthly-analysis" className="space-y-5 pt-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold">{ui('التحليل الشهري')}</h2>
-                  <p className="text-sm text-muted-foreground">{ui('معادلة التقرير القديم: إجمالي الإيراد ناقص إجمالي المصروفات يساوي صافي الربح.')}</p>
-                </div>
-                <Button variant="outline" onClick={exportMonthly} disabled={!monthlyQuery.data}>
-                  <Download className="size-4" /> {ui('تصدير التحليل')}
-                </Button>
-              </div>
-              {monthlyQuery.isLoading ? <Card><CardContent className="py-12 text-center text-muted-foreground">{ui('جارٍ حساب التحليل الشهري…')}</CardContent></Card> : null}
-              {monthlyQuery.isError ? <Card><CardContent className="py-12 text-center text-destructive">{ui('تعذر تحميل التحليل الشهري.')} <Button variant="link" onClick={() => void monthlyQuery.refetch()}>{ui('إعادة المحاولة')}</Button></CardContent></Card> : null}
-              {monthlyQuery.data ? (
-                <div className="grid gap-5 lg:grid-cols-2">
-                  {[{ title: ui('الإيرادات'), rows: monthlyQuery.data.revenues }, { title: ui('المصروفات'), rows: monthlyQuery.data.expenses }].map((section) => (
-                    <Card key={section.title}>
-                      <CardHeader><CardTitle>{section.title}</CardTitle></CardHeader>
-                      <CardContent className="divide-y p-0">
-                        {section.rows.map((row) => (
-                          <div key={row.key} className="flex items-center justify-between gap-4 px-5 py-3 last:font-bold">
-                            <span>{row.label}</span>
-                            <span className="nums whitespace-nowrap">{formatMoney(row.amount, undefined, locale)}</span>
-                          </div>
-                        ))}
-                      </CardContent>
-                    </Card>
-                  ))}
-                  <div className="flex items-center justify-between gap-4 rounded-xl border border-primary/25 bg-primary/[0.04] px-5 py-4 lg:col-span-2">
-                    <span className="text-lg font-bold">{monthlyQuery.data.netProfit.label}</span>
-                    <span className={cn('nums text-xl font-black', monthlyQuery.data.netProfit.amount < 0 ? 'text-destructive' : 'text-emerald-700 dark:text-emerald-300')}>{formatMoney(monthlyQuery.data.netProfit.amount, undefined, locale)}</span>
-                  </div>
-                  {monthlyQuery.data.scope.sharedBranchExpenses ? <p className="text-xs text-muted-foreground lg:col-span-2">{ui('المصروفات والمشتريات مشتركة على مستوى الفرع، بينما الإيرادات المرتبطة بالأعضاء مقيدة بالقسم الحالي.')}</p> : null}
-                </div>
-              ) : null}
-            </TabsContent>
-
-            <TabsContent value="daily-close" className="space-y-5 pt-5">
-              <div>
-                <h2 className="text-lg font-semibold">{ui('الإقفال اليومي')}</h2>
-                <p className="text-sm text-muted-foreground">{ui('راجعي تحصيل يوم النهاية المحدد، ثم أغلقيه بسجل لا يحذف أو يستبدل الأحداث السابقة.')}</p>
-              </div>
-              {dailyCloseNeedsBranch ? <Card><CardContent className="py-10 text-center text-muted-foreground">{ui('اختاري فرعًا واحدًا من شريط الفلاتر لعرض الإقفال.')}</CardContent></Card> : null}
-              {dailyCloseQuery.isLoading ? <Card><CardContent className="py-10 text-center text-muted-foreground">{ui('جارٍ تحميل حالة الإقفال…')}</CardContent></Card> : null}
-              {dailyCloseQuery.isError ? <Card><CardContent className="py-10 text-center text-destructive">{ui('تعذر تحميل حالة الإقفال.')} <Button variant="link" onClick={() => void dailyCloseQuery.refetch()}>{ui('إعادة المحاولة')}</Button></CardContent></Card> : null}
-              {dailyCloseQuery.data ? (
-                <Card>
-                  <CardHeader>
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <CardTitle>{ui('تسوية تحصيل اليوم')} · {toArabicDigits(dailyCloseQuery.data.date)}</CardTitle>
-                        <CardDescription>{ui('الفرع')} #{toArabicDigits(dailyCloseQuery.data.branchId)} · {ui(dailyCloseQuery.data.audience === 'male' ? 'رجال' : dailyCloseQuery.data.audience === 'female' ? 'سيدات' : 'كل الأقسام')}</CardDescription>
-                      </div>
-                      <span className={cn('rounded-full px-3 py-1 text-sm font-bold', dailyCloseQuery.data.state === 'closed' ? 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300' : dailyCloseQuery.data.state === 'reviewed' ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300' : 'bg-muted text-muted-foreground')}>
-                        {ui(dailyCloseQuery.data.state === 'closed' ? 'مقفل' : dailyCloseQuery.data.state === 'reviewed' ? 'تمت المراجعة' : 'مفتوح')}
-                      </span>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-5">
-                    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                      <div><p className="text-xs text-muted-foreground">{ui('التحصيل المتوقع')}</p><p className="nums mt-1 font-bold">{formatMoney(dailyCloseQuery.data.summary.expectedAmount, undefined, locale)}</p></div>
-                      <div><p className="text-xs text-muted-foreground">{ui('عدد الإيصالات')}</p><p className="nums mt-1 font-bold">{toArabicDigits(dailyCloseQuery.data.summary.receiptsCount)}</p></div>
-                      <div><p className="text-xs text-muted-foreground">{ui('قيمة الاشتراكات')}</p><p className="nums mt-1 font-bold">{formatMoney(dailyCloseQuery.data.summary.contractsValue, undefined, locale)}</p></div>
-                      <div><p className="text-xs text-muted-foreground">{ui('المتبقي')}</p><p className="nums mt-1 font-bold">{formatMoney(dailyCloseQuery.data.summary.remainingAmount, undefined, locale)}</p></div>
-                    </div>
-                    {user?.level === 1 ? (
-                      <div className="grid gap-3 border-t pt-5 md:grid-cols-[minmax(0,12rem)_minmax(0,1fr)_auto] md:items-end">
-                        <div className="grid gap-1.5"><Label htmlFor="daily-close-declared">{ui('المبلغ الفعلي')}</Label><Input id="daily-close-declared" type="number" min="0" value={declaredAmount} onChange={(event) => setDeclaredAmount(event.target.value)} disabled={dailyCloseQuery.data.state === 'closed'} /></div>
-                        <div className="grid gap-1.5"><Label htmlFor="daily-close-reason">{ui(dailyCloseQuery.data.state === 'closed' ? 'سبب إعادة الفتح' : 'ملاحظة المراجعة')}</Label><Input id="daily-close-reason" value={closeReason} onChange={(event) => setCloseReason(event.target.value)} placeholder={ui('اكتب ملاحظة واضحة عند الحاجة')} /></div>
-                        <div className="flex flex-wrap gap-2">
-                          {dailyCloseQuery.data.state === 'open' ? <Button onClick={() => void transitionDailyClose('review')} disabled={dailyAction != null}>{ui('تسجيل المراجعة')}</Button> : null}
-                          {dailyCloseQuery.data.state === 'reviewed' ? <Button onClick={() => void transitionDailyClose('close')} disabled={dailyAction != null}>{ui('إقفال اليوم')}</Button> : null}
-                          {dailyCloseQuery.data.state === 'closed' ? <Button variant="outline" onClick={() => void transitionDailyClose('reopen')} disabled={dailyAction != null}>{ui('إعادة فتح اليوم')}</Button> : null}
-                        </div>
-                      </div>
-                    ) : <p className="border-t pt-4 text-sm text-muted-foreground">{ui('العرض متاح لك، أما المراجعة والإقفال وإعادة الفتح فتتطلب مدير النظام.')}</p>}
-                  </CardContent>
-                </Card>
-              ) : null}
             </TabsContent>
           </Tabs>
         </>

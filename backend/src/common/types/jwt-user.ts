@@ -5,22 +5,20 @@
 export interface JwtUser {
   /** users.user_id (JWT `sub`) */
   sub: number;
-  /** Optional server-side auth session identity for revocation-aware hosts. */
-  sessionId?: string;
   /** users.level — 1 admin, 2 employee, 3 branch/dept manager */
   level: number | null;
+  /** Resolved active RBAC super-admin role. Never trusted directly from a stale token. */
+  is_super_admin?: boolean;
   /** users.emp_code — linkage to the employee row (legacy stores employees.id here) */
   emp_code: number | null;
-  /** Canonical employee row identity; kept optional for legacy JWT compatibility. */
-  employeeId?: number | null;
-  /** Human-facing employee code; kept separate from relational identity. */
-  employeeCode?: number | null;
   /** employees.branch_id_fk (or 0). NOTE: branch === 3 is a virtual parent of [6,7,3]. */
   branch: number;
   /** Resolved branch display name (available without org.branches permission). */
   branch_name: string | null;
-  /** Normalized authorization scope: 0 = men, 1 = women, -1 = invalid/fail-closed. */
+  /** employees.emp_type — 1 men, 2 women, 3 both (or legacy 0). */
   man_women_type: number;
+  /** Effective gender sections refreshed from active individual exceptions. */
+  member_sections?: Array<'male' | 'female'>;
   name: string | null;
   /** Avatar path — employee photo preferred over default user placeholder. */
   image: string | null;

@@ -1,5 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { AlertTriangle, Archive, Briefcase, Building2, Copy, ExternalLink, FileText, Loader2, LockKeyhole, LogIn, LogOut, MoreHorizontal, Pencil, Phone, Plus, RefreshCw, Smartphone, Trash2, Undo2, User, UserCheck, UserX, Wallet, X } from 'lucide-react';
+import { AlertTriangle, Archive, Building2, CalendarCheck, CalendarPlus, CalendarX, Copy, ExternalLink, Eye, FileText, Loader2, LockKeyhole, LogIn, LogOut, MoreHorizontal, Paperclip, Pencil, Phone, Plus, RefreshCw, Smartphone, Trash2, Undo2, User, UserCheck, UserMinus, UserX, Users, Wallet, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -50,7 +50,7 @@ import {
   usePaginatedList,
 } from '@/lib/api-hooks';
 import { confirm, afterMenuClose } from '@/lib/confirm';
-import { useListQuery } from '@/lib/use-list-query';
+import { listQueryToApiParams, useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
@@ -64,6 +64,46 @@ import type {
 } from '@/types/club';
 
 const selectCls = 'flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm';
+
+function subDays(dateStr: string, n: number): string {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+
+function DatePresetButtons() {
+  const [sp, setSp] = useSearchParams();
+  const today = localToday();
+  const presets: { label: string; from: string }[] = [
+    { label: 'يوم', from: today },
+    { label: '7 أيام', from: subDays(today, 7) },
+    { label: 'شهر', from: subDays(today, 30) },
+    { label: 'سنة', from: subDays(today, 365) },
+  ];
+  const isActive = (from: string) => sp.get('createdFrom') === from && sp.get('createdTo') === today;
+  const setPreset = (from: string) => {
+    const next = new URLSearchParams(sp);
+    next.set('createdFrom', from);
+    next.set('createdTo', today);
+    next.set('page', '1');
+    setSp(next, { replace: true });
+  };
+  return (
+    <div className="flex flex-wrap gap-1">
+      {presets.map((p) => (
+        <Button
+          key={p.label}
+          variant={isActive(p.from) ? 'brand' : 'outline'}
+          size="sm"
+          className="h-9 px-3 text-xs"
+          onClick={() => setPreset(p.from)}
+        >
+          {p.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
 const MEMBER_PHONE_FORMAT_ERROR = 'رقم الموبايل غير صحيح — يجب أن يكون 11 رقمًا';
 
 type MemberDocument = {
@@ -95,10 +135,7 @@ const EMPTY_FORM: ClubMemberFormData = {
   profilePicture: '',
   notes: '',
   isActive: true,
-  salesId: undefined,
   employeeId: undefined,
-  guardianName: '',
-  guardianPhone: '',
   autoCreateUser: true,
 };
 
@@ -128,6 +165,7 @@ function blockedMemberDetails(notes: string | null | undefined) {
 
 interface AttendanceRow {
   id: number;
+  attendanceType?: 'normal' | 'class' | 'spa' | 'inbody';
   memberName: string;
   memberCode: string;
   attendanceDate: string;
@@ -138,6 +176,7 @@ interface AttendanceRow {
 }
 
 interface DailyAttendanceRow {
+  attendanceType?: string;
   date: string;
   memberId: number;
   memberName: string;
@@ -219,9 +258,12 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   const ct = useClubT();
   const { ui } = useLocale();
   const { can } = usePermission();
+  const canViewMembers = can('club.members:view') || can('club.reception:view');
   const canCreateMembers = can('club.members:create');
   const canUpdateMembers = can('club.members:update');
   const canDeleteMembers = can('club.members:delete');
+  const canCreateSubscriptions = can('club.subscriptions:create');
+  const canCreateLockerSubscriptions = can('club.lockers:create');
   const { user } = useAuth();
   const isSystemAdmin = user?.level === 1;
   const memberOnboarding = useFirstVisitGuide('members', user?.sub);
@@ -251,17 +293,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   );
   const { data: branches } = useBranches();
   const { data: membershipTypes } = useArrayResource<ClubMembershipType>('club-membership-types');
-  const { data: salesReps } = useQuery({
-    queryKey: ['employees', 'sales-reps'],
-    queryFn: async () => {
-      const { data } = await api.get<Array<{ id: number; name: string | null; empCode: number | null }>>('/employees/sales-reps');
-      return data;
-    },
-  });
-  const salesRepOptions = useMemo(
-    () => (salesReps ?? []).map((e) => ({ value: String(e.id), label: e.name ?? `#${e.id}` })),
-    [salesReps],
-  );
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { id: memberIdParam } = useParams();
@@ -349,10 +380,10 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     },
     enabled: false,
   });
-  const { data: stats } = useQuery({
-    queryKey: ['club-members', 'statistics'],
+  const { data: stats, isLoading: statsLoading } = useQuery({
+    queryKey: ['club-members', 'statistics', memberListParams],
     queryFn: async () => {
-      const { data: s } = await api.get<ClubMemberStatistics>('/club-members/statistics');
+      const { data: s } = await api.get<ClubMemberStatistics>('/club-members/statistics', { params: listQueryToApiParams(memberListParams) });
       return s;
     },
   });
@@ -366,10 +397,14 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   );
 
   const branchOptions = (branches ?? []).map((b) => ({ value: String(b.id), label: b.name ?? '—' }));
+  // Tanta Up/Down are subscription locations, not standalone member records.
+  const memberRegistrationBranchOptions = branchOptions.filter((branch) => !['5', '6'].includes(branch.value));
 
   const filters: FilterField[] = [
     { key: 'branch', label: ct('common.branch'), type: 'select', options: branchOptions },
     { key: 'gender', label: ct('members.gender'), type: 'select', options: genderOptions },
+    { key: 'createdFrom', label: ui('من تاريخ'), type: 'date' },
+    { key: 'createdTo', label: ui('إلى تاريخ'), type: 'date' },
   ];
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -404,7 +439,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
 
   const openCreate = () => {
     if (!canCreateMembers) return;
-    const branchId = !isSystemAdmin && user?.branch && user.branch > 0 ? user.branch : 0;
+    const branchId = !isSystemAdmin && user?.branch && user.branch > 0
+      ? ([5, 6].includes(user.branch) ? 2 : user.branch)
+      : 0;
     setEditId(null);
     setForm({
       ...EMPTY_FORM,
@@ -428,7 +465,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
 
   useEffect(() => {
     if (!dialogOpen || editId || isSystemAdmin) return;
-    const branchId = user?.branch && user.branch > 0 ? user.branch : 0;
+    const branchId = user?.branch && user.branch > 0
+      ? ([5, 6].includes(user.branch) ? 2 : user.branch)
+      : 0;
     if (branchId > 0 && form.branchId !== branchId) {
       setForm((f) => ({ ...f, branchId }));
     }
@@ -522,10 +561,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       profilePicture: row.profilePicture ?? '',
       notes: row.notes ?? '',
       isActive: row.isActive,
-      salesId: row.salesId ?? undefined,
       employeeId: row.employeeId ?? undefined,
-      guardianName: row.guardianName ?? '',
-      guardianPhone: row.guardianPhone ?? '',
       autoCreateUser: false,
     });
     setGeneratedCredentials(null);
@@ -654,9 +690,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         jobTitle: form.jobTitle || undefined,
         profilePicture: form.profilePicture || undefined,
         notes: form.notes || undefined,
-        salesId: form.salesId || undefined,
-        guardianName: form.guardianName || undefined,
-        guardianPhone: form.guardianPhone || undefined,
         autoCreateUser: form.autoCreateUser,
       };
 
@@ -705,6 +738,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
           setGeneratedCredentials(created.generatedCredentials);
         }
       }
+      setDialogOpen(false);
       void qc.invalidateQueries({ queryKey: ['club-members'] });
       void qc.invalidateQueries({ queryKey: ['club-members', 'dropdown'] });
     } catch (e) {
@@ -954,7 +988,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       {
         id: 'actions',
         header: ct('common.actions'),
-        cell: ({ row }) => !canUpdateMembers && !canDeleteMembers ? null : (
+        cell: ({ row }) => !canViewMembers && !canUpdateMembers && !canDeleteMembers && !canCreateSubscriptions && !canCreateLockerSubscriptions ? null : (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" aria-label={ct('common.actions')}>
@@ -962,12 +996,36 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {canViewMembers ? (
+                <>
+                  <DropdownMenuItem onSelect={() => afterMenuClose(() => navigate(`/club/members/${row.original.id}/details`))}>
+                    <Eye className="size-4" /> {ui('تفاصيل')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => afterMenuClose(() => navigate(`/club/members/${row.original.id}/membership-document`))}>
+                    <FileText className="size-4" /> {ui('مستند عضوية')}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => afterMenuClose(() => navigate(`/club/members/${row.original.id}/attachments`))}>
+                    <Paperclip className="size-4" /> {ui('مرفقات')}
+                  </DropdownMenuItem>
+                </>
+              ) : null}
               {canUpdateMembers ? (
                 <DropdownMenuItem onSelect={() => afterMenuClose(() => openEdit(row.original))}>
                   <Pencil className="size-4" /> {ct('common.edit')}
                 </DropdownMenuItem>
               ) : null}
-              {canUpdateMembers && canDeleteMembers ? <DropdownMenuSeparator /> : null}
+              {(canViewMembers || canUpdateMembers) && (canCreateSubscriptions || canCreateLockerSubscriptions || canDeleteMembers) ? <DropdownMenuSeparator /> : null}
+              {canCreateSubscriptions ? (
+                <DropdownMenuItem onSelect={() => afterMenuClose(() => navigate('/club/subscriptions/new', { state: { prefillMember: row.original } }))}>
+                  <CalendarPlus className="size-4" /> {ui('إضافة اشتراك')}
+                </DropdownMenuItem>
+              ) : null}
+              {canCreateLockerSubscriptions ? (
+                <DropdownMenuItem onSelect={() => afterMenuClose(() => navigate('/club/lockers/new', { state: { prefillMember: row.original } }))}>
+                  <LockKeyhole className="size-4" /> {ui('إضافة اشتراك لوكر')}
+                </DropdownMenuItem>
+              ) : null}
+              {canDeleteMembers && (canViewMembers || canUpdateMembers || canCreateSubscriptions || canCreateLockerSubscriptions) ? <DropdownMenuSeparator /> : null}
               {canDeleteMembers ? (
                 <DropdownMenuItem
                   className="text-destructive"
@@ -981,7 +1039,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         ),
       },
     ],
-    [branches, ct, ui, canUpdateMembers, canDeleteMembers, user?.branch, user?.branch_name],
+    [branches, ct, ui, canViewMembers, canUpdateMembers, canDeleteMembers, canCreateSubscriptions, canCreateLockerSubscriptions, navigate, user?.branch, user?.branch_name],
   );
 
   const blockedColumns = useMemo<ColumnDef<ClubMemberListItem>[]>(
@@ -1078,6 +1136,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         : []),
       { accessorKey: 'attendanceDate', header: ct('members.attendanceDate'), cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string)}</span> },
       { accessorKey: 'checkInTime', header: ct('members.checkInTime'), cell: ({ getValue }) => <span className="nums">{formatTimeFromDate(getValue() as string)}</span> },
+      { accessorKey: 'attendanceType', header: ui('نوع الحضور'), cell: ({ getValue }) => ui(({ normal: 'عادي', class: 'حصص', spa: 'سبا', inbody: 'إنبودي' } as Record<string, string>)[getValue() as string] ?? 'عادي') },
       {
         accessorKey: 'duration',
         header: ct('members.duration'),
@@ -1124,6 +1183,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
           }]
         : []),
       { accessorKey: 'date', header: ct('members.attendanceDate'), cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string)}</span> },
+      { accessorKey: 'attendanceType', header: ui('نوع الحضور'), cell: ({ getValue }) => ui(({ normal: 'عادي', class: 'حصص', spa: 'سبا', inbody: 'إنبودي' } as Record<string, string>)[getValue() as string] ?? 'عادي') },
       { accessorKey: 'entries', header: ui('عدد مرات الدخول'), cell: ({ getValue }) => <span className="nums font-semibold">{toArabicDigits(getValue() as number)}</span> },
       { accessorKey: 'totalDuration', header: ui('إجمالي المدة (دقيقة)'), cell: ({ getValue }) => <span className="nums">{toArabicDigits((getValue() as number) ?? 0)}</span> },
       {
@@ -1182,12 +1242,23 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         />
       )}
 
-      {stats && tab === 'members' && (
-        <div className="grid gap-4 sm:grid-cols-3">
-          <ClubStatCard label={ct('members.total')} value={stats.total} />
-          <ClubStatCard label={ct('members.active')} value={stats.active} />
-          <ClubStatCard label={ct('members.inactive')} value={stats.inactive} />
-        </div>
+      {tab === 'members' && (
+        <section className="rounded-2xl border border-primary/15 bg-card p-4 shadow-sm md:p-5" aria-live="polite">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-bold">{ui('ملخص الأعضاء')}</h2>
+              <p className="text-xs text-muted-foreground">{ui('يتحدث حسب الفلاتر المحددة')}</p>
+            </div>
+            {statsLoading && <Loader2 className="size-4 animate-spin text-primary" aria-label={ui('جاري تحديث الإحصاءات')} />}
+          </div>
+          <div className="grid gap-3 grid-cols-2 md:grid-cols-5">
+            <ClubStatCard label={ui('إجمالي الأعضاء')} value={statsLoading ? '—' : stats?.total ?? 0} icon={Users} tone="members" />
+            <ClubStatCard label={ui('الأعضاء النشطون')} value={statsLoading ? '—' : stats?.memberActive ?? 0} icon={UserCheck} tone="lockers" />
+            <ClubStatCard label={ui('الأعضاء الغير نشطين')} value={statsLoading ? '—' : stats?.memberInactive ?? 0} icon={UserMinus} tone="alert" />
+            <ClubStatCard label={ui('اشتراكات سارية')} value={statsLoading ? '—' : stats?.active ?? 0} icon={CalendarCheck} tone="revenue" />
+            <ClubStatCard label={ui('اشتراكات منتهية')} value={statsLoading ? '—' : stats?.inactive ?? 0} icon={CalendarX} tone="classes" />
+          </div>
+        </section>
       )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as ClubMembersView)}>
@@ -1218,7 +1289,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
               </TabsList>
             </Tabs>
           </div>
-          <FilterBar fields={filters} />
+          <FilterBar fields={filters} hideSearch extra={<DatePresetButtons />} />
 
           <DataTable
             columns={memberListMode === 'blocked' ? blockedColumns : columns}
@@ -1857,7 +1928,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                       onChange={(e) => setForm((f) => ({ ...f, branchId: Number(e.target.value) || 0 }))}
                     >
                       <option value="">{ct('members.selectBranch')}</option>
-                      {branchOptions.map((branch) => (
+                      {memberRegistrationBranchOptions.map((branch) => (
                         <option key={branch.value} value={branch.value}>{branch.label}</option>
                       ))}
                     </select>
@@ -1935,8 +2006,8 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                 </FieldWrapper>
               </div>
 
-              <FieldWrapper label="ملف العضوية والمستندات" hint={editId ? 'PDF موثّق فقط، بحد أقصى 5 ميجابايت لكل ملف' : 'احفظ بيانات العضو أولاً ثم أرفق المستندات'}>
-                {editId ? (
+              {editId ? (
+                <FieldWrapper label="ملف العضوية والمستندات" hint="PDF موثّق فقط، بحد أقصى 5 ميجابايت لكل ملف">
                   <div className="space-y-3 rounded-xl border bg-muted/20 p-3">
                     <div className="grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)]">
                       <select className={selectCls} value={documentType} onChange={(event) => setDocumentType(event.target.value)} aria-label="نوع المستند">
@@ -1961,10 +2032,8 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                       </ul>
                     ) : <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">لا توجد مستندات مرفقة بعد.</p>}
                   </div>
-                ) : (
-                  <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">سيظهر رفع المستند بعد إنشاء العضو.</p>
-                )}
-              </FieldWrapper>
+                </FieldWrapper>
+              ) : null}
 
               <DialogFormToggle
                 label={ct('members.isActive')}
@@ -2000,34 +2069,11 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                 <FieldWrapper label={ct('members.address')} className="sm:col-span-2">
                   <Input value={form.address ?? ''} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
                 </FieldWrapper>
-                <FieldWrapper label={ct('members.jobTitle')} className="sm:col-span-2">
+                <FieldWrapper label={ct('members.jobTitle')}>
                   <Input value={form.jobTitle ?? ''} onChange={(e) => setForm((f) => ({ ...f, jobTitle: e.target.value }))} />
-                </FieldWrapper>
-              </DialogFormGrid>
-            </DialogFormSection>
-
-            <DialogFormSection title={ct('members.sectionStaff')} icon={Briefcase}>
-              <DialogFormGrid>
-                <FieldWrapper label={ct('members.salesRep')}>
-                  <select
-                    className={selectCls}
-                    value={form.salesId ?? ''}
-                    onChange={(e) => setForm((f) => ({ ...f, salesId: e.target.value ? Number(e.target.value) : undefined }))}
-                  >
-                    <option value="">—</option>
-                    {salesRepOptions.map((o) => (
-                      <option key={o.value} value={o.value}>{o.label}</option>
-                    ))}
-                  </select>
                 </FieldWrapper>
                 <FieldWrapper label={ui('الموظف المُسجِّل')}>
                   <Input className="bg-muted" value={user?.name ?? '—'} readOnly />
-                </FieldWrapper>
-                <FieldWrapper label={ct('members.guardianName')}>
-                  <Input value={form.guardianName ?? ''} onChange={(e) => setForm((f) => ({ ...f, guardianName: e.target.value }))} />
-                </FieldWrapper>
-                <FieldWrapper label={ct('members.guardianPhone')}>
-                  <Input className="nums" dir="ltr" value={form.guardianPhone ?? ''} onChange={(e) => setForm((f) => ({ ...f, guardianPhone: e.target.value }))} />
                 </FieldWrapper>
               </DialogFormGrid>
             </DialogFormSection>

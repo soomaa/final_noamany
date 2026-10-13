@@ -460,6 +460,7 @@ export function EmployeeFormPage() {
                   options={[
                     { value: '1', label: ui('رجالى') },
                     { value: '2', label: ui('حريمى') },
+                    { value: '3', label: ui('الكل') },
                   ]}
                 />
                 <RHFSelect control={control} name="edara_id_fk" label={ui('الإدارة')} required options={departmentSelectOptions} />

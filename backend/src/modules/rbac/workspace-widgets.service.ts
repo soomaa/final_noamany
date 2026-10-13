@@ -19,9 +19,15 @@ export class WorkspaceWidgetsService {
   async getWidgets(user: JwtUser, requestedBranchId?: number): Promise<{ config: WorkspaceConfig; data: WidgetPayload }> {
     const config = await this.workspace.getWorkspace(user.sub);
     const data: WidgetPayload = {};
+    const currentUser = user.level === 1
+      ? null
+      : await this.prisma.users.findUnique({
+        where: { user_id: user.sub },
+        select: { branch_id_fk: true },
+      });
     const branchIds = user.level === 1
       ? (requestedBranchId != null && Number.isFinite(requestedBranchId) ? [requestedBranchId] : null)
-      : (Number(user.branch ?? 0) > 0 ? [Number(user.branch)] : []);
+      : (Number(currentUser?.branch_id_fk ?? 0) > 0 ? [Number(currentUser?.branch_id_fk)] : []);
 
     for (const key of config.widgets) {
       data[key] = await this.loadWidget(key, user, branchIds);
@@ -36,9 +42,19 @@ export class WorkspaceWidgetsService {
     const branchWhere = branchIds === null ? {} : { branch_id: { in: branchIds } };
 
     switch (key) {
+      case 'my_subscriptions_today': {
+        const rows = await this.prisma.club_subscriptions.findMany({
+          where: { registration_date: today, created_by: user.sub, ...branchWhere },
+          select: { id: true, paid_amount: true },
+        });
+        return {
+          count: rows.length,
+          paidTotal: rows.reduce((sum, subscription) => sum + toNum(subscription.paid_amount), 0),
+        };
+      }
       case 'recent_checkins': {
         const rows = await this.prisma.club_attendance.findMany({
-          where: branchWhere,
+          where: { ...branchWhere, attendance_date: today },
           orderBy: [{ attendance_date: 'desc' }, { check_in_time: 'desc' }],
           take: 8,
           include: { member: { select: { name: true, member_code: true } } },

@@ -62,6 +62,8 @@ function useFeatureReports(): { group: string; items: QuickReport[] }[] {
         { href: '/reports/finance/treasury', title: ui('الخزينة'), desc: ui('الرصيد النقدي المتاح'), icon: Landmark },
         { href: '/reports/finance/payment-methods', title: ui('طرق الدفع'), desc: ui('كاش · فيزا · تحويل'), icon: CreditCard },
         { href: '/reports/finance/outstanding', title: ui('سداد المتبقي'), desc: ui('اشتراكات لها مبلغ متبقٍ'), icon: PiggyBank },
+        { href: '/reports/finance/daily-closing', title: ui('التقفيل اليومي'), desc: ui('المقبوضات والمصروفات وصافي الربح'), icon: Wallet },
+        { href: '/reports/finance/target', title: ui('تقرير التارجت'), desc: ui('عمليات ومبالغ الموظف خلال الشهر'), icon: UserPlus },
       ],
     },
   ];

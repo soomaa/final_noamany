@@ -8,6 +8,7 @@ import { MemberAuthService } from './member-auth.service';
 describe('MemberAuthService.deleteAccount', () => {
   const prisma = {
     api_users: {
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
     },
@@ -80,5 +81,39 @@ describe('MemberAuthService.deleteAccount', () => {
     expect(prisma.am_member_notifications.deleteMany).toHaveBeenCalledWith({
       where: { member_id: 45 },
     });
+  });
+});
+
+describe('MemberAuthService.login', () => {
+  const prisma = {
+    api_users: { findFirst: jest.fn() },
+    club_members: { findFirst: jest.fn() },
+  };
+  const service = new MemberAuthService(
+    prisma as unknown as PrismaService,
+    {} as JwtService,
+    { get: jest.fn() } as unknown as ConfigService,
+  );
+
+  beforeEach(() => jest.clearAllMocks());
+
+  it('identifies an unregistered phone number before checking a password', async () => {
+    prisma.api_users.findFirst.mockResolvedValue(null);
+
+    await expect(service.login('01000000000', 'any-password')).rejects.toThrow(
+      'رقم الهاتف غير صحيح',
+    );
+  });
+
+  it('identifies an incorrect password for a registered phone number', async () => {
+    prisma.api_users.findFirst.mockResolvedValue({
+      user_id: 12,
+      status: 1,
+      user_pass: await bcrypt.hash('correct-password', 4),
+    });
+
+    await expect(service.login('01000000000', 'wrong-password')).rejects.toThrow(
+      'كلمة المرور غير صحيحة',
+    );
   });
 });

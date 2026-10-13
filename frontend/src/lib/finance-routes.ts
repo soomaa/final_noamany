@@ -8,4 +8,6 @@ export const FINANCE_ROUTES = {
   revenueReports: '/finance/revenue-reports',
   analysis: '/finance/analysis',
   profitLoss: '/finance/profit-loss',
+  dailyClosing: '/reports/finance/daily-closing',
+  targetReport: '/reports/finance/target',
 } as const;

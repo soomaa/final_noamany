@@ -90,14 +90,8 @@ export class ClubTrainersService {
     };
   }
 
-  async list(
-    q: ListClubTrainersDto,
-    branchIds: number[] | null = null,
-    audience: 'male' | 'female' | null = null,
-  ) {
+  async list(q: ListClubTrainersDto) {
     const and: Prisma.club_trainersWhereInput[] = [{ is_deleted: false }];
-    const employeeIds = await this.employeeIdsForBranches(branchIds, audience);
-    if (employeeIds) and.push({ employee_id: { in: employeeIds } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -124,15 +118,10 @@ export class ClubTrainersService {
     return paginated(rows.map((r) => this.mapTrainer(r)), total, q.page, q.pageSize);
   }
 
-  async statistics(
-    branchIds: number[] | null = null,
-    audience: 'male' | 'female' | null = null,
-  ) {
-    const employeeIds = await this.employeeIdsForBranches(branchIds, audience);
-    const scopeWhere: Prisma.club_trainersWhereInput = employeeIds ? { employee_id: { in: employeeIds } } : {};
+  async statistics() {
     const [total, active] = await Promise.all([
-      this.prisma.club_trainers.count({ where: { ...scopeWhere, is_deleted: false } }),
-      this.prisma.club_trainers.count({ where: { ...scopeWhere, is_deleted: false, is_active: true } }),
+      this.prisma.club_trainers.count({ where: { is_deleted: false } }),
+      this.prisma.club_trainers.count({ where: { is_deleted: false, is_active: true } }),
     ]);
     return { total, active, inactive: total - active };
   }
@@ -227,13 +216,9 @@ export class ClubTrainersService {
     return this.getDefaultSchedule(trainerId, classTypeId);
   }
 
-  async listEarningPayments(trainerId?: number, branchIds: number[] | null = null) {
-    const employeeIds = await this.employeeIdsForBranches(branchIds);
+  async listEarningPayments(trainerId?: number) {
     const rows = await this.prisma.club_trainer_earning_payments.findMany({
-      where: {
-        ...(trainerId ? { trainer_id: trainerId } : {}),
-        ...(employeeIds ? { trainer: { employee_id: { in: employeeIds } } } : {}),
-      },
+      where: trainerId ? { trainer_id: trainerId } : undefined,
       include: { trainer: { select: { id: true, name: true } } },
       orderBy: [{ payment_date: 'desc' }, { id: 'desc' }],
     });
@@ -248,22 +233,6 @@ export class ClubTrainersService {
       notes: row.notes,
       createdAt: row.created_at,
     }));
-  }
-
-  private async employeeIdsForBranches(
-    branchIds: number[] | null,
-    audience: 'male' | 'female' | null = null,
-  ) {
-    if (branchIds === null && !audience) return null;
-    if (branchIds !== null && !branchIds.length) return [];
-    const employees = await this.prisma.employees.findMany({
-      where: {
-        ...(branchIds === null ? {} : { branch_id_fk: { in: branchIds } }),
-        ...(audience ? { emp_type: audience === 'male' ? 1 : 2 } : {}),
-      },
-      select: { id: true },
-    });
-    return employees.map((employee) => employee.id);
   }
 
   async createEarningPayment(
@@ -468,54 +437,24 @@ export class ClubTrainersService {
   async addRating(trainerId: number, body: Record<string, unknown>) {
     await this.findOne(trainerId);
     const rating = Number(body.rating);
-    if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
-      throw new BadRequestException('التقييم يجب أن يكون رقمًا صحيحًا بين 1 و 5');
+    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      throw new BadRequestException('التقييم يجب أن يكون بين 1 و 5');
     }
-    const attendanceId = Number(body.attendanceId);
-    const memberId = Number(body.memberId);
-    if (!Number.isInteger(attendanceId) || attendanceId <= 0 || !Number.isInteger(memberId) || memberId <= 0) {
-      throw new BadRequestException('بيانات الحضور والعضو مطلوبة');
-    }
-    const attendance = await this.prisma.club_attendance.findUnique({
-      where: { id: attendanceId },
-      include: { private_commission: { select: { trainer_id: true } } },
-    });
-    if (!attendance) throw new NotFoundException('سجل الحضور غير موجود');
-    if (attendance.status !== 'checked_out') throw new BadRequestException('يجب تسجيل خروج العضو أولاً');
-    if (attendance.member_id !== memberId) throw new BadRequestException('بيانات العضو لا تطابق الحضور');
-    if (attendance.private_commission?.trainer_id !== trainerId) throw new BadRequestException('الحضور غير مرتبط بهذا المدرب');
-    const ratings = this.prisma.club_trainer_ratings as unknown as {
-      findUnique(args: unknown): Promise<{ id: number } | null>;
-    };
-    if (await ratings.findUnique({ where: { attendance_id: attendanceId }, select: { id: true } })) {
-      throw new ConflictException('تم تقييم هذه الحصة من قبل');
-    }
-    let row;
-    try {
-      row = await this.prisma.$transaction(async (tx) => {
-        const txRatings = tx.club_trainer_ratings as unknown as { create(args: unknown): Promise<{ id: number; trainer_id: number; attendance_id: number | null; member_id: number | null; rating: Prisma.Decimal; comment: string | null; created_at: Date }> };
-        const created = await txRatings.create({
+    const row = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.club_trainer_ratings.create({
         data: {
           trainer_id: trainerId,
-          attendance_id: attendanceId,
-          member_id: memberId,
+          member_id: body.memberId != null ? Number(body.memberId) : null,
           rating,
-          comment: body.comment ? String(body.comment).trim() || null : null,
+          comment: body.comment ? String(body.comment) : null,
         },
       });
       const avg = await this.recalculateRatingAvg(trainerId, tx);
       return { ...created, ratingAvg: avg };
     });
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw new ConflictException('تم تقييم هذه الحصة من قبل');
-      }
-      throw error;
-    }
     return {
       id: row.id,
       trainerId: row.trainer_id,
-      attendanceId: row.attendance_id,
       memberId: row.member_id,
       rating: toNum(row.rating),
       comment: row.comment,
@@ -539,82 +478,6 @@ export class ClubTrainersService {
       comment: r.comment,
       createdAt: r.created_at,
     }));
-  }
-
-  /**
-   * One manager-facing source of truth for a trainer profile. This intentionally reads existing
-   * classes, immutable earnings and rating rows rather than introducing a second trainer ledger.
-   */
-  async workspace(
-    id: number,
-    query: { dateFrom?: string; dateTo?: string },
-    access: { targets: boolean; earnings: boolean; ratings: boolean } = {
-      targets: true,
-      earnings: true,
-      ratings: true,
-    },
-  ) {
-    const today = localDateString();
-    const dateFrom = query.dateFrom ?? `${today.slice(0, 7)}-01`;
-    const dateTo = query.dateTo ?? today;
-    assertDateOrder(dateFrom, dateTo, 'تاريخ بداية الفترة يجب أن يسبق نهايتها');
-    const trainer = await this.findOne(id);
-    const targetPeriod = access.targets ? await this.prisma.club_trainer_target_periods.findUnique({
-      where: {
-        trainer_id_period_month: {
-          trainer_id: id,
-          period_month: dateFrom.slice(0, 7),
-        },
-      },
-    }) : null;
-    const [details, earnings, payments, ratings] = await Promise.all([
-      this.findDetails(id, { dateFrom, dateTo }),
-      access.earnings ? this.earningsSummary(id, dateFrom, dateTo) : Promise.resolve(null),
-      access.earnings ? this.listEarningPayments(id) : Promise.resolve([]),
-      access.ratings ? this.listRatings(id) : Promise.resolve([]),
-    ]);
-    const settingNumber = (value: unknown) => {
-      const parsed = Number(value ?? 0);
-      return Number.isFinite(parsed) ? parsed : 0;
-    };
-    const target = access.targets ? settingNumber(targetPeriod?.target_value) : null;
-    const targetUnit = targetPeriod?.target_unit === 'money' ? 'money' : 'members';
-    const revenue = earnings
-      ? Math.round(((earnings as { revenue?: number }).revenue ?? (earnings.classRevenue + earnings.subscriptionRevenue)) * 100) / 100
-      : null;
-    const achieved = targetUnit === 'money' ? (revenue ?? 0) : details.statistics.uniqueMembers;
-    const achievementPct = target != null && target > 0 ? Math.round((achieved / target) * 1000) / 10 : access.targets ? 0 : null;
-    const ratingDistribution = { '1': 0, '2': 0, '3': 0, '4': 0, '5': 0 } as Record<'1' | '2' | '3' | '4' | '5', number>;
-    for (const rating of ratings) {
-      const key = String(Math.max(1, Math.min(5, Math.round(rating.rating)))) as keyof typeof ratingDistribution;
-      ratingDistribution[key] += 1;
-    }
-    return {
-      trainer: details.trainer,
-      stats: {
-        sessions: (earnings as { sessions?: number } | null)?.sessions ?? details.statistics.totalClasses,
-        uniqueMembers: (earnings as { totalTrainees?: number } | null)?.totalTrainees ?? details.statistics.uniqueMembers,
-        attendance: details.statistics.totalEnrollments, revenue, target, targetUnit, achievementPct,
-        commissionPercent: access.earnings ? 0 : null,
-        earned: earnings?.earned ?? null,
-        paid: earnings?.paid ?? null,
-        remaining: earnings?.remaining ?? null,
-        overpaid: earnings ? (earnings as { overpaid?: number }).overpaid ?? 0 : null,
-        ratingAvg: access.ratings ? details.trainer.ratingAvg : null,
-        ratingCount: access.ratings ? ratings.length : null,
-      },
-      activeSalary: details.activeSalary,
-      commissionSetting: targetPeriod ? {
-        employeeId: trainer.employeeId,
-        trainerId: id,
-        targetUnit,
-        baseTarget: target,
-        periodMonth: targetPeriod.period_month,
-        tiers: [],
-      } : null,
-      classes: details.classes, payments, ratings, ratingDistribution,
-      access,
-    };
   }
 
   async findDetails(id: number, query?: { dateFrom?: string; dateTo?: string }) {

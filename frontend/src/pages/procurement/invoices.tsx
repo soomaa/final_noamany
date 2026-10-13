@@ -22,13 +22,14 @@ import { useListQuery } from '@/lib/use-list-query';
 import { validateOverpayCap } from '@/lib/validators';
 import { toArabicDigits } from '@/lib/utils';
 import type { GoodsReceiptRow, PurchaseInvoiceRow, PurchaseOrderRow, SupplierPaymentRow } from '@/types/gym-sales';
-import type { NamedEntity } from '@/types/inventory';
+import type { NamedEntity, ProductListItem } from '@/types/inventory';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { uiStatic } from '@/lib/ui-static';
 
 interface InvoiceLineDraft {
+  productId: string;
   name: string;
   quantity: string;
   price: string;
@@ -75,13 +76,23 @@ function PurchaseInvoicesTab() {
     },
   });
 
+  const { data: products } = useQuery({
+    queryKey: ['products', 'purchase-invoice-options'],
+    queryFn: async () => {
+      const { data: r } = await api.get<PaginatedResponse<ProductListItem>>('/products', {
+        params: { page: 1, pageSize: 500, status: 'active' },
+      });
+      return r.data;
+    },
+  });
+
   const [open, setOpen] = useState(false);
   const [supplierId, setSupplierId] = useState('');
   const [purchaseOrderId, setPurchaseOrderId] = useState('');
   const [goodsReceiptId, setGoodsReceiptId] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState('');
-  const [lines, setLines] = useState<InvoiceLineDraft[]>([{ name: '', quantity: '1', price: '0' }]);
+  const [lines, setLines] = useState<InvoiceLineDraft[]>([{ productId: '', name: '', quantity: '1', price: '0' }]);
   const [saving, setSaving] = useState(false);
   const [matchingId, setMatchingId] = useState<number | null>(null);
 
@@ -93,6 +104,7 @@ function PurchaseInvoicesTab() {
       setSupplierId(String(po.supplierId));
       setLines(
         (po.items ?? []).map((i) => ({
+          productId: i.productId == null ? '' : String(i.productId),
           name: i.name,
           quantity: String(i.quantity),
           price: String(i.price),
@@ -162,7 +174,7 @@ function PurchaseInvoicesTab() {
   );
 
   const save = async () => {
-    const validLines = lines.filter((l) => l.name.trim() && Number(l.quantity) > 0);
+    const validLines = lines.filter((l) => l.productId && Number(l.quantity) > 0);
     if (!supplierId || !validLines.length) {
       toast.error(uiStatic('يرجى تعبئة البيانات وإضافة بند واحد على الأقل'));
       return;
@@ -176,6 +188,7 @@ function PurchaseInvoicesTab() {
         goodsReceiptId: goodsReceiptId ? Number(goodsReceiptId) : undefined,
         invoiceDate: invoiceDate || undefined,
         items: validLines.map((l) => ({
+          productId: Number(l.productId),
           name: l.name,
           quantity: Number(l.quantity),
           price: Number(l.price) || 0,
@@ -201,7 +214,7 @@ function PurchaseInvoicesTab() {
             setGoodsReceiptId('');
             setInvoiceNumber('');
             setInvoiceDate('');
-            setLines([{ name: '', quantity: '1', price: '0' }]);
+            setLines([{ productId: '', name: '', quantity: '1', price: '0' }]);
             setOpen(true);
           }}
         >
@@ -290,17 +303,28 @@ function PurchaseInvoicesTab() {
               <Label>{uiStatic('البنود')}</Label>
               {lines.map((line, idx) => (
                 <div key={idx} className="grid grid-cols-3 gap-2">
-                  <Input
-                    placeholder={uiStatic('البند')}
-                    value={line.name}
+                  <select
+                    className="rounded-md border bg-background px-2 py-2 text-sm"
+                    value={line.productId}
                     onChange={(e) => {
+                      const product = products?.find((item) => item.id === Number(e.target.value));
                       setLines((prev) => {
                         const next = [...prev];
-                        next[idx] = { ...next[idx], name: e.target.value };
+                        next[idx] = {
+                          ...next[idx],
+                          productId: e.target.value,
+                          name: product?.nameAr ?? '',
+                          price: String(product?.costPrice ?? 0),
+                        };
                         return next;
                       });
                     }}
-                  />
+                  >
+                    <option value="">{uiStatic('المنتج')}</option>
+                    {(products ?? []).map((product) => (
+                      <option key={product.id} value={product.id}>{product.nameAr}</option>
+                    ))}
+                  </select>
                   <Input
                     type="number"
                     className="nums"
@@ -333,7 +357,7 @@ function PurchaseInvoicesTab() {
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setLines((prev) => [...prev, { name: '', quantity: '1', price: '0' }])}
+                onClick={() => setLines((prev) => [...prev, { productId: '', name: '', quantity: '1', price: '0' }])}
               >
                 {uiStatic('إضافة بند')}
               </Button>

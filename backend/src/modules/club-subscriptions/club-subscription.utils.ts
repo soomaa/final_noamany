@@ -109,8 +109,12 @@ export function nextSeqFromMax(maxNum: unknown): number {
 }
 
 export function daysBetween(start: string, end: string): number {
-  const ms = parseDateOnly(end).getTime() - parseDateOnly(start).getTime();
-  return Math.ceil(ms / 86400000);
+  // Calendar days must not gain/lose an hour when Egypt changes its DST offset.
+  const utcDay = (value: string) => {
+    const [year, month, day] = value.split('-').map(Number);
+    return Date.UTC(year, month - 1, day);
+  };
+  return (utcDay(end) - utcDay(start)) / 86400000;
 }
 
 /**

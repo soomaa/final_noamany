@@ -1,40 +1,29 @@
 import { Search, Undo2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/common/page-header';
 import { StatusBadge } from '@/components/common/status-badge';
+import { SubscriptionRefundHistory, type RefundHistoryRow } from '@/components/club/subscription-refund-history';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useClubT } from '@/hooks/use-club-t';
+import { useBranches } from '@/hooks/use-branches';
+import { usePermission } from '@/hooks/use-permission';
+import { useAuth } from '@/store/auth';
 import { useArrayResource } from '@/lib/api-hooks';
 import { api, apiError } from '@/lib/api';
 import { localToday, formatMoney } from '@/lib/formatters';
 import { confirmWithPreview } from '@/lib/confirm';
 import { toArabicDigits } from '@/lib/utils';
+import { searchClubMembers } from '@/lib/club-member-search';
 import { useLocale } from '@/store/locale';
-import type { ClubSubscriptionListItem } from '@/types/club';
-import type { ClubSearchHit } from '@/types/gym-ops';
+import type { ClubMemberLookupItem, ClubSubscriptionListItem } from '@/types/club';
 
-interface ClubSearchResult {
-  hits: ClubSearchHit[];
-  topMatch: ClubSearchHit | null;
-}
-
-async function fetchClubSearch(q: string): Promise<ClubSearchResult> {
-  const { data } = await api.get<
-    ClubSearchHit[] | { hits: ClubSearchHit[]; topMatch?: ClubSearchHit | null }
-  >('/club/search', {
-    params: { q: q.trim(), withEntitlement: true },
-  });
-  if (Array.isArray(data)) {
-    return { hits: data, topMatch: data[0] ?? null };
-  }
-  const hits = data.hits ?? [];
-  return { hits, topMatch: data.topMatch ?? hits[0] ?? null };
-}
+const fetchClubSearch = (q: string) => searchClubMembers(q, undefined, false, false, true);
 
 interface RefundPreview {
   subscriptionId: number;
@@ -51,20 +40,18 @@ interface RefundPreview {
   paidAmount?: number;
 }
 
-interface RefundRow {
-  id: number;
-  invoiceNumber: string;
-  customerName: string | null;
-  refundAmount: number;
-  remainingDays: number;
-  refundDate: string;
-  status: string;
-}
-
 export function SubscriptionRefundsWorkspace() {
   const ct = useClubT();
   const { ui } = useLocale();
+  const { user } = useAuth();
+  const { superAdmin } = usePermission();
+  const { data: branches = [] } = useBranches();
+  const [payoutBranch, setPayoutBranch] = useState('');
   const qc = useQueryClient();
+  const location = useLocation();
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const prefilledMemberId = Number(new URLSearchParams(location.search).get('memberId'));
+  const prefilledSubscriptionId = Number(new URLSearchParams(location.search).get('subscriptionId'));
   const [query, setQuery] = useState('');
   const [selectedMemberId, setSelectedMemberId] = useState<number | null>(null);
   const [selectedSubId, setSelectedSubId] = useState<number | null>(null);
@@ -86,7 +73,7 @@ export function SubscriptionRefundsWorkspace() {
     enabled: selectedMemberId != null,
     queryFn: async () => {
       const { data: m } = await api.get<{ id: number; name: string; memberCode: string }>(
-        `/club-members/${selectedMemberId}`,
+        `/club-members/refund-transfer-member/${selectedMemberId}`,
       );
       return m;
     },
@@ -96,16 +83,25 @@ export function SubscriptionRefundsWorkspace() {
     queryKey: ['club-refunds-subs', selectedMemberId],
     enabled: selectedMemberId != null,
     queryFn: async () => {
-      const { data: list } = await api.get<{ data: ClubSubscriptionListItem[] }>('/club-subscriptions', {
+      const { data: list } = await api.get<{ data: ClubSubscriptionListItem[] }>('/club-subscriptions/refund-sources', {
         params: { memberId: selectedMemberId, pageSize: 50 },
       });
-      return list.data.filter((s) => s.status === 'active' && s.paidAmount > 0);
+      const refundable = list.data.filter((s) => s.status === 'active' && s.paidAmount > 0);
+      if (prefilledSubscriptionId > 0 && !refundable.some((s) => s.id === prefilledSubscriptionId)) {
+        const { data: selected } = await api.get<ClubSubscriptionListItem>(`/club-subscriptions/operation-subscription/${prefilledSubscriptionId}`);
+        if (selected.memberId === selectedMemberId && selected.status === 'active' && selected.paidAmount > 0) {
+          refundable.unshift(selected);
+        }
+      }
+      return refundable;
     },
   });
 
-  const { data: refunds, refetch: refetchRefunds } = useArrayResource<RefundRow>('club-subscription-refunds');
+  const { data: refunds, refetch: refetchRefunds } = useArrayResource<RefundHistoryRow>('club-subscription-refunds');
+  const refundBranchId = Number(superAdmin && payoutBranch ? payoutBranch : user?.branch) ||
+    (subs ?? []).find(s => s.id === selectedSubId)?.branchId;
 
-  const selectMember = (hit: ClubSearchHit) => {
+  const selectMember = (hit: ClubMemberLookupItem) => {
     setSelectedMemberId(hit.id);
     setQuery(hit.memberCode);
     setSelectedSubId(null);
@@ -142,7 +138,34 @@ export function SubscriptionRefundsWorkspace() {
     setSelectedSubId(null);
     setPreview(null);
     setQuery('');
+    setPayoutBranch('');
   };
+
+  useEffect(() => {
+    if (!location.state?.startNewRefund) return;
+    setSelectedMemberId(null);
+    setSelectedSubId(null);
+    setQuery('');
+    setPreview(null);
+    setStopDate(localToday());
+    setReason('');
+    setNotes('');
+    searchInputRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    searchInputRef.current?.focus({ preventScroll: true });
+  }, [location.key, location.state]);
+
+  useEffect(() => {
+    if (!Number.isInteger(prefilledMemberId) || prefilledMemberId <= 0) return;
+    setSelectedMemberId(prefilledMemberId);
+    setQuery('');
+  }, [prefilledMemberId]);
+
+  useEffect(() => {
+    if (!Number.isInteger(prefilledSubscriptionId) || prefilledSubscriptionId <= 0) return;
+    if ((subs ?? []).some((subscription) => subscription.id === prefilledSubscriptionId)) {
+      setSelectedSubId(prefilledSubscriptionId);
+    }
+  }, [prefilledSubscriptionId, subs]);
 
   useEffect(() => {
     if (!selectedSubId || !stopDate) {
@@ -154,7 +177,7 @@ export function SubscriptionRefundsWorkspace() {
         try {
           const { data } = await api.post<{ preview?: RefundPreview } & RefundPreview>(
             '/club-subscription-refunds?dryRun=true',
-            { subscriptionId: selectedSubId, stopDate },
+            { subscriptionId: selectedSubId, stopDate, branchId: refundBranchId },
           );
           const p = (data as { preview?: RefundPreview }).preview ?? data;
           if (p && typeof p === 'object' && 'refundAmount' in p) {
@@ -167,7 +190,7 @@ export function SubscriptionRefundsWorkspace() {
       })();
     }, 300);
     return () => window.clearTimeout(timer);
-  }, [selectedSubId, stopDate]);
+  }, [selectedSubId, stopDate, refundBranchId]);
 
   const submitRefund = async () => {
     if (!selectedSubId || !stopDate) {
@@ -190,6 +213,7 @@ export function SubscriptionRefundsWorkspace() {
         async () => {
           const { data } = await api.post('/club-subscription-refunds?dryRun=true', {
             subscriptionId: selectedSubId,
+            branchId: refundBranchId,
             stopDate,
             reason: reason || undefined,
             notes: notes || undefined,
@@ -214,6 +238,7 @@ export function SubscriptionRefundsWorkspace() {
         async () => {
           await api.post('/club-subscription-refunds', {
             subscriptionId: selectedSubId,
+            branchId: refundBranchId,
             stopDate,
             reason: reason || undefined,
             notes: notes || undefined,
@@ -243,12 +268,13 @@ export function SubscriptionRefundsWorkspace() {
         <Label className="mb-2 block">{ct('subscriptions.refundSearchLabel')}</Label>
         <div className="flex flex-wrap gap-2">
           <Input
+            ref={searchInputRef}
             className="max-w-md"
             placeholder={ct('subscriptions.refundSearchPlaceholder')}
             value={query}
             onChange={(e) => {
-              setQuery(e.target.value);
               if (selectedMemberId != null) resetMember();
+              setQuery(e.target.value);
             }}
             onKeyDown={(e) => e.key === 'Enter' && void runSearch()}
           />
@@ -262,7 +288,7 @@ export function SubscriptionRefundsWorkspace() {
           )}
         </div>
         {!selectedMemberId && (searchResult?.hits?.length ?? 0) > 0 && (
-          <ul className="mt-3 space-y-1 rounded-lg border bg-muted/20 p-2">
+          <ul className="mt-3 max-h-80 space-y-1 overflow-y-auto rounded-lg border bg-muted/20 p-2">
             {searchResult!.hits.map((hit) => (
               <li key={hit.id}>
                 <button
@@ -306,6 +332,7 @@ export function SubscriptionRefundsWorkspace() {
                   >
                     <div className="space-y-1">
                       <p className="font-medium">{s.subscriptionType ?? '—'}</p>
+                      <p className="text-xs text-muted-foreground nums">{s.subscriptionNumber}</p>
                       <p className="text-sm text-muted-foreground nums">
                         {ct('subscriptions.paid')}: {formatMoney(s.paidAmount)} · {ct('subscriptions.remaining')}:{' '}
                         {formatMoney(s.remainingAmount)}
@@ -334,6 +361,11 @@ export function SubscriptionRefundsWorkspace() {
             <div className="rounded-xl border bg-card p-4 space-y-4">
               <h3 className="font-medium">{ct('subscriptions.refundCancelForm')}</h3>
               <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-2 sm:col-span-2">
+                  <Label>{ui('فرع صرف المرتجع')}</Label>
+                  {superAdmin ? <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={refundBranchId ?? ''} onChange={e => setPayoutBranch(e.target.value)}>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name || `#${branch.id}`}</option>)}</select> : <p className="rounded-lg border bg-muted/30 p-3 text-sm font-semibold">{branches.find(branch => branch.id === refundBranchId)?.name ?? `#${refundBranchId}`}</p>}
+                  <p className="text-xs text-muted-foreground">{ui('يخصم المبلغ من خزنة هذا الفرع ويظهر في تقفيله اليومي.')}</p>
+                </div>
                 <div className="grid gap-2">
                   <Label>{ct('subscriptions.refundStopDate')}</Label>
                   <Input type="date" value={stopDate} onChange={(e) => setStopDate(e.target.value)} />
@@ -417,42 +449,12 @@ export function SubscriptionRefundsWorkspace() {
         </div>
       )}
 
-      <div className="space-y-3">
-        <h3 className="font-medium">{ct('subscriptions.refundHistory')}</h3>
-        <div className="overflow-x-auto rounded-xl border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50">
-              <tr>
-                <th className="p-3 text-start">{ct('subscriptions.receiptNumber')}</th>
-                <th className="p-3 text-start">{ct('common.customer')}</th>
-                <th className="p-3 text-start">{ct('subscriptions.refundAmount')}</th>
-                <th className="p-3 text-start">{ct('subscriptions.refundDate')}</th>
-                <th className="p-3 text-start">{ct('common.status')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(refunds ?? []).length === 0 && (
-                <tr>
-                  <td colSpan={5} className="p-6 text-center text-muted-foreground">
-                    {ct('common.noData')}
-                  </td>
-                </tr>
-              )}
-              {(refunds ?? []).map((r) => (
-                <tr key={r.id} className="border-t">
-                  <td className="p-3 nums">{r.invoiceNumber}</td>
-                  <td className="p-3">{r.customerName ?? '—'}</td>
-                  <td className="p-3 nums">{formatMoney(r.refundAmount)}</td>
-                  <td className="p-3 nums">{toArabicDigits(r.refundDate)}</td>
-                  <td className="p-3">
-                    <StatusBadge status={r.status === 'completed' ? 'active' : 'pending'} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <SubscriptionRefundHistory refunds={refunds ?? []} onChanged={async () => {
+        await refetchRefunds();
+        if (selectedMemberId != null) await refetchSubs();
+        void qc.invalidateQueries({ queryKey: ['club-subscriptions'] });
+        void qc.invalidateQueries({ queryKey: ['club-subscription-refunds'] });
+      }} />
     </div>
   );
 }
@@ -461,7 +463,7 @@ export function ClubSubscriptionRefundsPage() {
   const ct = useClubT();
   return (
     <div className="space-y-6">
-      <PageHeader title={ct('subscriptions.tabRefunds')} description={ct('subscriptions.refundsPageDesc')} />
+      <PageHeader title="عمل مرتجع اشتراك" description={ct('subscriptions.refundsPageDesc')} />
       <SubscriptionRefundsWorkspace />
     </div>
   );

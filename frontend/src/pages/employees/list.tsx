@@ -39,7 +39,16 @@ export function EmployeesListPage() {
   const { data, isLoading, isError, error, refetch } = usePaginatedList<EmployeeListItem>('employees', params);
 
   const filters: FilterField[] = [
-    { key: 'emp_type', label: ui('النوع'), type: 'select', options: [{ value: '1', label: ui('رجالى') }, { value: '2', label: ui('حريمى') }] },
+    {
+      key: 'emp_type',
+      label: ui('النوع'),
+      type: 'select',
+      options: [
+        { value: '1', label: ui('رجالى') },
+        { value: '2', label: ui('حريمى') },
+        { value: '3', label: ui('الكل') },
+      ],
+    },
   ];
   const selectedStatus = params.filters.status;
   const pageTitle = ui('قائمة الموظفين');

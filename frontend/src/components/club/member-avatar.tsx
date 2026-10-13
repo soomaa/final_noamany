@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 export interface MemberAvatarProps {
   name?: string | null;
   profilePicture?: string | null;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
   className?: string;
 }
 
@@ -12,6 +12,7 @@ const sizeCls = {
   sm: 'size-8 text-xs',
   md: 'size-10 text-sm',
   lg: 'size-20 text-2xl',
+  xl: 'size-32 text-3xl sm:size-36',
 };
 
 export function memberInitials(name?: string | null): string {

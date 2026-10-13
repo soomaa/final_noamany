@@ -100,6 +100,33 @@ describe('ClubSubscriptionTransfersService.transferToMember', () => {
     member: undefined,
     type: undefined,
   };
+  const exhaustedSource = {
+    ...source,
+    subscription_end_date: addDays(today, -1),
+    transferred_out_amount: 210,
+    status: 'expired',
+  };
+  const existingTransfer = {
+    id: 55,
+    source_subscription_id: 100,
+    destination_subscription_id: 101,
+    source_member_id: 10,
+    destination_member_id: 20,
+    source_branch_id: 6,
+    destination_branch_id: 6,
+    entitlement_kind: 'days',
+    remaining_days: 21,
+    remaining_sessions: null,
+    transferred_value: 210,
+    effective_date: today,
+    reason: 'طلب العضو',
+    created_by: 7,
+    before_json: { endDate: source.subscription_end_date, sessionsUsed: 0 },
+    after_json: { memberId: 20, endDate: createdDestination.subscription_end_date },
+    source_subscription: exhaustedSource,
+    destination_subscription: createdDestination,
+    source_member: sourceMember,
+  };
   const tx = {
     $queryRaw: jest.fn(),
     club_subscriptions: {
@@ -107,9 +134,25 @@ describe('ClubSubscriptionTransfersService.transferToMember', () => {
       findMany: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn(),
     },
     club_members: { findUnique: jest.fn() },
-    club_member_subscription_transfers: { create: jest.fn() },
+    club_member_subscription_transfers: { create: jest.fn(), findUnique: jest.fn(), update: jest.fn(), delete: jest.fn(), count: jest.fn() },
+    club_attendance: { count: jest.fn() },
+    club_receipts: { count: jest.fn() },
+    club_subscription_refunds: { count: jest.fn() },
+    club_subscription_freezes: { count: jest.fn() },
+    club_subscription_waivers: { count: jest.fn() },
+    club_subscription_transfers: { count: jest.fn() },
+    club_inbody_invoices: { count: jest.fn() },
+    club_spa_invoices: { count: jest.fn() },
+    club_spa_attendance: { count: jest.fn() },
+    club_class_enrollments: { count: jest.fn() },
+    club_member_point_transactions: { count: jest.fn() },
+    cs_feedbacks: { count: jest.fn() },
+    staff_tasks: { count: jest.fn() },
+    club_customer_service_interactions: { count: jest.fn() },
     business_audit_log: { create: jest.fn() },
   };
   const prisma = {
@@ -123,22 +166,31 @@ describe('ClubSubscriptionTransfersService.transferToMember', () => {
     allowedBranchIds: jest.fn().mockReturnValue(null),
   };
   const user = { sub: 7, level: 1, branch: 0 } as JwtUser;
+  const branchGroups = { siblingBranchIds: jest.fn().mockImplementation(async (id: number) => [id]) };
   const service = new ClubSubscriptionTransfersService(
     prisma as unknown as PrismaService,
     receipts as unknown as ClubReceiptsService,
     { postJournal: jest.fn() } as unknown as import('./club-subscription-accounting.service').ClubSubscriptionAccountingService,
     audit as unknown as BusinessAuditService,
     branchScope as unknown as BranchScopeService,
+    branchGroups,
   );
 
   beforeEach(() => {
     jest.clearAllMocks();
     branchScope.isBranchAllowed.mockReturnValue(true);
+    branchScope.allowedBranchIds.mockReturnValue(null);
+    branchGroups.siblingBranchIds.mockImplementation(async (id: number) => [id]);
     prisma.$transaction.mockImplementation(async (fn: (client: typeof tx) => unknown) => fn(tx));
     tx.club_subscriptions.findUnique.mockResolvedValue(source);
     tx.club_subscriptions.findMany.mockResolvedValue([]);
     tx.club_members.findUnique.mockResolvedValue(destinationMember);
     tx.club_subscriptions.create.mockResolvedValue(createdDestination);
+    tx.club_member_subscription_transfers.findUnique.mockResolvedValue(existingTransfer);
+    tx.club_member_subscription_transfers.update.mockResolvedValue(existingTransfer);
+    for (const value of Object.values(tx)) {
+      if (value && typeof value === 'object' && 'count' in value) value.count.mockResolvedValue(0);
+    }
     tx.club_member_subscription_transfers.create.mockImplementation(async ({ data }: any) => ({
       id: 55,
       ...data,
@@ -207,13 +259,33 @@ describe('ClubSubscriptionTransfersService.transferToMember', () => {
     expect(tx.club_member_subscription_transfers.create).not.toHaveBeenCalled();
   });
 
-  it('rejects cross-branch transfers', async () => {
+  it('moves the subscription to the destination member branch', async () => {
     tx.club_members.findUnique.mockResolvedValue({ ...destinationMember, branch_id: 7 });
+
+    await service.transferToMember(
+      { sourceSubscriptionId: 100, destinationMemberId: 20, reason: 'طلب العضو' },
+      user,
+    );
+
+    expect(tx.club_subscriptions.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ branch_id: 7, member_id: 20 }),
+    });
+    expect(tx.club_member_subscription_transfers.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ source_branch_id: 6, destination_branch_id: 7 }),
+      include: expect.any(Object),
+    });
+  });
+
+  it('requires access to the destination branch', async () => {
+    tx.club_members.findUnique.mockResolvedValue({ ...destinationMember, branch_id: 7 });
+    branchScope.isBranchAllowed.mockImplementation((_user: JwtUser, branchId: number) => branchId === 6);
+    branchScope.allowedBranchIds.mockReturnValue([6]);
 
     await expect(service.transferToMember(
       { sourceSubscriptionId: 100, destinationMemberId: 20, reason: 'طلب العضو' },
       user,
-    )).rejects.toThrow('التحويل بين الأعضاء مسموح داخل نفس الفرع فقط');
+    )).rejects.toThrow('لا تملك صلاحية الوصول لهذا الفرع');
+    expect(tx.club_subscriptions.create).not.toHaveBeenCalled();
   });
 
   it('rejects creating a duplicate live entitlement for the destination member', async () => {
@@ -232,5 +304,59 @@ describe('ClubSubscriptionTransfersService.transferToMember', () => {
     )).rejects.toThrow('العضو المستلم لديه بالفعل نفس الاشتراك');
 
     expect(tx.club_subscriptions.create).not.toHaveBeenCalled();
+  });
+
+  it('allows reception to transfer to a sibling branch while retaining each subscription branch', async () => {
+    branchScope.isBranchAllowed.mockImplementation((_user: JwtUser, branchId: number) => branchId === 6);
+    branchScope.allowedBranchIds.mockReturnValue([6]);
+    branchGroups.siblingBranchIds.mockResolvedValue([6, 7]);
+    tx.club_members.findUnique.mockResolvedValue({ ...destinationMember, branch_id: 7 });
+    await service.transferToMember({ sourceSubscriptionId: 100, destinationMemberId: 20, reason: 'طلب العضو' }, { ...user, level: 2, branch: 6 });
+    expect(tx.club_subscriptions.create).toHaveBeenCalledWith({ data: expect.objectContaining({ branch_id: 7 }) });
+    expect(tx.club_member_subscription_transfers.create).toHaveBeenCalledWith({ data: expect.objectContaining({ source_branch_id: 6, destination_branch_id: 7 }), include: expect.anything() });
+  });
+
+  it('updates the recipient and reason before the destination entitlement is used', async () => {
+    tx.club_members.findUnique.mockResolvedValue({ ...destinationMember, id: 30, name: 'New recipient', branch_id: 7 });
+
+    await service.updateMemberTransfer(55, { destinationMemberId: 30, reason: 'تصحيح اسم المستلم' }, user);
+
+    expect(tx.club_subscriptions.update).toHaveBeenCalledWith({
+      where: { id: 101 },
+      data: expect.objectContaining({ member_id: 30, branch_id: 7, customer_name: 'New recipient' }),
+    });
+    expect(tx.club_member_subscription_transfers.update).toHaveBeenCalledWith({
+      where: { id: 55 },
+      data: expect.objectContaining({ destination_member_id: 30, destination_branch_id: 7, reason: 'تصحيح اسم المستلم' }),
+    });
+  });
+
+  it('keeps the recipient unchanged when only the reason is edited', async () => {
+    await service.updateMemberTransfer(55, { destinationMemberId: 20, reason: 'سبب مُصحَّح' }, user);
+
+    expect(tx.club_subscriptions.update).not.toHaveBeenCalled();
+    expect(tx.club_member_subscription_transfers.update).toHaveBeenCalledWith({ where: { id: 55 }, data: { reason: 'سبب مُصحَّح' } });
+    expect(tx.business_audit_log.create).toHaveBeenCalled();
+  });
+
+  it('reverses an unused transfer when deleted', async () => {
+    await service.deleteMemberTransfer(55, user);
+
+    expect(tx.club_member_subscription_transfers.delete).toHaveBeenCalledWith({ where: { id: 55 } });
+    expect(tx.club_subscriptions.delete).toHaveBeenCalledWith({ where: { id: 101 } });
+    expect(tx.club_subscriptions.update).toHaveBeenCalledWith({
+      where: { id: 100 },
+      data: expect.objectContaining({ subscription_end_date: source.subscription_end_date, sessions_used: 0, transferred_out_amount: 0, status: 'active' }),
+    });
+  });
+
+  it('blocks recipient changes and deletion once the destination subscription was used', async () => {
+    tx.club_attendance.count.mockResolvedValue(1);
+    tx.club_members.findUnique.mockResolvedValue({ ...destinationMember, id: 30, branch_id: 7 });
+
+    await expect(service.updateMemberTransfer(55, { destinationMemberId: 30, reason: 'تصحيح المستلم' }, user)).rejects.toThrow('لا يمكن تغيير أو حذف التحويل');
+    await expect(service.deleteMemberTransfer(55, user)).rejects.toThrow('لا يمكن تغيير أو حذف التحويل');
+    expect(tx.club_subscriptions.delete).not.toHaveBeenCalled();
+    expect(tx.club_subscriptions.update).not.toHaveBeenCalled();
   });
 });

@@ -91,7 +91,6 @@ describe('ProductsService quantity alerts', () => {
       manufacturer: null,
       supplier: null,
       unit_template: null,
-      packages: [],
     };
     const prisma = {
       inv_products: {

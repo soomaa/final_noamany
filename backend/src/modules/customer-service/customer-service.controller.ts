@@ -1,24 +1,22 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Put, Query, UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { JwtUser } from '../../common/types/jwt-user';
-import { CustomerRosterQuery, CustomerServiceService, FollowUpQuery } from './customer-service.service';
+import { CustomerServiceService } from './customer-service.service';
+import { CreateCustomerServiceFeedbackDto, CustomerServiceListDto, UpsertCustomerServiceQuestionDto } from './dto/customer-service.dto';
 
 @UseGuards(JwtAuthGuard)
-@Controller('club/customer-service')
-@RequiresPermission('club.customer_service:view')
+@Controller('customer-service')
 export class CustomerServiceController {
   constructor(private readonly service: CustomerServiceService) {}
-  @Get('customers') customers(@Query() query: CustomerRosterQuery, @CurrentUser() user: JwtUser) { return this.service.listCustomers(query, user); }
-  @Get('follow-ups') list(@Query() query: FollowUpQuery, @CurrentUser() user: JwtUser) { return this.service.listFollowUps(query, user); }
-  @Get('follow-ups/:id') detail(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) { return this.service.getInteraction(id, user); }
-  @Get('opinions') opinions(@Query() query: FollowUpQuery, @CurrentUser() user: JwtUser) { return this.service.listOpinions(query, user); }
-  @Get('questions') questions(@Query() query: { branchId?: number; includeInactive?: boolean }, @CurrentUser() user: JwtUser) { return this.service.listQuestions(query, user); }
-  @Post('follow-ups') @RequiresPermission('club.customer_service:create')
-  create(@Body() body: Parameters<CustomerServiceService['createInteraction']>[0], @CurrentUser() user: JwtUser) { return this.service.createInteraction(body, user.sub, user); }
-  @Post('questions') @RequiresPermission('club.customer_service:update')
-  question(@Body() body: { title: string; branchId?: number }, @CurrentUser() user: JwtUser) { return this.service.createQuestion(body, user.sub, user); }
-  @Patch('questions/:id') @RequiresPermission('club.customer_service:update')
-  versionQuestion(@Param('id', ParseIntPipe) id: number, @Body('title') title: string, @CurrentUser() user: JwtUser) { return this.service.versionQuestion(id, title, user.sub, user); }
+  @Get('questions') @RequiresPermission('customer-service.questions:view') listQuestions() { return this.service.listQuestions(); }
+  @Post('questions') @RequiresPermission('customer-service.questions:create') createQuestion(@Body() dto: UpsertCustomerServiceQuestionDto) { return this.service.createQuestion(dto); }
+  @Put('questions/:id') @RequiresPermission('customer-service.questions:update') updateQuestion(@Param('id', ParseIntPipe) id: number, @Body() dto: UpsertCustomerServiceQuestionDto) { return this.service.updateQuestion(id, dto); }
+  @Delete('questions/:id') @RequiresPermission('customer-service.questions:delete') removeQuestion(@Param('id', ParseIntPipe) id: number) { return this.service.removeQuestion(id); }
+  @Get('branches') @RequiresPermission('customer-service.feedback:view') branches() { return this.service.branches(); }
+  @Get('subscriptions') @RequiresPermission('customer-service.feedback:view') subscriptions(@Query() query: CustomerServiceListDto) { return this.service.listSubscriptions(query); }
+  @Get('reports') @RequiresPermission('customer-service.reports:view') reports(@Query() query: CustomerServiceListDto) { return this.service.listSubscriptions(query); }
+  @Post('feedback') @RequiresPermission('customer-service.feedback:create') createFeedback(@Body() dto: CreateCustomerServiceFeedbackDto, @CurrentUser() user: JwtUser) { return this.service.createFeedback(dto, user); }
+  @Get('feedback/:id') @RequiresPermission('customer-service.feedback:view') feedbackDetails(@Param('id', ParseIntPipe) id: number) { return this.service.feedbackDetails(id); }
 }

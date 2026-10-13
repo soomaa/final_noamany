@@ -1,14 +1,12 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { ClubGender, Prisma } from '@prisma/client';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { assertDateOrder } from '../../common/validators';
-import { assertSystemAdmin } from '../../common/utils/system-admin.util';
 import { localDateString } from '../club-members/club-member.utils';
 import { expandClubReportBranchIds } from '../club-members/club-branch-groups';
 import { toNum } from './club-subscription.utils';
-import { receiptBusinessBranchWhere, receiptMemberAudienceWhere } from './receipt-business-scope';
 
 export interface SubscriptionReportQuery {
   startDate?: string;
@@ -27,20 +25,6 @@ export interface SubscriptionReportQuery {
   source?: string;
 }
 
-export interface DailyCloseQuery {
-  date?: string;
-  branch?: string;
-  gender?: string;
-}
-
-export interface DailyCloseInput {
-  declaredAmount?: number;
-  reason?: string;
-}
-
-type DailyCloseAction = 'review' | 'close' | 'reopen';
-type DailyCloseState = 'open' | 'reviewed' | 'closed';
-
 type DetailDimension = 'payment' | 'sales' | 'user' | 'status' | 'source' | 'subscriptionType';
 
 type ServiceInvoiceReportRow = {
@@ -50,7 +34,14 @@ type ServiceInvoiceReportRow = {
 };
 
 function missingOptionalTable(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021';
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021') {
+    return true;
+  }
+  // Split receipt payments are an optional enhancement for existing installations.
+  // If an older generated client lacks either relation, fall back to the receipt
+  // header's payment method instead of failing the whole subscriptions report.
+  return error instanceof Prisma.PrismaClientValidationError &&
+    /Unknown (?:argument|field) `(?:receipt|payments)`/.test(error.message);
 }
 
 /** Club payment methods that SPA/InBody (SalesPaymentMethod) cannot store as-is. */
@@ -106,27 +97,13 @@ export class SubscriptionReportsService {
     return expandClubReportBranchIds(branchIds);
   }
 
-  private reportAudience(q: SubscriptionReportQuery, user?: JwtUser): 'male' | 'female' | null {
-    return this.branchScope.memberGenderFilter(user) ??
-      (q.gender === 'male' || q.gender === 'female' ? q.gender : null);
-  }
-
-  private async audienceMemberIds(
-    q: SubscriptionReportQuery,
-    user: JwtUser | undefined,
-    branchIds: number[] | null,
-  ): Promise<number[] | null> {
-    const audience = this.reportAudience(q, user);
-    if (!audience) return null;
-    const rows = await this.prisma.club_members.findMany({
-      where: {
-        is_deleted: false,
-        gender: audience,
-        ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-      },
-      select: { id: true },
-    });
-    return rows.map((row) => row.id);
+  private categoryFilter(gender: ClubGender): Prisma.club_subscriptionsWhereInput {
+    return {
+      OR: [
+        { gender },
+        { gender: null, member: { is: { gender } } },
+      ],
+    };
   }
 
   private subscriptionWhere(
@@ -144,12 +121,9 @@ export class SubscriptionReportsService {
     if (q.subscriptionTypeId && q.subscriptionTypeId !== 'all') {
       and.push({ subscription_type_id: Number(q.subscriptionTypeId) });
     }
-    // A member audience is security scope. A URL filter may narrow an unrestricted
-    // report, but must never broaden a men's/women's scoped token.
-    const audience = this.reportAudience(q, user);
-    if (audience) {
-      and.push({ member: { is: { is_deleted: false, gender: audience } } });
-    }
+    const audienceGender = this.branchScope.memberGenderFilter(user);
+    if (audienceGender) and.push(this.categoryFilter(audienceGender));
+    else if (q.gender === 'male' || q.gender === 'female') and.push(this.categoryFilter(q.gender as ClubGender));
     if (q.salesId && q.salesId !== 'all') and.push({ member: { sales_id: Number(q.salesId) } });
     if (q.userId && q.userId !== 'all') and.push({ created_by: Number(q.userId) });
     if (q.customerSourceId && q.customerSourceId !== 'all') {
@@ -192,19 +166,19 @@ export class SubscriptionReportsService {
   private receiptWhere(q: SubscriptionReportQuery, user?: JwtUser): Prisma.club_receiptsWhereInput {
     const { startDate, endDate } = this.period(q);
     const branchIds = this.branchIds(q, user);
-    const and: Prisma.club_receiptsWhereInput[] = [];
-    if (branchIds !== null) {
-      and.push(receiptBusinessBranchWhere(branchIds));
-    }
-    const audience = this.reportAudience(q, user);
-    if (audience) {
-      and.push(receiptMemberAudienceWhere(audience));
-    }
     return {
       receipt_date: { gte: startDate, lte: endDate },
       status: { in: ['مدفوعة', 'paid'] },
       ...(q.userId && q.userId !== 'all' ? { created_by: Number(q.userId) } : {}),
-      ...(and.length ? { AND: and } : {}),
+      ...(branchIds !== null
+        ? {
+            OR: [
+              { branch_id: { in: branchIds } },
+              { subscription: { branch_id: { in: branchIds } } },
+              { member: { branch_id: { in: branchIds } } },
+            ],
+          }
+        : {}),
     };
   }
 
@@ -222,8 +196,6 @@ export class SubscriptionReportsService {
     nextWeek.setDate(nextWeek.getDate() + 7);
     const nextWeekDate = nextWeek.toISOString().slice(0, 10);
 
-    const audience = this.reportAudience(q, user);
-    const scopedMemberIds = await this.audienceMemberIds(q, user, branchIds);
     const [
       subscriptions,
       newMembersBySales,
@@ -270,7 +242,7 @@ export class SubscriptionReportsService {
           },
           ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
           ...(q.salesId && q.salesId !== 'all' ? { sales_id: Number(q.salesId) } : {}),
-          ...(audience ? { gender: audience } : q.gender === 'male' || q.gender === 'female' ? { gender: q.gender } : {}),
+          ...(q.gender === 'male' || q.gender === 'female' ? { gender: q.gender } : {}),
         },
         _count: { _all: true },
       }),
@@ -331,7 +303,6 @@ export class SubscriptionReportsService {
                 status: 'paid',
                 invoice_date: { gte: startDate, lte: endDate },
                 ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-                ...(scopedMemberIds !== null ? { member_id: { in: scopedMemberIds } } : {}),
                 ...(salesPaymentMethod != null ? { payment_method: salesPaymentMethod } : {}),
               },
               select: { invoice_date: true, total_amount: true, payment_method: true },
@@ -351,7 +322,6 @@ export class SubscriptionReportsService {
                 status: 'paid',
                 invoice_date: { gte: startDate, lte: endDate },
                 ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-                ...(scopedMemberIds !== null ? { member_id: { in: scopedMemberIds } } : {}),
                 ...(salesPaymentMethod != null ? { payment_method: salesPaymentMethod } : {}),
               },
               select: { invoice_date: true, total_amount: true, payment_method: true },
@@ -366,7 +336,6 @@ export class SubscriptionReportsService {
         where: {
           subscription_start_date: { gte: startDate, lte: endDate },
           ...(branchIds !== null ? { main_branch_id: { in: branchIds } } : {}),
-          ...(audience ? { member: { is: { is_deleted: false, gender: audience } } } : {}),
           ...(q.paymentMethod && q.paymentMethod !== 'all'
             ? { payment_method: q.paymentMethod as never }
             : {}),
@@ -377,12 +346,7 @@ export class SubscriptionReportsService {
         where: {
           status: 'completed',
           refund_date: { gte: startDate, lte: endDate },
-          subscription: {
-            ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-            ...(audience
-              ? { member: { is: { is_deleted: false, gender: audience } } }
-              : {}),
-          },
+          ...(branchIds !== null ? { subscription: { branch_id: { in: branchIds } } } : {}),
         },
         _sum: { refund_amount: true },
         _count: true,
@@ -390,12 +354,7 @@ export class SubscriptionReportsService {
       this.prisma.club_subscription_waivers.aggregate({
         where: {
           waiver_date: { gte: startDate, lte: endDate },
-          subscription: {
-            ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-            ...(audience
-              ? { member: { is: { is_deleted: false, gender: audience } } }
-              : {}),
-          },
+          ...(branchIds !== null ? { subscription: { branch_id: { in: branchIds } } } : {}),
         },
         _sum: { amount: true },
         _count: true,
@@ -638,256 +597,6 @@ export class SubscriptionReportsService {
     };
   }
 
-  /** Legacy monthly revenue - expenses = net-profit analysis, with server-owned scope. */
-  async monthlyAnalysis(q: SubscriptionReportQuery, user?: JwtUser) {
-    const { startDate, endDate } = this.period(q);
-    const branchIds = this.branchIds(q, user);
-    const audience = this.reportAudience(q, user);
-    const scopedMemberIds = await this.audienceMemberIds(q, user, branchIds);
-    const createdAt = {
-      gte: new Date(`${startDate}T00:00:00`),
-      lte: new Date(`${endDate}T23:59:59.999`),
-    };
-    const [subscriptions, lockers, sales, refunds, purchases, expenseVouchers] = await Promise.all([
-      this.prisma.club_subscriptions.aggregate({
-        where: this.subscriptionWhere(q, user),
-        _sum: { paid_amount: true },
-      }),
-      this.prisma.club_locker_subscriptions.aggregate({
-        where: {
-          subscription_start_date: { gte: startDate, lte: endDate },
-          ...(branchIds !== null ? { main_branch_id: { in: branchIds } } : {}),
-          ...(audience ? { member: { is: { is_deleted: false, gender: audience } } } : {}),
-        },
-        _sum: { paid_amount: true },
-      }),
-      this.prisma.sales_quick_sales.aggregate({
-        where: {
-          sale_date: { gte: startDate, lte: endDate },
-          status: 'completed',
-          ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-          // A scoped token must not receive anonymous or opposite-section sales.
-          ...(scopedMemberIds !== null ? { customer_member_id: { in: scopedMemberIds } } : {}),
-        },
-        _sum: { collected_amount: true },
-      }),
-      this.prisma.club_subscription_refunds.aggregate({
-        where: {
-          status: 'completed',
-          refund_date: { gte: startDate, lte: endDate },
-          subscription: {
-            ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-            ...(audience
-              ? { member: { is: { is_deleted: false, gender: audience } } }
-              : {}),
-          },
-        },
-        _sum: { refund_amount: true },
-      }),
-      this.prisma.prc_purchase_orders.aggregate({
-        where: {
-          is_deleted: false,
-          created_at: createdAt,
-          status: { notIn: ['cancelled', 'ملغي'] },
-          ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-        },
-        _sum: { total_amount: true },
-      }),
-      this.prisma.fin_expenses.aggregate({
-        where: {
-          is_deleted: false,
-          expense_date: { gte: startDate, lte: endDate },
-          ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-        },
-        _sum: { total_amount: true },
-      }),
-    ]);
-
-    const subscriptionAmount = toNum(subscriptions._sum.paid_amount);
-    const lockerAmount = toNum(lockers._sum.paid_amount);
-    const salesAmount = toNum(sales._sum.collected_amount);
-    const refundAmount = toNum(refunds._sum.refund_amount);
-    const purchasesAmount = toNum(purchases._sum.total_amount);
-    const expenseAmount = toNum(expenseVouchers._sum.total_amount);
-    const totalRevenue = subscriptionAmount + lockerAmount + salesAmount;
-    const totalExpenses = refundAmount + purchasesAmount + expenseAmount;
-
-    return {
-      period: { startDate, endDate },
-      scope: {
-        branchIds,
-        audience,
-        // Current expense and purchase ledgers are branch-owned, not member-gender-owned.
-        sharedBranchExpenses: audience != null,
-      },
-      revenues: [
-        { key: 'subscriptions', label: 'الاشتراكات', amount: subscriptionAmount },
-        { key: 'lockers', label: 'اللوكر', amount: lockerAmount },
-        { key: 'sales', label: 'المبيعات', amount: salesAmount },
-        { key: 'total_revenue', label: 'اجمالى الايراد', amount: totalRevenue },
-      ],
-      expenses: [
-        { key: 'subscription_refunds', label: 'مرتجع الاشتراكات', amount: refundAmount },
-        { key: 'purchases', label: 'المشتريات', amount: purchasesAmount },
-        { key: 'expense_vouchers', label: 'سندات الصرف', amount: expenseAmount },
-        { key: 'total_expenses', label: 'اجمالى المصروفات', amount: totalExpenses },
-      ],
-      netProfit: { label: 'صافى الربح', amount: totalRevenue - totalExpenses },
-    };
-  }
-
-  private dailyCloseContext(q: DailyCloseQuery, user: JwtUser) {
-    const date = q.date || localDateString();
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-      throw new BadRequestException('تاريخ الإقفال غير صالح');
-    }
-    const branchIds = this.branchScope.resolveListFilter(user, q.branch ?? null);
-    if (!branchIds || branchIds.length !== 1) {
-      throw new BadRequestException('اختر فرعًا واحدًا لإقفال اليوم');
-    }
-    const audience = this.reportAudience({ gender: q.gender }, user);
-    const branchId = branchIds[0];
-    return {
-      date,
-      branchId,
-      audience,
-      entityId: `${date}:${branchId}:${audience ?? 'all'}`,
-    };
-  }
-
-  private dailyCloseState(action?: string | null): DailyCloseState {
-    if (action === 'daily_close_review') return 'reviewed';
-    if (action === 'daily_close_close') return 'closed';
-    return 'open';
-  }
-
-  private async dailyCloseSnapshot(
-    q: DailyCloseQuery,
-    user: JwtUser,
-    client: PrismaService | Prisma.TransactionClient = this.prisma,
-  ) {
-    const context = this.dailyCloseContext(q, user);
-    const reportQuery: SubscriptionReportQuery = {
-      startDate: context.date,
-      endDate: context.date,
-      branch: String(context.branchId),
-      ...(context.audience ? { gender: context.audience } : {}),
-    };
-    const [subscriptions, receipts] = await Promise.all([
-      client.club_subscriptions.aggregate({
-        where: this.subscriptionWhere(reportQuery, user),
-        _count: true,
-        _sum: { subscription_value: true, paid_amount: true, remaining_amount: true },
-      }),
-      client.club_receipts.aggregate({
-        where: this.receiptWhere(reportQuery, user),
-        _count: true,
-        _sum: { amount: true },
-      }),
-    ]);
-    return {
-      subscriptionsCount: subscriptions._count,
-      contractsValue: toNum(subscriptions._sum.subscription_value),
-      subscriptionPaid: toNum(subscriptions._sum.paid_amount),
-      remainingAmount: toNum(subscriptions._sum.remaining_amount),
-      receiptsCount: receipts._count,
-      expectedAmount: toNum(receipts._sum.amount),
-    };
-  }
-
-  async dailyClose(q: DailyCloseQuery, user: JwtUser) {
-    const context = this.dailyCloseContext(q, user);
-    const [latest, history, summary] = await Promise.all([
-      this.prisma.business_audit_log.findFirst({
-        where: { entity_type: 'club_subscription_daily_close', entity_id: context.entityId },
-        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-      }),
-      this.prisma.business_audit_log.findMany({
-        where: { entity_type: 'club_subscription_daily_close', entity_id: context.entityId },
-        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-      }),
-      this.dailyCloseSnapshot(q, user),
-    ]);
-    return {
-      ...context,
-      state: this.dailyCloseState(latest?.action),
-      summary,
-      latest: latest ?? null,
-      history,
-    };
-  }
-
-  async transitionDailyClose(
-    action: DailyCloseAction,
-    q: DailyCloseQuery,
-    input: DailyCloseInput,
-    user: JwtUser,
-  ) {
-    assertSystemAdmin(user);
-    const context = this.dailyCloseContext(q, user);
-    const reason = input.reason?.trim() || null;
-    if (action === 'reopen' && !reason) {
-      throw new BadRequestException('سبب إعادة فتح اليوم مطلوب');
-    }
-    const declaredAmount = Number(input.declaredAmount);
-    if (action !== 'reopen' && (!Number.isFinite(declaredAmount) || declaredAmount < 0)) {
-      throw new BadRequestException('المبلغ الفعلي للخزينة غير صالح');
-    }
-
-    return this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT GET_LOCK(${`club_daily_close_${context.entityId}`}, 10)`;
-      try {
-        const latest = await tx.business_audit_log.findFirst({
-          where: { entity_type: 'club_subscription_daily_close', entity_id: context.entityId },
-          orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-        });
-        const beforeState = this.dailyCloseState(latest?.action);
-        if (action === 'review' && beforeState !== 'open') {
-          throw new BadRequestException('لا يمكن مراجعة يوم سبق إقفاله أو مراجعته');
-        }
-        if (action === 'close' && beforeState !== 'reviewed') {
-          throw new BadRequestException('يجب مراجعة اليوم قبل الإقفال');
-        }
-        if (action === 'reopen' && beforeState !== 'closed') {
-          throw new BadRequestException('اليوم غير مقفل');
-        }
-        const state: DailyCloseState = action === 'review' ? 'reviewed' : action === 'close' ? 'closed' : 'open';
-        const summary = await this.dailyCloseSnapshot(q, user, tx);
-        const previous = (latest?.after_json ?? null) as Record<string, unknown> | null;
-        const effectiveDeclared = action === 'reopen'
-          ? Number(previous?.declaredAmount ?? summary.expectedAmount)
-          : declaredAmount;
-        const after = {
-          state,
-          date: context.date,
-          branchId: context.branchId,
-          audience: context.audience,
-          expectedAmount: summary.expectedAmount,
-          declaredAmount: effectiveDeclared,
-          variance: effectiveDeclared - summary.expectedAmount,
-          summary,
-        };
-        const event = await tx.business_audit_log.create({
-          data: {
-            entity_type: 'club_subscription_daily_close',
-            entity_id: context.entityId,
-            action: `daily_close_${action}`,
-            actor_user_id: user.sub,
-            actor_name: user.name ?? null,
-            branch_id: context.branchId,
-            before_json: previous as Prisma.InputJsonValue | undefined,
-            after_json: after,
-            changed_fields: ['state', 'declaredAmount', 'variance'],
-            reason,
-          },
-        });
-        return { ...context, state, summary, event, reconciliation: after };
-      } finally {
-        await tx.$queryRaw`SELECT RELEASE_LOCK(${`club_daily_close_${context.entityId}`})`;
-      }
-    });
-  }
-
   async details(
     dimension: DetailDimension,
     key: string,
@@ -916,7 +625,6 @@ export class SubscriptionReportsService {
           lte: new Date(`${endDate}T23:59:59.999`),
         },
         ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-        ...(this.reportAudience(q, user) ? { gender: this.reportAudience(q, user)! } : {}),
       };
       const [rows, total] = await Promise.all([
         this.prisma.club_members.findMany({
@@ -1039,8 +747,6 @@ export class SubscriptionReportsService {
   ) {
     const { startDate, endDate } = this.period(q);
     const branchIds = this.branchIds(q, user);
-    const audience = this.reportAudience(q, user);
-    const scopedMemberIds = await this.audienceMemberIds(q, user, branchIds);
     const take = page * pageSize;
     const receiptWhere = this.receiptWhere(q, user);
     const source = q.source && q.source !== 'all' ? q.source : null;
@@ -1123,7 +829,6 @@ export class SubscriptionReportsService {
                   payment_method: salesMethod,
                   invoice_date: { gte: startDate, lte: endDate },
                   ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-                  ...(scopedMemberIds !== null ? { member_id: { in: scopedMemberIds } } : {}),
                 },
                 orderBy: { created_at: 'desc' },
                 take,
@@ -1155,7 +860,6 @@ export class SubscriptionReportsService {
                   payment_method: salesMethod,
                   invoice_date: { gte: startDate, lte: endDate },
                   ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
-                  ...(scopedMemberIds !== null ? { member_id: { in: scopedMemberIds } } : {}),
                 },
                 orderBy: { created_at: 'desc' },
                 take,
@@ -1183,9 +887,6 @@ export class SubscriptionReportsService {
               payment_method: method as never,
               subscription_start_date: { gte: startDate, lte: endDate },
               ...(branchIds !== null ? { main_branch_id: { in: branchIds } } : {}),
-              ...(audience
-                ? { member: { is: { is_deleted: false, gender: audience } } }
-                : {}),
             },
             orderBy: { created_at: 'desc' },
             take,

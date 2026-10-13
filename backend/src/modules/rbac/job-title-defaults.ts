@@ -36,25 +36,18 @@ function normalizeJobTitle(value: string): string {
  */
 export function defaultPermissionCellsForJobTitle(name: string): JobTitlePermissionCell[] {
   const title = normalizeJobTitle(name);
-  const isSalesManagement = /(^|\s)(مدير|رئيس|رييس|مشرف)(\s|$)/.test(title)
-    || /\b(manager|head|supervisor)\b/.test(title);
-  const isPreviewOnlySales = /معاينه الاعضاء فقط/.test(title);
-  const isPersonalSales = !isSalesManagement && !isPreviewOnlySales && (
-    /(مبيعات|تسويق|سيلز)/.test(title)
-    || /^(sales|sales specialist|sales representative)$/.test(title)
-  );
 
   if (/(مدرب|مدربه)/.test(title)) {
     return grant(['trainer.portal'], ['view']);
   }
-  if (isPreviewOnlySales) {
-    return grant(['club.reception', 'club.members.attendance'], ['view']);
-  }
-  if (isPersonalSales) {
-    return [
-      ...grant(['sales.portal'], ['view', 'update']),
-      ...grant(['club.reception', 'club.members.attendance'], ['view']),
-    ];
+  if (/(مبيعات|تسويق)/.test(title)) {
+    return grant(['club.members', 'club.subscriptions'], [
+      'view',
+      'create',
+      'update',
+      'export',
+      'print',
+    ]);
   }
   if (/(استقبال|ريسبشن)/.test(title)) {
     // Note: no `approve` — allowing an expired member in stays a manager decision.

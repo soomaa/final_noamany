@@ -84,6 +84,8 @@ interface ClubPaymentSplitFieldsProps {
   onTotalChange?: (total: number) => void;
   className?: string;
   disabled?: boolean;
+  /** Set false when the workflow accepts one payment method only. */
+  allowMultipleMethods?: boolean;
 }
 
 /**
@@ -100,6 +102,7 @@ export function ClubPaymentSplitFields({
   onTotalChange,
   className,
   disabled,
+  allowMultipleMethods = true,
 }: ClubPaymentSplitFieldsProps) {
   const ct = useClubT();
   const split = rows.length > 1;
@@ -157,7 +160,7 @@ export function ClubPaymentSplitFields({
               onChange={(event) => setRow(index, { amount: event.target.value })}
             />
           </div>
-          {split ? (
+          {split && allowMultipleMethods ? (
             <Button
               type="button"
               variant="ghost"
@@ -174,16 +177,18 @@ export function ClubPaymentSplitFields({
       ))}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={disabled || rows.length >= CLUB_PAYMENT_METHODS.length}
-          onClick={addRow}
-        >
-          <Plus className="me-1 size-4" />
-          {ct('subscriptions.addPaymentMethod')}
-        </Button>
+        {allowMultipleMethods ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={disabled || rows.length >= CLUB_PAYMENT_METHODS.length}
+            onClick={addRow}
+          >
+            <Plus className="me-1 size-4" />
+            {ct('subscriptions.addPaymentMethod')}
+          </Button>
+        ) : null}
         {split ? (
           <span
             className={cn(

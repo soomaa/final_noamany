@@ -1,7 +1,8 @@
-import { ChevronDown, ChevronLeft, ChevronRight, LayoutDashboard, LayoutGrid } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Dumbbell, LayoutDashboard, LayoutGrid, Undo2 } from 'lucide-react';
 import { type CSSProperties, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { LOGO_SRC } from '@/components/brand/logo';
+import { CLUB_ROUTES } from '@/lib/club-routes';
 import {
   activeGroupId,
   activeNavPath,
@@ -80,6 +81,35 @@ function HomeNavLink({ onNavigate }: { onNavigate?: () => void }) {
         <LayoutDashboard className="size-[18px]" strokeWidth={ICON_STROKE} />
       </span>
       <span>{t('nav.dashboard')}</span>
+    </Link>
+  );
+}
+
+/** Direct access to the trainer's own schedule and earnings portal. */
+function TrainerPortalNavLink({ onNavigate }: { onNavigate?: () => void }) {
+  const { pathname } = useLocation();
+  const { t } = useLocale();
+  const active = pathname === '/trainer';
+
+  return (
+    <Link
+      to="/trainer"
+      onClick={onNavigate}
+      className={cn(
+        'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-[15px] font-bold text-white transition-colors',
+        active ? 'bg-white/15' : 'hover:bg-white/10',
+      )}
+    >
+      {active && <span className="absolute inset-y-2 start-0 w-[3px] rounded-full bg-white" aria-hidden />}
+      <span
+        className={cn(
+          'flex size-9 shrink-0 items-center justify-center rounded-lg transition-colors',
+          active ? 'bg-white/20 text-white' : 'bg-white/10 text-white group-hover:bg-white/18',
+        )}
+      >
+        <Dumbbell className="size-[18px]" strokeWidth={ICON_STROKE} />
+      </span>
+      <span>{t('nav.trainerPortal')}</span>
     </Link>
   );
 }
@@ -335,14 +365,18 @@ function SectionDetail({
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const { t, isRtl } = useLocale();
-  const { canNavRoute, isReady } = usePermission();
+  const { can, canNavRoute, canRoute, isReady } = usePermission();
+  const canCreateRefund = isReady && canNavRoute(CLUB_ROUTES.subscriptions.refunds) && (
+    can('club.subscriptions:update') || can('club.subscriptions.list:update') || can('club.reception:update')
+  );
   const activePath = activeNavPath(pathname);
   const currentSection = activeSectionId(pathname);
   const currentGroup = activeGroupId(pathname);
   // Strict filter: a nav item shows only when its route maps to a catalog resource the user can view.
   // Unmapped/uncatalogued routes are hidden (never leak into the menu).
-  const sections = isReady ? filterNavSections(NAV_SECTIONS, canNavRoute) : NAV_SECTIONS;
+  const sections = isReady ? filterNavSections(NAV_SECTIONS, canNavRoute) : [];
 
   // Which section is drilled into. Mirrors the active route, but can be collapsed back to the root list.
   const [drilled, setDrilled] = useState<string | null>(currentSection);
@@ -354,7 +388,13 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
 
   const openSection = (section: NavSection) => {
     setDrilled(section.id);
-    navigate(navSectionLandingPath(section.id));
+
+    // A section can be visible because the user has access to one of its child
+    // pages while its default landing page is denied. Navigating in that case
+    // triggers RouteGuard's redirect and immediately resets `drilled`, which
+    // makes the just-opened section appear to close by itself.
+    const landingPath = navSectionLandingPath(section.id);
+    if (canRoute(landingPath)) navigate(landingPath);
   };
 
   // Entry slide: the detail panel pushes in from the inline-end; the root slides back from the inline-start.
@@ -364,6 +404,23 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <aside className="sidebar-shell flex h-full w-[288px] shrink-0 flex-col">
       <SidebarHeader />
+
+      {canCreateRefund ? (
+        <div className="shrink-0 border-b border-white/10 px-3 py-3">
+          <Link
+            to={CLUB_ROUTES.subscriptions.refunds}
+            state={{ startNewRefund: true }}
+            onClick={onNavigate}
+            className={cn(
+              'flex min-h-12 items-center justify-center gap-2 rounded-xl border border-white/25 bg-brand-gradient px-3 py-3 text-sm font-bold text-white shadow-lg transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white',
+              pathname === CLUB_ROUTES.subscriptions.refunds && 'ring-2 ring-white/60',
+            )}
+          >
+            <Undo2 className="size-5 shrink-0" />
+            <span>{t('nav.routes./club/subscriptions/refunds')}</span>
+          </Link>
+        </div>
+      ) : null}
 
       <nav className="relative flex-1 overflow-hidden">
         {detailSection ? (
@@ -387,6 +444,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             style={{ '--panel-from': panelFrom('root') } as CSSProperties}
           >
             <HomeNavLink onNavigate={onNavigate} />
+            {user?.is_trainer && <TrainerPortalNavLink onNavigate={onNavigate} />}
 
             <p className="px-3 pb-1 pt-3 text-[10px] font-bold tracking-[0.2em] text-white/40">{t('nav.departments')}</p>
 

@@ -13,7 +13,6 @@ import { useLocale } from '@/store/locale';
 import { InventoryPageShell } from '@/pages/inventory/inventory-shell';
 import { useAuth } from '@/store/auth';
 import { useBranches } from '@/hooks/use-branches';
-import { usePermission } from '@/hooks/use-permission';
 
 interface SupplierDebt {
   supplierId: number;
@@ -28,8 +27,6 @@ const money = (value: number) => `${toArabicDigits(value.toFixed(2))} ج.م`;
 
 export function CafeSupplierPaymentsPage() {
   const { ui } = useLocale();
-  const { can } = usePermission();
-  const canCreate = can('gym-sales.procurement.supplier_payments:create');
   const queryClient = useQueryClient();
   const user = useAuth((state) => state.user);
   const { data: branches = [] } = useBranches();
@@ -57,7 +54,6 @@ export function CafeSupplierPaymentsPage() {
   );
 
   const settle = async () => {
-    if (!canCreate) return;
     const paid = Number(amount);
     if (!selected) return toast.error(ui('اختر المورد'));
     if (!effectiveBranchId) return toast.error(ui('اختر الفرع'));
@@ -125,8 +121,7 @@ export function CafeSupplierPaymentsPage() {
                       <td className="nums p-3 text-center font-bold text-amber-700">{money(row.remaining)}</td>
                       <td className="nums p-3 text-center text-muted-foreground">{row.lastPaymentDate ?? '—'}</td>
                       <td className="p-3 text-end">
-                        {canCreate ? <Button
-                          permissionAction="create"
+                        <Button
                           size="sm"
                           variant={supplierId === String(row.supplierId) ? 'default' : 'outline'}
                           disabled={row.remaining <= 0}
@@ -136,7 +131,7 @@ export function CafeSupplierPaymentsPage() {
                           }}
                         >
                           {ui('سداد')}
-                        </Button> : null}
+                        </Button>
                       </td>
                     </tr>
                   ))}
@@ -192,9 +187,9 @@ export function CafeSupplierPaymentsPage() {
                 <option value="wallet">{ui('محفظة')}</option>
               </select>
             </div>
-            {canCreate ? <Button permissionAction="create" className="h-12 w-full text-base" disabled={saving || !selected} onClick={() => void settle()}>
+            <Button className="h-12 w-full text-base" disabled={saving || !selected} onClick={() => void settle()}>
               {saving ? ui('جارٍ تسجيل الدفعة…') : ui('حفظ وسداد المديونية')}
-            </Button> : null}
+            </Button>
           </CardContent>
         </Card>
       </div>

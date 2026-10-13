@@ -15,7 +15,6 @@ import { useBranches } from '@/hooks/use-branches';
 import { usePermission } from '@/hooks/use-permission';
 import { confirmWithPreview } from '@/lib/confirm';
 import { formatMoney } from '@/lib/formatters';
-import { DEFAULT_PRODUCT_IMAGE, resolveProductImageUrl } from '@/lib/product-image';
 import { toast } from 'sonner';
 import type { CafeProductListItem, CafeCategory, CafeCartItem, CafeProductVariant } from '@/types/cafe';
 
@@ -32,6 +31,7 @@ export function CafePosPage() {
   const { data: branches } = useBranches();
   const [branchId, setBranchId] = useState<number>(0);
   const [activeCategory, setActiveCategory] = useState<string>('all');
+  const [gender, setGender] = useState<'male' | 'female' | ''>('');
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CafeCartItem[]>([]);
   const [checkingOut, setCheckingOut] = useState(false);
@@ -50,6 +50,7 @@ export function CafePosPage() {
   const products = productsData?.data ?? [];
 
   const filtered = useMemo(() => {
+    if (activeCategory === 'all') return [];
     let list = products;
     if (activeCategory !== 'all') {
       list = list.filter((p) => p.categoryId === Number(activeCategory));
@@ -64,6 +65,14 @@ export function CafePosPage() {
   const cartTotal = cart.reduce((sum, item) => sum + (item.variant?.sellPrice ?? item.product.sellPrice) * item.quantity, 0);
 
   const addResolvedToCart = (product: CafeProductListItem, variant?: CafeProductVariant) => {
+    if (activeCategory === 'all') {
+      toast.error(ui('اختر فئة الفاتورة أولًا'));
+      return;
+    }
+    if (product.categoryId !== Number(activeCategory)) {
+      toast.error(ui('لا يمكن إضافة منتج من فئة مختلفة إلى الفاتورة'));
+      return;
+    }
     setCart((prev) => {
       const targetKey = `${product.id}:${variant?.id ?? 'base'}`;
       const existing = prev.find((item) => lineKey(item) === targetKey);
@@ -98,6 +107,14 @@ export function CafePosPage() {
       toast.error(ui('اختر الفرع'));
       throw new Error('no branch');
     }
+    if (activeCategory === 'all') {
+      toast.error(ui('اختر فئة الفاتورة'));
+      throw new Error('missing cafe category');
+    }
+    if (!gender) {
+      toast.error(ui('اختر جنس العميل'));
+      throw new Error('missing invoice gender');
+    }
     const ok = await confirmWithPreview(
       {
         title: ui('إتمام البيع'),
@@ -107,6 +124,8 @@ export function CafePosPage() {
       async () => {
         const { data } = await api.post('/cafe-products/sell-cart?dryRun=true', {
           branchId: effectiveBranchId,
+          gender,
+          cafeCategoryId: Number(activeCategory),
           items: items.map((i) => ({ productId: i.product.id, variantId: i.variant?.id, quantity: i.quantity })),
         });
         const rows = (data as { rows?: { label: string; after?: string }[] }).rows ?? [];
@@ -118,6 +137,8 @@ export function CafePosPage() {
       async () => {
         const { data } = await api.post<CafeSellCartResult>('/cafe-products/sell-cart', {
           branchId: effectiveBranchId,
+          gender,
+          cafeCategoryId: Number(activeCategory),
           items: items.map((i) => ({ productId: i.product.id, variantId: i.variant?.id, quantity: i.quantity })),
         });
         toast.success(`${ui('فاتورة')} ${data.saleNumber} · ${formatMoney(data.totalAmount)}`);
@@ -158,9 +179,31 @@ export function CafePosPage() {
                 ))}
               </select>
             </div>
+            <div className="grid gap-1.5">
+              <Label className="text-xs text-muted-foreground">{ui('جنس العميل')}</Label>
+              <select
+                className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
+                value={gender}
+                onChange={(event) => setGender(event.target.value as 'male' | 'female' | '')}
+              >
+                <option value="">{ui('اختر الجنس')}</option>
+                <option value="male">{ui('رجالي')}</option>
+                <option value="female">{ui('حريمي')}</option>
+              </select>
+            </div>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <Tabs value={activeCategory} onValueChange={setActiveCategory}>
+            <Tabs value={activeCategory} onValueChange={(nextCategory) => {
+              if (nextCategory === 'all') {
+                toast.error(ui('اختر فئة واحدة للفاتورة'));
+                return;
+              }
+              if (cart.length && nextCategory !== activeCategory) {
+                toast.error(ui('أفرغ السلة قبل تغيير فئة الفاتورة'));
+                return;
+              }
+              setActiveCategory(nextCategory);
+            }}>
               <TabsList>
                 <TabsTrigger value="all">{ui('الكل')}</TabsTrigger>
                 {(categories ?? [])
@@ -200,14 +243,10 @@ export function CafePosPage() {
                   <div className="relative aspect-square overflow-hidden bg-muted">
                     {product.imageUrl ? (
                       <img
-                        src={resolveProductImageUrl(product.imageUrl)}
+                        src={product.imageUrl}
                         alt={product.name}
                         className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-110"
                         loading="lazy"
-                        onError={(event) => {
-                          event.currentTarget.onerror = null;
-                          event.currentTarget.src = DEFAULT_PRODUCT_IMAGE;
-                        }}
                       />
                     ) : (
                       <div className="flex h-full items-center justify-center text-muted-foreground/40">

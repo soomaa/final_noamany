@@ -2,7 +2,7 @@ import { Eraser, RotateCcw, Save, Search, ShieldCheck, UserCog } from 'lucide-re
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/components/common/page-header';
-import { EmptyState } from '@/components/common/states';
+import { EmptyState, ErrorState } from '@/components/common/states';
 import { StatCard } from '@/components/common/stat-card';
 import { PermissionMatrix } from '@/components/rbac/permission-matrix';
 import { Badge } from '@/components/ui/badge';
@@ -15,6 +15,9 @@ import {
   useClearExceptions,
   useRbacUsers,
   useSaveExceptions,
+  useOperationalScope,
+  useSetOperationalScope,
+  useSetSectionException,
   useUserExceptions,
 } from '@/hooks/use-rbac';
 import { confirm } from '@/lib/confirm';
@@ -95,6 +98,8 @@ function PickUser({
               <Skeleton key={i} className="h-12 w-full" />
             ))}
           </div>
+        ) : usersQ.isError ? (
+          <ErrorState onRetry={() => void usersQ.refetch()} />
         ) : (usersQ.data?.length ?? 0) === 0 ? (
           <EmptyState title={ui('لا يوجد مستخدمون')} description={ui('جرّب كلمة بحث أخرى.')} />
         ) : (
@@ -140,6 +145,12 @@ function EditExceptions({ userId,
   const exQ = useUserExceptions(userId);
   const save = useSaveExceptions(userId);
   const clear = useClearExceptions(userId);
+  const scopeQ = useOperationalScope(userId);
+  const setScope = useSetOperationalScope(userId);
+  const setSectionException = useSetSectionException(userId);
+  const [branchId, setBranchId] = useState('');
+  const [section, setSection] = useState<'female' | 'male'>('female');
+  const [reason, setReason] = useState('');
   const [draft, setDraft] = useState<Map<string, TriState>>(new Map());
 
   // baseline (role-derived) + server explicit exceptions
@@ -194,6 +205,30 @@ function EditExceptions({ userId,
           <Button size="sm" variant="outline" onClick={onChangeUser}>
             {ui('تغيير المستخدم')}
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <div>
+            <p className="text-sm font-semibold">{ui('نطاق التشغيل: الفرع والقسم')}</p>
+            <p className="text-xs text-muted-foreground">{ui('البيانات المشتركة تتبع صلاحية الصفحة فقط. بيانات الأعضاء تتبع الفرع والقسم.')}</p>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {scopeQ.data?.assignments.map((item) => <Badge key={item.id} variant="secondary">{ui('فرع')} {item.branch_id} — {item.section === 'female' ? ui('حريمي') : ui('رجالي')}</Badge>)}
+            {scopeQ.data?.exceptions.map((item) => <Badge key={item.id} variant="outline">{ui('استثناء')}: {item.section === 'female' ? ui('حريمي') : ui('رجالي')} — {item.reason}</Badge>)}
+          </div>
+          <div className="grid gap-2 sm:grid-cols-4">
+            <Input type="number" min="1" value={branchId} onChange={(e) => setBranchId(e.target.value)} placeholder={ui('رقم الفرع')} />
+            <select className="h-9 rounded-md border border-input bg-background px-2 text-sm" value={section} onChange={(e) => setSection(e.target.value as 'female' | 'male')}>
+              <option value="female">{ui('حريمي')}</option><option value="male">{ui('رجالي')}</option>
+            </select>
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={ui('سبب الاستثناء')} />
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" disabled={!branchId} onClick={() => setScope.mutate({ branchId: Number(branchId), section })}>{ui('تعيين القسم')}</Button>
+              <Button size="sm" disabled={!branchId || !reason.trim()} onClick={() => setSectionException.mutate({ branchId: Number(branchId), section, reason: reason.trim() })}>{ui('منح استثناء')}</Button>
+            </div>
+          </div>
         </CardContent>
       </Card>
 

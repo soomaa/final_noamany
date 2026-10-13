@@ -267,8 +267,7 @@ export class TrainerPortalService {
           }
         : {}),
     };
-    const subscriptions = (this.prisma as unknown as { club_subscriptions?: { findMany(args: unknown): Promise<any[]> } }).club_subscriptions;
-    const [paidAgg, payments, privateCommissions, privateSubscriptions] = await Promise.all([
+    const [paidAgg, payments, privateCommissions] = await Promise.all([
       this.prisma.club_trainer_earning_payments.aggregate({
         where: paymentWhere,
         _sum: { amount: true },
@@ -292,19 +291,6 @@ export class TrainerPortalService {
         },
         orderBy: [{ attendance_date: 'desc' }, { id: 'desc' }],
       }),
-      // The trainer receives the operational roster, never the package price or member debt.
-      (subscriptions?.findMany
-        ? subscriptions.findMany({
-        where: { private_trainer_id: trainer.id },
-        select: {
-          id: true, subscription_number: true, subscription_type: true,
-          subscription_start_date: true, subscription_end_date: true,
-          is_linked_to_sessions: true, sessions_count: true, sessions_used: true,
-          member: { select: { id: true, name: true, member_code: true, phone: true } },
-        },
-          orderBy: [{ subscription_end_date: 'desc' }, { id: 'desc' }],
-        })
-        : Promise.resolve([])),
     ]);
     const privateEarnings = privateCommissions.reduce((sum, row) => sum + toNum(row.commission_amount), 0);
     totalEarnings = roundMoney(totalEarnings + privateEarnings);
@@ -332,8 +318,6 @@ export class TrainerPortalService {
         adherenceRate: eligibleForAdherence ? (executed / eligibleForAdherence) * 100 : 100,
         totalEarnings,
         privateEarnings,
-        privateSessions: privateCommissions.length,
-        privateClients: privateSubscriptions.filter((row) => row.member).length,
       },
       schedule: classes.map((cls) => ({
         id: cls.id,
@@ -353,16 +337,6 @@ export class TrainerPortalService {
         color: cls.class_type?.color ?? '#2563EB',
       })),
       attendance,
-      privateClients: privateSubscriptions.map((row) => ({
-        subscriptionId: row.id, subscriptionNumber: row.subscription_number,
-        memberId: row.member?.id ?? null, memberName: row.member?.name ?? 'عضو غير مرتبط',
-        memberCode: row.member?.member_code ?? null, memberPhone: row.member?.phone ?? null,
-        packageName: row.subscription_type ?? 'باقة Private', startDate: row.subscription_start_date,
-        endDate: row.subscription_end_date, isLinkedToSessions: row.is_linked_to_sessions,
-        sessionsCount: row.sessions_count, sessionsUsed: row.sessions_used,
-        sessionsRemaining: row.sessions_count == null ? null : Math.max(0, row.sessions_count - row.sessions_used),
-        isActive: row.subscription_end_date >= new Date().toISOString().slice(0, 10) && (row.sessions_count == null || row.sessions_used < row.sessions_count),
-      })),
       earnings: {
         total: totalEarnings,
         paid,

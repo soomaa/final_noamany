@@ -5,10 +5,6 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { localDateString } from '../club-members/club-member.utils';
 import { addDays, toNum } from '../club-subscriptions/club-subscription.utils';
-import {
-  receiptBusinessBranchWhere,
-  receiptMemberAudienceWhere,
-} from '../club-subscriptions/receipt-business-scope';
 import { resolveTreasuryPeriod } from '../gym-ops/treasury-range.util';
 import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
 import {
@@ -68,78 +64,15 @@ export class ClubDashboardService {
     return ids === null ? {} : { [field]: { in: ids } };
   }
 
-  /** Raw SQL must fail closed just like Prisma's `{ in: [] }` filters. */
-  private rawBranchFilter(scopedBranches: number[] | null, field: 'e.branch_id' | 's.branch_id' | 'w.branch_id') {
-    if (scopedBranches === null) return Prisma.empty;
-    if (scopedBranches.length === 0) return Prisma.sql`AND 1 = 0`;
-    return Prisma.sql`AND ${Prisma.raw(field)} IN (${Prisma.join(scopedBranches)})`;
-  }
-
-  private employeeScopeWhere(
-    scopedBranches: number[] | null,
-    audience?: 'male' | 'female' | null,
-  ): Prisma.employeesWhereInput {
-    return {
-      ...(scopedBranches === null ? {} : { branch_id_fk: { in: scopedBranches } }),
-      ...(audience ? { emp_type: audience === 'male' ? 1 : 2 } : {}),
-    };
-  }
-
-  private async activeTrainerCount(scopedBranches: number[] | null, audience?: 'male' | 'female' | null) {
-    if (scopedBranches === null && !audience) {
-      return this.prisma.club_trainers.count({ where: { is_deleted: false, is_active: true } });
-    }
-    const employees = await this.prisma.employees.findMany({
-      where: this.employeeScopeWhere(scopedBranches, audience),
-      select: { id: true },
-    });
-    return this.prisma.club_trainers.count({
-      where: { is_deleted: false, is_active: true, employee_id: { in: employees.map((employee) => employee.id) } },
-    });
-  }
-
   /**
    * Operational dashboards must follow the membership screens, not archived member history.
    * Unlinked subscriptions remain visible because they are still legitimate subscription records.
    */
-  private visibleSubscriptionWhere(audience?: 'male' | 'female' | null): Prisma.club_subscriptionsWhereInput {
-    if (audience) {
-      // A restricted employee may only see subscriptions linked to an authoritative member
-      // in the same audience. Legacy unlinked rows fail closed because their audience cannot
-      // be proven from canonical member data.
-      return { member: { is_deleted: false, gender: audience } };
-    }
+  private visibleSubscriptionWhere(): Prisma.club_subscriptionsWhereInput {
     return {
       OR: [
         { member_id: null },
         { member: { is_deleted: false } },
-      ],
-    };
-  }
-
-  private classAudienceWhere(audience?: 'male' | 'female' | null): Prisma.club_classesWhereInput {
-    if (!audience) return {};
-    return { audience: { in: audience === 'male' ? ['men', 'mixed'] : ['women', 'mixed'] } };
-  }
-
-  private async audienceMemberIds(audience?: 'male' | 'female' | null) {
-    if (!audience) return null;
-    const members = await this.prisma.club_members.findMany({
-      where: { is_deleted: false, gender: audience },
-      select: { id: true },
-    });
-    return members.map((member) => member.id);
-  }
-
-  private inbodyAudienceWhere(
-    audience: 'male' | 'female' | null,
-    memberIds: number[] | null,
-  ): Prisma.club_inbody_invoicesWhereInput {
-    if (!audience || memberIds === null) return {};
-    return {
-      OR: [
-        { member_id: { in: memberIds } },
-        { member_id: null, subscription: { member: { is_deleted: false, gender: audience } } },
       ],
     };
   }
@@ -161,7 +94,9 @@ export class ClubDashboardService {
   }
 
   private financialLedgerRows(start: string, end: string, scopedBranches: number[] | null) {
-    const branchSql = this.rawBranchFilter(scopedBranches, 'e.branch_id');
+    const branchSql = scopedBranches?.length
+      ? Prisma.sql`AND e.branch_id IN (${Prisma.join(scopedBranches)})`
+      : Prisma.empty;
     return this.prisma.$queryRaw<DashboardLedgerRow[]>`
       SELECT
         e.date,
@@ -186,7 +121,9 @@ export class ClubDashboardService {
   }
 
   private branchExpenseRows(start: string, end: string, scopedBranches: number[] | null) {
-    const branchSql = this.rawBranchFilter(scopedBranches, 'e.branch_id');
+    const branchSql = scopedBranches?.length
+      ? Prisma.sql`AND e.branch_id IN (${Prisma.join(scopedBranches)})`
+      : Prisma.empty;
     return this.prisma.$queryRaw<DashboardBranchExpenseRow[]>`
       SELECT e.branch_id, SUM(l.debit - l.credit) AS amount
       FROM acc_journal_entries e
@@ -201,39 +138,21 @@ export class ClubDashboardService {
     `;
   }
 
-  private branchSalesRows(
-    start: string,
-    end: string,
-    scopedBranches: number[] | null,
-    audience?: 'male' | 'female' | null,
-  ) {
-    const branchSql = this.rawBranchFilter(scopedBranches, 's.branch_id');
-    const audienceSql = audience
-      ? Prisma.sql`AND EXISTS (
-          SELECT 1 FROM club_members audience_member
-          WHERE audience_member.id = s.customer_member_id
-            AND audience_member.gender = ${audience}
-            AND audience_member.is_deleted = 0
-        )`
+  private branchSalesRows(start: string, end: string, scopedBranches: number[] | null) {
+    const branchSql = scopedBranches?.length
+      ? Prisma.sql`AND s.branch_id IN (${Prisma.join(scopedBranches)})`
       : Prisma.empty;
-    // Revenue here must follow cash actually collected, exactly like subscriptions
-    // (paid_amount, not subscription_value) elsewhere in this same dashboard. Employee/partner
-    // tab sales are completed with collected_amount = 0 until their statement is settled
-    // (see cafe-products.service.ts reports()); counting their full line_total here would book
-    // revenue for cash the club has not received yet. Collected cash is allocated across item
-    // types by each type's share of the sale's billed total.
     return this.prisma.$queryRaw<DashboardBranchSalesRow[]>`
       SELECT
         s.branch_id,
         s.sale_date,
-        COALESCE(SUM(CASE WHEN i.item_type = 'cafe' THEN i.line_total * s.collected_amount / NULLIF(s.total_amount, 0) ELSE 0 END), 0) AS bar_revenue,
-        COALESCE(SUM(CASE WHEN i.item_type <> 'cafe' THEN i.line_total * s.collected_amount / NULLIF(s.total_amount, 0) ELSE 0 END), 0) AS product_revenue
+        COALESCE(SUM(CASE WHEN i.item_type = 'cafe' THEN i.line_total ELSE 0 END), 0) AS bar_revenue,
+        COALESCE(SUM(CASE WHEN i.item_type <> 'cafe' THEN i.line_total ELSE 0 END), 0) AS product_revenue
       FROM sales_quick_sales s
       INNER JOIN sales_quick_sale_items i ON i.quick_sale_id = s.id
       WHERE s.status = 'completed'
         AND s.sale_date BETWEEN ${start} AND ${end}
         ${branchSql}
-        ${audienceSql}
       GROUP BY s.branch_id, s.sale_date
     `;
   }
@@ -245,31 +164,24 @@ export class ClubDashboardService {
   ) {
     const { start, end } = this.dashboardPeriod(query.startDate, query.endDate);
     const scopedBranches = this.branchIds(user, query.branchId ?? null);
-    const audience = this.branchScope.memberGenderFilter(user);
     const clubBranchWhere = this.branchWhere(scopedBranches);
     const lockerBranchWhere = this.branchWhere(scopedBranches, 'main_branch_id');
-    const classAudienceWhere = this.classAudienceWhere(audience);
-    const audienceMemberIds = await this.audienceMemberIds(audience);
-    const directMemberAudienceWhere = audienceMemberIds === null ? {} : { member_id: { in: audienceMemberIds } };
-    const inbodyAudienceWhere = this.inbodyAudienceWhere(audience, audienceMemberIds);
 
-    const memberWhere = { is_deleted: false, ...clubBranchWhere, ...(audience ? { gender: audience } : {}) };
+    const memberWhere = { is_deleted: false, ...clubBranchWhere };
     const subWhere = {
       ...clubBranchWhere,
       registration_date: { gte: start, lte: end },
-      ...this.visibleSubscriptionWhere(audience),
+      ...this.visibleSubscriptionWhere(),
     };
     const lockerSubWhere = {
       ...lockerBranchWhere,
       subscription_start_date: { gte: start, lte: end },
-      ...(audience ? { member: { is_deleted: false, gender: audience } } : {}),
     };
 
     const today = localDateString();
     const renewalWindow = addDays(today, 7);
-    const subscriptionBranchSql = this.rawBranchFilter(scopedBranches, 's.branch_id');
-    const subscriptionAudienceSql = audience
-      ? Prisma.sql`AND m.gender = ${audience}`
+    const subscriptionBranchSql = scopedBranches?.length
+      ? Prisma.sql`AND s.branch_id IN (${Prisma.join(scopedBranches)})`
       : Prisma.empty;
 
     const [totalMembers, legacyActiveMembers, newMembersInPeriod, subsInRange, lockerSubs, attendance, facilityCount, subscriptionMetricsRows, trainerCount, classesToday, spaInvoices, inbodyInvoices, classEnrollmentsPaid, ledgerRows] =
@@ -300,7 +212,6 @@ export class ClubDashboardService {
           where: {
             attendance_date: { gte: start, lte: end },
             ...clubBranchWhere,
-            ...(audience ? { member: { is_deleted: false, gender: audience } } : {}),
           },
         }),
         this.prisma.club_halls.count({ where: { is_deleted: false, ...clubBranchWhere } }),
@@ -322,15 +233,13 @@ export class ClubDashboardService {
           LEFT JOIN club_members m ON m.id = s.member_id
           WHERE (s.member_id IS NULL OR m.is_deleted = 0)
             ${subscriptionBranchSql}
-            ${subscriptionAudienceSql}
         `,
-        this.activeTrainerCount(scopedBranches, audience),
+        this.prisma.club_trainers.count({ where: { is_deleted: false, is_active: true } }),
         this.prisma.club_classes.count({
           where: {
             is_deleted: false,
             class_date: today,
             ...clubBranchWhere,
-            ...classAudienceWhere,
           },
         }),
         this.prisma.club_spa_invoices.findMany({
@@ -338,7 +247,6 @@ export class ClubDashboardService {
             is_active: true,
             invoice_date: { gte: start, lte: end },
             ...clubBranchWhere,
-            ...directMemberAudienceWhere,
           },
           select: { status: true, total_amount: true },
         }),
@@ -347,7 +255,6 @@ export class ClubDashboardService {
             is_active: true,
             invoice_date: { gte: start, lte: end },
             ...clubBranchWhere,
-            ...inbodyAudienceWhere,
           },
           select: { status: true, total_amount: true },
         }),
@@ -355,11 +262,9 @@ export class ClubDashboardService {
           where: {
             enrollment_date: { gte: start, lte: end },
             attendance_status: { not: 'cancelled' },
-            ...directMemberAudienceWhere,
             class: {
               is_deleted: false,
               ...clubBranchWhere,
-              ...classAudienceWhere,
             },
           },
           include: { class: { select: { price: true } } },
@@ -445,26 +350,18 @@ export class ClubDashboardService {
           AND: [
             {
               OR: [
+                { member: { is_deleted: false } },
                 {
-                  subscription_id: { not: null },
-                  subscription: { is: { member: { is_deleted: false } } },
-                },
-                {
-                  subscription_id: null,
-                  locker_subscription_id: { not: null },
-                  locker_subscription: { is: { member: { is_deleted: false } } },
-                },
-                {
-                  subscription_id: null,
-                  locker_subscription_id: null,
-                  member_id: { not: null },
-                  member: { is_deleted: false },
+                  member_id: null,
+                  subscription: { member: { is_deleted: false } },
                 },
               ],
             },
-            receiptMemberAudienceWhere(audience),
           ],
-          ...receiptBusinessBranchWhere(scopedBranches),
+          // Honor the branch filter via the receipt's subscription/member (receipts have no branch column).
+          ...(scopedBranches
+            ? { OR: [{ subscription: { branch_id: { in: scopedBranches } } }, { member: { branch_id: { in: scopedBranches } } }] }
+            : {}),
         },
         orderBy: { created_at: 'desc' },
         take: 5,
@@ -475,7 +372,6 @@ export class ClubDashboardService {
           status: 'completed',
           refund_date: { gte: start, lte: end },
           ...clubBranchWhere,
-          ...(audience ? { subscription: { member: { is_deleted: false, gender: audience } } } : {}),
         },
         select: { refund_amount: true },
       }),
@@ -556,8 +452,7 @@ export class ClubDashboardService {
   async executive(query: { startDate?: string; endDate?: string; branchId?: string }, user?: JwtUser) {
     const { start, end } = this.dashboardPeriod(query.startDate, query.endDate);
     const scopedBranches = this.branchIds(user, query.branchId ?? null);
-    const audience = this.branchScope.memberGenderFilter(user);
-    const key = [start, end, scopedBranches?.join(',') ?? 'all', audience ?? 'all', user?.sub ?? 'anonymous'].join('|');
+    const key = [start, end, scopedBranches?.join(',') ?? 'all', user?.sub ?? 'anonymous'].join('|');
     const now = Date.now();
     const cached = this.executiveCache.get(key);
     if (cached && cached.expiresAt > now) return cached.value;
@@ -581,18 +476,15 @@ export class ClubDashboardService {
   private async buildExecutive(query: { startDate?: string; endDate?: string; branchId?: string }, user?: JwtUser) {
     const { start, end, days, startMs } = this.dashboardPeriod(query.startDate, query.endDate);
     const scopedBranches = this.branchIds(user, query.branchId ?? null);
-    const audience = this.branchScope.memberGenderFilter(user);
     const clubBranchWhere = this.branchWhere(scopedBranches);
-    const audienceMemberIds = await this.audienceMemberIds(audience);
-    const inbodyAudienceWhere = this.inbodyAudienceWhere(audience, audienceMemberIds);
-    const employeeScopeWhere = this.employeeScopeWhere(scopedBranches, audience);
     const today = localDateString();
     const expiring7Date = addDays(today, 7);
     const expiring30Date = addDays(today, 30);
-    const warehouseBranchSql = this.rawBranchFilter(scopedBranches, 'w.branch_id');
-    const subscriptionBranchSql = this.rawBranchFilter(scopedBranches, 's.branch_id');
-    const subscriptionAudienceSql = audience
-      ? Prisma.sql`AND m.gender = ${audience}`
+    const warehouseBranchSql = scopedBranches?.length
+      ? Prisma.sql`AND w.branch_id IN (${Prisma.join(scopedBranches)})`
+      : Prisma.empty;
+    const subscriptionBranchSql = scopedBranches?.length
+      ? Prisma.sql`AND s.branch_id IN (${Prisma.join(scopedBranches)})`
       : Prisma.empty;
 
     type CountRow = { total: bigint | number };
@@ -628,7 +520,7 @@ export class ClubDashboardService {
           where: {
             registration_date: { gte: start, lte: end },
             ...clubBranchWhere,
-            ...this.visibleSubscriptionWhere(audience),
+            ...this.visibleSubscriptionWhere(),
           },
           select: {
             registration_date: true,
@@ -647,16 +539,11 @@ export class ClubDashboardService {
               lte: new Date(`${end}T23:59:59.999Z`),
             },
             ...clubBranchWhere,
-            ...(audience ? { gender: audience } : {}),
           },
           select: { created_at: true },
         }),
         this.prisma.club_attendance.findMany({
-          where: {
-            attendance_date: { gte: start, lte: end },
-            ...clubBranchWhere,
-            ...(audience ? { member: { is_deleted: false, gender: audience } } : {}),
-          },
+          where: { attendance_date: { gte: start, lte: end }, ...clubBranchWhere },
           select: { attendance_date: true, member_id: true },
         }),
         this.prisma.$queryRaw<DashboardSubscriptionMetricsRow[]>`
@@ -674,7 +561,6 @@ export class ClubDashboardService {
           LEFT JOIN club_members m ON m.id = s.member_id
           WHERE (s.member_id IS NULL OR m.is_deleted = 0)
             ${subscriptionBranchSql}
-            ${subscriptionAudienceSql}
         `,
         this.prisma.$queryRaw<CountRow[]>`
           SELECT COUNT(*) AS total
@@ -689,16 +575,11 @@ export class ClubDashboardService {
         this.prisma.employees.count({
           where: {
             OR: [{ leave_emp: null }, { leave_emp: 0 }],
-            ...employeeScopeWhere,
+            ...(scopedBranches ? { branch_id_fk: { in: scopedBranches } } : {}),
           },
         }),
         this.prisma.sales_quick_sales.aggregate({
-          where: {
-            sale_date: today,
-            status: 'completed',
-            ...clubBranchWhere,
-            ...(audienceMemberIds === null ? {} : { customer_member_id: { in: audienceMemberIds } }),
-          },
+          where: { sale_date: today, status: 'completed', ...clubBranchWhere },
           _count: { _all: true },
           _sum: { collected_amount: true },
         }),
@@ -707,9 +588,6 @@ export class ClubDashboardService {
             booking_date: today,
             status: { not: 'cancelled' },
             ...clubBranchWhere,
-            // Bookings contain only free-text customer identity and no authoritative
-            // member/audience relation, so restricted users must not see a mixed total.
-            ...(audience ? { id: -1 } : {}),
           },
         }),
         ledgerRowsPromise,
@@ -723,7 +601,7 @@ export class ClubDashboardService {
           where: {
             registration_date: { gte: start, lte: end },
             ...clubBranchWhere,
-            ...this.visibleSubscriptionWhere(audience),
+            ...this.visibleSubscriptionWhere(),
           },
           _count: { _all: true },
           _sum: { paid_amount: true },
@@ -737,18 +615,12 @@ export class ClubDashboardService {
               lte: new Date(`${end}T23:59:59.999Z`),
             },
             ...clubBranchWhere,
-            ...(audience ? { gender: audience } : {}),
           },
           _count: { _all: true },
         }),
         this.prisma.club_members.groupBy({
           by: ['branch_id'],
-          where: {
-            is_deleted: false,
-            is_blocked: true,
-            ...clubBranchWhere,
-            ...(audience ? { gender: audience } : {}),
-          },
+          where: { is_deleted: false, is_blocked: true, ...clubBranchWhere },
           _count: { _all: true },
         }),
         this.prisma.club_inbody_invoices.groupBy({
@@ -757,13 +629,12 @@ export class ClubDashboardService {
             is_active: true,
             invoice_date: { gte: start, lte: end },
             ...clubBranchWhere,
-            ...inbodyAudienceWhere,
           },
           _count: { _all: true },
           _sum: { total_amount: true },
         }),
         this.branchExpenseRows(start, end, scopedBranches),
-        this.branchSalesRows(start, end, scopedBranches, audience),
+        this.branchSalesRows(start, end, scopedBranches),
       ]);
 
     const daily = new Map<string, {
@@ -965,24 +836,25 @@ export class ClubDashboardService {
     };
 
     const scopedBranches = this.branchIds(user, opts.branchId ?? null);
-    const audience = this.branchScope.memberGenderFilter(user);
-    const audienceMemberIds = await this.audienceMemberIds(audience);
     const clubBranchWhere = this.branchWhere(scopedBranches);
     const lockerBranchWhere = this.branchWhere(scopedBranches, 'main_branch_id');
     const creatorScope = await resolveFinanceCreatorScope(this.permissions, user);
     const creatorWhere = createdByFilter(creatorScope.selectedUserId);
-    const receiptBranchWhere = receiptBusinessBranchWhere(scopedBranches);
-    const receiptAudienceWhere = receiptMemberAudienceWhere(audience);
-    const directMemberAudienceWhere = audienceMemberIds === null
-      ? {}
-      : { member_id: { in: audienceMemberIds } };
-    const inbodyAudienceWhere = this.inbodyAudienceWhere(audience, audienceMemberIds);
+    const receiptBranchWhere: Prisma.club_receiptsWhereInput = scopedBranches
+      ? {
+          OR: [
+            { branch_id: { in: scopedBranches } },
+            { subscription: { branch_id: { in: scopedBranches } } },
+            { member: { branch_id: { in: scopedBranches } } },
+          ],
+        }
+      : {};
 
     if (summaryOnly) {
       const receiptWhere: Prisma.club_receiptsWhereInput = {
         ...dateFilter({ receipt_date: dateFrom ?? '' }),
+        ...receiptBranchWhere,
         ...creatorWhere,
-        AND: [receiptBranchWhere, receiptAudienceWhere],
       };
       const receiptPaymentWhere: Prisma.club_receipt_paymentsWhereInput = {
         receipt: { is: receiptWhere },
@@ -991,7 +863,6 @@ export class ClubDashboardService {
         ...dateFilter({ registration_date: dateFrom ?? '' }),
         ...clubBranchWhere,
         ...creatorWhere,
-        ...this.visibleSubscriptionWhere(audience),
         paid_amount: { gt: 0 },
         receipts: {
           none: dateFrom && dateTo
@@ -1032,7 +903,6 @@ export class ClubDashboardService {
             ...dateFilter({ subscription_start_date: dateFrom ?? '' }),
             ...lockerBranchWhere,
             ...creatorWhere,
-            ...(audience ? { member: { is_deleted: false, gender: audience } } : {}),
             paid_amount: { gt: 0 },
           },
           _sum: { paid_amount: true },
@@ -1046,7 +916,6 @@ export class ClubDashboardService {
             status: 'paid',
             ...clubBranchWhere,
             ...creatorWhere,
-            ...directMemberAudienceWhere,
           },
           _sum: { total_amount: true },
           _count: { _all: true },
@@ -1059,7 +928,6 @@ export class ClubDashboardService {
             status: 'paid',
             ...clubBranchWhere,
             ...creatorWhere,
-            ...inbodyAudienceWhere,
           },
           _sum: { total_amount: true },
           _count: { _all: true },
@@ -1125,8 +993,8 @@ export class ClubDashboardService {
       this.prisma.club_receipts.findMany({
         where: {
           ...dateFilter({ receipt_date: dateFrom ?? '' }),
+          ...receiptBranchWhere,
           ...creatorWhere,
-          AND: [receiptBranchWhere, receiptAudienceWhere],
         },
         include: { payments: { select: { method: true, amount: true }, orderBy: { id: 'asc' } } },
       }),
@@ -1135,7 +1003,6 @@ export class ClubDashboardService {
           ...dateFilter({ registration_date: dateFrom ?? '' }),
           ...clubBranchWhere,
           ...creatorWhere,
-          ...this.visibleSubscriptionWhere(audience),
           receipts: {
             none: dateFrom && dateTo
               ? { receipt_date: dateFrom === dateTo ? dateFrom : { gte: dateFrom, lte: dateTo } }
@@ -1148,7 +1015,6 @@ export class ClubDashboardService {
           ...dateFilter({ subscription_start_date: dateFrom ?? '' }),
           ...lockerBranchWhere,
           ...creatorWhere,
-          ...(audience ? { member: { is_deleted: false, gender: audience } } : {}),
         },
       }),
       this.prisma.club_spa_invoices.findMany({
@@ -1158,7 +1024,6 @@ export class ClubDashboardService {
           status: 'paid',
           ...clubBranchWhere,
           ...creatorWhere,
-          ...directMemberAudienceWhere,
         },
         include: { service: { select: { name: true } } },
       }),
@@ -1169,7 +1034,6 @@ export class ClubDashboardService {
           status: 'paid',
           ...clubBranchWhere,
           ...creatorWhere,
-          ...inbodyAudienceWhere,
         },
       }),
     ]);

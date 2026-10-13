@@ -589,6 +589,140 @@ export class FinanceReportsService {
     };
   }
 
+  /**
+   * Legacy Monthly Analysis reimplemented against the new operational tables.
+   * Its COGS deliberately uses the last purchase-invoice line by id for the
+   * same inventory product, matching the old `one_price_buy ... ORDER BY id DESC`.
+   */
+  async monthlyAnalysis(q: FinanceAnalysisQueryDto, user?: JwtUser) {
+    const { dateFrom, dateTo } = this.resolveDateRange(q);
+    const requestedBranch = Number(q.branchId);
+    const scopedBranches = this.branchScope.resolveListFilter(user, q.branchId ?? null);
+    const branchIsThree = requestedBranch === 3 || (!Number.isFinite(requestedBranch) && scopedBranches?.includes(3));
+    const salesBranchIds = branchIsThree ? [8, 9] : scopedBranches;
+    const operationsBranchIds = branchIsThree ? [3, 8, 9] : scopedBranches;
+    const dateRange = (field: string) =>
+      dateFrom || dateTo
+        ? {
+            [field]: {
+              ...(dateFrom ? { gte: dateFrom } : {}),
+              ...(dateTo ? { lte: dateTo } : {}),
+            },
+          }
+        : {};
+
+    const [subscriptions, lockers, refunds, expenses, sales] = await Promise.all([
+      this.prisma.club_subscriptions.findMany({
+        where: {
+          ...dateRange('registration_date'),
+          ...(salesBranchIds ? { branch_id: { in: salesBranchIds } } : {}),
+          ...(q.gender ? { gender: q.gender } : {}),
+        },
+        select: { paid_amount: true },
+      }),
+      this.prisma.club_locker_subscriptions.findMany({
+        where: {
+          ...dateRange('subscription_start_date'),
+          ...(operationsBranchIds ? { sub_branch_id: { in: operationsBranchIds } } : {}),
+          ...(q.gender ? { gender: q.gender } : {}),
+        },
+        select: { paid_amount: true },
+      }),
+      this.prisma.club_subscription_refunds.findMany({
+        where: {
+          status: 'completed',
+          ...dateRange('refund_date'),
+          ...(operationsBranchIds ? { branch_id: { in: operationsBranchIds } } : {}),
+          ...(q.gender ? { subscription: { is: { gender: q.gender } } } : {}),
+        },
+        select: { refund_amount: true },
+      }),
+      this.prisma.fin_expenses.findMany({
+        where: {
+          is_deleted: false,
+          ...dateRange('expense_date'),
+          ...(operationsBranchIds ? { branch_id: { in: operationsBranchIds } } : {}),
+          ...(q.gender ? { gender_scope: q.gender } : {}),
+        },
+        select: { total_amount: true },
+      }),
+      this.prisma.sales_quick_sales.findMany({
+        where: {
+          ...dateRange('sale_date'),
+          ...(salesBranchIds ? { branch_id: { in: salesBranchIds } } : {}),
+          collected_amount: { not: 0 },
+          customer_member_id: { not: 0 },
+          ...(q.cafeCategoryId != null ? { cafe_category_id: q.cafeCategoryId } : {}),
+          ...(q.gender ? { gender: q.gender } : {}),
+        },
+        select: {
+          discount_amount: true,
+          items: {
+            select: {
+              inventory_product_id: true,
+              quantity: true,
+              line_total: true,
+            },
+          },
+        },
+      }),
+    ]);
+
+    const soldItems = sales.flatMap((sale) => sale.items);
+    const inventoryProductIds = [...new Set(
+      soldItems
+        .map((item) => item.inventory_product_id)
+        .filter((id): id is number => id != null),
+    )];
+    const purchaseItems = inventoryProductIds.length
+      ? await this.prisma.prc_purchase_invoice_items.findMany({
+          where: { product_id: { in: inventoryProductIds } },
+          orderBy: { id: 'desc' },
+          select: { id: true, product_id: true, price: true },
+        })
+      : [];
+    const latestPriceByProduct = new Map<number, number>();
+    for (const item of purchaseItems) {
+      if (!latestPriceByProduct.has(item.product_id)) {
+        latestPriceByProduct.set(item.product_id, toNumber(item.price));
+      }
+    }
+
+    const subscriptionRevenue = roundMoney(subscriptions.reduce((sum, row) => sum + toNumber(row.paid_amount), 0));
+    const lockerRevenue = roundMoney(lockers.reduce((sum, row) => sum + toNumber(row.paid_amount), 0));
+    const salesGross = roundMoney(soldItems.reduce((sum, item) => sum + toNumber(item.line_total), 0));
+    const salesDiscounts = roundMoney(sales.reduce((sum, row) => sum + toNumber(row.discount_amount), 0));
+    const cafeSales = roundMoney(salesGross - salesDiscounts);
+    const subscriptionRefunds = roundMoney(refunds.reduce((sum, row) => sum + toNumber(row.refund_amount), 0));
+    const cogs = roundMoney(soldItems.reduce((sum, item) => {
+      const price = item.inventory_product_id != null ? latestPriceByProduct.get(item.inventory_product_id) : undefined;
+      return price == null ? sum : sum + toNumber(item.quantity) * price;
+    }, 0));
+    const expenseTotal = roundMoney(expenses.reduce((sum, row) => sum + toNumber(row.total_amount), 0));
+    const totalRevenue = roundMoney(subscriptionRevenue + lockerRevenue + cafeSales);
+    const totalExpenses = roundMoney(subscriptionRefunds + cogs + expenseTotal);
+
+    return {
+      period: { dateFrom: dateFrom ?? null, dateTo: dateTo ?? null },
+      filters: {
+        branchId: q.branchId ?? 'all',
+        cafeCategoryId: q.cafeCategoryId ?? null,
+        gender: q.gender ?? null,
+      },
+      subscriptions: subscriptionRevenue,
+      lockers: lockerRevenue,
+      salesGross,
+      salesDiscounts,
+      cafeSales,
+      subscriptionRefunds,
+      cogs,
+      expenses: expenseTotal,
+      totalRevenue,
+      totalExpenses,
+      netProfit: roundMoney(totalRevenue - totalExpenses),
+    };
+  }
+
   async profitLoss(q: ProfitLossQueryDto, user?: JwtUser) {
     const dateFrom = q.dateFrom ?? q.startDate;
     const dateTo = q.dateTo ?? q.endDate;

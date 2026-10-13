@@ -26,6 +26,7 @@ import { ListClubMembersDto } from './dto/list-club-members.dto';
 import { UpsertClubMemberDto } from './dto/upsert-club-member.dto';
 import { AdjustClubMemberPointsDto } from './dto/adjust-club-member-points.dto';
 import { assertSystemAdmin } from '../../common/utils/system-admin.util';
+import { ClubGroupOperation } from '../../common/branch-groups/club-operation-scope';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-members')
@@ -33,14 +34,76 @@ import { assertSystemAdmin } from '../../common/utils/system-admin.util';
 export class ClubMembersController {
   constructor(private readonly service: ClubMembersService) {}
 
+  @Get('lookup')
+  @RequiresPermission('club.members:view', 'club.subscriptions:view')
+  lookup(@Query('q') q: string, @Query('branch') branch: string | undefined, @Query('exactBranch') exactBranch: string | undefined, @CurrentUser() user: JwtUser) {
+    return this.service.lookup(q ?? '', branch, user, exactBranch === 'true');
+  }
+
+  @Get('membership-operation-lookup')
+  @RequiresPermission('club.subscriptions:create', 'club.subscriptions.list:create', 'club.subscriptions.new:create', 'club.subscriptions.special:create', 'club.reception:create', 'club.lockers:create', 'club.lockers.new:create')
+  membershipOperationLookup(@Query('q') q: string, @Query('branch') branch: string | undefined, @CurrentUser() user: JwtUser) {
+    return this.service.lookup(q ?? '', branch, user, false, true);
+  }
+
+  @Get('refund-transfer-lookup')
+  @ClubGroupOperation()
+  @RequiresPermission('club.subscriptions.member_transfer:view', 'club.subscriptions.member_transfer:create', 'club.subscriptions.refunds:view', 'club.subscriptions:update', 'club.subscriptions.list:update', 'club.reception:update')
+  refundTransferLookup(@Query('q') q: string, @Query('branch') branch: string | undefined, @Query('exactBranch') exactBranch: string | undefined, @CurrentUser() user: JwtUser) {
+    return this.service.lookup(q ?? '', branch, user, exactBranch === 'true', false, true);
+  }
+
+  @Get('measurement-operation-lookup')
+  @ClubGroupOperation()
+  @RequiresPermission('club.members.measurements:view', 'club.members.measurements:create', 'club.members.measurements:update')
+  measurementOperationLookup(@Query('q') q: string, @Query('branch') branch: string | undefined, @CurrentUser() user: JwtUser) {
+    const query = (q ?? '').trim();
+    const normalized = /^[a-z]+[0-9]+$/i.test(query) ? query.toUpperCase() : query;
+    return this.service.lookup(normalized, branch, user, false, false, true);
+  }
+
+  @Get('measurement-operation-member/:id')
+  @ClubGroupOperation()
+  @RequiresPermission('club.members.measurements:view', 'club.members.measurements:create', 'club.members.measurements:update')
+  measurementOperationMember(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user, false, true);
+  }
+
+  @Get('refund-transfer-member/:id')
+  @ClubGroupOperation()
+  @RequiresPermission('club.subscriptions.member_transfer:view', 'club.subscriptions.member_transfer:create', 'club.subscriptions.refunds:view', 'club.subscriptions:update', 'club.subscriptions.list:update', 'club.reception:update')
+  refundTransferMember(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user, false, true);
+  }
+
+  @Get('membership-operation-member/:id')
+  @RequiresPermission('club.subscriptions:create', 'club.subscriptions.list:create', 'club.subscriptions.new:create', 'club.subscriptions.special:create', 'club.reception:create', 'club.lockers:create', 'club.lockers.new:create')
+  membershipOperationMember(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user, true);
+  }
+
   @Get()
   list(@Query() query: ListClubMembersDto, @CurrentUser() user: JwtUser) {
     return this.service.list(query, user);
   }
 
+  @Get('print-cards')
+  @RequiresPermission('club.members.barcode_management:view', 'club.members.barcode.print_range:view')
+  printCards(@Query() query: ListClubMembersDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(query, user, true);
+  }
+
   @Get('statistics')
-  statistics(@CurrentUser() user: JwtUser) {
-    return this.service.statistics(user);
+  statistics(@Query() query: ListClubMembersDto, @CurrentUser() user: JwtUser) {
+    return this.service.statistics(query, user);
+  }
+
+  @Get('birthdays-today')
+  birthdaysToday(
+    @Query('branchId') branchId?: string,
+    @CurrentUser() user?: JwtUser,
+  ) {
+    return this.service.birthdaysToday(user, branchId ? Number(branchId) : undefined);
   }
 
   @Get('sales-portal')
@@ -148,7 +211,7 @@ export class ClubMembersController {
     const document = await this.service.readLegacyMembershipDocument(id, user);
     const encodedFilename = encodeURIComponent(document.originalFilename).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
     response.setHeader('Content-Type', document.mimeType);
-    response.setHeader('Content-Disposition', `inline; filename="member-document.pdf"; filename*=UTF-8''${encodedFilename}`);
+    response.setHeader('Content-Disposition', `inline; filename="member-document"; filename*=UTF-8''${encodedFilename}`);
     response.setHeader('Cache-Control', 'private, no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     return response.send(document.buffer);
@@ -201,7 +264,7 @@ export class ClubMembersController {
     const document = await this.service.readMembershipDocument(id, documentId, user);
     const encodedFilename = encodeURIComponent(document.originalFilename).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
     response.setHeader('Content-Type', document.mimeType);
-    response.setHeader('Content-Disposition', `inline; filename="member-document.pdf"; filename*=UTF-8''${encodedFilename}`);
+    response.setHeader('Content-Disposition', `inline; filename="member-document"; filename*=UTF-8''${encodedFilename}`);
     response.setHeader('Cache-Control', 'private, no-store');
     response.setHeader('X-Content-Type-Options', 'nosniff');
     return response.send(document.buffer);
@@ -215,6 +278,11 @@ export class ClubMembersController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.service.removeMembershipDocumentItem(id, documentId, user);
+  }
+
+  @Get(':id/workspace')
+  workspace(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.memberWorkspace(id, user);
   }
 
   @Get(':id')

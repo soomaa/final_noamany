@@ -11,7 +11,6 @@ import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
-import { csvCell } from '../../common/export/csv.util';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
 import { recordSystemExpense } from '../finance/system-expense.util';
 import {
@@ -1276,6 +1275,14 @@ export class PayrollService {
       publisher: row.publisher,
     };
   }
+}
+
+/** CSV-escape a cell (RFC 4180: quote when it contains comma/quote/newline). */
+function csvCell(value: string): string {
+  if (/[",\r\n]/.test(value)) {
+    return `"${value.replace(/"/g, '""')}"`;
+  }
+  return value;
 }
 
 function unixDate(date: string): string {

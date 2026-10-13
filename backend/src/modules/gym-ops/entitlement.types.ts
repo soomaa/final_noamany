@@ -56,6 +56,8 @@ export interface EntitlementResult {
 export interface ValidateEntitlementOptions {
   memberId: number;
   branchId?: number;
+  /** Explicitly trusted operation branches (for configured club branch groups). */
+  branchIds?: number[];
   /** When set, validate/pick THIS subscription (reception chose it) instead of auto-picking. */
   subscriptionId?: number;
   at?: Date;

@@ -46,6 +46,7 @@ export async function seedGymSales(): Promise<void> {
     'inv_products',
     'inv_unit_conversions', 'inv_unit_templates',
     'inv_storages', 'inv_warehouses',
+    'inv_supplier_phones',
     'inv_suppliers', 'inv_manufacturers', 'inv_brands',
     'inv_categories', 'inv_sub_categories', 'inv_main_categories',
   ]);
@@ -890,7 +891,7 @@ export async function seedGymSales(): Promise<void> {
       const lineTotal = round2(it.qty * it.price);
       await prisma.prc_purchase_invoice_items.create({
         data: {
-          purchase_invoice_id: pi.id, name: it.name, quantity: it.qty, price: it.price,
+          purchase_invoice_id: pi.id, product_id: it.product_id, name: it.name, quantity: it.qty, price: it.price,
           total: lineTotal, po_quantity: it.qty, grn_quantity: it.qty, variance: 0,
         },
       });

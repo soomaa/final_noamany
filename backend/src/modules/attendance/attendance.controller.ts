@@ -59,6 +59,17 @@ export class AttendanceController {
     return this.attendance.patchSettings(body);
   }
 
+  @Get('weekly-schedule-rollout')
+  getWeeklyScheduleRollout() {
+    return this.attendance.getWeeklyScheduleRollout();
+  }
+
+  @Post('weekly-schedule-rollout/activate')
+  @RequiresPermission('attendance:update')
+  activateWeeklyScheduleRollout() {
+    return this.attendance.activateWeeklyScheduleRollout();
+  }
+
   // -------- shifts (tbl_hdodr_setting) --------
   @Get('shifts')
   listShifts(@Query() query: PaginationDto) {
@@ -190,21 +201,6 @@ export class AttendanceController {
   @Get('manual-options')
   manualOptions(@Query('branchId') branchId: string | undefined, @CurrentUser() user: JwtUser) {
     return this.attendance.manualOptions(user, branchId);
-  }
-
-  @Get('barcode-preview')
-  barcodePreview(
-    @Query('empCode') empCode: string,
-    @Query('branchId') branchId: string | undefined,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.attendance.barcodePreviewForUser(empCode, user, branchId);
-  }
-
-  @Post('barcode-punch')
-  @RequiresPermission('attendance:update')
-  barcodePunch(@Body() body: Pick<CheckPunchDto, 'empCode' | 'branchId'>, @CurrentUser() user: JwtUser) {
-    return this.attendance.barcodePunchForUser(body, user);
   }
 
   /** Legacy Hdoor::add_emp_hdoor XLSX import (multipart field: hdoor_file). */

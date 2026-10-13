@@ -188,7 +188,7 @@ export class AppManagementService {
     return this.mapInvitation(row);
   }
 
-  async updateInvitation(id: number, dto: UpdateInvitationDto) {
+  async updateInvitation(id: number, dto: UpdateInvitationDto, actorUserId?: number) {
     const existing = await this.prisma.am_invitations.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الدعوة غير موجودة');
 
@@ -202,9 +202,11 @@ export class AppManagementService {
     };
     if (dto.status === 'accepted' && existing.status !== 'accepted') {
       data.accepted_date = new Date();
+      data.accepted_by_user_id = actorUserId ?? null;
     }
     if (dto.status === 'rejected' && existing.status !== 'rejected') {
       data.rejected_date = new Date();
+      data.rejected_by_user_id = actorUserId ?? null;
     }
     if (dto.status === 'attended' && existing.status !== 'attended') {
       data.attendance_date = new Date();
@@ -225,11 +227,18 @@ export class AppManagementService {
     status: AmInvitationStatus;
     accepted_date: Date | null;
     rejected_date: Date | null;
+    accepted_by_user_id: number | null;
+    rejected_by_user_id: number | null;
     rejection_reason: string | null;
     attendance_date: Date | null;
     branch_id: number | null;
     created_at: Date;
   }) {
+    const actorIds = [row.accepted_by_user_id, row.rejected_by_user_id].filter((id): id is number => id != null);
+    const actors = actorIds.length
+      ? await this.prisma.users.findMany({ where: { user_id: { in: actorIds } }, select: { user_id: true, name: true, username: true } })
+      : [];
+    const actorName = new Map(actors.map((actor) => [actor.user_id, actor.name || actor.username || `#${actor.user_id}`]));
     return {
       id: row.id,
       invitationCode: row.invitation_code,
@@ -241,6 +250,10 @@ export class AppManagementService {
       status: row.status,
       acceptedDate: row.accepted_date,
       rejectedDate: row.rejected_date,
+      acceptedByUserId: row.accepted_by_user_id,
+      rejectedByUserId: row.rejected_by_user_id,
+      acceptedByName: row.accepted_by_user_id != null ? actorName.get(row.accepted_by_user_id) ?? null : null,
+      rejectedByName: row.rejected_by_user_id != null ? actorName.get(row.rejected_by_user_id) ?? null : null,
       rejectionReason: row.rejection_reason,
       attendanceDate: row.attendance_date,
       branchId: row.branch_id,

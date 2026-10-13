@@ -84,7 +84,7 @@ describe('AttendanceService full attendance sheet', () => {
     };
     const service = new AttendanceService(prisma as never);
 
-    await service.manualOptions({ level: 2, emp_code: 7, branch: 3, man_women_type: 0 } as never, '3');
+    await service.manualOptions({ level: 2, emp_code: 7, branch: 3 } as never, '3');
 
     expect(prisma.employees.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({
@@ -92,5 +92,26 @@ describe('AttendanceService full attendance sheet', () => {
         OR: [{ id: 7 }, { manger: '7' }],
       }),
     }));
+  });
+
+  it('uses a weekly schedule rest slot instead of the retired weekly-leave record after rollout', async () => {
+    const prisma = {
+      attendance_weekly_schedule_settings: { findUnique: jest.fn().mockResolvedValue({ enabled: true }) },
+      employee_weekly_schedules: { findMany: jest.fn().mockResolvedValue([{
+        employee_id: 7, effective_from: '2026-01-01', effective_to: null,
+        slots: [{ weekday: 0, shift_id: null }],
+      }]) },
+      employees: { findMany: jest.fn().mockResolvedValue([{ id: 7, emp_code: 1007, employee: 'موظف', branch_id_fk: 1, edara_n: null, qsm_n: null }]) },
+      tbl_hdoor_emps: { findMany: jest.fn().mockResolvedValue([]) },
+      hr_emp_agazat_dayes: { findMany: jest.fn().mockResolvedValue([]) },
+      hr_all_agzat_orders: { findMany: jest.fn().mockResolvedValue([]) },
+      tbl_branches: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = new AttendanceService(prisma as never);
+
+    const result = await service.fullAttendanceSheet({ dateFrom: '2026-08-01', dateTo: '2026-08-01', page: 1, pageSize: 25, skip: 0, take: 25 } as never);
+
+    expect(result.data[0]).toEqual(expect.objectContaining({ status: 'weekly_off', statusLabel: 'إجازة أسبوعية' }));
+    expect(prisma.hr_emp_agazat_dayes.findMany).not.toHaveBeenCalled();
   });
 });

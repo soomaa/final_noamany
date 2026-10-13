@@ -6,7 +6,7 @@ import { notDeletedFilter } from './inventory.utils';
 
 /**
  * Keeps the database's required stock location internal to the application.
- * The café operates one logical inventory per branch, so users never choose a
+ * Noamany operates one logical inventory per branch, so users never choose a
  * warehouse in business forms.
  */
 @Injectable()
@@ -21,27 +21,6 @@ export class InventoryLocationService {
     return branchId;
   }
 
-  resolveStockTakingBranch(
-    user: JwtUser,
-    requestedBranchId?: number | null,
-  ): number {
-    const requested = Number(requestedBranchId);
-    const hasRequested = Number.isInteger(requested) && requested > 0;
-
-    if (user.level === 1) {
-      if (!hasRequested) {
-        throw new BadRequestException('اختر الفرع الذي سيتم جرده');
-      }
-      return requested;
-    }
-
-    const assignedBranch = this.requireUserBranch(user);
-    if (hasRequested && requested !== assignedBranch) {
-      throw new BadRequestException('لا يمكنك إنشاء جرد لفرع غير فرعك');
-    }
-    return assignedBranch;
-  }
-
   async resolveBranchStockLocation(
     branchId: number,
     tx?: Prisma.TransactionClient,
@@ -54,7 +33,7 @@ export class InventoryLocationService {
     });
     if (location) return location.id;
 
-    // The DB schema requires a stock-balance location, although the café has no
+    // The DB schema requires a stock-balance location, although Noamany has no
     // warehouse concept in the UI. Create one hidden logical location per
     // branch on first use so a fresh branch works without manual setup.
     const internalCode = `Noamany-STOCK-${branchId}`;

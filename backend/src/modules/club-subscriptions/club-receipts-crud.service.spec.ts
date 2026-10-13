@@ -26,13 +26,10 @@ describe('ClubReceiptsCrudService receipt period filters', () => {
       }),
     }));
     const query = findMany.mock.calls[0][0];
-    expect(query.where.AND[1].OR[0]).toEqual({
-      subscription_id: { not: null },
-      subscription: { is: { branch_id: { in: [2] } } },
-    });
-    expect(query.where.AND[1].OR[1]).toEqual(expect.objectContaining({
-      subscription_id: null,
-      locker_subscription_id: { not: null },
-    }));
+    expect(query.where.AND[1].OR).toEqual(expect.arrayContaining([
+      { branch_id: 2 },
+      { subscription: { branch_id: 2 } },
+      { member: { branch_id: 2 } },
+    ]));
   });
 });

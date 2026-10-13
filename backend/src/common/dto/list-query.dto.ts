@@ -1,4 +1,4 @@
-import { IsIn, IsOptional, IsString } from 'class-validator';
+import { IsOptional, IsString } from 'class-validator';
 import { PaginationDto } from './pagination.dto';
 
 /**
@@ -20,5 +20,4 @@ export class ListQueryDto extends PaginationDto {
   @IsOptional() @IsString() source?: string;
   @IsOptional() @IsString() expiry?: string;
   @IsOptional() @IsString() branchId?: string;
-  @IsOptional() @IsIn(['male', 'female']) gender?: 'male' | 'female';
 }

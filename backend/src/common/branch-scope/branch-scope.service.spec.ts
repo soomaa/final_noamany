@@ -7,6 +7,13 @@ describe("BranchScopeService", () => {
     expect(service.resolveListFilter({ level: 1 } as never, "all")).toBeNull();
   });
 
+  it("allows an RBAC super-admin role to view all branches", () => {
+    const user = { level: 2, branch: 2, is_super_admin: true } as never;
+
+    expect(service.resolveListFilter(user, "all")).toBeNull();
+    expect(service.isBranchAllowed(user, 5)).toBe(true);
+  });
+
   it("keeps a super-admin's explicit branch selection exact", () => {
     expect(service.resolveListFilter({ level: 1 } as never, "2")).toEqual([2]);
   });
@@ -39,18 +46,12 @@ describe("BranchScopeService", () => {
     expect(service.isBranchAllowed(undefined, 1)).toBe(false);
   });
 
-  it("enforces the legacy men/women audience scope independently of branch scope", () => {
-    const menManager = { level: 3, branch: 2, man_women_type: 0 } as never;
-    const womenManager = { level: 3, branch: 2, man_women_type: 1 } as never;
-    expect(service.memberGenderFilter(menManager)).toBe('male');
-    expect(service.memberGenderFilter(womenManager)).toBe('female');
-    expect(service.isMemberGenderAllowed(menManager, 'male')).toBe(true);
-    expect(service.isMemberGenderAllowed(menManager, 'female')).toBe(false);
-  });
+  it('does not gender-filter an employee assigned to all sections', () => {
+    const user = { level: 2, branch: 2, man_women_type: 3 } as never;
 
-  it("keeps only system administrators unrestricted and fails closed for legacy mixed scope", () => {
-    expect(service.memberGenderFilter({ level: 1, man_women_type: 0 } as never)).toBeNull();
-    expect(() => service.memberGenderFilter({ level: 3, man_women_type: 2 } as never))
-      .toThrow('نطاق القسم غير مضبوط');
+    expect(service.memberGenderFilter(user)).toBeNull();
+    expect(service.isMemberGenderAllowed(user, 'male')).toBe(true);
+    expect(service.isMemberGenderAllowed(user, 'female')).toBe(true);
+    expect(service.resolveListFilter(user, null)).toEqual([2]);
   });
 });

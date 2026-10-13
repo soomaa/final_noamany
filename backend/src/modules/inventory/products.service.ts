@@ -15,7 +15,6 @@ import { BranchScopeService } from '../../common/branch-scope/branch-scope.servi
 import type { JwtUser } from '../../common/types/jwt-user';
 import {
   ListProductsDto,
-  PackagedMaterialSizeDto,
   ProductRecipeLineDto,
   UpdateProductStockDto,
   UpsertProductDto,
@@ -193,7 +192,6 @@ export class ProductsService {
       manufacturer: true;
       supplier: true;
       unit_template: true;
-      packages: true;
     };
   }>) {
     return {
@@ -222,17 +220,6 @@ export class ProductsService {
       model: row.model,
       color: row.color,
       size: row.size,
-      isPackaged: row.is_packaged,
-      packages: row.packages.map((pack) => ({
-        id: pack.id,
-        packageSize: toNumber(pack.package_size),
-        packageUnit: pack.package_unit,
-        packageBaseQuantity: toNumber(pack.package_base_quantity),
-        packagePrice: toNumber(pack.package_price),
-        reorderPoint: toNumber(pack.reorder_point),
-        isDefault: pack.is_default,
-        isActive: pack.is_active,
-      })),
       material: row.material,
       weightKg: row.weight_kg != null ? toNumber(row.weight_kg) : null,
       dimensions: row.dimensions,
@@ -254,17 +241,13 @@ export class ProductsService {
   }
 
   private includeRelations() {
-    return Prisma.validator<Prisma.inv_productsInclude>()({
+    return {
       category: true,
       brand: true,
       manufacturer: true,
       supplier: true,
       unit_template: true,
-      packages: {
-        where: { is_active: true },
-        orderBy: [{ is_default: 'desc' }, { package_base_quantity: 'asc' }, { id: 'asc' }],
-      },
-    });
+    } as const;
   }
 
   async list(q: ListProductsDto, user?: JwtUser) {
@@ -466,376 +449,6 @@ export class ProductsService {
     return `PRD${String(nextNum).padStart(6, '0')}`;
   }
 
-  private packageBaseUnit(unit: string): 'g' | 'ml' | 'piece' {
-    const normalized = unit.trim().toLowerCase();
-    if (['g', 'kg', 'oz'].includes(normalized)) return 'g';
-    if (['ml', 'l', 'fl_oz'].includes(normalized)) return 'ml';
-    if (normalized === 'piece') return 'piece';
-    throw new BadRequestException(`وحدة العبوة ${unit} غير مدعومة`);
-  }
-
-  private normalizePackage(pack: PackagedMaterialSizeDto) {
-    const baseUnit = this.packageBaseUnit(pack.packageUnit);
-    const baseQuantity = convertToBaseUnit(
-      pack.packageSize,
-      pack.packageUnit as RecipeUnit,
-      baseUnit,
-    );
-    if (baseQuantity == null || baseQuantity <= 0) {
-      throw new BadRequestException('حجم العبوة ووحدتها غير صالحين');
-    }
-    const unitCost = Math.round((pack.packagePrice / baseQuantity) * 1_000_000) / 1_000_000;
-    return { ...pack, baseUnit, baseQuantity, unitCost };
-  }
-
-  private validatePackageSet(packages?: PackagedMaterialSizeDto[]) {
-    if (!packages?.length) throw new BadRequestException('أضف حجم عبوة واحدًا على الأقل');
-    const normalized = packages.map((pack) => this.normalizePackage(pack));
-    const baseUnit = normalized[0].baseUnit;
-    if (normalized.some((pack) => pack.baseUnit !== baseUnit)) {
-      throw new BadRequestException('كل أحجام الخامة الواحدة يجب أن تكون من نفس النوع: وزن أو حجم أو قطعة');
-    }
-    const sizes = normalized.map((pack) => pack.baseQuantity.toFixed(3));
-    if (new Set(sizes).size !== sizes.length) {
-      throw new BadRequestException('لا يمكن تكرار نفس حجم العبوة داخل الخامة');
-    }
-    return normalized;
-  }
-
-  private packageSizeLabel(packageSize: number, packageUnit: string) {
-    return `${Number(packageSize.toFixed(3))} ${packageUnit}`;
-  }
-
-  private async createPackagedMaterial(dto: UpsertProductDto, userId: number, branchId?: number) {
-    if (!dto.nameAr?.trim()) throw new BadRequestException('اسم الخامة مطلوب');
-    if (dto.inventoryKind && dto.inventoryKind !== 'raw_material') {
-      throw new BadRequestException('العبوات المتعددة متاحة للخامات الأساسية فقط');
-    }
-    const packages = this.validatePackageSet(dto.packages);
-    const productCode = dto.productCode?.trim() || (await this.generateProductCode());
-    await assertUnique(
-      () => this.prisma.inv_products.findFirst({
-        where: { product_code: productCode, ...notDeletedFilter() },
-      }),
-      'كود المنتج مستخدم بالفعل',
-    );
-    if (dto.barcode?.trim()) {
-      await assertUnique(
-        () => this.prisma.inv_products.findFirst({
-          where: { barcode: dto.barcode!.trim(), ...notDeletedFilter() },
-        }),
-        'الباركود مستخدم بالفعل',
-      );
-    }
-
-    const initialStock = packages.reduce(
-      (sum, pack) => sum + Number(pack.initialPackageCount ?? 0) * pack.baseQuantity,
-      0,
-    );
-    const openingValue = packages.reduce(
-      (sum, pack) => sum + Number(pack.initialPackageCount ?? 0) * pack.packagePrice,
-      0,
-    );
-    const openingUnitCost = initialStock > 0
-      ? openingValue / initialStock
-      : packages[0].unitCost;
-    const openingBranchId = initialStock > 0
-      ? await this.resolveOpeningStockBranchId(dto.openingBranchId ?? branchId)
-      : null;
-    if (openingValue > 0) await this.moduleLedger.ensureChart();
-
-    const row = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.inv_products.create({
-        data: {
-          product_code: productCode,
-          name_ar: dto.nameAr.trim(),
-          name_en: dto.nameEn?.trim() || dto.nameAr.trim(),
-          description: dto.description ?? null,
-          barcode: dto.barcode?.trim() || null,
-          category_id: dto.categoryId ?? null,
-          brand_id: dto.brandId ?? null,
-          manufacturer_id: dto.manufacturerId ?? null,
-          supplier_id: dto.supplierId ?? null,
-          inventory_kind: 'raw_material',
-          inventory_section: dto.inventorySection ?? 'preparation_ingredients',
-          cost_price: Math.round(openingUnitCost * 1_000_000) / 1_000_000,
-          selling_price: 0,
-          unit_of_measure: packages[0].baseUnit,
-          min_stock: Number(packages[0].reorderPoint ?? 0) * packages[0].baseQuantity,
-          max_stock: dto.maxStock ?? 1_000_000,
-          reorder_point: Number(packages[0].reorderPoint ?? 0) * packages[0].baseQuantity,
-          image_url: dto.imageUrl ?? null,
-          material: dto.material ?? null,
-          shelf_location: dto.shelfLocation ?? null,
-          apply_to_all_branches: dto.applyToAllBranches ?? false,
-          status: dto.status ?? 'active',
-          is_packaged: true,
-          created_by: userId,
-          packages: {
-            create: packages.map((pack, index) => ({
-              package_size: pack.packageSize,
-              package_unit: pack.packageUnit,
-              package_base_quantity: pack.baseQuantity,
-              package_price: pack.packagePrice,
-              reorder_point: pack.reorderPoint ?? 0,
-              is_default: index === 0,
-            })),
-          },
-        },
-      });
-
-      if (dto.supplierId) {
-        await tx.inv_supplier_products.create({
-          data: {
-            supplier_id: dto.supplierId,
-            product_id: created.id,
-            purchase_unit: 'package',
-            last_unit_cost: packages[0].packagePrice,
-            is_active: true,
-          },
-        });
-      }
-
-      if (initialStock > 0) {
-        const warehouseId = await this.location.resolveBranchStockLocation(openingBranchId!, tx);
-        const openingDescription = packages
-          .filter((pack) => Number(pack.initialPackageCount ?? 0) > 0)
-          .map((pack) =>
-            String(Number(pack.initialPackageCount)) + ' عبوة × '
-              + this.packageSizeLabel(pack.packageSize, pack.packageUnit),
-          )
-          .join('، ');
-        const opening = await tx.inv_opening_stocks.create({
-          data: {
-            opening_stock_date: new Date(),
-            item_code: created.product_code,
-            quantity: initialStock,
-            unit_cost: openingUnitCost,
-            total_cost: openingValue,
-            notes: openingDescription,
-            branch_id: openingBranchId!,
-            warehouse_id: warehouseId,
-            product_id: created.id,
-          },
-        });
-        await this.stock.applyMovement({
-          productId: created.id,
-          warehouseId,
-          direction: MovementDirection.in,
-          quantity: initialStock,
-          operation: 'set',
-          txnType: InventoryTxnType.adjustment,
-          unitCost: openingUnitCost,
-          docType: 'opening_stock',
-          docRef: String(opening.id),
-          branchId: openingBranchId!,
-          createdBy: userId,
-        }, tx);
-        await this.moduleLedger.postOpeningStock({
-          openingStockId: opening.id,
-          branchId: openingBranchId!,
-          date: opening.opening_stock_date!.toISOString().slice(0, 10),
-          amount: openingValue,
-          itemName: created.name_ar,
-          createdBy: userId,
-        }, tx);
-      }
-
-      return created;
-    }, { maxWait: 10_000, timeout: 30_000 });
-
-    if (dto.applyToAllBranches) await this.fanOutToAllBranches(row.id);
-    return this.findOne(row.id);
-  }
-
-  private async updatePackagedMaterial(
-    productId: number,
-    dto: Partial<UpsertProductDto>,
-    userId: number,
-    branchId?: number,
-  ) {
-    const existing = await this.prisma.inv_products.findFirst({
-      where: { id: productId, is_packaged: true, ...notDeletedFilter() },
-      include: { packages: { where: { is_active: true }, orderBy: { id: 'asc' } } },
-    });
-    if (!existing) throw new NotFoundException('الخامة ذات العبوات غير موجودة');
-    const packages = this.validatePackageSet(dto.packages);
-    const existingById = new Map(existing.packages.map((pack) => [pack.id, pack]));
-    const submittedIds = packages.flatMap((pack) => pack.id ? [pack.id] : []);
-    if (submittedIds.some((id) => !existingById.has(id))) {
-      throw new BadRequestException('أحد أحجام العبوات لا ينتمي إلى هذه الخامة');
-    }
-    if (existing.packages.some((pack) => !submittedIds.includes(pack.id))) {
-      throw new BadRequestException('لا يمكن حذف حجم عبوة سبق حفظه؛ يمكن إضافة أحجام جديدة وتعديل السعر');
-    }
-    for (const pack of packages) {
-      if (!pack.id) continue;
-      const saved = existingById.get(pack.id)!;
-      if (Math.abs(toNumber(saved.package_base_quantity) - pack.baseQuantity) > 0.0001) {
-        throw new BadRequestException(
-          'لا يمكن تغيير سعة عبوة محفوظة حفاظًا على فواتير الشراء السابقة؛ أضف حجمًا جديدًا بدلًا منها',
-        );
-      }
-    }
-    await this.assertMasterDataChangeAllowed(productId, existing, {
-      unitOfMeasure: packages[0].baseUnit,
-    });
-
-    const newPackages = packages.filter((pack) => !pack.id);
-    const addedStock = newPackages.reduce(
-      (sum, pack) => sum + Number(pack.initialPackageCount ?? 0) * pack.baseQuantity,
-      0,
-    );
-    const addedValue = newPackages.reduce(
-      (sum, pack) => sum + Number(pack.initialPackageCount ?? 0) * pack.packagePrice,
-      0,
-    );
-    const openingBranchId = addedStock > 0
-      ? await this.resolveOpeningStockBranchId(dto.openingBranchId ?? branchId)
-      : null;
-    if (addedValue > 0) await this.moduleLedger.ensureChart();
-
-    await this.prisma.$transaction(async (tx) => {
-      let nextCost = toNumber(existing.cost_price);
-      if (addedStock > 0) {
-        const aggregate = await tx.inv_stock_balances.aggregate({
-          where: { product_id: productId },
-          _sum: { current_stock: true },
-        });
-        const currentStock = toNumber(aggregate._sum.current_stock);
-        nextCost = currentStock + addedStock > 0
-          ? ((currentStock * nextCost) + addedValue) / (currentStock + addedStock)
-          : addedValue / addedStock;
-      }
-
-      await tx.inv_products.update({
-        where: { id: productId },
-        data: {
-          ...(dto.nameAr != null ? { name_ar: dto.nameAr.trim() } : {}),
-          ...(dto.nameEn != null ? { name_en: dto.nameEn.trim() || dto.nameAr?.trim() } : {}),
-          ...(dto.description !== undefined ? { description: dto.description ?? null } : {}),
-          ...(dto.supplierId !== undefined ? { supplier_id: dto.supplierId ?? null } : {}),
-          ...(dto.inventorySection !== undefined ? { inventory_section: dto.inventorySection } : {}),
-          ...(dto.maxStock !== undefined ? { max_stock: dto.maxStock } : {}),
-          ...(dto.status !== undefined ? { status: dto.status } : {}),
-          ...(dto.applyToAllBranches !== undefined
-            ? { apply_to_all_branches: dto.applyToAllBranches }
-            : {}),
-          unit_of_measure: packages[0].baseUnit,
-          min_stock: Number(packages[0].reorderPoint ?? 0) * packages[0].baseQuantity,
-          reorder_point: Number(packages[0].reorderPoint ?? 0) * packages[0].baseQuantity,
-          cost_price: Math.round(nextCost * 1_000_000) / 1_000_000,
-        },
-      });
-
-      await tx.inv_product_packages.updateMany({
-        where: { product_id: productId },
-        data: { is_default: false },
-      });
-      for (const [index, pack] of packages.entries()) {
-        if (pack.id) {
-          await tx.inv_product_packages.update({
-            where: { id: pack.id },
-            data: {
-              package_size: pack.packageSize,
-              package_unit: pack.packageUnit,
-              package_base_quantity: pack.baseQuantity,
-              package_price: pack.packagePrice,
-              reorder_point: pack.reorderPoint ?? 0,
-              is_default: index === 0,
-              is_active: true,
-            },
-          });
-        } else {
-          await tx.inv_product_packages.create({
-            data: {
-              product_id: productId,
-              package_size: pack.packageSize,
-              package_unit: pack.packageUnit,
-              package_base_quantity: pack.baseQuantity,
-              package_price: pack.packagePrice,
-              reorder_point: pack.reorderPoint ?? 0,
-              is_default: index === 0,
-            },
-          });
-        }
-      }
-
-      const effectiveSupplierId = dto.supplierId === undefined
-        ? existing.supplier_id
-        : dto.supplierId;
-      if (effectiveSupplierId) {
-        await tx.inv_supplier_products.upsert({
-          where: {
-            supplier_id_product_id: {
-              supplier_id: effectiveSupplierId,
-              product_id: productId,
-            },
-          },
-          create: {
-            supplier_id: effectiveSupplierId,
-            product_id: productId,
-            purchase_unit: 'package',
-            last_unit_cost: packages[0].packagePrice,
-            is_active: true,
-          },
-          update: {
-            purchase_unit: 'package',
-            last_unit_cost: packages[0].packagePrice,
-            is_active: true,
-          },
-        });
-      }
-
-      if (addedStock > 0) {
-        const warehouseId = await this.location.resolveBranchStockLocation(openingBranchId!, tx);
-        const openingDescription = newPackages
-          .filter((pack) => Number(pack.initialPackageCount ?? 0) > 0)
-          .map((pack) =>
-            String(Number(pack.initialPackageCount)) + ' عبوة × '
-              + this.packageSizeLabel(pack.packageSize, pack.packageUnit),
-          )
-          .join('، ');
-        const opening = await tx.inv_opening_stocks.create({
-          data: {
-            opening_stock_date: new Date(),
-            item_code: existing.product_code,
-            quantity: addedStock,
-            unit_cost: addedValue / addedStock,
-            total_cost: addedValue,
-            notes: openingDescription,
-            branch_id: openingBranchId!,
-            warehouse_id: warehouseId,
-            product_id: productId,
-          },
-        });
-        await this.stock.applyMovement({
-          productId,
-          warehouseId,
-          direction: MovementDirection.in,
-          quantity: addedStock,
-          txnType: InventoryTxnType.adjustment,
-          unitCost: addedValue / addedStock,
-          docType: 'opening_stock',
-          docRef: String(opening.id),
-          branchId: openingBranchId!,
-          createdBy: userId,
-        }, tx);
-        await this.moduleLedger.postOpeningStock({
-          openingStockId: opening.id,
-          branchId: openingBranchId!,
-          date: opening.opening_stock_date!.toISOString().slice(0, 10),
-          amount: addedValue,
-          itemName: existing.name_ar,
-          createdBy: userId,
-        }, tx);
-      }
-    }, { maxWait: 10_000, timeout: 30_000 });
-
-    if (dto.applyToAllBranches) await this.fanOutToAllBranches(productId);
-    return this.findOne(productId);
-  }
-
   private async fanOutToAllBranches(productId: number) {
     const branches = await this.prisma.tbl_branches.findMany({
       select: { branch_id: true },
@@ -886,9 +499,6 @@ export class ProductsService {
   }
 
   async create(dto: UpsertProductDto, userId: number, branchId?: number) {
-    if (dto.isPackaged) {
-      return this.createPackagedMaterial(dto, userId, branchId);
-    }
     if (!dto.nameAr?.trim()) throw new BadRequestException('اسم المنتج مطلوب');
 
     const productCode = dto.productCode?.trim() || (await this.generateProductCode());
@@ -1072,17 +682,11 @@ export class ProductsService {
     return this.findOne(row.id);
   }
 
-  async update(id: number, dto: Partial<UpsertProductDto>, userId = 0, branchId?: number) {
+  async update(id: number, dto: Partial<UpsertProductDto>) {
     const existing = await this.prisma.inv_products.findFirst({
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('المنتج غير موجود');
-    if (existing.is_packaged && dto.packages) {
-      return this.updatePackagedMaterial(id, dto, userId, branchId);
-    }
-    if (dto.isPackaged && !existing.is_packaged) {
-      throw new BadRequestException('لا يمكن تحويل خامة مستخدمة إلى مجموعة عبوات؛ أنشئ خامة عبوات جديدة حفاظًا على الحركات الحالية');
-    }
     await this.assertMasterDataChangeAllowed(id, existing, dto);
 
     const applyAll = dto.applyToAllBranches ?? existing.apply_to_all_branches;
@@ -1374,4 +978,3 @@ export class ProductsService {
     return { updated: updated.length, failed: failed.length, failedRows: failed };
   }
 }
-

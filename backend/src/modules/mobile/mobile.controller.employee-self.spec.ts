@@ -2,15 +2,14 @@ import { MobileController } from './mobile.controller';
 
 describe('MobileController employee self-service lookups', () => {
   const mobile = { employeeIdByPhone: jest.fn() };
-  const permissions = { available: jest.fn(), list: jest.fn(), action: jest.fn(), selfDetail: jest.fn() };
+  const permissions = { available: jest.fn(), list: jest.fn(), action: jest.fn() };
   const leaves = { listTypes: jest.fn(), list: jest.fn(), action: jest.fn(), create: jest.fn() };
   const attendance = {
     syncOfflinePunch: jest.fn(), listShifts: jest.fn(), createShiftSwap: jest.fn(), createExtraHours: jest.fn(),
     basmaReport: jest.fn(), lateReport: jest.fn(), absenceReport: jest.fn(),
   };
-  const compat = { identity: jest.fn(), permissionDetail: jest.fn(), shiftChanges: jest.fn(), overtime: jest.fn() };
+  const compat = { identity: jest.fn(), shiftChanges: jest.fn(), overtime: jest.fn() };
   const loans = {};
-  const evaluations = { myEvaluations: jest.fn(), myEvaluation: jest.fn() };
   const controller = new MobileController(
     mobile as never,
     permissions as never,
@@ -18,7 +17,6 @@ describe('MobileController employee self-service lookups', () => {
     attendance as never,
     compat as never,
     loans as never,
-    evaluations as never,
   );
   const user = { sub: 44, emp_code: 8, name: 'موظف' } as any;
 
@@ -36,27 +34,6 @@ describe('MobileController employee self-service lookups', () => {
 
     await expect(controller.permissionAvailability('2026-08-20', user)).resolves.toEqual({ remainMinutes: 120, remainNum: 2 });
     expect(permissions.available).toHaveBeenCalledWith(8, '2026-08-20');
-  });
-
-  it('returns a permission detail only through the authenticated employee owner scope', async () => {
-    compat.identity.mockResolvedValue({ id: 81, empCode: 8 });
-    permissions.selfDetail.mockResolvedValue({ id: 19, emp_id_fk: 81 });
-
-    await expect(controller.permissionDetail(19, user)).resolves.toEqual({ id: 19, emp_id_fk: 81 });
-    expect(permissions.selfDetail).toHaveBeenCalledWith(19, 81, 44);
-    expect(compat.permissionDetail).not.toHaveBeenCalled();
-  });
-
-  it('lists and opens evaluations using the authenticated employee identity', async () => {
-    compat.identity.mockResolvedValue({ id: 81, empCode: 8 });
-    evaluations.myEvaluations.mockResolvedValue([{ id: 55, employee_id: 81 }]);
-    evaluations.myEvaluation.mockResolvedValue({ id: 55, employee_id: 81 });
-
-    await expect(controller.myEvaluations('2026-09', user)).resolves.toEqual([{ id: 55, employee_id: 81 }]);
-    await expect(controller.myEvaluation(55, user)).resolves.toEqual({ id: 55, employee_id: 81 });
-
-    expect(evaluations.myEvaluations).toHaveBeenCalledWith(81, { monthKey: '2026-09' });
-    expect(evaluations.myEvaluation).toHaveBeenCalledWith(81, 55);
   });
 
   it('forwards an offline attendance record to the signed-in employee service', async () => {

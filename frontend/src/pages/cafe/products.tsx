@@ -36,11 +36,11 @@ import {
 } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { toast } from 'sonner';
-import type { CafeProductListItem, CafeProductDetail, CafeCategory, CafeProductType, CafeBusinessClassification, RecipeUnit } from '@/types/cafe';
+import type { CafeProductListItem, CafeProductDetail, CafeCategory, CafeProductType, RecipeUnit } from '@/types/cafe';
 import type { ProductListItem } from '@/types/inventory';
 import { UploadField } from '@/components/employees/upload-fields';
-import { DEFAULT_PRODUCT_IMAGE, resolveProductImageUrl } from '@/lib/product-image';
-import { validateProductImageInput } from '@/lib/product-image-input';
+import { uploadUrl } from '@/components/employees/use-uploads';
+import { resolveProductImageUrl } from '@/lib/product-image';
 import { CAFE_UNIT_OPTIONS, convertCafeUnit } from '@/lib/cafe-units';
 import { useBranches } from '@/hooks/use-branches';
 import { useAuth } from '@/store/auth';
@@ -49,7 +49,6 @@ import { usePermission } from '@/hooks/use-permission';
 interface ProductFormState {
   name: string;
   productType: CafeProductType;
-  businessClassification: CafeBusinessClassification | '';
   inventoryProductId: string;
   readyUnit: RecipeUnit;
   readyMinStock: number;
@@ -68,7 +67,6 @@ interface ProductFormState {
 const emptyForm: ProductFormState = {
   name: '',
   productType: 'prepared',
-  businessClassification: '',
   inventoryProductId: '',
   readyUnit: 'piece',
   readyMinStock: 0,
@@ -99,7 +97,6 @@ export function CafeProductsPage() {
     filters: { isActive: 'true' },
   });
   const productsTab = params.filters.isActive === 'false' ? 'archived' : 'active';
-  const [searchDraft, setSearchDraft] = useState(params.search);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formTab, setFormTab] = useState<ProductFormTab>('details');
@@ -115,18 +112,6 @@ export function CafeProductsPage() {
   const [productionQuantity, setProductionQuantity] = useState(1);
   const [producing, setProducing] = useState(false);
 
-  useEffect(() => {
-    setSearchDraft(params.search);
-  }, [params.search]);
-
-  useEffect(() => {
-    if (searchDraft === params.search) return;
-    const timer = window.setTimeout(() => {
-      setParams({ search: searchDraft, page: 1 });
-    }, 350);
-    return () => window.clearTimeout(timer);
-  }, [params.search, searchDraft, setParams]);
-
   const { data: listData, isLoading, isError, error, refetch } = usePaginatedList<CafeProductListItem>(
     'cafe-products',
     params,
@@ -140,10 +125,6 @@ export function CafeProductsPage() {
   });
 
   const effectiveProductionBranchId = productionBranchId || String(branches?.[0]?.id ?? '');
-  const imageInputValidation = validateProductImageInput(form.imageUrl);
-  const imagePreviewUrl = imageInputValidation.error
-    ? DEFAULT_PRODUCT_IMAGE
-    : resolveProductImageUrl(imageInputValidation.value);
 
   const detailQuery = useResource<CafeProductDetail>('cafe-products', editingId ?? undefined);
 
@@ -208,15 +189,9 @@ export function CafeProductsPage() {
       : ui('منتج يتم تحضيره');
 
   const goToNextFormTab = () => {
-    if (formTab === 'details') {
-      if (!form.name.trim()) {
-        toast.error(ui('اكتب اسم المنتج أولاً'));
-        return;
-      }
-      if (form.productType !== 'internal' && !form.businessClassification) {
-        toast.error(ui('اختر التصنيف التجاري للمنتج'));
-        return;
-      }
+    if (formTab === 'details' && !form.name.trim()) {
+      toast.error(ui('اكتب اسم المنتج أولاً'));
+      return;
     }
     if (formTab === 'pricing') {
       if (form.productType !== 'internal' && !form.variantsEnabled && effectiveSellPrice <= 0) {
@@ -270,7 +245,6 @@ export function CafeProductsPage() {
     setForm({
       name: row.name,
       productType: row.productType,
-      businessClassification: row.businessClassification ?? '',
       inventoryProductId: row.inventoryProductId ? String(row.inventoryProductId) : '',
       readyUnit: 'piece',
       readyMinStock: 0,
@@ -328,7 +302,6 @@ export function CafeProductsPage() {
       const payload = {
         name: vars.body.name,
         productType: vars.body.productType,
-        businessClassification: vars.body.productType === 'internal' ? undefined : vars.body.businessClassification || undefined,
         inventoryProductId: vars.body.productType !== 'prepared' && vars.body.inventoryProductId ? Number(vars.body.inventoryProductId) : undefined,
         readyUnit: vars.body.productType !== 'prepared' ? vars.body.readyUnit : undefined,
         readyMinStock: vars.body.productType !== 'prepared' ? Number(vars.body.readyMinStock) : undefined,
@@ -423,11 +396,6 @@ export function CafeProductsPage() {
       goToNextFormTab();
       return;
     }
-    if (imageInputValidation.error) {
-      setFormTab('details');
-      toast.error(ui('أدخل رابط صورة آمن يبدأ بـ https://'));
-      return;
-    }
     if (!form.name.trim()) {
       toast.error(ui('اسم المنتج مطلوب'));
       return;
@@ -469,10 +437,7 @@ export function CafeProductsPage() {
     }
     setIsSubmitting(true);
     try {
-      await saveMutation.mutateAsync({
-        id: editingId ?? undefined,
-        body: { ...form, imageUrl: imageInputValidation.value },
-      });
+      await saveMutation.mutateAsync({ id: editingId ?? undefined, body: form });
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -597,8 +562,8 @@ export function CafeProductsPage() {
       isError={isError}
       errorMessage={apiError(error)}
       onRetry={refetch}
-      search={searchDraft}
-      onSearchChange={setSearchDraft}
+      search={params.search}
+      onSearchChange={(search) => setParams({ search, page: 1 })}
       searchPlaceholder={ui('بحث بالاسم أو الكود…')}
       enableExport
     />
@@ -715,17 +680,6 @@ export function CafeProductsPage() {
                             </SelectContent>
                           </Select>
                         </div>
-                        {form.productType !== 'internal' ? <div className="space-y-2 sm:col-span-2">
-                          <Label>{ui('التصنيف التجاري')}</Label>
-                          <Select value={form.businessClassification || undefined} onValueChange={(value: CafeBusinessClassification) => setForm({ ...form, businessClassification: value })}>
-                            <SelectTrigger><SelectValue placeholder={ui('اختر Protein أو Bar')} /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="protein">Protein — {ui('يُحتسب في التارجت')}</SelectItem>
-                              <SelectItem value="bar">Bar — {ui('لا يُحتسب في التارجت')}</SelectItem>
-                            </SelectContent>
-                          </Select>
-                          <p className="text-xs text-muted-foreground">{ui('التصنيف حقيقة تشغيلية محفوظة؛ اسم المنتج لا يغيّرها.')}</p>
-                        </div> : null}
                       </div>
                       <div className="flex items-center justify-between rounded-xl border bg-card p-4">
                         <div>
@@ -736,46 +690,8 @@ export function CafeProductsPage() {
                       </div>
                     </div>
                     <div className="space-y-3 rounded-2xl border bg-muted/20 p-3">
-                      <img
-                        src={imagePreviewUrl}
-                        alt={form.name || ui('صورة المنتج')}
-                        className="aspect-square w-full rounded-xl border bg-background object-cover"
-                        onError={(event) => {
-                          event.currentTarget.onerror = null;
-                          event.currentTarget.src = DEFAULT_PRODUCT_IMAGE;
-                        }}
-                      />
+                      <img src={uploadUrl(form.imageUrl) ?? resolveProductImageUrl(null)} alt={form.name || ui('صورة المنتج')} className="aspect-square w-full rounded-xl border bg-background object-cover" />
                       <UploadField category="product-image" value={form.imageUrl} onChange={(path) => setForm((current) => ({ ...current, imageUrl: path ?? '' }))} accept="image/*" label={ui('اختيار صورة المنتج')} />
-                      <div className="space-y-1.5 border-t border-border/60 pt-3">
-                        <Label htmlFor="cafe-product-image-url" className="text-xs font-semibold">
-                          {ui('أو الصق رابط الصورة')}
-                        </Label>
-                        <Input
-                          id="cafe-product-image-url"
-                          dir="ltr"
-                          inputMode="url"
-                          autoComplete="url"
-                          value={form.imageUrl}
-                          aria-invalid={imageInputValidation.error === 'invalid'}
-                          aria-describedby="cafe-product-image-url-help"
-                          className={imageInputValidation.error ? 'border-destructive focus-visible:ring-destructive' : ''}
-                          placeholder="https://example.com/product.jpg"
-                          onChange={(event) => setForm((current) => ({ ...current, imageUrl: event.target.value }))}
-                          onBlur={() => {
-                            if (!imageInputValidation.error && imageInputValidation.value !== form.imageUrl) {
-                              setForm((current) => ({ ...current, imageUrl: imageInputValidation.value }));
-                            }
-                          }}
-                        />
-                        <p
-                          id="cafe-product-image-url-help"
-                          className={`text-xs ${imageInputValidation.error ? 'text-destructive' : 'text-muted-foreground'}`}
-                        >
-                          {imageInputValidation.error
-                            ? ui('الرابط غير صالح. استخدم رابطًا يبدأ بـ https://')
-                            : ui('يمكنك لصق رابط مباشر للصورة بدل رفع ملف.')}
-                        </p>
-                      </div>
                       <p className="text-center text-xs text-muted-foreground">{ui('تظهر الصورة في شاشة البيع.')}</p>
                     </div>
                   </div>
@@ -897,16 +813,8 @@ export function CafeProductsPage() {
                   <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
                     <section className="rounded-2xl border bg-card p-5 shadow-sm">
                       <div className="flex items-center gap-4">
-                        <img
-                          src={imagePreviewUrl}
-                          alt=""
-                          className="size-24 rounded-2xl border bg-muted object-cover"
-                          onError={(event) => {
-                            event.currentTarget.onerror = null;
-                            event.currentTarget.src = DEFAULT_PRODUCT_IMAGE;
-                          }}
-                        />
-                        <div className="min-w-0"><p className="text-xs text-muted-foreground nums">{previewProductCode || '—'}</p><h3 className="mt-1 truncate text-xl font-black">{form.name || ui('لم يُكتب اسم المنتج')}</h3><div className="mt-2 flex flex-wrap gap-2"><Badge variant="outline">{productTypeLabel}</Badge><Badge variant="outline">{selectedCategoryName}</Badge>{form.businessClassification ? <Badge variant="outline">{form.businessClassification === 'protein' ? 'Protein' : 'Bar'}</Badge> : null}<Badge variant={form.isActive ? 'success' : 'secondary'}>{form.isActive ? ui('نشط') : ui('معطل')}</Badge></div></div>
+                        <img src={uploadUrl(form.imageUrl) ?? resolveProductImageUrl(null)} alt="" className="size-24 rounded-2xl border bg-muted object-cover" />
+                        <div className="min-w-0"><p className="text-xs text-muted-foreground nums">{previewProductCode || '—'}</p><h3 className="mt-1 truncate text-xl font-black">{form.name || ui('لم يُكتب اسم المنتج')}</h3><div className="mt-2 flex flex-wrap gap-2"><Badge variant="outline">{productTypeLabel}</Badge><Badge variant="outline">{selectedCategoryName}</Badge><Badge variant={form.isActive ? 'success' : 'secondary'}>{form.isActive ? ui('نشط') : ui('معطل')}</Badge></div></div>
                       </div>
                       <dl className="mt-5 grid gap-3 sm:grid-cols-2">
                         <div className="rounded-xl bg-muted/45 p-3"><dt className="text-xs text-muted-foreground">{ui('طريقة التسعير')}</dt><dd className="mt-1 font-semibold">{form.variantsEnabled ? `${form.variants.filter((variant) => variant.isActive).length} ${ui('أحجام/أنواع بأسعار مستقلة')}` : form.productType === 'internal' ? ui('غير مخصص للبيع') : ui('سعر واحد')}</dd></div>

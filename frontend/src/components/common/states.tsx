@@ -2,7 +2,6 @@ import type { LucideIcon } from 'lucide-react';
 import { AlertCircle, Inbox, RefreshCw, ServerCrash } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
@@ -85,26 +84,6 @@ export function ErrorState({ title, message, onRetry, className, inline }: Error
           {t('errors.retry')}
         </Button>
       )}
-    </div>
-  );
-}
-
-/** Accessible, layout-stable loading state for card and report workspaces. */
-export function LoadingState({ className }: { className?: string }) {
-  const { t } = useLocale();
-  return (
-    <div
-      className={cn('rounded-2xl border bg-card p-5 shadow-sm', className)}
-      role="status"
-      aria-live="polite"
-      aria-label={t('common.loading')}
-    >
-      <div className="space-y-3" aria-hidden="true">
-        <Skeleton className="h-5 w-40 max-w-[60%]" />
-        <Skeleton className="h-16 w-full" />
-        <Skeleton className="h-16 w-full" />
-      </div>
-      <span className="sr-only">{t('common.loading')}</span>
     </div>
   );
 }

@@ -1,0 +1,24 @@
+import React from 'react';
+import { createRoot } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { FitnessInbodyPage } from '../src/pages/club/fitness/inbody';
+import { LocaleProvider } from '../src/store/locale';
+import { useAuth } from '../src/store/auth';
+import { api } from '../src/lib/api';
+import '../src/styles/index.css';
+import '@fontsource/tajawal/400.css';
+const user = { sub: 10, level: 2, branch: 3, job_title: 'موظف استقبال', man_women_type: 3, name: 'استقبال تجريبي' };
+useAuth.setState({ user, status: 'authenticated' });
+const matched = { id: 42, memberCode: 'B868', name: 'عضو بر شرقي قديم مطابق', branchId: 7, gender: 'male', createdAt: '2020-01-01', isActive: true };
+api.defaults.adapter = async config => {
+  let data;
+  if (config.url === '/me/permissions') data = { superAdmin: false, keys: ['club.fitness:view', 'club.fitness:create', 'club.fitness:update'], routeMap: {}, scope: {} };
+  else if (config.url === '/club-inbody-measurements/next-file-number') data = { nextFileNumber: 200 };
+  else if (config.url === '/club-inbody-measurements') data = { data: [{ id: 1, memberId: 42, memberCode: 'B868', memberName: matched.name, measurementDate: new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo' }).format(new Date()), reportUrl: null }], total: 1, page: 1, pageSize: 20 };
+  else if (config.url === '/club-members/measurement-operation-lookup') data = [matched, { ...matched, id: 43, memberCode: 'B8681', name: 'عضو اقتراح جزئي' }];
+  else if (config.url === '/club-members/measurement-operation-member/42') data = matched;
+  else throw new Error('Unexpected API in isolated measurement test: ' + config.url);
+  return { data, status: 200, statusText: 'OK', headers: {}, config };
+};
+createRoot(document.getElementById('root')).render(<LocaleProvider><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter><main className="mx-auto max-w-5xl p-8"><FitnessInbodyPage /></main></MemoryRouter></QueryClientProvider></LocaleProvider>);

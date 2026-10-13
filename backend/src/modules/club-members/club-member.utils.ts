@@ -123,7 +123,7 @@ export function nextSeqFromMax(maxNum: unknown): number {
   return Number.isFinite(n) ? n + 1 : 1;
 }
 
-/** Legacy member code: configured branch letter + 6-digit sequence (e.g. A012253). */
+/** Member code: configured branch letter + its running sequence (e.g. A12253). */
 export function formatBranchMemberCode(prefix: string, seq: number): string {
-  return `${prefix}${String(seq).padStart(6, '0')}`;
+  return `${prefix}${seq}`;
 }

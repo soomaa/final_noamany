@@ -1,7 +1,7 @@
 import axios, { AxiosError } from 'axios';
 import { uiStatic } from '@/lib/ui-static';
 
-/** Single axios instance. Vite proxies /api → http://localhost:4000 in dev. */
+/** Single axios instance. Vite proxies /api → http://127.0.0.1:4002 in dev. */
 export const api = axios.create({
   baseURL: '/api',
   withCredentials: true,

@@ -10,7 +10,6 @@ import {
   Post,
   Query,
   UseGuards,
-  Optional,
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -49,7 +48,6 @@ import { AttendanceService } from '../attendance/attendance.service';
 import { AttendanceReportDto } from '../attendance/dto/report.dto';
 import { LegacyMobileCompatService } from './legacy-mobile-compat.service';
 import { LoansService } from '../loans/loans.service';
-import { EvaluationWorkflowService } from '../evaluations/evaluation-workflow.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('mobile')
@@ -61,7 +59,6 @@ export class MobileController {
     private readonly attendanceService: AttendanceService,
     private readonly compat: LegacyMobileCompatService,
     private readonly loans: LoansService,
-    @Optional() private readonly evaluationWorkflow?: EvaluationWorkflowService,
   ) {}
 
   @Public()
@@ -155,27 +152,6 @@ export class MobileController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.permissions.action(id, dto, user.sub, user.name ?? undefined);
-  }
-
-  /** Detail remains self-scoped, unlike the HR management evaluation register. */
-  @Get('permissions/:id')
-  async permissionDetail(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    const identity = await this.compat.identity(user);
-    return this.permissions.selfDetail(id, identity.id, user.sub);
-  }
-
-  @Get('evaluations')
-  async myEvaluations(@Query('month') month: string | undefined, @CurrentUser() user: JwtUser) {
-    if (!this.evaluationWorkflow) return [];
-    const identity = await this.compat.identity(user);
-    return this.evaluationWorkflow.myEvaluations(identity.id, { monthKey: month });
-  }
-
-  @Get('evaluations/:id')
-  async myEvaluation(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    if (!this.evaluationWorkflow) return null;
-    const identity = await this.compat.identity(user);
-    return this.evaluationWorkflow.myEvaluation(identity.id, id);
   }
 
   /** Legacy Add_Task/Get_Tasks_List use the employee daily-report table. */

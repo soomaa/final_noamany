@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeftRight,
@@ -9,7 +9,6 @@ import {
   LockKeyhole,
   ShieldCheck,
   Square,
-  Trash2,
   UserRound,
   WalletCards,
 } from "lucide-react";
@@ -27,10 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ShiftWastePanel } from "@/components/sales/shift-waste-panel";
 import { useBranches } from "@/hooks/use-branches";
-import { usePermission } from "@/hooks/use-permission";
 import { useCurrentShiftSession } from "@/hooks/use-shift-session";
 import { api, apiError } from "@/lib/api";
 import { confirmWithPreview } from "@/lib/confirm";
@@ -39,7 +35,6 @@ import { toArabicDigits } from "@/lib/utils";
 import { isDryRunResponse } from "@/lib/validators";
 import { useAuth } from "@/store/auth";
 import { useLocale } from "@/store/locale";
-import type { Paginated, WasteRecord } from "@/pages/cafe/waste-types";
 
 interface Shift {
   id: number;
@@ -64,15 +59,10 @@ interface ScheduleStatus {
   alertActive: boolean;
 }
 
-export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
+export function PosShiftSwitcher() {
   const location = useLocation();
   const qc = useQueryClient();
   const { ui } = useLocale();
-  const { can } = usePermission();
-  const canCreateShift = can('gym-sales.sales.shifts:create');
-  const canUpdateShift = can('gym-sales.sales.shifts:update');
-  const canViewWaste = can('club.cafe.waste:view');
-  const canCreateWaste = can('club.cafe.waste:create');
   const user = useAuth((state) => state.user);
   const switchPosUser = useAuth((state) => state.switchPosUser);
   const { data: branches = [] } = useBranches();
@@ -128,20 +118,6 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
   const [closingDay, setClosingDay] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [handoverTab, setHandoverTab] = useState<'handover' | 'waste'>('handover');
-
-  const shiftWasteQuery = useQuery({
-    queryKey: ['cafe-waste', 'records', 'shift', current?.id],
-    queryFn: async () => (await api.get<Paginated<WasteRecord>>('/cafe-waste/records', {
-      params: {
-        branchId,
-        shiftSessionId: current?.id,
-        page: 1,
-        pageSize: 100,
-      },
-    })).data,
-    enabled: open && canViewWaste && !!branchId && !!current?.id,
-  });
 
   useEffect(() => {
     const timer = window.setInterval(
@@ -195,7 +171,6 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
       const refreshed = await refetchCurrent();
       const activeSession = refreshed.data;
       if (!activeSession) {
-        if (!canCreateShift) return;
         const suggestedShift =
           shifts.find((shift) => shift.id === schedule?.current?.id) ??
           shifts[0];
@@ -209,7 +184,6 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
         setStartOpen(true);
         return;
       }
-      if (!canUpdateShift) return;
       const availableShifts = shifts.filter(
         (shift) =>
           shift.isActive !== false && shift.id !== activeSession.shiftId,
@@ -241,7 +215,6 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
       setShowPassword(false);
       setNotes("");
       setShortageReason("");
-      setHandoverTab('handover');
       setOpen(true);
     } catch (error) {
       toast.error(apiError(error, ui("تعذر تحميل رصيد الوردية الحالي")));
@@ -251,7 +224,7 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
   };
 
   const prepareEndDayDialog = async () => {
-    if (!canUpdateShift || preparing) return;
+    if (preparing) return;
     setPreparing(true);
     try {
       const refreshed = await refetchCurrent();
@@ -279,12 +252,12 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
   useEffect(() => {
     const openFromShiftDashboard = () => void prepareDialog();
     window.addEventListener(
-      "noamany:open-shift-switcher",
+      "one80:open-shift-switcher",
       openFromShiftDashboard,
     );
     return () =>
       window.removeEventListener(
-        "noamany:open-shift-switcher",
+        "one80:open-shift-switcher",
         openFromShiftDashboard,
       );
   }, [
@@ -297,7 +270,7 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
   ]);
 
   const startShiftFromPos = async () => {
-    if (!canCreateShift || !startShiftId || !branchId || starting) return;
+    if (!startShiftId || !branchId || starting) return;
     setStarting(true);
     try {
       await api.post("/shift-sessions/start", {
@@ -375,7 +348,7 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
   };
 
   const closeDay = async () => {
-    if (!canUpdateShift || !current || closingDay) return;
+    if (!current || closingDay) return;
     const closing = Number(endDayClosingBalance) || 0;
     const drop = Number(endDayCashDropAmount) || 0;
     const retained = Number(endDayRetainedAmount) || 0;
@@ -430,7 +403,7 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
   };
 
   const submit = async () => {
-    if (!canUpdateShift || !targetShiftId || !username.trim() || !password || saving) return;
+    if (!targetShiftId || !username.trim() || !password || saving) return;
     if (handoverShortage > 0.01 && !shortageReason.trim()) {
       toast.error(ui("اكتب سبب عجز النقدية قبل تسليم الدرج"));
       return;
@@ -533,8 +506,7 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
                 ) : null}
               </div>
             ) : null}
-            {(current ? canUpdateShift : canCreateShift) ? <Button
-              permissionAction={current ? 'update' : 'create'}
+            <Button
               type="button"
               className="h-11 gap-2 rounded-xl px-5 shadow-lg shadow-primary/15"
               disabled={preparing}
@@ -546,17 +518,12 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
                 : current
                   ? ui(currentIsLastShift ? "إغلاق اليوم" : "تسليم وتبديل الشيفت")
                   : ui("فتح وردية")}
-            </Button> : null}
-            {actions ? (
-              <div className="flex items-center gap-2">
-                {actions}
-              </div>
-            ) : null}
+            </Button>
           </div>
         </div>
       </section>
 
-      <Dialog open={canCreateShift && startOpen} onOpenChange={setStartOpen}>
+      <Dialog open={startOpen} onOpenChange={setStartOpen}>
         <DialogContent size="md">
           <DialogHeader>
             <DialogTitle>{ui("فتح وردية من نقطة البيع")}</DialogTitle>
@@ -612,14 +579,14 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
             <Button variant="outline" onClick={() => setStartOpen(false)} disabled={starting}>
               {ui("إلغاء")}
             </Button>
-            <Button permissionAction="create" onClick={() => void startShiftFromPos()} disabled={starting || !startShiftId}>
+            <Button onClick={() => void startShiftFromPos()} disabled={starting || !startShiftId}>
               {starting ? ui("جاري فتح الوردية…") : ui("فتح الوردية")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={canUpdateShift && endDayOpen} onOpenChange={setEndDayOpen}>
+      <Dialog open={endDayOpen} onOpenChange={setEndDayOpen}>
         <DialogContent size="md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
@@ -695,7 +662,6 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
               {ui("إلغاء")}
             </Button>
             <Button
-              permissionAction="update"
               onClick={() => void closeDay()}
               disabled={
                 closingDay ||
@@ -708,11 +674,8 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={canUpdateShift && open} onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) setHandoverTab('handover');
-      }}>
-        <DialogContent size="form" className="h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] gap-4 p-4 sm:h-auto sm:max-h-[92vh] sm:p-6">
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent size="lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <ArrowLeftRight className="size-6 text-primary" />
@@ -725,22 +688,6 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
             </DialogDescription>
           </DialogHeader>
 
-          <Tabs value={handoverTab} onValueChange={(value) => setHandoverTab(value as 'handover' | 'waste')} dir="rtl" className="min-h-0">
-            <TabsList className="h-auto w-full justify-start gap-1 p-1 sm:w-fit" aria-label={ui('أقسام تسليم الشيفت')}>
-              <TabsTrigger value="handover" className="min-h-10 gap-2 px-4">
-                <ArrowLeftRight className="size-4" />{ui('تسليم الشيفت')}
-              </TabsTrigger>
-              {canViewWaste ? (
-                <TabsTrigger value="waste" className="min-h-10 gap-2 px-4">
-                  <Trash2 className="size-4" />{ui('هالك الشيفت')}
-                  <span className="nums min-w-6 rounded-full bg-rose-100 px-1.5 py-0.5 text-[11px] font-black text-rose-700 dark:bg-rose-500/15 dark:text-rose-200">
-                    {toArabicDigits(shiftWasteQuery.data?.total ?? 0)}
-                  </span>
-                </TabsTrigger>
-              ) : null}
-            </TabsList>
-
-            <TabsContent value="handover" className="mt-4 space-y-6">
           <div className="grid gap-4 lg:grid-cols-2">
             <section className="space-y-4 rounded-2xl border border-primary/15 bg-primary/[0.025] p-4">
               <div className="flex items-center gap-2 font-bold">
@@ -996,7 +943,6 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
               {ui("إلغاء")}
             </Button>
             <Button
-              permissionAction="update"
               onClick={() => void submit()}
               disabled={
                 saving ||
@@ -1011,24 +957,6 @@ export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
                 : ui("اعتماد التسليم وتبديل المستخدم")}
             </Button>
           </DialogFooter>
-            </TabsContent>
-
-            {canViewWaste && branchId && current?.id ? (
-              <TabsContent value="waste" className="mt-4">
-                <ShiftWastePanel
-                  branchId={Number(branchId)}
-                  shiftSessionId={current.id}
-                  records={shiftWasteQuery.data?.data ?? []}
-                  isLoading={shiftWasteQuery.isLoading}
-                  isError={shiftWasteQuery.isError}
-                  error={shiftWasteQuery.error}
-                  canCreate={canCreateWaste}
-                  onRetry={() => void shiftWasteQuery.refetch()}
-                  onReturnToHandover={() => setHandoverTab('handover')}
-                />
-              </TabsContent>
-            ) : null}
-          </Tabs>
         </DialogContent>
       </Dialog>
     </>

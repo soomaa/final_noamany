@@ -16,6 +16,7 @@ export interface LockerReceiptInput {
   paymentMethod?: string | null;
   registrationDate?: string;
   createdBy?: number;
+  receiptNumber?: string | null;
   /** For the receipt description / GL narration. */
   subscriptionNumber: string;
 }
@@ -57,7 +58,7 @@ export class ClubLockerAccountingService {
 
     // Race-safe LRCP-###### number: recompute + insert together, retrying on a concurrent take.
     const receipt = await retryOnUniqueViolation(async () => {
-      const receiptNumber = await this.nextReceiptNumber(tx);
+      const receiptNumber = input.receiptNumber?.trim() || await this.nextReceiptNumber(tx);
       return tx.club_receipts.create({
         data: {
           receipt_number: receiptNumber,

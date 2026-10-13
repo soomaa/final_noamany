@@ -1,4 +1,4 @@
-const { cpSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } = require('fs');
+const { cpSync, existsSync, mkdirSync, renameSync, rmSync } = require('fs');
 const { join, resolve } = require('path');
 
 const backendRoot = resolve(__dirname, '..');
@@ -20,10 +20,5 @@ renameSync(join(publicDir, 'index.html'), join(publicDir, 'system.html'));
 
 // Website files own index.html, shop.html, account.html, and the other public pages.
 cpSync(websiteDist, publicDir, { recursive: true, force: true });
-
-writeFileSync(
-  join(publicDir, '.noamany-unified-build'),
-  `${new Date().toISOString()}\nwebsite=/\nmanagement=/login\n`,
-);
 
 console.log('Unified public build ready: / -> website, /login -> management system.');

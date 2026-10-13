@@ -4,7 +4,6 @@ import { Navigate, useLocation } from 'react-router-dom';
 import { ErrorState } from '@/components/common/states';
 import { PageSkeleton } from '@/components/common/page-skeleton';
 import { useHomeRoute, usePermission } from '@/hooks/use-permission';
-import { operationalBarcodeRoutePermissionKeys } from '@/lib/persistent-scanner-model';
 
 /**
  * Blocks direct navigation to a page the user lacks View on. Waits for the permission
@@ -12,8 +11,8 @@ import { operationalBarcodeRoutePermissionKeys } from '@/lib/persistent-scanner-
  * routes to the user's role home. Unmapped routes (utility pages) pass through.
  */
 export function RouteGuard({ children }: { children: ReactNode }) {
-  const { pathname, search } = useLocation();
-  const { can, canRoute, isReady, hasError, retry, refresh } = usePermission();
+  const { pathname } = useLocation();
+  const { canRoute, isReady, hasError, retry, refresh } = usePermission();
   const { homeRoute, isLoading: homeLoading } = useHomeRoute();
   const [verifiedPath, setVerifiedPath] = useState<string | null>(null);
 
@@ -36,7 +35,6 @@ export function RouteGuard({ children }: { children: ReactNode }) {
       </div>
     );
   }
-  const operationalScannerAllowed = operationalBarcodeRoutePermissionKeys(pathname, search).some((permission) => can(permission));
-  if (!canRoute(pathname) && !operationalScannerAllowed) return <Navigate to={homeRoute} replace />;
+  if (!canRoute(pathname)) return <Navigate to={homeRoute} replace />;
   return <>{children}</>;
 }

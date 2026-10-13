@@ -1,116 +1,299 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, ClipboardList, Download, Eye, FileCheck2, LockKeyhole, Plus, Printer, Save, X } from 'lucide-react';
-import { useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/common/page-header';
-import { PageSkeleton } from '@/components/common/page-skeleton';
-import { EmptyState, ErrorState } from '@/components/common/states';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { useBranches } from '@/hooks/use-branches';
+import { useEmployeeOptions } from '@/hooks/use-employee-options';
+import { useAuth } from '@/store/auth';
 import { api, apiError } from '@/lib/api';
-import { useArrayResource } from '@/lib/api-hooks';
-import { localToday } from '@/lib/formatters';
-import { lockerInventoryCsv, normalizeTask8Tab } from '../task8-workspace-model';
-import { ClubLockersPage } from './lockers';
+import { confirm } from '@/lib/confirm';
+import { Pencil, Trash2, Eye } from 'lucide-react';
 
-type LockerTab = 'operations' | 'draft' | 'finalized' | 'review';
-type SessionStatus = 'draft' | 'finalized' | 'approved' | 'rejected';
-type Session = { id: number; branch_id: number; inventory_date: string; status: SessionStatus; notes?: string | null; created_at?: string; finalized_at?: string | null; reviewed_at?: string | null };
-type Line = { id: number; locker_id: number; lockerNumber: string; expected_status: string; actual_status: string; notes?: string | null; hasDifference: boolean };
-type SessionDetail = Session & { lines: Line[]; totals: { counted: number; differences: number } };
-type Locker = { id: number; locker_number?: string; lockerNumber?: string; main_branch_id?: number; mainBranchId?: number; sub_branch_id?: number; subBranchId?: number; is_available?: boolean; isAvailable?: boolean };
+type Locker = { id: number; locker_number: string; is_available: boolean };
+type InventoryLocker = {
+  id: number;
+  lockerNumber: string;
+  isAvailable: boolean;
+  latestCustomerName: string | null;
+  latestCustomerPhone: string | null;
+  previousCustomerName: string | null;
+  previousCustomerPhone: string | null;
+  latestSubscriptionStartDate: string | null;
+  latestSubscriptionEndDate: string | null;
+};
+type ReportItem = {
+  id: number;
+  observed_status: string;
+  notes: string | null;
+  locker: Locker;
+  latest_customer_name: string | null;
+  latest_customer_phone: string | null;
+  previous_customer_name: string | null;
+  previous_customer_phone: string | null;
+  latest_subscription_start_date: string | null;
+  latest_subscription_end_date: string | null;
+};
+type Report = { id: number; branch_id: number; employee_id: number | null; employee_name: string | null; notes: string | null; status: string; created_at: string; items: ReportItem[] };
 
-const tabs = ['operations', 'draft', 'finalized', 'review'] as const;
-const selectCls = 'flex h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm';
-const statusLabels: Record<SessionStatus, string> = { draft: 'مسودة', finalized: 'منتهٍ بانتظار المراجعة', approved: 'معتمد', rejected: 'مرفوض' };
-const lockerStatusLabels: Record<string, string> = { available: 'متاح', occupied: 'مشغول', damaged: 'تالف', unavailable: 'غير متاح' };
+const STATUS_MAP: Record<string, string> = { pending_review: 'قيد المراجعة', approved: 'تمت الموافقة', rejected: 'مرفوض' };
 
-export function LockerInventoryPage() {
-  const qc = useQueryClient();
-  const [params, setParams] = useSearchParams();
-  const requested = params.get('tab');
-  const tab = requested === 'inventory' ? 'draft' : requested === 'inventory-review' ? 'review' : normalizeTask8Tab(requested, tabs, 'operations');
+function utcDay(value: string): number {
+  const [year, month, day] = value.split('-').map(Number);
+  return Date.UTC(year, month - 1, day) / 86_400_000;
+}
+
+function cairoDay(date: Date = new Date()): number {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((part) => part.type === type)?.value);
+  return Date.UTC(value('year'), value('month') - 1, value('day')) / 86_400_000;
+}
+
+function reportItemLocker(item: ReportItem): InventoryLocker {
+  return {
+    id: item.locker.id,
+    lockerNumber: item.locker.locker_number,
+    isAvailable: item.locker.is_available,
+    latestCustomerName: item.latest_customer_name,
+    latestCustomerPhone: item.latest_customer_phone,
+    previousCustomerName: item.previous_customer_name,
+    previousCustomerPhone: item.previous_customer_phone,
+    latestSubscriptionStartDate: item.latest_subscription_start_date,
+    latestSubscriptionEndDate: item.latest_subscription_end_date,
+  };
+}
+
+type InventoryFinding = { status: string; notes: string };
+type InventoryFindings = Record<number, InventoryFinding>;
+
+function InventoryRowsTable({ lockers, findings, onChange, day, blankLockerIds }: {
+  lockers: InventoryLocker[];
+  findings: InventoryFindings;
+  onChange: (value: InventoryFindings | ((current: InventoryFindings) => InventoryFindings)) => void;
+  day: number;
+  blankLockerIds?: Set<number>;
+}) {
+  return <div className="overflow-x-auto">
+    <Table className="min-w-[1280px]">
+      <TableHeader><TableRow>
+        <TableHead>رقم اللوكر</TableHead>
+        <TableHead>إسم أحدث عميل مشترك باللوكر</TableHead>
+        <TableHead>هاتف العميل الحالي</TableHead>
+        <TableHead>إسم العميل السابق</TableHead>
+        <TableHead>هاتف العميل السابق</TableHead>
+        <TableHead>تاريخ بياني</TableHead>
+        <TableHead>حالة اللوكر</TableHead>
+        <TableHead>ملاحظات</TableHead>
+      </TableRow></TableHeader>
+      <TableBody>{lockers.map((locker) => {
+        const dateSummary = inventoryDateSummary(locker, day);
+        const blank = blankLockerIds?.has(locker.id);
+        return <TableRow key={locker.id}>
+          <TableCell className="font-mono font-semibold">{locker.lockerNumber}</TableCell>
+          <TableCell>{locker.latestCustomerName || (blank ? '—' : 'غير مشغول')}</TableCell>
+          <TableCell><span dir="ltr" className="inline-block font-mono">{locker.latestCustomerPhone || '—'}</span></TableCell>
+          <TableCell>{locker.previousCustomerName || (blank ? '—' : 'غير مشغول')}</TableCell>
+          <TableCell><span dir="ltr" className="inline-block font-mono">{locker.previousCustomerPhone || '—'}</span></TableCell>
+          <TableCell><span className={dateSummary.tone}>{blank && !locker.latestSubscriptionStartDate ? '—' : dateSummary.label}</span><span dir="ltr" className="block text-xs text-muted-foreground">{dateSummary.detail}</span></TableCell>
+          <TableCell><select aria-label={`حالة اللوكر ${locker.lockerNumber}`} className="h-10 w-40 rounded-md border bg-background px-3 text-sm" value={findings[locker.id]?.status ?? ''} onChange={(event) => onChange((current) => ({ ...current, [locker.id]: { status: event.target.value, notes: current[locker.id]?.notes ?? '' } }))}><option value="">— اختر الحالة —</option><option value="available">متاح</option><option value="occupied">مشغول</option><option value="maintenance">صيانة</option><option value="missing">غير موجود</option></select></TableCell>
+          <TableCell><Input aria-label={`ملاحظات اللوكر ${locker.lockerNumber}`} className="min-w-48" placeholder="ملاحظة على اللوكر (اختياري)" value={findings[locker.id]?.notes ?? ''} onChange={(event) => onChange((current) => ({ ...current, [locker.id]: { status: current[locker.id]?.status ?? '', notes: event.target.value } }))} /></TableCell>
+        </TableRow>;
+      })}</TableBody>
+    </Table>
+  </div>;
+}
+
+function inventoryDateSummary(locker: InventoryLocker, today: number) {
+  const start = locker.latestSubscriptionStartDate;
+  const end = locker.latestSubscriptionEndDate;
+  if (!start || !end) return { label: 'لا يوجد اشتراك', detail: '—', tone: 'text-muted-foreground' };
+  const startsIn = utcDay(start) - today;
+  const remaining = utcDay(end) - today;
+  const label = startsIn > 0
+    ? `يبدأ بعد ${startsIn} يوم`
+    : remaining > 0
+      ? `متبقي ${remaining} يوم`
+      : remaining === 0
+        ? 'ينتهي اليوم'
+        : `انتهى منذ ${Math.abs(remaining)} يوم`;
+  return {
+    label,
+    detail: `${start} — ${end}`,
+    tone: startsIn > 0 ? 'text-sky-600 dark:text-sky-400' : remaining >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400',
+  };
+}
+
+export function ClubLockerInventoryPage() {
   const { data: branches = [] } = useBranches();
-  const { data: lockers = [] } = useArrayResource<Locker>('club-lockers', tab !== 'operations');
+  const { data: employeeOptions = [] } = useEmployeeOptions();
+  const user = useAuth((s) => s.user);
+  const empCode = user?.emp_code ?? null;
   const [branchId, setBranchId] = useState('');
-  const [createOpen, setCreateOpen] = useState(false);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [draftForm, setDraftForm] = useState({ branchId: '', inventoryDate: localToday(), notes: '' });
-  const [lineForm, setLineForm] = useState({ lockerId: '', actualStatus: 'available', notes: '' });
+  const [employeeId, setEmployeeId] = useState('');
+  const [notes, setNotes] = useState('');
+  const [items, setItems] = useState<Record<number, { status: string; notes: string }>>({});
+  const [detailReport, setDetailReport] = useState<Report | null>(null);
+  const [editReport, setEditReport] = useState<Report | null>(null);
 
-  const sessionQuery = useQuery({
-    queryKey: ['club-lockers/inventory', tab, branchId],
-    queryFn: async ({ signal }) => (await api.get<Session[]>('/club-lockers/inventory', { signal, params: { branchId: branchId ? Number(branchId) : undefined, status: tab === 'draft' ? 'draft' : tab === 'finalized' ? 'finalized' : undefined } })).data,
-    enabled: tab !== 'operations',
-  });
-  const detailQuery = useQuery({ queryKey: ['club-lockers/inventory/detail', selectedId], queryFn: async ({ signal }) => (await api.get<SessionDetail>(`/club-lockers/inventory/${selectedId}`, { signal })).data, enabled: selectedId != null });
+  useEffect(() => { if (empCode) setEmployeeId(String(empCode)); }, [empCode]);
+  const employeeLocked = !!empCode;
 
-  const refresh = () => { void qc.invalidateQueries({ queryKey: ['club-lockers/inventory'] }); if (selectedId) void qc.invalidateQueries({ queryKey: ['club-lockers/inventory/detail', selectedId] }); };
-  const createMutation = useMutation({ mutationFn: () => api.post('/club-lockers/inventory/drafts', { branchId: Number(draftForm.branchId), inventoryDate: draftForm.inventoryDate, notes: draftForm.notes || undefined }), onSuccess: (response) => { toast.success('تم إنشاء مسودة الجرد'); setCreateOpen(false); refresh(); setSelectedId(response.data.id); }, onError: (error) => toast.error(apiError(error)) });
-  const lineMutation = useMutation({ mutationFn: () => api.patch(`/club-lockers/inventory/${selectedId}/lines`, { lockerId: Number(lineForm.lockerId), actualStatus: lineForm.actualStatus, notes: lineForm.notes || undefined }), onSuccess: () => { toast.success('تم حفظ حالة اللوكر'); setLineForm({ lockerId: '', actualStatus: 'available', notes: '' }); refresh(); }, onError: (error) => toast.error(apiError(error)) });
-  const finalizeMutation = useMutation({ mutationFn: () => api.patch(`/club-lockers/inventory/${selectedId}/finalize`), onSuccess: () => { toast.success('تم إنهاء الجرد وإرساله للمراجعة'); refresh(); }, onError: (error) => toast.error(apiError(error)) });
-  const reviewMutation = useMutation({ mutationFn: (action: 'approve' | 'reject') => api.patch(`/club-lockers/inventory/${selectedId}/review`, { action }), onSuccess: (_, action) => { toast.success(action === 'approve' ? 'تم اعتماد الجرد' : 'تم رفض الجرد'); refresh(); }, onError: (error) => toast.error(apiError(error)) });
-  const changeTab = (value: string) => { const next = new URLSearchParams(params); next.set('tab', value); setParams(next, { replace: true }); setSelectedId(null); };
-  const visibleSessions = (sessionQuery.data ?? []).filter((session) => tab !== 'review' || session.status !== 'draft');
-  const activeBranch = detailQuery.data?.branch_id;
-  const availableLockers = lockers.filter((locker) => !activeBranch || [locker.main_branch_id, locker.mainBranchId, locker.sub_branch_id, locker.subBranchId].includes(activeBranch));
-  const exportDetail = () => {
-    const detail = detailQuery.data;
-    if (!detail) return;
-    const csv = lockerInventoryCsv({
-      id: detail.id,
-      inventoryDate: detail.inventory_date,
-      status: statusLabels[detail.status],
-      lines: detail.lines.map((line) => ({
-        lockerNumber: line.lockerNumber,
-        expectedStatus: lockerStatusLabels[line.expected_status] ?? line.expected_status,
-        actualStatus: lockerStatusLabels[line.actual_status] ?? line.actual_status,
-        result: line.hasDifference ? 'يوجد فرق' : 'مطابق',
-        notes: line.notes,
-      })),
-    });
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = `locker-inventory-${detail.id}-${detail.inventory_date}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+  const { data: lockers = [], refetch: refetchLockers } = useQuery({ queryKey: ['locker-inventory-lockers', branchId], enabled: !!branchId, queryFn: async () => (await api.get<InventoryLocker[]>('/club-lockers/inventory-snapshot', { params: { branchId } })).data });
+  const { data: reports = [], refetch: refetchReports } = useQuery({ queryKey: ['locker-inventory-reports', branchId], queryFn: async () => (await api.get<Report[]>('/club-lockers/inventory-reports', { params: branchId ? { branchId } : {} })).data });
+
+  const branchName = useMemo(() => branches.find((b) => String(b.id) === branchId)?.name ?? '—', [branches, branchId]);
+  const todayDay = cairoDay();
+  const ready = lockers.length > 0 && lockers.some((l) => items[l.id]?.status);
+
+  const submit = async () => {
+    const filled = lockers.filter((l) => items[l.id]?.status);
+    if (!filled.length) return;
+    try {
+      await api.post('/club-lockers/inventory-reports', {
+        branchId: Number(branchId),
+        employeeId: employeeId ? Number(employeeId) : null,
+        notes,
+        items: filled.map((l) => ({ lockerId: l.id, observedStatus: items[l.id].status, notes: items[l.id].notes || undefined })),
+      });
+      toast.success('تم رفع تقرير الجرد للمراجعة');
+      setNotes(''); setItems({});
+      void refetchReports(); void refetchLockers();
+    } catch (e) { toast.error(apiError(e)); }
   };
 
-  return <main className="space-y-5" dir="rtl">
-    <PageHeader title="إدارة اللوكر والجرد" description="تشغيل اشتراكات اللوكر، جرد فعلي بمرحلة مسودة، ومراجعة مستقلة تحفظ الفروق والأثر." />
-    <Tabs value={tab} onValueChange={changeTab}>
-      <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto sm:w-fit" aria-label="أقسام اللوكر والجرد"><TabsTrigger value="operations" className="min-h-11 gap-2"><LockKeyhole />الاشتراكات واللوكرات</TabsTrigger><TabsTrigger value="draft" className="min-h-11 gap-2"><ClipboardList />مسودات الجرد</TabsTrigger><TabsTrigger value="finalized" className="min-h-11 gap-2"><FileCheck2 />الجرد المنتهى</TabsTrigger><TabsTrigger value="review" className="min-h-11 gap-2"><Eye />المراجعة والاعتماد</TabsTrigger></TabsList>
-      <TabsContent value="operations" className="mt-5"><ClubLockersPage /></TabsContent>
-      {(['draft', 'finalized', 'review'] as LockerTab[]).map((value) => <TabsContent key={value} value={value} className="mt-5 space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-3"><div className="w-full sm:max-w-xs"><Label htmlFor={`locker-inventory-branch-${value}`}>الفرع</Label><select id={`locker-inventory-branch-${value}`} className={selectCls} value={branchId} onChange={(event) => setBranchId(event.target.value)}><option value="">الفروع المسموحة</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></div>{value === 'draft' ? <Button variant="brand" onClick={() => { setDraftForm({ branchId: branchId || (branches[0]?.id ? String(branches[0].id) : ''), inventoryDate: localToday(), notes: '' }); setCreateOpen(true); }}><Plus />مسودة جرد جديدة</Button> : null}</div>
-        <SessionList loading={sessionQuery.isLoading} error={sessionQuery.isError} rows={visibleSessions} onRetry={() => void sessionQuery.refetch()} onSelect={setSelectedId} />
-      </TabsContent>)}
-    </Tabs>
+  const handleDelete = async (r: Report) => {
+    const ok = await confirm({ title: 'حذف تقرير الجرد', description: `هل تريد حذف تقرير الجرد #${r.id}؟`, variant: 'destructive' });
+    if (!ok) return;
+    try { await api.delete(`/club-lockers/inventory-reports/${r.id}`); toast.success('تم الحذف'); void refetchReports(); } catch (e) { toast.error(apiError(e)); }
+  };
 
-    <Dialog open={createOpen} onOpenChange={setCreateOpen}><DialogContent aria-describedby={undefined}><DialogHeader><DialogTitle>مسودة جرد لوكر جديدة</DialogTitle></DialogHeader><div className="grid gap-4 sm:grid-cols-2"><div><Label htmlFor="locker-draft-branch">الفرع</Label><select id="locker-draft-branch" className={selectCls} value={draftForm.branchId} onChange={(event) => setDraftForm((form) => ({ ...form, branchId: event.target.value }))}><option value="">اختر الفرع</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></div><div><Label htmlFor="locker-draft-date">تاريخ الجرد</Label><Input id="locker-draft-date" type="date" value={draftForm.inventoryDate} onChange={(event) => setDraftForm((form) => ({ ...form, inventoryDate: event.target.value }))} /></div></div><div><Label htmlFor="locker-draft-notes">ملاحظات البداية</Label><Textarea id="locker-draft-notes" className="text-base sm:text-sm" value={draftForm.notes} onChange={(event) => setDraftForm((form) => ({ ...form, notes: event.target.value }))} /></div><DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>إلغاء</Button><Button onClick={() => createMutation.mutate()} disabled={createMutation.isPending || !draftForm.branchId || !draftForm.inventoryDate}><Save />{createMutation.isPending ? 'جارٍ الإنشاء…' : 'إنشاء المسودة'}</Button></DialogFooter></DialogContent></Dialog>
+  if (editReport) return <EditReportForm
+    key={editReport.id}
+    report={editReport}
+    branches={branches}
+    employeeOptions={employeeOptions}
+    onClose={() => { setEditReport(null); void refetchReports(); }}
+  />;
 
-    <Dialog open={selectedId != null} onOpenChange={(open) => !open && setSelectedId(null)}><DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-3xl" aria-describedby={undefined}><DialogHeader><DialogTitle>جلسة جرد اللوكر</DialogTitle></DialogHeader>{detailQuery.isLoading ? <PageSkeleton /> : detailQuery.isError ? <ErrorState onRetry={() => void detailQuery.refetch()} /> : detailQuery.data ? <div id="locker-inventory-report" className="space-y-5">
-      <section className="grid gap-3 sm:grid-cols-3"><Stat label="الحالة" value={statusLabels[detailQuery.data.status]} /><Stat label="اللوكرات المعدودة" value={String(detailQuery.data.totals.counted)} /><Stat label="الفروق" value={String(detailQuery.data.totals.differences)} emphasis={detailQuery.data.totals.differences > 0} /></section>
-      <div className="no-print flex flex-wrap gap-2"><Button type="button" variant="outline" onClick={exportDetail} disabled={!detailQuery.data.lines.length}><Download />تصدير CSV</Button><Button type="button" variant="outline" onClick={() => window.print()}><Printer />طباعة تقرير الجرد</Button></div>
-      {detailQuery.data.status === 'draft' ? <section className="rounded-xl border p-4"><h3 className="font-semibold">إدخال حالة لوكر</h3><div className="mt-3 grid gap-3 sm:grid-cols-3"><div><Label htmlFor="inventory-locker">اللوكر</Label><select id="inventory-locker" className={selectCls} value={lineForm.lockerId} onChange={(event) => setLineForm((form) => ({ ...form, lockerId: event.target.value }))}><option value="">اختر اللوكر</option>{availableLockers.map((locker) => <option key={locker.id} value={locker.id}>{locker.locker_number ?? locker.lockerNumber ?? `لوكر ${locker.id}`}</option>)}</select></div><div><Label htmlFor="inventory-status">الحالة الفعلية</Label><select id="inventory-status" className={selectCls} value={lineForm.actualStatus} onChange={(event) => setLineForm((form) => ({ ...form, actualStatus: event.target.value }))}>{Object.entries(lockerStatusLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></div><div><Label htmlFor="inventory-note">ملاحظة</Label><Input id="inventory-note" value={lineForm.notes} onChange={(event) => setLineForm((form) => ({ ...form, notes: event.target.value }))} /></div></div><Button className="mt-3" onClick={() => lineMutation.mutate()} disabled={lineMutation.isPending || !lineForm.lockerId}><Save />{lineMutation.isPending ? 'جارٍ الحفظ…' : 'حفظ الحالة'}</Button></section> : null}
-      {!detailQuery.data.lines.length ? <EmptyState compact title="لم يتم إدخال أي لوكر" /> : <div className="overflow-x-auto rounded-xl border"><table className="w-full min-w-[640px] text-sm"><thead className="bg-muted/50 text-muted-foreground"><tr><th className="p-3 text-start">اللوكر</th><th className="p-3 text-start">المتوقع</th><th className="p-3 text-start">الفعلي</th><th className="p-3 text-start">النتيجة</th><th className="p-3 text-start">الملاحظة</th></tr></thead><tbody>{detailQuery.data.lines.map((line) => <tr key={line.id} className="border-t"><td className="p-3 font-medium">{line.lockerNumber}</td><td className="p-3">{lockerStatusLabels[line.expected_status] ?? line.expected_status}</td><td className="p-3">{lockerStatusLabels[line.actual_status] ?? line.actual_status}</td><td className="p-3"><span className={line.hasDifference ? 'font-medium text-destructive' : 'text-emerald-700 dark:text-emerald-300'}>{line.hasDifference ? 'يوجد فرق' : 'مطابق'}</span></td><td className="max-w-xs break-words p-3 text-muted-foreground">{line.notes || '—'}</td></tr>)}</tbody></table></div>}
-      <DialogFooter>{detailQuery.data.status === 'draft' ? <Button onClick={() => finalizeMutation.mutate()} disabled={finalizeMutation.isPending || !detailQuery.data.lines.length}><FileCheck2 />إنهاء وإرسال للمراجعة</Button> : null}{detailQuery.data.status === 'finalized' ? <><Button variant="destructive" permissionResource="club.lockers" permissionAction="approve" onClick={() => reviewMutation.mutate('reject')} disabled={reviewMutation.isPending}><X />رفض</Button><Button permissionResource="club.lockers" permissionAction="approve" onClick={() => reviewMutation.mutate('approve')} disabled={reviewMutation.isPending}><Check />اعتماد</Button></> : null}</DialogFooter>
-    </div> : null}</DialogContent></Dialog>
-  </main>;
+  return <div className="space-y-5"><PageHeader title="جرد اللوكر" description="سجل الحالة الفعلية لكل لوكر وارفع التقرير للمراجعة" />
+
+    <div className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-2"><div><Label>الفرع</Label><select className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={branchId} onChange={(e) => setBranchId(e.target.value)}><option value="">اختر الفرع</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+      <div><Label>الموظف المسؤول عن الجرد</Label><select className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={employeeId} disabled={employeeLocked} onChange={(e) => setEmployeeId(e.target.value)}><option value="">— اختر الموظف —</option>{employeeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div></div>
+
+    {branchId && <div className="rounded-xl border bg-card p-4">
+      <p className="mb-3 font-medium">لوكرات فرع {branchName}</p>
+      <InventoryRowsTable lockers={lockers} findings={items} onChange={setItems} day={todayDay} />
+      <Textarea className="mt-4" placeholder="ملاحظات عامة للتقرير (اختياري)" value={notes} onChange={(e) => setNotes(e.target.value)} />
+      <Button className="mt-3" disabled={!ready} onClick={() => void submit()}>رفع الجرد للمراجعة</Button>
+    </div>}
+
+    <div className="rounded-xl border bg-card p-4">
+      <h2 className="mb-3 font-semibold">تقارير الجرد</h2>
+      {reports.length ? (
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader><TableRow><TableHead className="w-12">#</TableHead><TableHead>التاريخ والوقت</TableHead><TableHead>الموظف</TableHead><TableHead>الفرع</TableHead><TableHead>الحالة</TableHead><TableHead className="text-center">عدد اللوكرات</TableHead><TableHead className="text-center">الإجراءات</TableHead></TableRow></TableHeader>
+            <TableBody>{reports.map((r) => <TableRow key={r.id}>
+              <TableCell className="font-mono">{r.id}</TableCell>
+              <TableCell>{new Date(r.created_at).toLocaleString('ar-EG')}</TableCell>
+              <TableCell>{r.employee_name ?? '—'}</TableCell>
+              <TableCell>{branches.find((b) => b.id === r.branch_id)?.name ?? r.branch_id}</TableCell>
+              <TableCell><span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${r.status === 'approved' ? 'bg-green-100 text-green-700' : r.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>{STATUS_MAP[r.status] ?? r.status}</span></TableCell>
+              <TableCell className="text-center">{r.items.length}</TableCell>
+              <TableCell>
+                <div className="flex min-w-max items-center justify-center gap-1">
+                  <Button variant="outline" size="sm" onClick={() => setDetailReport(r)}><Eye className="size-4" /> تفاصيل</Button>
+                  <Button variant="outline" size="sm" onClick={() => setEditReport(r)}><Pencil className="size-4" /> تعديل</Button>
+                  <Button variant="outline" size="sm" className="text-destructive" onClick={() => void handleDelete(r)}><Trash2 className="size-4" /> حذف</Button>
+                </div>
+              </TableCell>
+            </TableRow>)}</TableBody>
+          </Table>
+        </div>
+      ) : <p className="text-sm text-muted-foreground">لا توجد تقارير لهذا الفرع.</p>}
+    </div>
+
+    <Dialog open={!!detailReport} onOpenChange={(o) => { if (!o) setDetailReport(null); }}>
+      <DialogContent className="max-h-[90vh] max-w-[95vw] overflow-y-auto"><DialogHeader><DialogTitle>تفاصيل تقرير الجرد #{detailReport?.id}</DialogTitle></DialogHeader>
+        {detailReport && <div className="space-y-3">
+          <div className="grid gap-3 text-sm md:grid-cols-2"><div><span className="text-muted-foreground">التاريخ:</span> {new Date(detailReport.created_at).toLocaleString('ar-EG')}</div><div><span className="text-muted-foreground">الفرع:</span> {branches.find((branch) => branch.id === detailReport.branch_id)?.name ?? detailReport.branch_id}</div><div><span className="text-muted-foreground">الموظف:</span> {detailReport.employee_name ?? '—'}</div><div><span className="text-muted-foreground">الحالة:</span> {STATUS_MAP[detailReport.status] ?? detailReport.status}</div><div className="md:col-span-2"><span className="text-muted-foreground">ملاحظات عامة:</span> {detailReport.notes || 'بدون'}</div></div>
+          <div className="overflow-x-auto"><Table className="min-w-[1280px]"><TableHeader><TableRow><TableHead>رقم اللوكر</TableHead><TableHead>إسم أحدث عميل مشترك باللوكر</TableHead><TableHead>هاتف العميل الحالي</TableHead><TableHead>إسم العميل السابق</TableHead><TableHead>هاتف العميل السابق</TableHead><TableHead>تاريخ بياني</TableHead><TableHead>حالة اللوكر</TableHead><TableHead>ملاحظات</TableHead></TableRow></TableHeader>
+            <TableBody>{detailReport.items.map((item) => {
+              const locker = reportItemLocker(item);
+              const dateSummary = inventoryDateSummary(locker, cairoDay(new Date(detailReport.created_at)));
+              return <TableRow key={item.id}><TableCell className="font-mono font-semibold">{locker.lockerNumber}</TableCell><TableCell>{locker.latestCustomerName || '—'}</TableCell><TableCell dir="ltr">{locker.latestCustomerPhone || '—'}</TableCell><TableCell>{locker.previousCustomerName || '—'}</TableCell><TableCell dir="ltr">{locker.previousCustomerPhone || '—'}</TableCell><TableCell><span className={dateSummary.tone}>{locker.latestSubscriptionStartDate ? dateSummary.label : '—'}</span><span dir="ltr" className="block text-xs text-muted-foreground">{dateSummary.detail}</span></TableCell><TableCell>{item.observed_status === 'available' ? 'متاح' : item.observed_status === 'occupied' ? 'مشغول' : item.observed_status === 'maintenance' ? 'صيانة' : item.observed_status === 'missing' ? 'غير موجود' : item.observed_status}</TableCell><TableCell>{item.notes || '—'}</TableCell></TableRow>;
+            })}</TableBody></Table></div>
+        </div>}
+      </DialogContent>
+    </Dialog>
+  </div>;
 }
 
-function SessionList({ loading, error, rows, onRetry, onSelect }: { loading: boolean; error: boolean; rows: Session[]; onRetry: () => void; onSelect: (id: number) => void }) {
-  if (loading) return <PageSkeleton />;
-  if (error) return <ErrorState onRetry={onRetry} />;
-  if (!rows.length) return <EmptyState title="لا توجد جلسات جرد في هذه المرحلة" />;
-  return <div className="overflow-x-auto rounded-xl border bg-card"><table className="w-full min-w-[680px] text-sm"><thead className="bg-muted/50 text-muted-foreground"><tr><th className="p-3 text-start">رقم الجلسة</th><th className="p-3 text-start">الفرع</th><th className="p-3 text-start">التاريخ</th><th className="p-3 text-start">الحالة</th><th className="p-3 text-start">الملاحظات</th><th className="p-3 text-start">التفاصيل</th></tr></thead><tbody>{rows.map((session) => <tr key={session.id} className="border-t"><td className="p-3 font-medium tabular-nums">#{session.id}</td><td className="p-3 tabular-nums">{session.branch_id}</td><td className="p-3 tabular-nums">{session.inventory_date}</td><td className="p-3"><span className="rounded-full bg-muted px-2.5 py-1 text-xs font-medium">{statusLabels[session.status]}</span></td><td className="max-w-sm break-words p-3 text-muted-foreground">{session.notes || '—'}</td><td className="p-3"><Button variant="ghost" size="sm" onClick={() => onSelect(session.id)}><Eye />فتح</Button></td></tr>)}</tbody></table></div>;
-}
+function EditReportForm({ report, branches, employeeOptions, onClose }: { report: Report; branches: { id: number; name: string | null }[]; employeeOptions: { value: string; label: string }[]; onClose: () => void }) {
+  const [notes, setNotes] = useState(report.notes ?? '');
+  const [employeeId, setEmployeeId] = useState(report.employee_id ? String(report.employee_id) : '');
+  const [items, setItems] = useState<Record<number, { status: string; notes: string }>>(() =>
+    Object.fromEntries(report.items.map((item) => [item.locker.id, { status: item.observed_status, notes: item.notes ?? '' }])),
+  );
+  const [saving, setSaving] = useState(false);
+  const { data: currentLockers = [], isLoading: lockersLoading } = useQuery({
+    queryKey: ['locker-inventory-edit-lockers', report.branch_id],
+    queryFn: async () => (await api.get<InventoryLocker[]>('/club-lockers/inventory-snapshot', { params: { branchId: report.branch_id } })).data,
+  });
+  const lockers = useMemo(() => {
+    const saved = report.items.map(reportItemLocker);
+    const savedIds = new Set(saved.map((locker) => locker.id));
+    const collator = new Intl.Collator('ar', { numeric: true, sensitivity: 'base' });
+    return [...saved, ...currentLockers.filter((locker) => !savedIds.has(locker.id))]
+      .sort((a, b) => collator.compare(a.lockerNumber, b.lockerNumber));
+  }, [currentLockers, report.items]);
 
-function Stat({ label, value, emphasis }: { label: string; value: string; emphasis?: boolean }) { return <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">{label}</p><p className={emphasis ? 'mt-1 font-semibold text-destructive' : 'mt-1 font-semibold'}>{value}</p></div>; }
+  const handleSave = async () => {
+    const editedItems = lockers
+      .filter((locker) => items[locker.id]?.status)
+      .map((locker) => ({
+        lockerId: locker.id,
+        observedStatus: items[locker.id].status,
+        notes: items[locker.id].notes || undefined,
+      }));
+    if (!editedItems.length) {
+      toast.error('يجب تحديد حالة لوكر واحد على الأقل');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put(`/club-lockers/inventory-reports/${report.id}`, {
+        notes,
+        employeeId: employeeId ? Number(employeeId) : null,
+        items: editedItems,
+      });
+      toast.success('تم حفظ التعديلات');
+      onClose();
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return <div className="space-y-5">
+    <PageHeader title={`تعديل تقرير الجرد #${report.id}`} description="راجع نفس بيانات المحضر المسجلة وعدّل الحالة أو الملاحظات ثم احفظ التغييرات" />
+    <div className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-2">
+      <div><Label>الفرع</Label><Input className="mt-2" value={branches.find((branch) => branch.id === report.branch_id)?.name ?? String(report.branch_id)} readOnly /></div>
+      <div><Label>الموظف المسؤول عن الجرد</Label><select className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}><option value="">— اختر الموظف —</option>{employeeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
+    </div>
+    <div className="rounded-xl border bg-card p-4">
+      <p className="mb-3 font-medium">لوكرات فرع {branches.find((branch) => branch.id === report.branch_id)?.name ?? report.branch_id}</p>
+      {lockersLoading ? <p className="py-4 text-sm text-muted-foreground">جاري تحميل اللوكرات...</p> : <InventoryRowsTable lockers={lockers} findings={items} onChange={setItems} day={cairoDay(new Date(report.created_at))} blankLockerIds={new Set(report.items.map((item) => item.locker.id))} />}
+      <Textarea className="mt-4" placeholder="ملاحظات عامة للتقرير (اختياري)" value={notes} onChange={(event) => setNotes(event.target.value)} />
+      <div className="mt-3 flex gap-2"><Button onClick={() => void handleSave()} disabled={saving || lockersLoading}>{saving ? 'جاري الحفظ...' : 'حفظ التعديلات'}</Button><Button variant="outline" onClick={onClose}>إلغاء</Button></div>
+    </div>
+  </div>;
+}

@@ -24,6 +24,8 @@ export class ClubSubscriptionStatusCron {
   }
 
   private async handleExpiredLocked() {
+    const releasedFreezeCount = await this.subscriptions.releaseFinishedFreezes();
+    if (releasedFreezeCount > 0) this.log.log(`Released ${releasedFreezeCount} finished subscription freezes`);
     const expiredSubs = await this.subscriptions.findNewlyExpired();
     const count = await this.subscriptions.updateExpiredStatuses();
     if (count > 0) this.log.log(`Marked ${count} subscriptions as expired`);

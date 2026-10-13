@@ -15,13 +15,12 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { JwtUser } from '../../common/types/jwt-user';
 import { CreateEvaluationDto, ListEvaluationsDto } from './dto/evaluation.dto';
 import { EvaluationsService } from './evaluations.service';
-import { EvaluationWorkflowService, MonthlyEvaluationQuery } from './evaluation-workflow.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('hr/evaluations')
 @RequiresPermission('affairs.evaluations:view')
 export class EvaluationsController {
-  constructor(private readonly evaluations: EvaluationsService, private readonly workflow: EvaluationWorkflowService) {}
+  constructor(private readonly evaluations: EvaluationsService) {}
 
   @Get()
   list(@Query() query: ListEvaluationsDto) {
@@ -31,32 +30,6 @@ export class EvaluationsController {
   @Get('criteria')
   getCriteria() {
     return this.evaluations.getCriteriaTree();
-  }
-
-  @Get('templates')
-  listTemplates(
-    @Query() query: { roleKey?: string; branchId?: number; active?: boolean },
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.workflow.listTemplates(query, user);
-  }
-
-  @Get('monthly')
-  listMonthly(@Query() query: MonthlyEvaluationQuery, @CurrentUser() user: JwtUser) {
-    return this.workflow.listMonthly(query, user);
-  }
-
-  /** Modern role templates are versioned; historical monthly evaluations retain their question snapshot. */
-  @Post('templates')
-  @RequiresPermission('affairs.evaluations:create')
-  versionTemplate(@Body() body: { roleKey: string; title: string; questions: Array<string | { title: string; maxScore?: number }>; branchId?: number }, @CurrentUser() user: JwtUser) {
-    return this.workflow.versionTemplate(body, user);
-  }
-
-  @Post('monthly')
-  @RequiresPermission('affairs.evaluations:create')
-  createMonthly(@Body() body: { employeeId: number; templateId: number; templateVersion: number; monthKey: string; branchId?: number; answers?: Array<{ questionId: number; score?: number; answer?: string; note?: string }> }, @CurrentUser() user: JwtUser) {
-    return this.workflow.createMonthly(body, user);
   }
 
   @Get(':id')

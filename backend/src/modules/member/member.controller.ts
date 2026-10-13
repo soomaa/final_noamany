@@ -23,8 +23,6 @@ import {
   MemberLoginDto,
 } from "./dto/member.dto";
 import { MemberService } from "./member.service";
-import { OnlineSubscriptionsService } from '../online-subscriptions/online-subscriptions.service';
-import { NutritionInput } from '../online-subscriptions/nutrition-calculator';
 
 @Controller("member/auth")
 export class MemberAuthController {
@@ -72,7 +70,6 @@ export class MemberController {
   constructor(
     private readonly member: MemberService,
     private readonly auth: MemberAuthService,
-    private readonly online: OnlineSubscriptionsService,
   ) {}
 
   @Get("profile")
@@ -84,12 +81,6 @@ export class MemberController {
   packages(@CurrentMember() user: MemberJwtUser) {
     return this.member.listPackages(user.branchId);
   }
-
-  @Get('trainers')
-  trainers(@CurrentMember() user: MemberJwtUser) { return this.member.listTrainers(user.branchId); }
-
-  @Post('nutrition/calculate')
-  nutrition(@Body() body: NutritionInput) { return this.online.nutrition(body); }
 
   @Get("subscriptions")
   subscriptions(@CurrentMember() user: MemberJwtUser) {

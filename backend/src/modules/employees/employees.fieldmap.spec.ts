@@ -30,3 +30,11 @@ describe('employee birth date compatibility', () => {
     });
   });
 });
+
+describe('employee YesNo form defaults', () => {
+  it('prefills missing YesNo values as no so an edit never submits an empty enum', () => {
+    expect(rowToForm({ birth_img: null, shahadt_jaish: null })).toEqual(
+      expect.objectContaining({ birth_img: 'no', shahadt_jaish: 'no' }),
+    );
+  });
+});

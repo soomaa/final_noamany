@@ -2,15 +2,20 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { MemberCell } from '@/components/club/member-cell';
 import { Eye, Lock, MoreHorizontal, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
+import { Combobox } from '@/components/common/combobox';
 import { FilterBar, type FilterField } from '@/components/common/filter-bar';
 import { PageHeader } from '@/components/common/page-header';
 import { StatusBadge } from '@/components/common/status-badge';
 import { ErrorState } from '@/components/common/states';
 import { ClubStatCard } from '@/components/club/stat-card';
+import { MemberSearchCombobox } from '@/components/club/member-search-combobox';
 import { PaidAmountField } from '@/components/club/paid-amount-field';
+import { clubPaymentMethodLabel } from '@/components/club/club-payment-method-select';
+import { calculateSubscriptionDiscount, type SubscriptionDiscountMode } from '@/components/club/subscription-discount-fields';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -31,7 +36,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useBranches } from '@/hooks/use-branches';
 import { useClubT } from '@/hooks/use-club-t';
 import { api, apiError } from '@/lib/api';
-import { localToday } from '@/lib/formatters';
+import { formatMoney, localToday } from '@/lib/formatters';
 import { useArrayResource, usePaginatedList } from '@/lib/api-hooks';
 import { confirm, afterMenuClose } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
@@ -43,10 +48,19 @@ import type {
   ClubLockerListItem,
   ClubLockerStatistics,
   ClubLockerSubscriptionDetail,
+  ClubDiscountCode,
   ClubMemberListItem,
 } from '@/types/club';
+import type { EmployeeListItem } from '@/types/employees';
 
 const selectCls = 'flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm';
+
+
+function addDaysLocal(dateStr: string, days: number): string {
+  const [year, month, day] = dateStr.split('-').map(Number);
+  const date = new Date(year, (month ?? 1) - 1, (day ?? 1) + days);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
 
 interface LockerRow {
   id: number;
@@ -61,6 +75,17 @@ interface LockerTypeRow {
   name: string;
   meta_value: number;
   days: number;
+  branch_id?: number | null;
+  has_stop?: boolean;
+  stop_days?: number | null;
+  is_target_based?: boolean;
+}
+
+interface LockerSubscriptionPrefill {
+  branchId: number;
+  gender: 'male' | 'female';
+  memberCode: string;
+  name: string;
 }
 
 function LockerDetailRow({
@@ -135,6 +160,8 @@ export function ClubLockersPage({
 }: ClubLockersPageProps = {}) {
   const ct = useClubT();
   const { ui } = useLocale();
+  const location = useLocation();
+  const lockerSubscriptionPrefill = location.state as LockerSubscriptionPrefill | null;
   const qc = useQueryClient();
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<ClubLockerListItem>(
@@ -144,6 +171,11 @@ export function ClubLockersPage({
   const { data: branches } = useBranches();
   const { data: lockerTypes, refetch: refetchTypes } = useArrayResource<LockerTypeRow>('club-locker-types');
   const { data: lockers } = useArrayResource<LockerRow>('club-lockers');
+  const { data: discountCodes = [] } = useArrayResource<ClubDiscountCode>('club-discount-codes');
+  const { data: employees = [] } = useQuery({
+    queryKey: ['employees', 'locker-subscriptions'],
+    queryFn: async () => (await api.get<{ data: EmployeeListItem[] }>('/employees', { params: { page: 1, pageSize: 200, status: 1 } })).data.data ?? [],
+  });
   const { data: stats } = useQuery({
     queryKey: ['club-lockers', 'statistics'],
     queryFn: async () => {
@@ -164,6 +196,7 @@ export function ClubLockersPage({
   const branchOptions = (branches ?? []).map((b) => ({ value: String(b.id), label: b.name ?? '—' }));
   const filters: FilterField[] = [
     { key: 'mainBranchId', label: ct('lockers.mainBranch'), type: 'select', options: branchOptions },
+    { key: 'gender', label: 'الفئة', type: 'select', options: [{ value: 'male', label: 'رجالي' }, { value: 'female', label: 'حريمي' }] },
     { key: 'status', label: ct('common.status'), type: 'select', options: statusOptions },
   ];
 
@@ -173,7 +206,7 @@ export function ClubLockersPage({
     days: '7',
     preview: null,
   });
-  const [dialogOpen, setDialogOpen] = useState(!!openSubOnMount);
+  const [dialogOpen, setDialogOpen] = useState(!!openSubOnMount || !!lockerSubscriptionPrefill);
   const [lockerOpen, setLockerOpen] = useState(!!openLockerOnMount);
   const [typeOpen, setTypeOpen] = useState(false);
   const [typeEditId, setTypeEditId] = useState<number | null>(null);
@@ -181,20 +214,35 @@ export function ClubLockersPage({
   const [detailOpen, setDetailOpen] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [lockerDetail, setLockerDetail] = useState<ClubLockerDetails | null>(null);
+  const [subscriptionDetail, setSubscriptionDetail] = useState<ClubLockerListItem | null>(null);
+  const [editingSubscription, setEditingSubscription] = useState<ClubLockerListItem | null>(null);
+  const [editForm, setEditForm] = useState({
+    customerName: '',
+    startDate: '',
+    endDate: '',
+    gender: 'male' as 'male' | 'female',
+    employeeId: '',
+  });
+  const [selectedMember, setSelectedMember] = useState<ClubMemberListItem | null>(null);
+  const [paidAmountEdited, setPaidAmountEdited] = useState(false);
 
   const [form, setForm] = useState({
-    mainBranchId: 0,
-    subBranchId: 0,
-    memberCode: '',
-    customerName: '',
+    mainBranchId: lockerSubscriptionPrefill?.branchId ?? 0,
+    subBranchId: lockerSubscriptionPrefill?.branchId ?? 0,
+    memberCode: lockerSubscriptionPrefill?.memberCode ?? '',
+    customerName: lockerSubscriptionPrefill?.name ?? '',
     subscriptionTypeId: '',
     lockerId: '',
     paidAmount: '',
-    discountEnabled: false,
+    discountMode: 'none' as SubscriptionDiscountMode,
     discountValue: '',
+    discountCodeId: '',
+    memberDiscountGrantId: '',
+    pointsToRedeem: '',
     paymentMethod: 'cash',
-    gender: 'male',
+    gender: lockerSubscriptionPrefill?.gender ?? 'male',
     recommendedEmployeeId: '',
+    receiptNumber: '',
     subscriptionStartDate: localToday(),
   });
   const [lockerForm, setLockerForm] = useState({
@@ -202,15 +250,44 @@ export function ClubLockersPage({
     mainBranchId: 0,
     subBranchId: 0,
   });
-  const [typeForm, setTypeForm] = useState({ name: '', metaValue: '', days: '' });
+  const [typeForm, setTypeForm] = useState({ name: '', metaValue: '', days: '', branchId: '', hasStop: false, stopDays: '', isTargetBased: false });
 
-  const availableLockers = (lockers ?? []).filter((l) => l.is_available);
-  const selectedType = (lockerTypes ?? []).find((t) => String(t.id) === form.subscriptionTypeId);
+  const { data: pointsAccount } = useQuery({
+    queryKey: ['club-points', 'locker-subscription-account', selectedMember?.id],
+    enabled: dialogOpen && selectedMember?.id != null,
+    queryFn: async () => (await api.get<{ points: number; conversion: { points: number; value: number } | null }>(`/club-points/members/${selectedMember!.id}`)).data,
+  });
+  const { data: memberDiscountGrants = [] } = useQuery({
+    queryKey: ['club-discount-codes', 'locker-member-grants', selectedMember?.id],
+    enabled: dialogOpen && selectedMember?.id != null,
+    queryFn: async () => (await api.get<Array<{ id: number; code: string | null; percentage: number; used: boolean; expiresOn: string | null }>>('/club-discount-codes/member-grants', { params: { memberId: selectedMember!.id } })).data
+      .filter((grant) => !grant.used && !!grant.code && (!grant.expiresOn || grant.expiresOn >= localToday())),
+  });
+  const availableLockers = (lockers ?? []).filter((l) => l.is_available && l.main_branch_id === form.mainBranchId);
+  const visibleLockerTypes = (lockerTypes ?? []).filter((type) => type.branch_id == null || type.branch_id === form.mainBranchId);
+  const selectedType = visibleLockerTypes.find((t) => String(t.id) === form.subscriptionTypeId);
   const referencePrice = selectedType?.meta_value ?? 0;
-  const netDue = form.discountEnabled
-    ? Math.max(0, referencePrice - (Number(form.discountValue) || 0))
-    : referencePrice;
+  const discountAmount = calculateSubscriptionDiscount(
+    referencePrice,
+    form.discountMode,
+    memberDiscountGrants.map((grant) => ({ id: grant.id, code: grant.code ?? '', percentage: grant.percentage, isActive: true, usageCount: 0, createdAt: '', updatedAt: '' })),
+    form.memberDiscountGrantId,
+    form.discountValue,
+    form.pointsToRedeem,
+    pointsAccount?.conversion ?? null,
+  );
+  const netDue = Math.max(0, referencePrice - discountAmount);
   const remainingDue = Math.max(0, netDue - (Number(form.paidAmount) || 0));
+  const subscriptionEndDate = selectedType
+    ? addDaysLocal(form.subscriptionStartDate, selectedType.days)
+    : '';
+
+  useEffect(() => {
+    if (paidAmountEdited) return;
+    setForm((current) => current.paidAmount === String(netDue)
+      ? current
+      : { ...current, paidAmount: String(netDue) });
+  }, [netDue, paidAmountEdited]);
 
   const openLockerDialog = () => {
     setLockerForm({
@@ -236,6 +313,43 @@ export function ClubLockersPage({
     }
   };
 
+  const openSubscriptionEdit = (subscription: ClubLockerListItem) => {
+    setEditingSubscription(subscription);
+    setEditForm({
+      customerName: subscription.customerName,
+      startDate: subscription.subscriptionStartDate,
+      endDate: subscription.subscriptionEndDate,
+      gender: subscription.gender === 'female' ? 'female' : 'male',
+      employeeId: subscription.recommendedEmployeeId != null ? String(subscription.recommendedEmployeeId) : '',
+    });
+  };
+
+  const saveSubscriptionEdit = async () => {
+    if (!editingSubscription) return;
+    if (!editForm.customerName.trim() || !editForm.startDate || !editForm.endDate || editForm.endDate < editForm.startDate) {
+      toast.error('أدخل اسم العميل وتواريخ اشتراك صحيحة');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.put(`/club-locker-subscriptions/${editingSubscription.id}`, {
+        customerName: editForm.customerName.trim(),
+        subscriptionStartDate: editForm.startDate,
+        subscriptionEndDate: editForm.endDate,
+        gender: editForm.gender,
+        recommendedEmployeeId: editForm.employeeId ? Number(editForm.employeeId) : null,
+      });
+      toast.success('تم تعديل اشتراك اللوكر');
+      setEditingSubscription(null);
+      void refetch();
+      void qc.invalidateQueries({ queryKey: ['club-lockers'] });
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const pageTitle =
     singleView === 'lockers'
       ? ct('lockers.manageLockersTitle')
@@ -250,6 +364,8 @@ export function ClubLockersPage({
         : ct('lockers.description');
 
   const openSubDialog = () => {
+    setSelectedMember(null);
+    setPaidAmountEdited(false);
     setForm({
       mainBranchId: branches?.[0]?.id ?? 0,
       subBranchId: branches?.[0]?.id ?? 0,
@@ -258,14 +374,22 @@ export function ClubLockersPage({
       subscriptionTypeId: '',
       lockerId: '',
       paidAmount: '',
-      discountEnabled: false,
+      discountMode: 'none',
       discountValue: '',
+      discountCodeId: '',
+      memberDiscountGrantId: '',
+      pointsToRedeem: '',
       paymentMethod: 'cash',
       gender: 'male',
       recommendedEmployeeId: '',
+      receiptNumber: '',
       subscriptionStartDate: localToday(),
     });
     setDialogOpen(true);
+    // Fetch next sequential receipt number from backend
+    void api.get<{ number: string }>('/club-receipts/next-number')
+      .then(({ data }) => setForm((f) => ({ ...f, receiptNumber: data.number })))
+      .catch(() => { /* silent — number stays blank */ });
   };
 
   const save = async () => {
@@ -273,10 +397,18 @@ export function ClubLockersPage({
       toast.error(ct('lockers.fillRequired'));
       return;
     }
+    if (form.discountMode === 'code' && (!selectedMember || !form.memberDiscountGrantId)) {
+      toast.error('اختر عضوًا وكود خصم ممنوحًا له');
+      return;
+    }
+    if (form.discountMode === 'points' && (!selectedMember || !Number.isInteger(Number(form.pointsToRedeem)) || Number(form.pointsToRedeem) < 1)) {
+      toast.error('اختر عضوًا وأدخل عدد نقاط صحيحًا للاستبدال');
+      return;
+    }
     setSaving(true);
     try {
-      let memberId: number | undefined;
-      if (form.memberCode.trim()) {
+      let memberId: number | undefined = selectedMember?.id;
+      if (!memberId && form.memberCode.trim()) {
         const q = form.memberCode.trim();
         const { data: list } = await api.get<{ data: ClubMemberListItem[] }>('/club-members', {
           params: { search: q, pageSize: 5 },
@@ -296,11 +428,14 @@ export function ClubLockersPage({
         subscriptionTypeId: Number(form.subscriptionTypeId),
         lockerId: Number(form.lockerId),
         paidAmount: form.paidAmount ? Number(form.paidAmount) : 0,
-        discountEnabled: form.discountEnabled,
-        discountValue: form.discountEnabled ? Number(form.discountValue || 0) : 0,
+        discountEnabled: form.discountMode !== 'none' && form.discountMode !== 'points',
+        discountValue: form.discountMode === 'fixed' || form.discountMode === 'percentage' ? discountAmount : 0,
+        memberDiscountGrantId: form.discountMode === 'code' ? Number(form.memberDiscountGrantId) || undefined : undefined,
+        pointsToRedeem: form.discountMode === 'points' ? Number(form.pointsToRedeem) || undefined : undefined,
         paymentMethod: form.paymentMethod,
         gender: form.gender,
         recommendedEmployeeId: form.recommendedEmployeeId ? Number(form.recommendedEmployeeId) : undefined,
+        receiptNumber: form.receiptNumber.trim() || undefined,
         subscriptionStartDate: form.subscriptionStartDate,
       });
       toast.success(ct('lockers.subCreated'));
@@ -347,6 +482,10 @@ export function ClubLockersPage({
         name: typeForm.name,
         metaValue: Number(typeForm.metaValue),
         days: Number(typeForm.days),
+        branchId: typeForm.branchId || undefined,
+        hasStop: typeForm.hasStop,
+        stopDays: typeForm.hasStop ? Number(typeForm.stopDays || 0) : undefined,
+        isTargetBased: typeForm.isTargetBased,
       };
       if (typeEditId) {
         await api.put(`/club-locker-types/${typeEditId}`, body);
@@ -433,6 +572,7 @@ export function ClubLockersPage({
       await api.delete(`/club-locker-subscriptions/${id}`);
       toast.success(ct('lockers.deleted'));
       void refetch();
+      void qc.invalidateQueries({ queryKey: ['club-lockers'] });
     } catch (e) {
       toast.error(apiError(e));
     }
@@ -470,7 +610,7 @@ export function ClubLockersPage({
         header: ct('lockers.customerName'),
         cell: ({ row }) => (
           <MemberCell
-            name={row.original.memberName ?? row.original.customerName}
+            name={row.original.customerName}
             code={row.original.memberCode}
             memberId={row.original.memberId}
             profilePicture={row.original.memberProfilePicture}
@@ -478,10 +618,24 @@ export function ClubLockersPage({
           />
         ),
       },
+      { accessorKey: 'subscriptionTypeName', header: 'نوع الاشتراك', cell: ({ getValue }) => (getValue() as string | null) || '—' },
+      { accessorKey: 'subscriptionStartDate', header: 'بداية الاشتراك', cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string)}</span> },
       {
         accessorKey: 'subscriptionEndDate',
-        header: ct('lockers.endDate'),
+        header: 'نهاية الاشتراك',
         cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string)}</span>,
+      },
+      { accessorKey: 'lockerNumber', header: 'رقم اللوكر', cell: ({ getValue }) => <span className="nums">{(getValue() as string | null) || '—'}</span> },
+      { accessorKey: 'mainBranchId', header: 'الفرع', cell: ({ getValue }) => branches?.find((branch) => branch.id === getValue())?.name ?? '—' },
+      { accessorKey: 'recommendedEmployeeName', header: 'الموظف', cell: ({ getValue }) => (getValue() as string | null) || '—' },
+      { accessorKey: 'bookedByName', header: 'القائم بالإضافة', cell: ({ getValue }) => (getValue() as string | null) || '—' },
+      { accessorKey: 'paidAmount', header: 'المدفوع', cell: ({ getValue }) => <span className="nums">{formatMoney(getValue() as number)}</span> },
+      { accessorKey: 'paymentMethod', header: 'طريقة الدفع', cell: ({ getValue }) => clubPaymentMethodLabel(ct, getValue() as string | null) },
+      { accessorKey: 'receiptNumber', header: 'رقم الإيصال', cell: ({ getValue }) => <span className="nums">{(getValue() as string | null) || '—'}</span> },
+      {
+        accessorKey: 'gender',
+        header: 'الفئة',
+        cell: ({ getValue }) => getValue() === 'female' ? 'حريمي' : getValue() === 'male' ? 'رجالي' : '—',
       },
       {
         accessorKey: 'status',
@@ -500,16 +654,24 @@ export function ClubLockersPage({
               <Button variant="ghost" size="icon"><MoreHorizontal /></Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => afterMenuClose(() => setSubscriptionDetail(row.original))}>
+                <Eye className="size-4" /> تفاصيل
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={() => afterMenuClose(() => openSubscriptionEdit(row.original))}>
+                <Pencil className="size-4" /> تعديل
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void release(row.original.id)}>{ct('lockers.release')}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => afterMenuClose(() => openFreeze(row.original.id))}>{ui('تجميد')}</DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void doUnfreeze(row.original.id)}>{ui('إلغاء التجميد')}</DropdownMenuItem>
-              <DropdownMenuItem className="text-destructive" onSelect={() => void remove(row.original.id)}>{ct('common.delete')}</DropdownMenuItem>
+              <DropdownMenuItem className="text-destructive" onSelect={() => void remove(row.original.id)}>
+                <Trash2 className="size-4" /> حذف
+              </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         ),
       },
     ],
-    [ct, ui],
+    [branches, ct, ui],
   );
 
   if (isError && singleView !== 'lockers' && singleView !== 'types') {
@@ -536,7 +698,7 @@ export function ClubLockersPage({
               variant="brand"
               onClick={() => {
                 setTypeEditId(null);
-                setTypeForm({ name: '', metaValue: '', days: '' });
+                setTypeForm({ name: '', metaValue: '', days: '', branchId: '', hasStop: false, stopDays: '', isTargetBased: false });
                 setTypeOpen(true);
               }}
             >
@@ -641,7 +803,7 @@ export function ClubLockersPage({
 
         <TabsContent value="types" className="space-y-4 pt-4">
           {!singleView && (
-            <Button variant="outline" onClick={() => { setTypeEditId(null); setTypeForm({ name: '', metaValue: '', days: '' }); setTypeOpen(true); }}>
+            <Button variant="outline" onClick={() => { setTypeEditId(null); setTypeForm({ name: '', metaValue: '', days: '', branchId: '', hasStop: false, stopDays: '', isTargetBased: false }); setTypeOpen(true); }}>
               <Plus className="size-4" /> {ct('lockers.newType')}
             </Button>
           )}
@@ -660,7 +822,7 @@ export function ClubLockersPage({
                     size="icon"
                     onClick={() => {
                       setTypeEditId(t.id);
-                      setTypeForm({ name: t.name, metaValue: String(t.meta_value), days: String(t.days) });
+                      setTypeForm({ name: t.name, metaValue: String(t.meta_value), days: String(t.days), branchId: t.branch_id ? String(t.branch_id) : '', hasStop: !!t.has_stop, stopDays: t.stop_days ? String(t.stop_days) : '', isTargetBased: !!t.is_target_based });
                       setTypeOpen(true);
                     }}
                   >
@@ -683,55 +845,139 @@ export function ClubLockersPage({
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader><DialogTitle>{ct('lockers.newSubTitle')}</DialogTitle></DialogHeader>
           <div className="grid gap-3 py-2">
-            <div className="grid gap-2">
-              <Label>{ct('lockers.customerName')}</Label>
-              <Input value={form.customerName} onChange={(e) => setForm((f) => ({ ...f, customerName: e.target.value }))} />
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-2">
+                <Label>الفرع</Label>
+                <select
+                  className={selectCls}
+                  value={form.mainBranchId || ''}
+                  onChange={(e) => {
+                    const mainBranchId = Number(e.target.value);
+                  setSelectedMember(null);
+                    setForm((current) => ({ ...current, mainBranchId, subBranchId: mainBranchId, lockerId: '', subscriptionTypeId: '', memberCode: '', customerName: '' }));
+                  }}
+                >
+                  <option value="">—</option>
+                  {(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
+                </select>
+              </div>
+              <div className="grid gap-2">
+                <Label>اسم العميل</Label>
+                <MemberSearchCombobox
+                  key={form.mainBranchId}
+                  selectedMember={selectedMember}
+                  branchId={form.mainBranchId}
+                  forMembershipOperation
+                  disabled={!form.mainBranchId}
+                  onSelect={(member) => {
+                    setSelectedMember(member);
+                    setForm((current) => ({
+                      ...current,
+                      subscriptionTypeId: '',
+                      lockerId: '',
+                      customerName: member.name,
+                      memberCode: member.memberCode,
+                      gender: member.gender,
+                    }));
+                  }}
+                  onClear={() => {
+                    setSelectedMember(null);
+                    setForm((current) => ({ ...current, customerName: '', memberCode: '' }));
+                  }}
+                />
+              </div>
             </div>
-            <div className="grid gap-2">
-              <Label>{ct('lockers.memberId')}</Label>
-              <Input className="font-mono" dir="ltr" value={form.memberCode} onChange={(e) => setForm((f) => ({ ...f, memberCode: e.target.value }))} />
+            <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid gap-2">
+                <Label>{ct('lockers.subType')}</Label>
+                <Combobox
+                  value={form.subscriptionTypeId}
+                  onValueChange={(v) => setForm((f) => ({ ...f, subscriptionTypeId: v }))}
+                  options={visibleLockerTypes.map((t) => ({ value: String(t.id), label: t.name }))}
+                  placeholder="—"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>السعر</Label>
+                <Input className="nums" readOnly value={referencePrice} />
+              </div>
             </div>
-            <div className="grid gap-2">
-              <Label>{ct('lockers.subType')}</Label>
-              <select className={selectCls} value={form.subscriptionTypeId} onChange={(e) => setForm((f) => ({ ...f, subscriptionTypeId: e.target.value }))}>
-                <option value="">—</option>
-                {(lockerTypes ?? []).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-              </select>
-              {selectedType && (
-                <p className="text-xs text-muted-foreground nums">
-                  {ct('lockers.metaValue')}: {toArabicDigits(referencePrice)} · {ct('lockers.days')}: {toArabicDigits(selectedType.days)} · {ct('lockers.paidAmount')}: {toArabicDigits(netDue)} · {ct('common.remaining')}: {toArabicDigits(remainingDue)}
-                </p>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid gap-2">
+                <Label>عدد الأيام</Label>
+                <Input className="nums" readOnly value={selectedType?.days ?? ''} />
+              </div>
+              <div className="grid gap-2">
+                <Label>{ct('lockers.startDate')}</Label>
+                <Input type="date" value={form.subscriptionStartDate} onChange={(e) => setForm((f) => ({ ...f, subscriptionStartDate: e.target.value }))} />
+              </div>
+              <div className="grid gap-2">
+                <Label>تاريخ النهاية</Label>
+                <Input type="date" readOnly value={subscriptionEndDate} />
+              </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid gap-2">
+                <Label>{ct('lockers.selectLocker')}</Label>
+                <Combobox
+                  value={form.lockerId}
+                  onValueChange={(v) => setForm((f) => ({ ...f, lockerId: v }))}
+                  options={availableLockers.map((l) => ({ value: String(l.id), label: l.locker_number }))}
+                  placeholder="—"
+                />
+              </div>
+              <div className="grid gap-2">
+                <Label>الفئة</Label>
+                <select className={selectCls} value={form.gender} onChange={(e) => setForm((f) => ({ ...f, gender: e.target.value as LockerSubscriptionPrefill['gender'] }))}>
+                  <option value="male">رجالي</option>
+                  <option value="female">حريمي</option>
+                </select>
+              </div>
+              <div className="grid gap-2">
+                <Label>الموظف</Label>
+                <Combobox
+                  value={form.recommendedEmployeeId}
+                  onValueChange={(v) => setForm((f) => ({ ...f, recommendedEmployeeId: v }))}
+                  options={employees.map((e) => ({ value: String(e.id), label: e.employee ?? '' }))}
+                  placeholder="—"
+                />
+              </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid gap-2">
+                <Label>حالة الخصم</Label>
+                <select className={selectCls} value={form.discountMode} onChange={(e) => setForm((current) => ({ ...current, discountMode: e.target.value as SubscriptionDiscountMode, discountValue: '', discountCodeId: '', memberDiscountGrantId: '', pointsToRedeem: '' }))}>
+                  <option value="none">بدون خصم</option>
+                  <option value="fixed">مبلغ</option>
+                  <option value="percentage">نسبة</option>
+                  <option value="code">كود خصم</option>
+                  <option value="points">خصم نقاط</option>
+                </select>
+              </div>
+              {form.discountMode === 'fixed' && (
+                <div className="grid gap-2"><Label>قيمة الخصم</Label><Input className="nums" type="number" min="0" max={referencePrice} value={form.discountValue} onChange={(e) => setForm((current) => ({ ...current, discountValue: e.target.value }))} /></div>
+              )}
+              {form.discountMode === 'percentage' && (
+                <div className="grid gap-2"><Label>نسبة الخصم</Label><Input className="nums" type="number" min="0" max="100" value={form.discountValue} onChange={(e) => setForm((current) => ({ ...current, discountValue: e.target.value }))} /></div>
+              )}
+              {form.discountMode === 'code' && (
+                <div className="grid gap-2"><Label>كود الخصم الممنوح للعضو</Label><select className={selectCls} value={form.memberDiscountGrantId} onChange={(e) => setForm((current) => ({ ...current, memberDiscountGrantId: e.target.value }))}><option value="">—</option>{memberDiscountGrants.map((code) => <option key={code.id} value={code.id}>{code.code} — {code.percentage}%</option>)}</select>{!memberDiscountGrants.length ? <p className="text-xs text-muted-foreground">لا توجد أكواد خصم صالحة ممنوحة للعضو.</p> : null}</div>
+              )}
+              {form.discountMode === 'points' && (
+                <div className="grid gap-2"><Label>النقاط المستخدمة</Label><Input className="nums" type="number" min="1" max={pointsAccount?.points || undefined} value={form.pointsToRedeem} onChange={(e) => setForm((current) => ({ ...current, pointsToRedeem: e.target.value }))} /><p className="text-xs text-muted-foreground">الرصيد: {toArabicDigits(pointsAccount?.points ?? 0)} نقطة</p></div>
               )}
             </div>
-            <div className="grid gap-2">
-              <Label>{ct('lockers.selectLocker')}</Label>
-              <select className={selectCls} value={form.lockerId} onChange={(e) => setForm((f) => ({ ...f, lockerId: e.target.value }))}>
-                <option value="">—</option>
-                {availableLockers.map((l) => <option key={l.id} value={l.id}>{l.locker_number}</option>)}
-              </select>
-            </div>
-            <PaidAmountField
-              label={ct('lockers.paidAmount')}
-              value={form.paidAmount}
-              max={netDue > 0 ? netDue : undefined}
-              onChange={(paidAmount) => setForm((current) => ({ ...current, paidAmount }))}
-            />
-            <div className="flex items-center gap-2">
-              <input
-                id="locker-discount"
-                type="checkbox"
-                checked={form.discountEnabled}
-                onChange={(e) => setForm((f) => ({ ...f, discountEnabled: e.target.checked }))}
+            <div className="grid gap-3 md:grid-cols-4">
+              <PaidAmountField
+                label={ct('lockers.paidAmount')}
+                value={form.paidAmount}
+                max={netDue > 0 ? netDue : undefined}
+                onChange={(paidAmount) => {
+                  setPaidAmountEdited(true);
+                  setForm((current) => ({ ...current, paidAmount }));
+                }}
               />
-              <Label htmlFor="locker-discount">{ct('common.discount')}</Label>
-            </div>
-            {form.discountEnabled && (
-              <div className="grid gap-2">
-                <Label>{ct('common.discountValue')}</Label>
-                <Input className="nums" value={form.discountValue} onChange={(e) => setForm((f) => ({ ...f, discountValue: e.target.value }))} />
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2"><Label>{ct('common.remaining')}</Label><Input className="nums" readOnly value={remainingDue} /></div>
               <div className="grid gap-2">
                 <Label>{ct('common.paymentMethod')}</Label>
                 <select className={selectCls} value={form.paymentMethod} onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value }))}>
@@ -741,25 +987,62 @@ export function ClubLockersPage({
                 </select>
               </div>
               <div className="grid gap-2">
-                <Label>{ct('common.gender')}</Label>
-                <select className={selectCls} value={form.gender} onChange={(e) => setForm((f) => ({ ...f, gender: e.target.value }))}>
-                  <option value="male">{ct('common.male')}</option>
-                  <option value="female">{ct('common.female')}</option>
-                </select>
+                <Label>{ct('subscriptions.receiptNumber')}</Label>
+                <Input className="nums text-muted-foreground" dir="ltr" readOnly value={form.receiptNumber} />
               </div>
-            </div>
-            <div className="grid gap-2">
-              <Label>{ct('subscriptions.recommendedEmployee')}</Label>
-              <Input className="nums" value={form.recommendedEmployeeId} onChange={(e) => setForm((f) => ({ ...f, recommendedEmployeeId: e.target.value }))} />
-            </div>
-            <div className="grid gap-2">
-              <Label>{ct('lockers.startDate')}</Label>
-              <Input type="date" value={form.subscriptionStartDate} onChange={(e) => setForm((f) => ({ ...f, subscriptionStartDate: e.target.value }))} />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>{ct('common.cancel')}</Button>
             <Button variant="brand" onClick={() => void save()} disabled={saving}>{saving ? ct('common.saving') : ct('common.save')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={subscriptionDetail !== null} onOpenChange={(open) => !open && setSubscriptionDetail(null)}>
+        <DialogContent size="md" aria-describedby={undefined}>
+          <DialogHeader><DialogTitle>تفاصيل اشتراك اللوكر</DialogTitle></DialogHeader>
+          {subscriptionDetail && (
+            <div className="max-h-[70vh] overflow-y-auto py-2">
+              <LockerDetailRow label="رقم الاشتراك" value={subscriptionDetail.subscriptionNumber} nums />
+              <LockerDetailRow label="اسم العميل" value={subscriptionDetail.customerName} />
+              <LockerDetailRow label="نوع الاشتراك" value={subscriptionDetail.subscriptionTypeName ?? '—'} />
+              <LockerDetailRow label="بداية الاشتراك" value={subscriptionDetail.subscriptionStartDate} nums />
+              <LockerDetailRow label="نهاية الاشتراك" value={subscriptionDetail.subscriptionEndDate} nums />
+              <LockerDetailRow label="رقم اللوكر" value={subscriptionDetail.lockerNumber ?? '—'} nums />
+              <LockerDetailRow label="الفرع" value={branches?.find((branch) => branch.id === subscriptionDetail.mainBranchId)?.name ?? '—'} />
+              <LockerDetailRow label="الفئة" value={subscriptionDetail.gender === 'female' ? 'حريمي' : subscriptionDetail.gender === 'male' ? 'رجالي' : '—'} />
+              <LockerDetailRow label="الحالة" value={ct(`common.${subscriptionDetail.status}`)} />
+              <LockerDetailRow label="الموظف" value={subscriptionDetail.recommendedEmployeeName ?? '—'} />
+              <LockerDetailRow label="القائم بالإضافة" value={subscriptionDetail.bookedByName ?? '—'} />
+              <LockerDetailRow label="المدفوع" value={formatMoney(subscriptionDetail.paidAmount)} nums />
+              <LockerDetailRow label="طريقة الدفع" value={clubPaymentMethodLabel(ct, subscriptionDetail.paymentMethod)} />
+              <LockerDetailRow label="رقم الإيصال" value={subscriptionDetail.receiptNumber ?? '—'} nums />
+            </div>
+          )}
+          <DialogFooter><Button variant="outline" onClick={() => setSubscriptionDetail(null)}>إغلاق</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editingSubscription !== null} onOpenChange={(open) => !open && setEditingSubscription(null)}>
+        <DialogContent size="md" aria-describedby={undefined}>
+          <DialogHeader><DialogTitle>تعديل اشتراك اللوكر</DialogTitle></DialogHeader>
+          {editingSubscription && (
+            <div className="grid max-h-[70vh] gap-3 overflow-y-auto py-2 md:grid-cols-2">
+              <div className="grid gap-2"><Label>رقم الاشتراك</Label><Input readOnly value={editingSubscription.subscriptionNumber} /></div>
+              <div className="grid gap-2"><Label>نوع الاشتراك</Label><Input readOnly value={editingSubscription.subscriptionTypeName ?? '—'} /></div>
+              <div className="grid gap-2"><Label>رقم اللوكر</Label><Input readOnly value={editingSubscription.lockerNumber ?? '—'} /></div>
+              <div className="grid gap-2"><Label>الفرع</Label><Input readOnly value={branches?.find((branch) => branch.id === editingSubscription.mainBranchId)?.name ?? '—'} /></div>
+              <div className="grid gap-2"><Label>اسم العميل</Label><Input value={editForm.customerName} onChange={(event) => setEditForm((form) => ({ ...form, customerName: event.target.value }))} /></div>
+              <div className="grid gap-2"><Label>الفئة</Label><select className={selectCls} value={editForm.gender} onChange={(event) => setEditForm((form) => ({ ...form, gender: event.target.value as 'male' | 'female' }))}><option value="male">رجالي</option><option value="female">حريمي</option></select></div>
+              <div className="grid gap-2"><Label>بداية الاشتراك</Label><Input type="date" value={editForm.startDate} onChange={(event) => setEditForm((form) => ({ ...form, startDate: event.target.value }))} /></div>
+              <div className="grid gap-2"><Label>نهاية الاشتراك</Label><Input type="date" value={editForm.endDate} onChange={(event) => setEditForm((form) => ({ ...form, endDate: event.target.value }))} /></div>
+              <div className="grid gap-2 md:col-span-2"><Label>الموظف</Label><select className={selectCls} value={editForm.employeeId} onChange={(event) => setEditForm((form) => ({ ...form, employeeId: event.target.value }))}><option value="">بدون موظف</option>{editingSubscription.recommendedEmployeeId != null && !employees.some((employee) => employee.id === editingSubscription.recommendedEmployeeId) && <option value={editingSubscription.recommendedEmployeeId}>{editingSubscription.recommendedEmployeeName ?? `موظف #${editingSubscription.recommendedEmployeeId}`}</option>}{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.employee ?? `موظف #${employee.id}`}</option>)}</select></div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingSubscription(null)}>{ct('common.cancel')}</Button>
+            <Button variant="brand" onClick={() => void saveSubscriptionEdit()} disabled={saving}>{saving ? ct('common.saving') : ct('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -797,6 +1080,10 @@ export function ClubLockersPage({
             <Input placeholder={ct('members.typeName')} value={typeForm.name} onChange={(e) => setTypeForm((f) => ({ ...f, name: e.target.value }))} />
             <Input className="nums" placeholder={ct('lockers.metaValue')} value={typeForm.metaValue} onChange={(e) => setTypeForm((f) => ({ ...f, metaValue: e.target.value }))} />
             <Input className="nums" placeholder={ct('lockers.days')} value={typeForm.days} onChange={(e) => setTypeForm((f) => ({ ...f, days: e.target.value }))} />
+            <select className={selectCls} value={typeForm.branchId} onChange={(e) => setTypeForm((f) => ({ ...f, branchId: e.target.value }))}><option value="">كل الفروع</option>{branchOptions.map((branch) => <option key={branch.value} value={branch.value}>{branch.label}</option>)}</select>
+            <label className="flex items-center gap-2"><input type="checkbox" checked={typeForm.hasStop} onChange={(e) => setTypeForm((f) => ({ ...f, hasStop: e.target.checked }))} />يسمح بالوقف</label>
+            {typeForm.hasStop && <Input type="number" min="1" placeholder="عدد أيام الوقف" value={typeForm.stopDays} onChange={(e) => setTypeForm((f) => ({ ...f, stopDays: e.target.value }))} />}
+            <label className="flex items-center gap-2"><input type="checkbox" checked={typeForm.isTargetBased} onChange={(e) => setTypeForm((f) => ({ ...f, isTargetBased: e.target.checked }))} />تابع للتارجت</label>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setTypeOpen(false)}>{ct('common.cancel')}</Button>

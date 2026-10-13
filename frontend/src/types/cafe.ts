@@ -1,6 +1,5 @@
 export type RecipeUnit = 'g' | 'kg' | 'oz' | 'ml' | 'L' | 'fl_oz' | 'piece';
 export type CafeProductType = 'ready' | 'prepared' | 'internal';
-export type CafeBusinessClassification = 'protein' | 'bar';
 
 export interface CafeRecipeItem {
   id: number;
@@ -33,7 +32,6 @@ export interface CafeProductListItem {
   categoryId: number | null;
   categoryName: string | null;
   productType: CafeProductType;
-  businessClassification: CafeBusinessClassification | null;
   inventoryProductId: number | null;
   sellPrice: number;
   cost: number;
@@ -83,7 +81,6 @@ export interface CafeSellResult {
 
 export interface UpsertCafeProductDto {
   name: string;
-  businessClassification?: CafeBusinessClassification;
   sellPrice: number;
   categoryId?: number;
   imageUrl?: string;

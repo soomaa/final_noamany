@@ -7,7 +7,6 @@ export interface MyPermissions {
   superAdmin: boolean;
   keys: string[];
   routeMap: Record<string, string>;
-  resourceActions: Record<string, string[]>;
   scope: Record<string, string>;
 }
 
@@ -88,8 +87,6 @@ export interface PermissionApi {
   /** Force a server round-trip before authorising a newly opened route. */
   refresh: () => Promise<void>;
   routeMap: Record<string, string>;
-  resourceActions: Record<string, string[]>;
-  resourceForRoute: (pathname: string) => string | null;
 }
 
 /** Synchronous permission helpers for components and the route guard. */
@@ -97,7 +94,6 @@ export function usePermission(): PermissionApi {
   const { data, isLoading, isError, refetch } = useMyPermissions();
   const keys = useMemo(() => new Set(data?.keys ?? []), [data]);
   const routeMap = data?.routeMap ?? {};
-  const resourceActions = data?.resourceActions ?? {};
 
   const can = useCallback(
     (key: string) => !!data?.superAdmin || keys.has(key),
@@ -156,7 +152,5 @@ export function usePermission(): PermissionApi {
     retry: () => void refetch(),
     refresh,
     routeMap,
-    resourceActions,
-    resourceForRoute,
   };
 }

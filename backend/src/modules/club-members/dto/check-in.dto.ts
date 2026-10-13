@@ -1,7 +1,10 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsInt, IsOptional, IsString, ValidateIf } from 'class-validator';
+import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Min, ValidateIf } from 'class-validator';
 
 export class CheckInDto {
+  @IsOptional()
+  @IsIn(['normal', 'class'])
+  attendanceType?: 'normal' | 'class';
   @ValidateIf((o) => !o.memberCode)
   @Transform(({ value }) => (value != null ? Number(value) : undefined))
   @IsInt()
@@ -38,6 +41,21 @@ export class CheckInDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   consumeSession?: boolean;
+}
+
+export class ServiceCheckInDto {
+  @Transform(({ value }) => Number(value))
+  @IsInt()
+  @Min(1)
+  memberId: number;
+
+  @Transform(({ value }) => Number(value))
+  @IsInt()
+  @Min(1)
+  subscriptionId: number;
+
+  @IsIn(['class', 'spa', 'inbody'])
+  attendanceType: 'class' | 'spa' | 'inbody';
 }
 
 export class CheckOutDto {

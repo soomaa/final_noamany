@@ -16,6 +16,7 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ListEmployeesDto } from './dto/list-employees.dto';
 import { EmployeesService } from './employees.service';
+import { PutWeeklyScheduleDto } from './dto/weekly-schedule.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('employees')
@@ -45,6 +46,13 @@ export class EmployeesController {
   @RequiresPermission('gym-sales.sales.new_receipt:view', 'gym-sales.sales.treasury:view', 'gym-sales.sales.settlements:view')
   posOptions() {
     return this.employees.posOptions();
+  }
+
+  // Static route must precede ':id'.
+  @Get('subscription-options')
+  @RequiresPermission('club.subscriptions:create', 'club.subscriptions.list:create', 'club.subscriptions.new:create')
+  subscriptionOptions() {
+    return this.employees.subscriptionOptions();
   }
 
   @Get(':id/identity')
@@ -115,6 +123,23 @@ export class EmployeesController {
   @Get(':id/dwam')
   getDwam(@Param('id', ParseIntPipe) id: number) {
     return this.employees.getDwam(id);
+  }
+
+  @Get(':id/weekly-schedule')
+  getWeeklySchedule(@Param('id', ParseIntPipe) id: number, @Query('date') date?: string) {
+    return this.employees.getWeeklySchedule(id, date);
+  }
+
+  @Put(':id/weekly-schedule')
+  @RequiresPermission('employees.list:update')
+  putWeeklySchedule(@Param('id', ParseIntPipe) id: number, @Body() dto: PutWeeklyScheduleDto, @CurrentUser('sub') userId: number) {
+    return this.employees.putWeeklySchedule(id, dto, userId);
+  }
+
+  @Post(':id/weekly-schedule/validate')
+  @RequiresPermission('employees.list:update')
+  validateWeeklySchedule(@Param('id', ParseIntPipe) id: number, @Body() dto: PutWeeklyScheduleDto) {
+    return this.employees.validateWeeklySchedule(id, dto);
   }
 
   @Put(':id/dwam')

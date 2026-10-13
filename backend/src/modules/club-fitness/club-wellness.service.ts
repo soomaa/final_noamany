@@ -1,6 +1,7 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, SalesPaymentMethod } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { ClubBranchGroupReader, ClubBranchGroupService } from '../../common/branch-groups/club-branch-group.service';
 import { assertPositive, assertWithinRange } from '../../common/validators';
 import { paginated } from '../../common/dto/list-result';
 import { ClubFitnessLedgerService } from './club-fitness-ledger.service';
@@ -15,12 +16,21 @@ import {
 import { attachMemberBrief, loadMemberBriefMap, searchMemberIds } from '../club-members/club-member-brief.utils';
 import { ListClubFitnessDto } from './dto/list-club-fitness.dto';
 import { recordSystemRevenue } from '../finance/system-revenue.util';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { clubOperationBranchIds } from '../../common/branch-groups/club-operation-scope';
+import { JwtUser } from '../../common/types/jwt-user';
+import { isReceptionEmployee } from '../../common/utils/reception-user.util';
 
 @Injectable()
 export class ClubWellnessService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledger: ClubFitnessLedgerService,
+    @Inject(ClubBranchGroupService)
+    private readonly branchGroups: Pick<ClubBranchGroupReader, 'siblingBranchIds'> = {
+      siblingBranchIds: async (branchId) => [branchId],
+    },
+    private readonly branchScope: BranchScopeService = new BranchScopeService(),
   ) {}
 
   private paymentMethod(value: unknown): SalesPaymentMethod {
@@ -97,6 +107,17 @@ export class ClubWellnessService {
   async checkInSpaByBarcode(memberCode: string, userId?: number) {
     if (!memberCode?.trim()) throw new BadRequestException('كود العضو مطلوب');
     const member = await this.findMemberByCode(memberCode);
+    const scanner = userId == null
+      ? null
+      : await this.prisma.users?.findUnique({
+          where: { user_id: userId },
+          select: { branch_id_fk: true },
+        });
+    const operationBranchId = Number(scanner?.branch_id_fk ?? member.branch_id);
+    const compatibleBranchIds = await this.branchGroups.siblingBranchIds(operationBranchId);
+    if (!compatibleBranchIds.includes(member.branch_id)) {
+      throw new ForbiddenException('لا يمكن تسجيل SPA لعضو تابع لفرع آخر');
+    }
     const today = localDateString();
     const duplicate = await this.prisma.club_spa_attendance.findFirst({
       where: { member_id: member.id, attendance_date: today },
@@ -118,7 +139,7 @@ export class ClubWellnessService {
           member_id: member.id,
           member_code: member.member_code,
           member_name: member.name,
-          branch_id: member.branch_id,
+          branch_id: operationBranchId,
           subscription_id: consumedSubscriptionId,
           attendance_date: today,
           check_in_time: time,
@@ -285,22 +306,42 @@ export class ClubWellnessService {
 
   // --- InBody measurements ---
 
-  async listInbodyMeasurements(q: ListClubFitnessDto) {
+  private async inbodyMemberScope(user?: JwtUser): Promise<Prisma.club_membersWhereInput> {
+    if (!user) return {};
+    const branches = await clubOperationBranchIds(this.branchScope, this.branchGroups, user);
+    const gender = this.branchScope.memberGenderFilter(user);
+    return { is_deleted: false, ...(branches === null ? {} : { branch_id: { in: branches } }), ...(gender ? { gender } : {}) };
+  }
+
+  private async assertInbodyMemberAccess(memberId: number, user?: JwtUser) {
+    if (!user) return;
+    const member = await this.prisma.club_members.findFirst({ where: { AND: [{ id: memberId }, await this.inbodyMemberScope(user)] }, select: { id: true } });
+    if (!member) throw new ForbiddenException('العضو خارج الفروع أو الأقسام المسموح بها');
+  }
+
+  private assertInbodyDateAccess(date: string, user?: JwtUser) {
+    if (isReceptionEmployee(user) && date !== localDateString()) throw new ForbiddenException('موظف الاستقبال يمكنه الوصول إلى قياسات اليوم فقط');
+  }
+
+  async listInbodyMeasurements(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_inbody_measurementsWhereInput = {};
-    if (q.memberId) where.member_id = Number(q.memberId);
+    const scopedIds = user ? (await this.prisma.club_members.findMany({ where: await this.inbodyMemberScope(user), select: { id: true } })).map(member => member.id) : null;
+    if (scopedIds) where.member_id = { in: scopedIds };
+    if (q.memberId) where.member_id = scopedIds === null || scopedIds.includes(Number(q.memberId)) ? Number(q.memberId) : { in: [] };
     if (q.dateFrom || q.dateTo) {
       where.measurement_date = {
         ...(q.dateFrom ? { gte: q.dateFrom } : {}),
         ...(q.dateTo ? { lte: q.dateTo } : {}),
       };
     }
+    if (isReceptionEmployee(user)) where.measurement_date = localDateString();
 
     if (q.search?.trim()) {
       const memberIds = await searchMemberIds(this.prisma, q.search);
       if (memberIds.length === 0) {
         return paginated([], 0, q.page, q.pageSize);
       }
-      where.member_id = { in: memberIds };
+      where.member_id = { in: memberIds.filter(id => (scopedIds === null || scopedIds.includes(id)) && (!q.memberId || id === Number(q.memberId))) };
     }
 
     const [rows, total] = await Promise.all([
@@ -319,6 +360,14 @@ export class ClubWellnessService {
       q.page,
       q.pageSize,
     );
+  }
+
+  /** Preview only: the database assigns the final auto-increment id on save. */
+  async nextInbodyFileNumber() {
+    const result = await this.prisma.club_inbody_measurements.aggregate({
+      _max: { id: true },
+    });
+    return (result._max.id ?? 0) + 1;
   }
 
   /** SPA barcode visits are distinct from paid SPA invoices and are reportable by date/branch. */
@@ -347,18 +396,22 @@ export class ClubWellnessService {
     })), total, q.page, q.pageSize);
   }
 
-  async findInbodyMeasurement(id: number) {
+  async findInbodyMeasurement(id: number, user?: JwtUser) {
     const row = await this.prisma.club_inbody_measurements.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('قياس InBody غير موجود');
+    this.assertInbodyDateAccess(row.measurement_date, user);
+    await this.assertInbodyMemberAccess(row.member_id, user);
     const memberMap = await loadMemberBriefMap(this.prisma, [row.member_id]);
     return this.mapInbodyMeasurement(row, memberMap);
   }
 
-  async createInbodyMeasurement(body: Record<string, unknown>) {
+  async createInbodyMeasurement(body: Record<string, unknown>, user?: JwtUser) {
     if (!body.memberId || !body.measurementDate) {
       throw new BadRequestException('كود العضو وتاريخ القياس مطلوبان');
     }
     await assertMemberExists(this.prisma, Number(body.memberId));
+    await this.assertInbodyMemberAccess(Number(body.memberId), user);
+    this.assertInbodyDateAccess(String(body.measurementDate), user);
     this.validateInbodyMeasurementValues(body);
     await this.assertUniqueInbodyDay(Number(body.memberId), String(body.measurementDate));
     const weight = body.weight != null ? Number(body.weight) : null;
@@ -382,15 +435,17 @@ export class ClubWellnessService {
         report_url: body.reportUrl ? String(body.reportUrl) : null,
       },
     });
-    return this.findInbodyMeasurement(row.id);
+    return this.findInbodyMeasurement(row.id, user);
   }
 
-  async updateInbodyMeasurement(id: number, body: Record<string, unknown>) {
-    const existing = await this.findInbodyMeasurement(id);
+  async updateInbodyMeasurement(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const existing = await this.findInbodyMeasurement(id, user);
     this.validateInbodyMeasurementValues(body);
     const memberId = body.memberId != null ? Number(body.memberId) : existing.memberId;
     const measurementDate =
       body.measurementDate != null ? String(body.measurementDate) : existing.measurementDate;
+    this.assertInbodyDateAccess(measurementDate, user);
+    await this.assertInbodyMemberAccess(memberId, user);
     if (body.memberId != null) await assertMemberExists(this.prisma, memberId);
     await this.assertUniqueInbodyDay(memberId, measurementDate, id);
     const weight = body.weight !== undefined ? (body.weight != null ? Number(body.weight) : null) : existing.weight;
@@ -418,11 +473,11 @@ export class ClubWellnessService {
         ...(body.reportUrl !== undefined ? { report_url: body.reportUrl ? String(body.reportUrl) : null } : {}),
       },
     });
-    return this.findInbodyMeasurement(id);
+    return this.findInbodyMeasurement(id, user);
   }
 
-  async removeInbodyMeasurement(id: number) {
-    await this.findInbodyMeasurement(id);
+  async removeInbodyMeasurement(id: number, user?: JwtUser) {
+    await this.findInbodyMeasurement(id, user);
     await this.prisma.club_inbody_measurements.delete({ where: { id } });
     return { success: true };
   }

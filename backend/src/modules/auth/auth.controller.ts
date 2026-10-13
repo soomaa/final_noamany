@@ -1,5 +1,6 @@
-import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { Request, Response } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -10,6 +11,7 @@ import { JwtUser } from '../../common/types/jwt-user';
 import { MemberJwtUser } from '../../common/types/member-jwt-user';
 import { MemberAuthService } from '../member/member-auth.service';
 import { AuthService } from './auth.service';
+import { UploadsService } from '../uploads/uploads.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
 
@@ -22,6 +24,7 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly memberAuth: MemberAuthService,
     private readonly config: ConfigService,
+    private readonly uploads: UploadsService,
   ) {}
 
   private cookieOpts(maxAgeMs: number) {
@@ -91,5 +94,14 @@ export class AuthController {
   @Get('me')
   me(@CurrentUser() user: JwtUser) {
     return this.auth.getSessionUser(user.sub);
+  }
+
+  /** The JWT supplies the owner, so this route can never change another employee's photo. */
+  @UseGuards(JwtAuthGuard)
+  @Post('profile-image')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  async updateProfileImage(@CurrentUser() user: JwtUser, @UploadedFile() file: Express.Multer.File) {
+    const upload = this.uploads.store('emp-photo', file);
+    return this.auth.updateProfileImage(user.sub, upload.path);
   }
 }

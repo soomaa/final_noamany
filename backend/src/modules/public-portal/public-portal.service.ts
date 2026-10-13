@@ -5,6 +5,8 @@ import type { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { UploadsService } from '../uploads/uploads.service';
+import { resolveSubscriptionEndDate } from '../club-subscriptions/club-subscription.utils';
+import { isSubscriptionTypeAvailableAtBranch, subscriptionTypeBranchWhere } from '../club-subscriptions/subscription-type-branch-scope';
 import type { PortalCustomerClaims } from './portal-customer.guard';
 
 type Row = Record<string, any>;
@@ -36,12 +38,6 @@ function numeric(value: unknown) {
   return Number.isFinite(number) ? number : 0;
 }
 
-export function cairoCalendarDay(now: Date = new Date()) {
-  const parts = new Intl.DateTimeFormat('en', { timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(now);
-  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
-  return `${values.year}-${values.month}-${values.day}`;
-}
-
 function publicProduct(row: Row) {
   const images = Array.isArray(row.images)
     ? row.images
@@ -66,16 +62,8 @@ function publicProduct(row: Row) {
     oldPrice: row.old_price == null ? null : Number(row.old_price),
     featured: Boolean(row.is_featured),
     isNew: Boolean(row.is_new),
-    displayOrder: Number(row.display_order ?? 0),
-    badge: positiveInt(row.badge_id)
-      ? {
-          id: positiveInt(row.badge_id),
-          name: stringValue(row.badge_name, 150),
-          nameEn: stringValue(row.badge_name_en, 150),
-          type: stringValue(row.badge_type, 30),
-          backgroundColor: stringValue(row.background_color, 20),
-          textColor: stringValue(row.text_color, 20),
-        }
+    badge: row.badge_name
+      ? { name: row.badge_name, backgroundColor: row.background_color, textColor: row.text_color }
       : null,
   };
 }
@@ -95,6 +83,10 @@ function publicContent(row: Row) {
     numericValue: row.numeric_value == null ? null : Number(row.numeric_value),
     suffix: row.suffix,
     extraText: row.extra_text,
+    subscriptionTypeId: row.subscriptionTypeId == null ? null : Number(row.subscriptionTypeId),
+    subscriptionTypeName: row.subscriptionTypeName ?? null,
+    subscriptionPrice: row.subscriptionPrice == null ? null : Number(row.subscriptionPrice),
+    subscriptionDays: row.subscriptionDays == null ? null : Number(row.subscriptionDays),
     branchId: row.branch_id == null ? null : Number(row.branch_id),
     featured: Boolean(row.is_featured),
     displayOrder: Number(row.display_order),
@@ -110,22 +102,20 @@ export class PublicPortalService {
     private readonly uploads: UploadsService,
   ) {}
 
-  async home(now: Date = new Date()) {
-    const businessDay = cairoCalendarDay(now);
-    const [company, about, sliders, offers, branches, classes, trainers, photos, videos, heroVideos, partners, products, contentRows] = await Promise.all([
+  async home() {
+    const [company, about, sliders, offers, branches, classes, trainers, photos, videos, partners, products, contentRows] = await Promise.all([
       this.safeRows('SELECT * FROM conf_company_data ORDER BY id_config DESC LIMIT 1'),
       this.safeRows('SELECT * FROM design_web_about ORDER BY id DESC LIMIT 1'),
       this.safeRows('SELECT id,title,slug_title,details,main_image,date FROM design_web_slider ORDER BY id DESC'),
-      this.safeRows("SELECT offer_id AS id,offer_name AS title,sub_title AS subtitle,from_date AS fromDate,to_date AS toDate,offer_value AS value,offer_details AS details,image FROM tbl_offers WHERE status='activ' AND (from_date IS NULL OR from_date='' OR DATE(from_date)<=?) AND (to_date IS NULL OR to_date='' OR DATE(to_date)>=?) ORDER BY offer_id DESC LIMIT 8", businessDay, businessDay),
+      this.safeRows("SELECT offer_id AS id,offer_name AS title,sub_title AS subtitle,from_date AS fromDate,to_date AS toDate,offer_value AS value,offer_details AS details,image FROM tbl_offers WHERE status='activ' AND (from_date IS NULL OR from_date='' OR from_date<=CURDATE()) AND (to_date IS NULL OR to_date='' OR to_date>=CURDATE()) ORDER BY offer_id DESC LIMIT 8"),
       this.safeRows("SELECT b.branch_id AS id,b.branch_name AS name,p.address,p.mob1,p.mob2,COALESCE(NULLIF(p.lat_map,''),g.lat_map) AS lat,COALESCE(NULLIF(p.lang_map,''),g.long_map) AS lng FROM tbl_branches b LEFT JOIN portal_branch_profiles p ON p.branch_id=b.branch_id LEFT JOIN branch_settings g ON g.title=b.branch_name ORDER BY b.branch_id"),
-      this.safeRows('SELECT c.id,c.class_title AS title,c.class_type AS classType,c.day,c.time,c.date,c.branch_id AS branchId,b.branch_name AS branch FROM design_web_classes c LEFT JOIN tbl_branches b ON b.branch_id=c.branch_id ORDER BY c.branch_id,c.class_type,c.day,c.time'),
-      this.safeRows('SELECT t.id,t.title,t.job_title AS jobTitle,t.main_image AS image,t.gender,t.date,t.branch_id AS branchId,b.branch_name AS branch FROM design_web_projects t LEFT JOIN tbl_branches b ON b.branch_id=t.branch_id ORDER BY t.id DESC'),
-      this.safeRows("SELECT p.id,p.title,p.details,p.main_image AS image,p.date,p.branch_id AS branchId,b.branch_name AS branch,GROUP_CONCAT(DISTINCT pi.images_name ORDER BY pi.images_id SEPARATOR '||') AS albumImages FROM design_web_photos p LEFT JOIN tbl_branches b ON b.branch_id=p.branch_id LEFT JOIN design_web_photos_images pi ON pi.photos_id_fk=p.id GROUP BY p.id ORDER BY p.id DESC LIMIT 18"),
-      this.safeRows('SELECT id,title,slug_title AS subtitle,video_link AS videoLink,main_image AS image,date,main_page_video AS mainPageVideo FROM design_web_videos WHERE main_page_video=1 ORDER BY id DESC LIMIT 8'),
-      this.safeRows('SELECT v.id,v.title,v.branch_id AS branchId,b.branch_name AS branch,v.date,v.video_link AS videoLink,v.main_image AS image,v.main_page_video AS mainPageVideo FROM design_web_slider_videos v LEFT JOIN tbl_branches b ON b.branch_id=v.branch_id WHERE v.main_page_video=1 ORDER BY v.id DESC'),
+      this.safeRows('SELECT c.id,c.class_title AS title,c.class_type AS classType,c.day,c.time,c.branch_id AS branchId,b.branch_name AS branch FROM design_web_classes c LEFT JOIN tbl_branches b ON b.branch_id=c.branch_id ORDER BY c.branch_id,c.class_type,c.day,c.time'),
+      this.safeRows('SELECT t.id,t.title,t.job_title AS jobTitle,t.main_image AS image,t.gender,t.branch_id AS branchId,b.branch_name AS branch FROM design_web_projects t LEFT JOIN tbl_branches b ON b.branch_id=t.branch_id ORDER BY t.id DESC'),
+      this.safeRows("SELECT p.id,p.title,p.details,p.main_image AS image,p.branch_id AS branchId,b.branch_name AS branch,GROUP_CONCAT(DISTINCT pi.images_name ORDER BY pi.images_id SEPARATOR '||') AS albumImages FROM design_web_photos p LEFT JOIN tbl_branches b ON b.branch_id=p.branch_id LEFT JOIN design_web_photos_images pi ON pi.photos_id_fk=p.id GROUP BY p.id ORDER BY p.id DESC LIMIT 18"),
+      this.safeRows('SELECT id,title,slug_title AS subtitle,video_link AS videoLink,main_image AS image FROM design_web_videos WHERE main_page_video=1 ORDER BY id DESC LIMIT 8'),
       this.safeRows('SELECT id,name,details,main_image AS image FROM design_web_partners ORDER BY id DESC'),
       this.productRows('WHERE p.is_featured=1 OR p.is_new=1', 'LIMIT 8'),
-      this.safeRows("SELECT * FROM portal_content_items WHERE is_active=1 AND content_type NOT IN ('ticker','membership-plans') ORDER BY content_type,display_order,id"),
+      this.safeRows("SELECT p.*,t.id AS subscriptionTypeId,t.name AS subscriptionTypeName,t.price AS subscriptionPrice,t.days AS subscriptionDays FROM portal_content_items p LEFT JOIN club_subscription_types t ON t.id=p.subscription_type_id WHERE p.is_active=1 AND (p.content_type<>'membership-plans' OR (t.is_active=1 AND t.apply_to_all_branches=1)) ORDER BY p.content_type,p.display_order,p.id"),
     ]);
 
     const content = contentRows.reduce<Record<string, ReturnType<typeof publicContent>[]>>((groups, row) => {
@@ -147,17 +137,7 @@ export class PublicPortalService {
       classes: classes.map((row) => ({ ...row, id: Number(row.id), classType: Number(row.classType), branchId: Number(row.branchId) })),
       trainers: trainers.map((row) => ({ ...row, id: Number(row.id), gender: Number(row.gender), branchId: Number(row.branchId) })),
       photos: photos.map((row) => ({ ...row, id: Number(row.id), branchId: Number(row.branchId), images: stringValue(row.albumImages).split('||').filter(Boolean) })),
-      videos: videos.map((row) => ({ ...row, id: Number(row.id), mainPageVideo: Boolean(row.mainPageVideo) })),
-      heroVideos: heroVideos.map((row) => ({
-        id: Number(row.id),
-        title: stringValue(row.title, 255),
-        branchId: row.branchId == null ? null : positiveInt(row.branchId) || null,
-        branch: stringValue(row.branch, 255),
-        date: stringValue(row.date, 40),
-        videoLink: stringValue(row.videoLink, 1000),
-        image: row.image == null ? null : stringValue(row.image, 1000) || null,
-        mainPageVideo: Boolean(row.mainPageVideo),
-      })),
+      videos: videos.map((row) => ({ ...row, id: Number(row.id) })),
       partners: partners.map((row) => ({ ...row, id: Number(row.id) })),
       products: products.map(publicProduct),
       content,
@@ -167,7 +147,7 @@ export class PublicPortalService {
   async products() {
     const [rows, categories] = await Promise.all([
       this.productRows('', ''),
-      this.safeRows('SELECT id,name,icon_class AS iconClass,image,display_order AS displayOrder FROM categories ORDER BY display_order,id'),
+      this.safeRows('SELECT id,name,image,display_order AS displayOrder FROM categories ORDER BY display_order,id'),
     ]);
     return {
       items: rows.map(publicProduct),
@@ -186,6 +166,105 @@ export class PublicPortalService {
   async jobs() {
     const rows = await this.safeRows("SELECT j.ads_id AS id,j.mosama_wazefy_name AS title,j.specialization,j.salary,j.gender,j.age,j.experience_years AS experienceYears,j.ads_start_date AS startDate,j.ads_end_date AS endDate,j.details,j.image,j.branch_id AS branchId,b.branch_name AS branch FROM design_web_job_ads j LEFT JOIN tbl_branches b ON b.branch_id=j.branch_id WHERE j.status='active' AND (j.ads_start_date IS NULL OR j.ads_start_date<=CURDATE()) AND (j.ads_end_date IS NULL OR j.ads_end_date>=CURDATE()) ORDER BY j.ads_id DESC");
     return rows.map((row) => ({ ...row, id: Number(row.id), branchId: row.branchId == null ? null : Number(row.branchId) }));
+  }
+
+  async membershipPlans() {
+    const rows = await this.safeRows(
+      "SELECT p.*,t.id AS subscriptionTypeId,t.name AS subscriptionTypeName,t.price AS subscriptionPrice,t.days AS subscriptionDays FROM portal_content_items p JOIN club_subscription_types t ON t.id=p.subscription_type_id WHERE p.content_type='membership-plans' AND p.is_active=1 AND t.is_active=1 AND t.apply_to_all_branches=1 ORDER BY p.display_order,p.id",
+    );
+    if (rows.length) return rows.map((row) => ({ ...publicContent(row), subscriptionTypeId: Number(row.subscriptionTypeId), name: row.subscriptionTypeName, price: Number(row.subscriptionPrice), days: Number(row.subscriptionDays) }));
+    const types = await this.safeRows('SELECT id,name,price,days FROM club_subscription_types WHERE is_active=1 AND apply_to_all_branches=1 ORDER BY price,id');
+    return types.map((type) => ({ id: Number(type.id), title: type.name, subtitle: '', details: '', extraText: '', featured: false, subscriptionTypeId: Number(type.id), subscriptionTypeName: type.name, subscriptionPrice: Number(type.price), subscriptionDays: Number(type.days), name: type.name, price: Number(type.price), days: Number(type.days) }));
+  }
+
+  async paymentMethods() {
+    const rows = await this.safeRows('SELECT id,name,number,username,image FROM settings_payment_methods WHERE is_active=1 ORDER BY id');
+    return rows.map((row) => ({
+      id: Number(row.id),
+      name: row.name,
+      number: row.number,
+      username: row.username ?? null,
+      image: row.image ?? null,
+    }));
+  }
+
+  /** Options are resolved from the member record; the client never supplies a branch. */
+  async onlineSubscriptionOptions(body: Record<string, unknown>) {
+    const member = await this.resolveOnlineSubscriptionMember(body);
+    const [plans, paymentMethods] = await Promise.all([
+      this.prisma.club_subscription_types.findMany({
+        where: { is_active: true, ...subscriptionTypeBranchWhere([member.branch_id]) },
+        select: { id: true, name: true, price: true, days: true, is_linked_to_sessions: true },
+        orderBy: [{ price: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.settings_payment_methods.findMany({
+        where: { is_active: true },
+        select: { id: true, name: true, number: true, username: true, image: true },
+        orderBy: { id: 'asc' },
+      }),
+    ]);
+
+    return {
+      branchId: member.branch_id,
+      plans: plans.map((plan) => ({
+        id: plan.id,
+        name: plan.name,
+        price: Number(plan.price),
+        days: plan.days,
+        isLinkedToSessions: plan.is_linked_to_sessions,
+      })),
+      paymentMethods: paymentMethods.map((method) => ({
+        id: method.id,
+        name: method.name,
+        number: method.number,
+        username: method.username ?? null,
+        image: method.image ?? null,
+        // Online requests always include proof of an external payment.
+        baseMethod: 'transfer',
+      })),
+    };
+  }
+
+  private async resolveOnlineSubscriptionMember(body: Record<string, unknown>) {
+    const memberCode = stringValue(body.memberCode, 30);
+    const customerName = stringValue(body.customerName, 200);
+    if (!memberCode || customerName.length < 2) {
+      throw new BadRequestException('أدخل كود العضو والاسم المسجلين في العضوية');
+    }
+    const member = await this.prisma.club_members.findFirst({
+      where: { member_code: memberCode, is_deleted: false, is_active: true },
+      select: { id: true, member_code: true, name: true, branch_id: true },
+    });
+    if (!member) throw new BadRequestException('كود العضو غير صحيح أو العضوية غير نشطة');
+    if (member.name.trim().toLocaleLowerCase('ar') !== customerName.trim().toLocaleLowerCase('ar')) {
+      throw new BadRequestException('كود العضو والاسم غير متطابقين');
+    }
+    return member;
+  }
+
+  async createOnlineSubscriptionRequest(body: Record<string, unknown>, paymentProof?: Express.Multer.File) {
+    const subscriptionTypeId = positiveInt(body.subscriptionTypeId);
+    const paymentMethodId = positiveInt(body.paymentMethodId);
+    const startDate = stringValue(body.startDate, 10);
+    if (!subscriptionTypeId || !paymentMethodId || !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw new BadRequestException('أكمل بيانات الاشتراك المطلوبة');
+    if (!paymentProof) throw new BadRequestException('ارفق صورة الدفع');
+    const member = await this.resolveOnlineSubscriptionMember(body);
+    const [type, method] = await Promise.all([
+      this.prisma.club_subscription_types.findFirst({
+        where: { id: subscriptionTypeId, is_active: true },
+        select: { id: true, name: true, price: true, days: true, is_linked_to_sessions: true, branch_id: true, apply_to_all_branches: true, branches: { select: { branch_id: true } } },
+      }),
+      this.prisma.settings_payment_methods.findFirst({ where: { id: paymentMethodId, is_active: true }, select: { id: true, name: true } }),
+    ]);
+    if (!type || !isSubscriptionTypeAvailableAtBranch(type, member.branch_id)) throw new BadRequestException('الباقة غير متاحة لفرع العضو');
+    if (!method) throw new BadRequestException('طريقة الدفع غير متاحة حاليًا');
+    const proof = this.uploads.store('online-subscription-proof', paymentProof).path;
+    const endDate = resolveSubscriptionEndDate(startDate, type.days, type.is_linked_to_sessions);
+    await this.prisma.$executeRawUnsafe(
+      'INSERT INTO online_subscription_requests (member_id,member_code,customer_name,branch_id,subscription_type_id,subscription_type_name,subscription_value,duration_days,requested_start_date,requested_end_date,payment_method_id,payment_method_name,payment_base_method,payment_proof_path,notes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+      member.id, member.member_code, member.name, member.branch_id, type.id, type.name, Number(type.price), type.days, startDate, endDate, method.id, method.name, 'transfer', proof, stringValue(body.notes, 5000) || null,
+    );
+    return { success: true, message: 'تم إرسال طلب الاشتراك بنجاح' };
   }
 
   async jobApplication(
@@ -283,17 +362,27 @@ export class PublicPortalService {
     if (password.length < 6) throw new BadRequestException('كلمة المرور يجب ألا تقل عن 6 أحرف');
 
     const existing = await this.safeRows('SELECT id,email,password FROM web_users WHERE phone=? OR (?<>\'\' AND email=?) ORDER BY id LIMIT 1', phone, email, email);
-    // A matching phone/email is not proof of ownership of guest order history.
-    // Existing guest records require assisted verification before activation.
-    if (existing[0]) throw new ConflictException('رقم الهاتف أو البريد مسجل من قبل؛ تواصل معنا لتفعيل الحساب بأمان');
     const hash = await bcrypt.hash(password, this.config.get<number>('bcryptRounds') ?? 12);
-    const created = await this.prisma.web_users.create({
-      data: { full_name: fullName, phone, email: email || null, password: hash,
-        governorate: stringValue(body.governorate, 100) || null,
-        city_street: stringValue(body.cityStreet, 2000) || null, is_active: 1 },
-      select: { id: true },
-    });
-    return this.authResult(created.id);
+    let id: number;
+    if (existing[0]) {
+      if (existing[0].password) throw new ConflictException('رقم الهاتف أو البريد مسجل من قبل');
+      if (existing[0].email && email && String(existing[0].email).toLowerCase() !== email) {
+        throw new ConflictException('هذا الرقم مرتبط بطلب سابق؛ تواصل معنا لتفعيل الحساب بأمان');
+      }
+      id = Number(existing[0].id);
+      await this.prisma.$executeRawUnsafe(
+        'UPDATE web_users SET full_name=?,email=COALESCE(NULLIF(?,\'\'),email),password=?,is_active=1,updated_at=NOW() WHERE id=?',
+        fullName, email, hash, id,
+      );
+    } else {
+      await this.prisma.$executeRawUnsafe(
+        'INSERT INTO web_users (full_name,phone,email,password,governorate,city_street,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,1,NOW(),NOW())',
+        fullName, phone, email || null, hash, stringValue(body.governorate, 100) || null, stringValue(body.cityStreet, 2000) || null,
+      );
+      const inserted = await this.safeRows('SELECT id FROM web_users WHERE phone=? ORDER BY id DESC LIMIT 1', phone);
+      id = Number(inserted[0].id);
+    }
+    return this.authResult(id);
   }
 
   async login(body: Record<string, unknown>) {
@@ -351,7 +440,7 @@ export class PublicPortalService {
     };
   }
 
-  async createOrder(body: Record<string, unknown>, authorization?: string) {
+  async createOrder(body: Record<string, unknown>, authorization?: string, paymentProof?: Express.Multer.File) {
     const customer = await this.optionalCustomer(authorization);
     const fullName = stringValue(body.fullName, 255);
     const country = stringValue(body.country, 100) || 'مصر';
@@ -366,7 +455,8 @@ export class PublicPortalService {
     if (!phonePattern.test(phone)) throw new BadRequestException('رقم الموبايل غير صحيح');
     if (backupPhone && !phonePattern.test(backupPhone)) throw new BadRequestException('رقم الهاتف الاحتياطي غير صحيح');
     if (email && !emailPattern.test(email)) throw new BadRequestException('البريد الإلكتروني غير صحيح');
-    if (paymentMethod !== 'cod') throw new BadRequestException('الدفع الإلكتروني لم يُفعّل بعد؛ اختر الدفع عند الاستلام');
+    if (!['cod', 'vodafone_cash', 'instapay'].includes(paymentMethod)) throw new BadRequestException('طريقة الدفع غير صحيحة');
+    if (paymentMethod !== 'cod' && !paymentProof) throw new BadRequestException('ارفق صورة التحويل لتأكيد الطلب');
     const lines = this.cartLines(body.items);
 
     return this.prisma.$transaction(async (tx) => {
@@ -379,7 +469,14 @@ export class PublicPortalService {
       const total = this.money(subtotalAfterDiscount + shippingCost);
 
       const duplicate = await this.duplicateOrder(tx, phone, total, priced.items);
-      if (duplicate) return { success: true, duplicate: true, orderId: duplicate, total };
+      if (duplicate) return {
+        success: true,
+        duplicate: true,
+        orderId: duplicate,
+        total,
+        status: 'pending',
+        message: 'تم إرسال الطلب، وهو قيد المراجعة وسوف يتم الرد عليك.',
+      };
 
       let userId = customer?.sub ?? null;
       if (userId) {
@@ -398,9 +495,10 @@ export class PublicPortalService {
         }
       }
 
+      const paymentProofPath = paymentProof ? this.uploads.store('store-payment-proof', paymentProof).path : null;
       await tx.$executeRawUnsafe(
-        'INSERT INTO orders (user_id,full_name,country,governorate,city_street,phone,backup_phone,email,order_notes,payment_method,coupon_code,coupon_id,coupon_percentage,coupon_discount_amount,captain_id,subtotal,shipping_cost,total,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,\'pending\',NOW(),NOW())',
-        userId, fullName, country, governorate, cityStreet, phone, backupPhone || null, email || null, notes || null, paymentMethod,
+        'INSERT INTO orders (user_id,full_name,country,governorate,city_street,phone,backup_phone,email,order_notes,payment_method,payment_status,payment_proof_path,coupon_code,coupon_id,coupon_percentage,coupon_discount_amount,captain_id,subtotal,shipping_cost,total,status,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,\'pending\',NOW(),NOW())',
+        userId, fullName, country, governorate, cityStreet, phone, backupPhone || null, email || null, notes || null, paymentMethod, 'pending', paymentProofPath,
         coupon?.code ?? null, coupon?.id ?? null, coupon?.rate ?? 0, couponDiscount, coupon?.captainId ?? null,
         subtotalAfterDiscount, shippingCost, total,
       );
@@ -409,7 +507,7 @@ export class PublicPortalService {
 
       for (const item of priced.items) {
         const changed = await tx.$executeRawUnsafe(
-          "UPDATE products SET stock_status=IF(current_stock-?<=0,'out_of_stock','in_stock'),current_stock=current_stock-? WHERE id=? AND current_stock>=?",
+          "UPDATE products SET current_stock=current_stock-?,stock_status=IF(current_stock-?<=0,'out_of_stock','in_stock') WHERE id=? AND current_stock>=?",
           item.quantity, item.quantity, item.productId, item.quantity,
         );
         if (Number(changed) !== 1) throw new ConflictException(`الكمية المتاحة من ${item.name} تغيرت؛ راجع السلة`);
@@ -418,16 +516,14 @@ export class PublicPortalService {
           orderId, item.productId, item.name, item.quantity, item.unitPrice, item.lineTotal,
         );
       }
-      return { success: true, duplicate: false, orderId, subtotal: subtotalAfterDiscount, shippingCost, total, couponDiscount };
+      return { success: true, duplicate: false, orderId, subtotal: subtotalAfterDiscount, shippingCost, total, couponDiscount, status: 'pending', message: 'تم إرسال الطلب، وهو قيد المراجعة وسوف يتم الرد عليك.' };
     }, { timeout: 15_000 });
   }
 
   private cartLines(value: unknown): CartLine[] {
     if (!Array.isArray(value) || value.length === 0) throw new BadRequestException('سلة المشتريات فارغة');
-    if (value.length > 50) throw new BadRequestException('السلة تتجاوز الحد الأقصى لعدد المنتجات');
     const merged = new Map<number, number>();
-    for (const raw of value) {
-      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new BadRequestException('بيانات منتج أو كمية غير صحيحة');
+    for (const raw of value.slice(0, 50)) {
       const item = raw as Record<string, unknown>;
       const productId = positiveInt(item.productId);
       const quantity = positiveInt(item.quantity);
@@ -514,7 +610,7 @@ export class PublicPortalService {
   private async productRows(where: string, suffix: string, ...params: unknown[]) {
     try {
       return await this.prisma.$queryRawUnsafe<Row[]>(
-        `SELECT p.*,c.name AS category_name,b.id AS badge_id,b.name AS badge_name,b.name_en AS badge_name_en,b.badge_type AS badge_type,b.background_color,b.text_color,GROUP_CONCAT(DISTINCT pi.image_path ORDER BY pi.display_order SEPARATOR '||') AS images FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN tbl_badge_settings b ON b.id=p.selected_badge AND b.is_active=1 LEFT JOIN product_images pi ON pi.product_id=p.id ${where} GROUP BY p.id ORDER BY p.display_order,p.id DESC ${suffix}`,
+        `SELECT p.*,c.name AS category_name,b.name AS badge_name,b.background_color,b.text_color,GROUP_CONCAT(DISTINCT pi.image_path ORDER BY pi.display_order SEPARATOR '||') AS images FROM products p LEFT JOIN categories c ON c.id=p.category_id LEFT JOIN tbl_badge_settings b ON b.id=p.selected_badge AND b.is_active=1 LEFT JOIN product_images pi ON pi.product_id=p.id ${where} GROUP BY p.id ORDER BY p.display_order,p.id DESC ${suffix}`,
         ...params,
       );
     } catch (error: any) {
@@ -523,7 +619,7 @@ export class PublicPortalService {
       // product just because one of those presentation joins is unavailable.
       if (error?.code !== 'P2010') throw error;
       return this.safeRows(
-        `SELECT p.*,'' AS category_name,NULL AS badge_id,NULL AS badge_name,NULL AS badge_name_en,NULL AS badge_type,NULL AS background_color,NULL AS text_color,p.image AS images FROM products p ${where} ORDER BY p.display_order,p.id DESC ${suffix}`,
+        `SELECT p.*,'' AS category_name,NULL AS badge_name,NULL AS background_color,NULL AS text_color,p.image AS images FROM products p ${where} ORDER BY p.display_order,p.id DESC ${suffix}`,
         ...params,
       );
     }

@@ -18,6 +18,21 @@ describe('RBAC catalog', () => {
     );
   });
 
+  it('places subscription transfers after the subscription list in the permissions tree', () => {
+    const resources = flattenCatalog();
+    const list = resources.find((item) => item.key === 'club.subscriptions.list');
+    const transfers = resources.find((item) => item.key === 'club.subscriptions.member_transfer');
+
+    expect(transfers).toMatchObject({
+      parentKey: 'club.subscriptions',
+      nameAr: 'تحويلات الاشتراكات',
+      route: '/club/subscriptions/member-transfer',
+      actions: ['view', 'create', 'update', 'delete', 'export'],
+      sortOrder: (list?.sortOrder ?? 0) + 1,
+    });
+    expect(buildRouteMap()['/club/subscriptions/member-transfer']).toBe('club.subscriptions.member_transfer');
+  });
+
   it('uses the Arabic job titles label in the permissions catalog', () => {
     const resource = flattenCatalog().find((item) => item.key === 'org.departments');
 
@@ -25,7 +40,7 @@ describe('RBAC catalog', () => {
     expect(resource?.route).toBe('/org/job-titles');
   });
 
-  it('matches the current Cafe & Inventory sidebar screens exactly', () => {
+  it('matches every current sales, cafe, inventory, and procurement sidebar screen', () => {
     const resources = flattenCatalog();
     const cafeModule = resources.find((resource) => resource.key === 'gym-sales');
     const currentRoutes = resources
@@ -36,65 +51,65 @@ describe('RBAC catalog', () => {
       .map((resource) => resource.route);
 
     expect(cafeModule?.nameAr).toBe('إدارة الكافيه والمخزون');
-    expect(currentRoutes).toEqual([
-      '/sales/bookings',
+    expect(currentRoutes).toEqual(expect.arrayContaining([
       '/sales/new',
       '/sales/drafts',
+      '/sales/invoices',
+      '/sales/revenue',
       '/sales/shifts',
       '/sales/treasury',
       '/sales/settlements',
       '/sales/pos-admin',
-      '/club/cafe/dashboard',
       '/club/cafe/categories',
       '/club/cafe/products',
       '/inventory/price-list',
-      '/club/cafe/waste',
       '/club/cafe/reports',
-      '/club/cafe/customers',
       '/club/cafe/reports/feedback',
       '/inventory/dashboard',
       '/club/cafe/raw-materials',
-      '/club/cafe/inventory',
+      '/inventory/gym-issue',
       '/club/cafe/stock-taking',
       '/club/cafe/movements',
-      '/club/cafe/suppliers',
-      '/club/cafe/purchases',
-      '/club/cafe/supplier-payments',
-    ]);
+      '/procurement/requisitions',
+      '/procurement/purchase-orders',
+      '/procurement/goods-receipts',
+      '/procurement/invoices',
+      '/procurement/returns',
+      '/procurement/dashboard',
+      '/procurement/settings',
+    ]));
   });
 
-  it('maps current Cafe routes and retires legacy Cafe routes', () => {
+  it('exposes evaluation management and customer service as independent sidebar departments', () => {
+    const resources = flattenCatalog();
+    const byKey = new Map(resources.map((resource) => [resource.key, resource]));
+
+    expect(byKey.get('evaluation-management')?.type).toBe('module');
+    expect(byKey.get('evaluation-management.categories')?.parentKey).toBe('evaluation-management');
+    expect(byKey.get('customer-service')?.type).toBe('module');
+    expect(byKey.get('affairs.customer_service')?.parentKey).toBe('customer-service');
+    expect(byKey.get('customer-service.questions')?.route).toBe('/customer-service/questions');
+    expect(byKey.get('customer-service.feedback')?.route).toBe('/customer-service/add-feedback');
+    expect(byKey.get('customer-service.reports')?.route).toBe('/customer-service/reports');
+  });
+
+  it('maps all current sales and customer-service sidebar routes', () => {
     const routes = buildRouteMap();
 
     expect(routes['/sales/new']).toBe('gym-sales.sales.new_receipt');
-    expect(routes['/sales/bookings']).toBe('gym-sales.sales.bookings');
     expect(routes['/sales/shifts']).toBe('gym-sales.sales.shifts');
     expect(routes['/sales/treasury']).toBe('gym-sales.sales.treasury');
     expect(routes['/sales/settlements']).toBe('gym-sales.sales.settlements');
     expect(routes['/hr/partners']).toBe('hr.partners');
     expect(routes['/inventory/price-list']).toBe('club.cafe.price_list');
-    expect(routes['/club/cafe/dashboard']).toBe('club.cafe.dashboard');
-    expect(routes['/club/cafe/waste']).toBe('club.cafe.waste');
-    expect(routes['/club/cafe/customers']).toBe('club.cafe.customers');
     expect(routes['/club/cafe/reports/feedback']).toBe('club.cafe.feedback_reports');
     expect(routes['/club/cafe/stock-taking']).toBe('gym-sales.inventory.stock_taking');
     expect(routes['/club/cafe/movements']).toBe('gym-sales.inventory.movement_log');
-    expect(routes['/club/cafe/inventory']).toBe('gym-sales.inventory.gym_issue');
-    expect(routes['/inventory/gym-issue']).toBeUndefined();
-    expect(routes['/club/cafe/pos']).toBeUndefined();
-    expect(routes['/inventory/settings']).toBeUndefined();
-    expect(routes['/sales/invoices']).toBeUndefined();
-  });
-
-  it('keeps the personal sales portal separate from Cafe point of sale', () => {
-    const resources = flattenCatalog();
-    const portal = resources.find((resource) => resource.key === 'sales.portal');
-    const routes = buildRouteMap();
-
-    expect(portal?.nameAr).toBe('بوابة المبيعات');
-    expect(portal?.route).toBe('/sales-portal');
-    expect(portal?.actions).toEqual(expect.arrayContaining(['view', 'update']));
-    expect(routes['/sales-portal']).toBe('sales.portal');
-    expect(routes['/sales/new']).toBe('gym-sales.sales.new_receipt');
+    expect(routes['/sales/invoices']).toBe('gym-sales.sales.invoices');
+    expect(routes['/sales/revenue']).toBe('gym-sales.sales.revenue');
+    expect(routes['/procurement/requisitions']).toBe('gym-sales.procurement.requisitions');
+    expect(routes['/customer-service/questions']).toBe('customer-service.questions');
+    expect(routes['/customer-service/add-feedback']).toBe('customer-service.feedback');
+    expect(routes['/customer-service/reports']).toBe('customer-service.reports');
   });
 });

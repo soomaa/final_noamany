@@ -45,7 +45,10 @@ export class AllExceptionsFilter implements ExceptionFilter {
         message = 'العنصر غير موجود';
       } else {
         status = HttpStatus.BAD_REQUEST;
-        message = 'خطأ في قاعدة البيانات';
+        message =
+          process.env.NODE_ENV === 'production'
+            ? 'خطأ في قاعدة البيانات'
+            : `خطأ في قاعدة البيانات (${exception.code})`;
         // Keep the client response intentionally generic, but retain Prisma's safe
         // diagnostic metadata in the server log so deployment/schema drift can be
         // identified without logging request bodies or customer data.

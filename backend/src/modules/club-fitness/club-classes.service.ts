@@ -1,11 +1,13 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { ClubClassAudience, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { ClubBranchGroupReader, ClubBranchGroupService } from '../../common/branch-groups/club-branch-group.service';
 import { assertNotPastDate } from '../../common/validators';
 import { paginated } from '../../common/dto/list-result';
 import { EntitlementService } from '../gym-ops/entitlement.service';
@@ -22,6 +24,10 @@ export class ClubClassesService {
     private readonly entitlement: EntitlementService,
     private readonly calendar: ClubCalendarService,
     private readonly webhooks: WebhookService,
+    @Inject(ClubBranchGroupService)
+    private readonly branchGroups: Pick<ClubBranchGroupReader, 'siblingBranchIds'> = {
+      siblingBranchIds: async (branchId) => [branchId],
+    },
   ) {}
 
   private async countActiveEnrollments(classId: number, tx?: Prisma.TransactionClient) {
@@ -460,6 +466,7 @@ export class ClubClassesService {
     });
     if (!cls) throw new NotFoundException('الحصة غير موجودة');
     assertNotPastDate(cls.class_date, 'لا يمكن التسجيل في حصة بتاريخ ماضٍ');
+    const compatibleBranchIds = await this.branchGroups.siblingBranchIds(cls.branch_id);
 
     let entitlement;
     let resolvedSubscriptionId = options?.subscriptionId;
@@ -484,6 +491,7 @@ export class ClubClassesService {
         const result = await this.entitlement.validate({
           memberId,
           branchId: cls.branch_id,
+          branchIds: compatibleBranchIds,
           subscriptionId,
           blockOnOutstanding: true,
           requireActiveSubscription: true,
@@ -507,6 +515,7 @@ export class ClubClassesService {
       entitlement = await this.entitlement.validate({
         memberId,
         branchId: cls.branch_id,
+        branchIds: compatibleBranchIds,
         subscriptionId: options?.subscriptionId,
         blockOnOutstanding: !options?.force,
         requireActiveSubscription: true,
@@ -817,6 +826,7 @@ export class ClubClassesService {
       const entitlement = await this.entitlement.validate({
         memberId: member.id,
         branchId: cls.branch_id,
+        branchIds: await this.branchGroups.siblingBranchIds(cls.branch_id),
         subscriptionId: existing.subscription_id,
         blockOnOutstanding: true,
         requireActiveSubscription: true,

@@ -1,7 +1,6 @@
 import { Transform } from 'class-transformer';
-import { IsArray, IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, Matches, Max, Min } from 'class-validator';
-
-const datePattern = /^\d{4}-\d{2}-\d{2}$/;
+import { Type } from 'class-transformer';
+import { ArrayMinSize, IsArray, IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
 
 export class CreateClubDiscountCodeDto {
   @Transform(({ value }) => String(value ?? '').trim().toUpperCase())
@@ -18,29 +17,6 @@ export class CreateClubDiscountCodeDto {
   @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean()
   isActive?: boolean;
-
-  @IsOptional()
-  @Transform(({ value }) => value === '' || value == null ? null : Number(value))
-  @IsInt()
-  @Min(1)
-  maxUses?: number | null;
-
-  @IsOptional()
-  @Matches(datePattern)
-  validFrom?: string | null;
-
-  @IsOptional()
-  @Matches(datePattern)
-  validTo?: string | null;
-
-  @IsOptional()
-  @IsIn(['all_users', 'specific_users'])
-  audience?: 'all_users' | 'specific_users';
-
-  @IsOptional()
-  @IsArray()
-  @IsInt({ each: true })
-  memberIds?: number[];
 }
 
 export class UpdateClubDiscountCodeDto {
@@ -60,27 +36,28 @@ export class UpdateClubDiscountCodeDto {
   @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean()
   isActive?: boolean;
+}
 
-  @IsOptional()
-  @Transform(({ value }) => value === '' || value == null ? null : Number(value))
-  @IsInt()
-  @Min(1)
-  maxUses?: number | null;
+export class AssignDiscountCodeToEmployeeDto {
+  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) employeeId!: number;
+  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) codeId!: number;
+  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) count!: number;
+}
 
-  @IsOptional()
-  @Matches(datePattern)
-  validFrom?: string | null;
+export class DiscountCodeAllocationRowDto {
+  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) codeId!: number;
+  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) count!: number;
+}
 
-  @IsOptional()
-  @Matches(datePattern)
-  validTo?: string | null;
+export class AssignDiscountCodesToEmployeeDto {
+  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) employeeId!: number;
+  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => DiscountCodeAllocationRowDto)
+  assignments!: DiscountCodeAllocationRowDto[];
+}
 
-  @IsOptional()
-  @IsIn(['all_users', 'specific_users'])
-  audience?: 'all_users' | 'specific_users';
-
-  @IsOptional()
-  @IsArray()
-  @IsInt({ each: true })
-  memberIds?: number[];
+export class GrantDiscountCodeToMemberDto {
+  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) employeeId!: number;
+  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) codeId!: number;
+  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) memberId!: number;
+  @IsOptional() @IsString() expiresOn?: string;
 }

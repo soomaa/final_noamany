@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InventoryTxnType, MovementDirection, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { isDryRun, previewResponse, PreviewRow } from '../../common/preview';
@@ -9,7 +9,6 @@ import { toNumber } from './inventory.utils';
 import type { JwtUser } from '../../common/types/jwt-user';
 import { ListStockTakingDto, UpsertCountItemDto, UpsertCountSessionDto } from './dto/inventory.dto';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
-import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 
 @Injectable()
 export class StockTakingService {
@@ -18,14 +17,7 @@ export class StockTakingService {
     private readonly stock: InventoryStockService,
     private readonly location: InventoryLocationService,
     private readonly moduleLedger: ModuleLedgerService,
-    private readonly branchScope: BranchScopeService = new BranchScopeService(),
   ) {}
-
-  private assertBranchAccess(user: JwtUser, branchId: number | null) {
-    if (branchId == null || !this.branchScope.isBranchAllowed(user, branchId)) {
-      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
-    }
-  }
 
   private mapSession(row: Prisma.inv_count_sessionsGetPayload<{ include: { items: true } }>) {
     return {
@@ -45,7 +37,6 @@ export class StockTakingService {
         systemQuantity: toNumber(i.system_quantity),
         countedQuantity: toNumber(i.counted_quantity),
         variance: toNumber(i.variance),
-        varianceReason: i.variance_reason,
         status: i.status,
       })),
       createdAt: row.created_at,
@@ -90,16 +81,15 @@ export class StockTakingService {
   }
 
   private async generateSessionNumber(): Promise<string> {
-    const rows = await this.prisma.$queryRaw<{ maxNum: number | bigint | null }[]>`
+    const rows = await this.prisma.$queryRaw<{ maxNum: number | null }[]>`
       SELECT MAX(CAST(SUBSTRING(session_number, 4) AS UNSIGNED)) AS maxNum
       FROM inv_count_sessions WHERE session_number LIKE 'CNT%'
     `;
-    const nextNumber = BigInt(rows[0]?.maxNum ?? 0) + 1n;
-    return `CNT${nextNumber.toString().padStart(6, '0')}`;
+    return `CNT${String((rows[0]?.maxNum ?? 0) + 1).padStart(6, '0')}`;
   }
 
   async createSession(dto: UpsertCountSessionDto, user: JwtUser) {
-    const branchId = this.location.resolveStockTakingBranch(user, dto.branchId);
+    const branchId = this.location.requireUserBranch(user);
     const warehouseId = await this.location.resolveBranchStockLocation(branchId);
     const row = await this.prisma.inv_count_sessions.create({
       data: {
@@ -139,10 +129,6 @@ export class StockTakingService {
   async addCountItem(sessionId: number, dto: UpsertCountItemDto) {
     const session = await this.findSession(sessionId);
     if (session.status !== 'draft') throw new BadRequestException('لا يمكن إضافة أصناف بعد إرسال الجرد للاعتماد');
-    if (dto.countedQuantity < 0) throw new BadRequestException('الكمية المعدودة لا يمكن أن تكون سالبة');
-    if (dto.productId && session.items.some((item) => item.productId === dto.productId)) {
-      throw new BadRequestException('تمت إضافة هذا الصنف بالفعل في جلسة الجرد');
-    }
     let systemQty = dto.systemQuantity ?? 0;
     if (dto.productId) {
       const balance = await this.prisma.inv_stock_balances.findUnique({
@@ -153,10 +139,6 @@ export class StockTakingService {
       if (balance) systemQty = toNumber(balance.current_stock);
     }
     const variance = dto.countedQuantity - systemQty;
-    const varianceReason = dto.varianceReason?.trim() || null;
-    if (variance !== 0 && !varianceReason) {
-      throw new BadRequestException('سبب فرق الجرد مطلوب عند وجود عجز أو زيادة');
-    }
     const row = await this.prisma.inv_count_items.create({
       data: {
         session_id: sessionId,
@@ -167,7 +149,6 @@ export class StockTakingService {
         system_quantity: systemQty,
         counted_quantity: dto.countedQuantity,
         variance,
-        variance_reason: varianceReason,
         status: dto.status ?? null,
       },
     });
@@ -178,59 +159,6 @@ export class StockTakingService {
       countedQuantity: toNumber(row.counted_quantity),
       variance: toNumber(row.variance),
     };
-  }
-
-  async updateCountItem(
-    sessionId: number,
-    itemId: number,
-    dto: UpsertCountItemDto,
-    user: JwtUser,
-  ) {
-    const session = await this.findSession(sessionId);
-    this.assertBranchAccess(user, session.branchId);
-    if (session.status !== 'draft') {
-      throw new BadRequestException('لا يمكن تعديل أصناف بعد إرسال الجرد للاعتماد');
-    }
-    if (dto.countedQuantity < 0) {
-      throw new BadRequestException('الكمية المعدودة لا يمكن أن تكون سالبة');
-    }
-    const item = session.items.find((entry) => entry.id === itemId);
-    if (!item) throw new NotFoundException('بند الجرد غير موجود داخل هذه الجلسة');
-
-    const variance = dto.countedQuantity - item.systemQuantity;
-    const varianceReason = dto.varianceReason?.trim() || null;
-    if (variance !== 0 && !varianceReason) {
-      throw new BadRequestException('سبب فرق الجرد مطلوب عند وجود عجز أو زيادة');
-    }
-    const row = await this.prisma.inv_count_items.update({
-      where: { id: itemId },
-      data: {
-        counted_quantity: dto.countedQuantity,
-        variance,
-        variance_reason: varianceReason,
-      },
-    });
-    return {
-      id: row.id,
-      productId: row.product_id,
-      systemQuantity: toNumber(row.system_quantity),
-      countedQuantity: toNumber(row.counted_quantity),
-      variance: toNumber(row.variance),
-      varianceReason: row.variance_reason,
-    };
-  }
-
-  async removeCountItem(sessionId: number, itemId: number, user: JwtUser) {
-    const session = await this.findSession(sessionId);
-    this.assertBranchAccess(user, session.branchId);
-    if (session.status !== 'draft') {
-      throw new BadRequestException('لا يمكن حذف أصناف بعد إرسال الجرد للاعتماد');
-    }
-    if (!session.items.some((entry) => entry.id === itemId)) {
-      throw new NotFoundException('بند الجرد غير موجود داخل هذه الجلسة');
-    }
-    await this.prisma.inv_count_items.delete({ where: { id: itemId } });
-    return { success: true };
   }
 
   async finalizeSession(sessionId: number, userId: number) {
@@ -290,7 +218,7 @@ export class StockTakingService {
     if (isDryRun(dryRun)) {
       return previewResponse(
         { adjustmentId, itemCount: previewRows.length },
-        { rows: previewRows, warning: 'سيتم تطبيق فروقات الجرد على الأرصدة الحالية مع الحفاظ على الحركات اللاحقة للعد' },
+        { rows: previewRows, warning: 'سيتم استبدال أرصدة المخزون بالكميات المعدودة' },
       );
     }
 
@@ -314,17 +242,16 @@ export class StockTakingService {
       let lossAmount = 0;
       for (const item of session.items) {
         if (!item.product_id) continue;
-        const variance = toNumber(item.variance);
-        const value = Math.abs(variance) * (costByProduct.get(item.product_id) ?? 0);
-        if (variance > 0) gainAmount += value;
-        if (variance < 0) lossAmount += value;
-        if (variance === 0) continue;
+        const value = Math.abs(toNumber(item.variance)) * (costByProduct.get(item.product_id) ?? 0);
+        if (toNumber(item.variance) > 0) gainAmount += value;
+        if (toNumber(item.variance) < 0) lossAmount += value;
         await this.stock.applyMovement(
           {
             productId: item.product_id,
             warehouseId: session.warehouse_id,
-            direction: variance > 0 ? MovementDirection.in : MovementDirection.out,
-            quantity: Math.abs(variance),
+            direction: MovementDirection.in,
+            quantity: toNumber(item.counted_quantity),
+            operation: 'set',
             txnType: InventoryTxnType.count,
             docType: 'stock_taking',
             docRef: adjustment.adjustment_number,

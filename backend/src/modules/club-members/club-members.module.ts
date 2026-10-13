@@ -13,9 +13,10 @@ import { ClubMembershipTypesService } from './club-membership-types.service';
 import { ClubLeadsController } from './club-leads.controller';
 import { ClubLeadsService } from './club-leads.service';
 import { MemberDocumentStorageService } from './member-document-storage.service';
+import { ClubPointsModule } from '../club-points/club-points.module';
 
 @Module({
-  imports: [GymOpsModule, ClubSubscriptionsModule, EmployeesModule],
+  imports: [GymOpsModule, ClubSubscriptionsModule, EmployeesModule, ClubPointsModule],
   controllers: [ClubMembersController, ClubMembershipTypesController, ClubAttendanceController, ClubMemberGroupsController, ClubSurveysController, ClubLeadsController],
   providers: [ClubMembersService, ClubMembershipTypesService, ClubAttendanceService, ClubAttendanceCron, ClubLeadsService, MemberDocumentStorageService],
   exports: [ClubMembersService],

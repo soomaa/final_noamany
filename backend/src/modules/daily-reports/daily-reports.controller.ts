@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { DailyReportsService } from './daily-reports.service';
 import {
   CreateDailyReportDto,
@@ -21,6 +22,7 @@ import {
 
 @UseGuards(JwtAuthGuard)
 @Controller('hr/daily-reports')
+@RequiresPermission('affairs.daily_reports:view')
 export class DailyReportsController {
   constructor(private readonly dailyReports: DailyReportsService) {}
 
@@ -35,26 +37,31 @@ export class DailyReportsController {
   }
 
   @Post()
+  @RequiresPermission('affairs.daily_reports:create')
   create(@Body() dto: CreateDailyReportDto) {
     return this.dailyReports.create(dto);
   }
 
   @Patch(':id')
+  @RequiresPermission('affairs.daily_reports:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateDailyReportDto) {
     return this.dailyReports.update(id, dto);
   }
 
   @Delete(':id')
+  @RequiresPermission('affairs.daily_reports:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.dailyReports.remove(id);
   }
 
   @Post(':id/approve')
+  @RequiresPermission('affairs.daily_reports:update')
   approve(@Param('id', ParseIntPipe) id: number) {
     return this.dailyReports.approve(id);
   }
 
   @Post(':id/reject')
+  @RequiresPermission('affairs.daily_reports:update')
   reject(@Param('id', ParseIntPipe) id: number, @Body() dto: RejectDailyReportDto) {
     return this.dailyReports.reject(id, dto);
   }

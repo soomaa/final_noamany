@@ -45,6 +45,7 @@ describe('ClubSubscriptionsService.freeze', () => {
     branchScope as unknown as BranchScopeService,
     {} as PermissionEngineService,
     { resolveDiscount: jest.fn() } as unknown as import('./club-discount-codes.service').ClubDiscountCodesService,
+    {} as never,
   );
 
   beforeEach(() => {

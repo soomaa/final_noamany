@@ -16,17 +16,15 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtUser } from '../../common/types/jwt-user';
 import { ClubSubscriptionsService } from './club-subscriptions.service';
+import { ClubGroupOperation } from '../../common/branch-groups/club-operation-scope';
 import {
+  FreezeClubSubscriptionDto,
   ProcessClubPaymentDto,
-  QuoteClubSubscriptionRenewalDto,
   RenewClubSubscriptionDto,
 } from './dto/club-subscription-payment.dto';
-import { ClubSubscriptionRenewalService } from './club-subscription-renewal.service';
 import { ListClubSubscriptionsDto } from './dto/list-club-subscriptions.dto';
 import { UpsertClubSubscriptionDto } from './dto/upsert-club-subscription.dto';
 import {
-  DailyCloseInput,
-  DailyCloseQuery,
   SubscriptionReportQuery,
   SubscriptionReportsService,
 } from './subscription-reports.service';
@@ -42,17 +40,50 @@ export class ClubSubscriptionsController {
   constructor(
     private readonly service: ClubSubscriptionsService,
     private readonly reports: SubscriptionReportsService,
-    private readonly renewals: ClubSubscriptionRenewalService,
   ) {}
 
   @Get()
+  @RequiresPermission('club.subscriptions:view', 'club.subscriptions.list:view', 'club.reception:view', 'club.subscriptions.member_transfer:view')
   list(@Query() query: ListClubSubscriptionsDto, @CurrentUser() user: JwtUser) {
     return this.service.list(query, user);
   }
 
   @Get('statistics')
-  statistics(@CurrentUser() user: JwtUser, @Query('isSpecial') isSpecial?: string) {
-    return this.service.statistics(isSpecial, user);
+  statistics(
+    @CurrentUser() user: JwtUser,
+    @Query('isSpecial') isSpecial?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ) {
+    return this.service.statistics(isSpecial, user, dateFrom, dateTo);
+  }
+
+  @Get('member-transfer-sources')
+  @ClubGroupOperation()
+  @RequiresPermission('club.subscriptions.member_transfer:view', 'club.subscriptions.member_transfer:create', 'club.subscriptions:view', 'club.subscriptions.list:view', 'club.reception:view', 'club.subscriptions:update', 'club.subscriptions.list:update', 'club.reception:update')
+  memberTransferSources(@Query() query: ListClubSubscriptionsDto, @CurrentUser() user: JwtUser) {
+    return this.service.listTransferSources(query, user);
+  }
+
+  @Get('refund-sources')
+  @ClubGroupOperation()
+  @RequiresPermission('club.subscriptions.refunds:view', 'club.subscriptions:update', 'club.subscriptions.list:update', 'club.reception:update')
+  refundSources(@Query() query: ListClubSubscriptionsDto, @CurrentUser() user: JwtUser) {
+    return this.service.listRefundSources(query, user);
+  }
+
+  @Get('operation-branch-options')
+  @ClubGroupOperation()
+  @RequiresPermission('club.subscriptions.member_transfer:view', 'club.subscriptions.member_transfer:create', 'club.subscriptions.refunds:view', 'club.subscriptions:update', 'club.subscriptions.list:update', 'club.reception:update')
+  operationBranchOptions(@CurrentUser() user: JwtUser) {
+    return this.service.operationBranchOptions(user);
+  }
+
+  @Get('operation-subscription/:id')
+  @ClubGroupOperation()
+  @RequiresPermission('club.subscriptions.member_transfer:view', 'club.subscriptions.member_transfer:create', 'club.subscriptions.refunds:view', 'club.subscriptions:update', 'club.subscriptions.list:update', 'club.reception:update')
+  operationSubscription(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.operationSubscription(id, user);
   }
 
   @Get('outstanding-report')
@@ -71,9 +102,11 @@ export class ClubSubscriptionsController {
   expiredReport(
     @Query('branch') branch?: string,
     @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
     @CurrentUser() user?: JwtUser,
   ) {
-    return this.service.expiredReport({ branch, search }, user);
+    return this.service.expiredReport({ branch, search, page, pageSize }, user);
   }
 
   @Get('waivers-report')
@@ -93,10 +126,9 @@ export class ClubSubscriptionsController {
     @Query('startDate') startDate: string | undefined,
     @Query('endDate') endDate: string | undefined,
     @Query('branch') branch: string | undefined,
-    @Query('gender') gender: string | undefined,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.service.userAnalytics({ startDate, endDate, branch, gender }, user);
+    return this.service.userAnalytics({ startDate, endDate, branch }, user);
   }
 
   @Get('daily-cashier')
@@ -115,54 +147,6 @@ export class ClubSubscriptionsController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.reports.summary(query, user);
-  }
-
-  @Get('reports/monthly-analysis')
-  @RequiresPermission('club.subscriptions.reports:view', 'club.subscriptions.user_analytics:view', 'club.subscriptions:view')
-  monthlyAnalysis(
-    @Query() query: SubscriptionReportQuery,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.reports.monthlyAnalysis(query, user);
-  }
-
-  @Get('reports/daily-close')
-  @RequiresPermission('club.subscriptions.daily_cashier:view')
-  dailyClose(
-    @Query() query: DailyCloseQuery,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.reports.dailyClose(query, user);
-  }
-
-  @Post('reports/daily-close/review')
-  @RequiresPermission('club.subscriptions.daily_cashier:view')
-  reviewDailyClose(
-    @Query() query: DailyCloseQuery,
-    @Body() body: DailyCloseInput,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.reports.transitionDailyClose('review', query, body, user);
-  }
-
-  @Post('reports/daily-close/close')
-  @RequiresPermission('club.subscriptions.daily_cashier:view')
-  closeDailyClose(
-    @Query() query: DailyCloseQuery,
-    @Body() body: DailyCloseInput,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.reports.transitionDailyClose('close', query, body, user);
-  }
-
-  @Post('reports/daily-close/reopen')
-  @RequiresPermission('club.subscriptions.daily_cashier:view')
-  reopenDailyClose(
-    @Query() query: DailyCloseQuery,
-    @Body() body: DailyCloseInput,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.reports.transitionDailyClose('reopen', query, body, user);
   }
 
   @Get('reports/details')
@@ -273,20 +257,6 @@ export class ClubSubscriptionsController {
     return this.service.processWaiver(id, Number(amount), reason, user);
   }
 
-  @Post(':id/renewal-quote')
-  @RequiresPermission(
-    'club.subscriptions:update',
-    'club.subscriptions.list:update',
-    'club.reception:update',
-  )
-  renewalQuote(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: QuoteClubSubscriptionRenewalDto,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.renewals.quote(id, body, user);
-  }
-
   @Patch(':id/renew')
   @RequiresPermission(
     'club.subscriptions:update',
@@ -296,9 +266,14 @@ export class ClubSubscriptionsController {
   renew(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: RenewClubSubscriptionDto,
-    @CurrentUser() user: JwtUser,
+    @CurrentUser() user?: JwtUser,
   ) {
-    return this.renewals.renew(id, body, user);
+    return this.service.renew(id, body.renewalDays, {
+      paidAmount: body.paidAmount,
+      paymentMethod: body.paymentMethod,
+      payments: body.payments,
+      user,
+    });
   }
 
   @Post(':id/freeze')
@@ -309,17 +284,32 @@ export class ClubSubscriptionsController {
   )
   freeze(
     @Param('id', ParseIntPipe) id: number,
-    @Body('days') days: number | undefined,
-    @Body('reason') reason: string | undefined,
+    @Body() body: FreezeClubSubscriptionDto,
     @CurrentUser() user: JwtUser,
   ) {
     return this.service.freeze(
       id,
-      days != null && `${days}`.trim() !== '' ? Number(days) : undefined,
-      reason,
+      body.days,
+      body.reason,
       user.sub,
       user,
+      body.freezeStartDate,
+      body.freezeEndDate,
     );
+  }
+
+  @Patch(':id/freeze')
+  @RequiresPermission(
+    'club.subscriptions:update',
+    'club.subscriptions.list:update',
+    'club.reception:update',
+  )
+  updateFreeze(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: FreezeClubSubscriptionDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.updateFreeze(id, body.freezeEndDate, body.reason, user.sub, user);
   }
 
   @Post(':id/unfreeze')

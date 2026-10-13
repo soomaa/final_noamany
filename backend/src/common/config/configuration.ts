@@ -11,8 +11,6 @@ export interface AppConfig {
   bcryptRounds: number;
   uploadDir: string;
   publicUploadBase: string;
-  privateMemberDocumentDir: string;
-  privateOnlineProofDir: string;
   redis: {
     url: string | null;
   };
@@ -91,8 +89,6 @@ export default (): AppConfig => ({
   bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS ?? "12", 10),
   uploadDir: process.env.UPLOAD_DIR ?? "./uploads",
   publicUploadBase: process.env.PUBLIC_UPLOAD_BASE ?? "/uploads",
-  privateMemberDocumentDir: process.env.PRIVATE_MEMBER_DOCUMENT_DIR ?? "./private-member-documents",
-  privateOnlineProofDir: process.env.PRIVATE_ONLINE_PROOF_DIR ?? "./private-online-proofs",
   redis: {
     url: process.env.REDIS_URL ?? null,
   },

@@ -152,10 +152,7 @@ function IngredientCombobox({
         setOpen(nextOpen);
         if (!nextOpen) setQuery('');
       }}
-      // This combobox is portalled from inside a modal Dialog. Keeping the
-      // popover modal gives it the active scroll lock, so wheel and touch
-      // gestures reach the long results list instead of being blocked.
-      modal
+      modal={false}
     >
       <PopoverTrigger asChild>
         <Button
@@ -207,7 +204,7 @@ function IngredientCombobox({
             {resultCount} {ui('عنصر متاح — اختر من القسم المناسب')}
           </p>
         </div>
-        <div className="max-h-[24rem] touch-pan-y space-y-2 overflow-y-auto overscroll-contain bg-muted/15 p-2 [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch]">
+        <div className="max-h-[24rem] space-y-2 overflow-y-auto bg-muted/15 p-2">
           {filteredGroups.length === 0 ? (
             <p className="rounded-xl border border-dashed bg-background py-10 text-center text-sm text-muted-foreground">
               {ui('لا توجد خامة مطابقة للبحث')}
@@ -324,7 +321,7 @@ export function RecipeEditor({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Label>{ui('مكونات الوصفة')}</Label>
         <div className="flex flex-wrap gap-2">
-          <Button permissionAction={null} type="button" variant="outline" size="sm" onClick={addLine} disabled={disabled}>
+          <Button type="button" variant="outline" size="sm" onClick={addLine} disabled={disabled}>
             <Plus className="me-1 size-4" />
             {ui('إضافة مكون / Addition')}
           </Button>

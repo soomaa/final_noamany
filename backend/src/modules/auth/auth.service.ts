@@ -1,13 +1,14 @@
 import { BadRequestException, Injectable, UnauthorizedException, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { createHmac } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { MemberLoginResult } from '../../common/types/member-jwt-user';
 import { MemberAuthService } from '../member/member-auth.service';
 import { isBcryptHash, legacyMatches } from './legacy-hash.util';
-import { legacyAudienceScopeFromEmployeeType } from './audience-scope.util';
 
 /** Faithful to legacy Auth.php: same failure message whether user is missing,
  *  password is wrong, or the account is not approved. */
@@ -103,6 +104,7 @@ export class AuthService {
     }
 
     // 3) Transparent migration: rehash legacy password to bcrypt, drop plaintext copies.
+    let refreshPassword = user.password ?? null;
     if (needsRehash) {
       const rounds = this.config.get<number>('bcryptRounds') ?? 12;
       const bhash = await bcrypt.hash(plaintext, rounds);
@@ -110,11 +112,12 @@ export class AuthService {
         where: { user_id: user.user_id },
         data: { password: bhash, x_y_z: null, app_pass: null, pass_demo: null, user_pass: null },
       });
+      refreshPassword = bhash;
     }
 
     const claims = await this.buildJwtUser(user.user_id);
     return {
-      ...(await this.signTokens(claims)),
+      ...(await this.signTokens(claims, this.refreshSessionVersion(refreshPassword))),
       user: claims,
       message: 'تم تسجيل الدخول بنجاح',
     };
@@ -125,6 +128,9 @@ export class AuthService {
     currentPassword: string,
     newPassword: string,
   ): Promise<{ message: string }> {
+    if (Buffer.byteLength(newPassword, 'utf8') > 72) {
+      throw new BadRequestException('كلمة المرور الجديدة لا يمكن أن تتجاوز 72 بايت');
+    }
     const user = await this.prisma.users.findUnique({ where: { user_id: userId } });
     if (!user || user.approved !== 1) {
       throw new UnauthorizedException(LOGIN_FAILED);
@@ -142,6 +148,26 @@ export class AuthService {
       data: { password: bhash, x_y_z: null, app_pass: null, pass_demo: null, user_pass: null },
     });
     return { message: 'تم تغيير كلمة المرور بنجاح' };
+  }
+
+  /** Update the authenticated staff member's avatar; no caller-supplied user id is accepted. */
+  async updateProfileImage(userId: number, image: string): Promise<{ image: string }> {
+    const user = await this.prisma.users.findUnique({
+      where: { user_id: userId },
+      select: { user_id: true, emp_code: true, approved: true },
+    });
+    if (!user || user.approved !== 1) throw new UnauthorizedException('انتهت الجلسة');
+
+    const updates: Prisma.PrismaPromise<unknown>[] = [
+      this.prisma.users.update({ where: { user_id: user.user_id }, data: { image } }),
+    ];
+    if (user.emp_code != null) {
+      updates.push(
+        this.prisma.employees.update({ where: { id: user.emp_code }, data: { personal_photo: image } }),
+      );
+    }
+    await this.prisma.$transaction(updates);
+    return { image };
   }
 
   private async verifyStaffPassword(
@@ -183,13 +209,13 @@ export class AuthService {
     return { valid: false, needsRehash: false, plaintext: password };
   }
 
-  async signTokens(claims: JwtUser): Promise<{ accessToken: string; refreshToken: string }> {
+  async signTokens(claims: JwtUser, refreshSessionVersion: string): Promise<{ accessToken: string; refreshToken: string }> {
     const accessToken = await this.jwt.signAsync(claims, {
       secret: this.config.get<string>('jwt.accessSecret'),
       expiresIn: this.config.get<JwtSignOptions['expiresIn']>('jwt.accessTtl'),
     });
     const refreshToken = await this.jwt.signAsync(
-      { sub: claims.sub },
+      { sub: claims.sub, pver: refreshSessionVersion },
       {
         secret: this.config.get<string>('jwt.refreshSecret'),
         expiresIn: this.config.get<JwtSignOptions['expiresIn']>('jwt.refreshTtl'),
@@ -201,11 +227,15 @@ export class AuthService {
   async refresh(refreshToken: string): Promise<{ accessToken: string; user: JwtUser }> {
     let sub: number;
     try {
-      const payload = await this.jwt.verifyAsync<{ sub: number; type?: string }>(refreshToken, {
+      const payload = await this.jwt.verifyAsync<{ sub: number; type?: string; pver?: string }>(refreshToken, {
         secret: this.config.get<string>('jwt.refreshSecret'),
       });
       if (payload.type === 'member') throw new UnauthorizedException('انتهت الجلسة');
       sub = payload.sub;
+      const user = await this.prisma.users.findUnique({ where: { user_id: sub } });
+      if (!user || user.approved !== 1 || !payload.pver || payload.pver !== this.refreshSessionVersion(user.password)) {
+        throw new UnauthorizedException('انتهت الجلسة');
+      }
     } catch {
       throw new UnauthorizedException('انتهت الجلسة');
     }
@@ -218,6 +248,12 @@ export class AuthService {
       expiresIn: this.config.get<JwtSignOptions['expiresIn']>('jwt.accessTtl'),
     });
     return { accessToken, user: claims };
+  }
+
+  /** Stable per-password HMAC carried by refresh tokens; a password change invalidates old tokens. */
+  private refreshSessionVersion(password: string | null): string {
+    const secret = this.config.get<string>('jwt.refreshSecret') ?? '';
+    return createHmac('sha256', secret).update(password ?? '').digest('base64url');
   }
 
   /** Fresh session claims (branch/scope from DB — not stale JWT payload). */
@@ -245,7 +281,7 @@ export class AuthService {
     if (!user || user.approved !== 1) throw new UnauthorizedException('انتهت الجلسة');
 
     let branch = user.branch_id_fk ?? 0;
-    let manWomenType: 0 | 1 | -1 = -1;
+    let manWomenType = 0;
     let jobTitle: string | null = null;
     let personalPhoto: string | null = null;
     let trainerId: number | null = null;
@@ -262,7 +298,7 @@ export class AuthService {
       });
       if (emp) {
         branch = emp.branch_id_fk ?? branch;
-        manWomenType = legacyAudienceScopeFromEmployeeType(emp.emp_type);
+        manWomenType = emp.emp_type ?? 0;
         personalPhoto = emp.personal_photo;
         jobTitle = emp.mosma_wazefy_n?.trim() || null;
         if (!jobTitle && emp.mosma_wazefy_code) {

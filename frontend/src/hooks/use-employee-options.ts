@@ -1,17 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
-import { fetchAllReportRows } from '@/lib/report-fetch';
+import { api } from '@/lib/api';
 import type { EmployeeListItem } from '@/types/employees';
 
 export function useEmployeeOptions(enabled = true) {
   return useQuery({
     queryKey: ['employees', 'select-options'],
     queryFn: async () => {
-      const data = await fetchAllReportRows<EmployeeListItem>('/employees', { status: 1 }, 200);
+      const { data } = await api.get<Pick<EmployeeListItem, 'id' | 'employee' | 'emp_code'>[]>('/employees/pos-options');
       return data.map((e) => ({
         value: String(e.id),
         label: `${e.employee ?? '—'} (${e.emp_code ?? '—'})`,
-        branchId: e.branch_id_fk,
-        jobTitle: e.mosma_wazefy_n,
       }));
     },
     enabled,

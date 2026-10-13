@@ -13,7 +13,6 @@ const COMPANY_EDITABLE = [
   'abbreviation_name',
   'slogan',
   'summary_company',
-  'footer',
   'website',
   'email',
   'address',

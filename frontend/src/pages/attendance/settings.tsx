@@ -1,6 +1,7 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Power, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
 import { Time12Input } from '@/components/common/time-12-input';
@@ -87,6 +88,11 @@ export function AttendanceSettingsPage() {
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState<ShiftForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  const [activatingWeeklySchedule, setActivatingWeeklySchedule] = useState(false);
+  const { data: weeklyScheduleRollout, refetch: refetchWeeklyScheduleRollout } = useQuery({
+    queryKey: ['attendance', 'weekly-schedule-rollout'],
+    queryFn: async () => (await api.get<{ enabled: boolean }>('/attendance/weekly-schedule-rollout')).data,
+  });
 
   const deleteMutation = useMutationWithToast(
     (id: number) => api.delete(`/attendance/shifts/${id}`),
@@ -156,6 +162,25 @@ export function AttendanceSettingsPage() {
     if (ok) deleteMutation.mutate(row.id);
   };
 
+  const activateWeeklySchedule = async () => {
+    const ok = await confirm({
+      title: ui('تفعيل جدول الدوام الأسبوعي؟'),
+      description: ui('لن تعتمد البصمة بعد التفعيل إلا جدول الأسبوع المحدد لكل موظف. لا يمكن التفعيل قبل اكتمال جداول كل الموظفين.'),
+      confirmLabel: ui('تفعيل'),
+    });
+    if (!ok) return;
+    setActivatingWeeklySchedule(true);
+    try {
+      await api.post('/attendance/weekly-schedule-rollout/activate');
+      toast.success(ui('تم تفعيل جدول الدوام الأسبوعي'));
+      void refetchWeeklyScheduleRollout();
+    } catch (error) {
+      toast.error(apiError(error));
+    } finally {
+      setActivatingWeeklySchedule(false);
+    }
+  };
+
   const timeCell = (v?: string) => <span className="nums">{v ? formatTime(v) : '—'}</span>;
 
   const columns: ColumnDef<ShiftRow>[] = [
@@ -188,12 +213,21 @@ export function AttendanceSettingsPage() {
       <PageHeader
         title={ui('إعدادات الدوام')}
         description={ui('الورديات')}
-        actions={
+        actions={<div className="flex flex-wrap gap-2">
+          {!weeklyScheduleRollout?.enabled && <Button variant="outline" size="sm" onClick={() => void activateWeeklySchedule()} disabled={activatingWeeklySchedule}>
+            <Power className="size-4" /> {activatingWeeklySchedule ? ui('جارٍ التفعيل…') : ui('تفعيل جدول الأسبوع')}
+          </Button>}
           <Button variant="brand" size="sm" onClick={openCreate}>
             <Plus className="size-4" /> {ui('وردية جديدة')}
           </Button>
-        }
+        </div>}
       />
+
+      <div className={`rounded-lg border px-4 py-3 text-sm ${weeklyScheduleRollout?.enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200'}`}>
+        {weeklyScheduleRollout?.enabled
+          ? ui('جدول الدوام الأسبوعي مفعل: البصمة تعتمد جدول كل موظف، بينما التبديل والشيفت الإضافي يظلان استثناءات حسب التاريخ.')
+          : ui('جدول الدوام الأسبوعي غير مفعل بعد. أكمل جدول الأيام السبعة لكل موظف أولاً، ثم فعّله من الزر أعلاه.')}
+      </div>
 
       <FilterBar searchPlaceholder={ui('بحث في الورديات…')} />
       <DataTable

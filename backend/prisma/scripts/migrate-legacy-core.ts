@@ -92,6 +92,15 @@ async function main(): Promise<void> {
   const sha = literal(dumpSha256);
   const sourceDbValue = literal(sourceDatabase);
 
+  const legacyBase = (variable: string, table: string): string => {
+    const override = process.env[variable];
+    if (override != null) {
+      if (!/^[1-9][0-9]*$/.test(override)) throw new Error(`Invalid ${variable}`);
+      return override;
+    }
+    return `(SELECT COALESCE(MAX(id),0)+1000 FROM ${table})`;
+  };
+
   const sourceTableCount = await one<CountRow>(
     target,
     `SELECT COUNT(*) n FROM information_schema.tables WHERE table_schema=${sourceDbValue} AND table_type='BASE TABLE'`,
@@ -134,7 +143,7 @@ async function main(): Promise<void> {
   await step("subscription type catalog", async (tx) => {
     await execute(
       tx,
-      "SET @legacy_type_base=(SELECT COALESCE(MAX(id),0)+1000 FROM club_subscription_types)",
+      `SET @legacy_type_base=${legacyBase("LEGACY_TYPE_BASE", "club_subscription_types")}`,
     );
     await execute(
       tx,
@@ -183,7 +192,7 @@ async function main(): Promise<void> {
     async (tx) => {
       await execute(
         tx,
-        "SET @legacy_member_base=(SELECT COALESCE(MAX(id),0)+1000 FROM club_members)",
+        `SET @legacy_member_base=${legacyBase("LEGACY_MEMBER_BASE", "club_members")}`,
       );
       await execute(
         tx,
@@ -320,8 +329,19 @@ async function main(): Promise<void> {
     );
     await execute(
       tx,
-      "SET @legacy_sub_base=(SELECT COALESCE(MAX(id),0)+1000 FROM club_subscriptions)",
+      `SET @legacy_sub_base=${legacyBase("LEGACY_SUB_BASE", "club_subscriptions")}`,
     );
+    // Keep this step fast when the historical mapping ledger contains unrelated records.
+    for (const name of ["tmp_gym_member_mapping", "tmp_gym_orphan_mapping", "tmp_gym_type_mapping", "tmp_gym_existing_sub_mapping"])
+      await execute(tx, `DROP TEMPORARY TABLE IF EXISTS ${name}`);
+    await execute(tx, "CREATE TEMPORARY TABLE tmp_gym_member_mapping (legacy_id INT PRIMARY KEY, target_id INT) ENGINE=MEMORY");
+    await execute(tx, `INSERT INTO tmp_gym_member_mapping SELECT CAST(legacy_id AS UNSIGNED),target_id FROM legacy_record_mappings WHERE source_key=${key} AND legacy_table='tbl_members' AND target_table='club_members'`);
+    await execute(tx, "CREATE TEMPORARY TABLE tmp_gym_orphan_mapping (legacy_id INT PRIMARY KEY, target_id INT) ENGINE=MEMORY");
+    await execute(tx, `INSERT INTO tmp_gym_orphan_mapping SELECT CAST(legacy_id AS UNSIGNED),target_id FROM legacy_record_mappings WHERE source_key=${key} AND legacy_table='legacy_orphan_members' AND target_table='club_members'`);
+    await execute(tx, "CREATE TEMPORARY TABLE tmp_gym_type_mapping (legacy_id INT PRIMARY KEY, target_id INT) ENGINE=MEMORY");
+    await execute(tx, `INSERT INTO tmp_gym_type_mapping SELECT CAST(legacy_id AS UNSIGNED),target_id FROM legacy_record_mappings WHERE source_key=${key} AND legacy_table='tbl_subscription_settings' AND target_table='club_subscription_types'`);
+    await execute(tx, "CREATE TEMPORARY TABLE tmp_gym_existing_sub_mapping (legacy_id INT PRIMARY KEY, id BIGINT) ENGINE=MEMORY");
+    await execute(tx, `INSERT INTO tmp_gym_existing_sub_mapping SELECT CAST(legacy_id AS UNSIGNED),id FROM legacy_record_mappings WHERE source_key=${key} AND legacy_table='tbl_subscription_members' AND target_table='club_subscriptions'`);
     await execute(
       tx,
       `
@@ -352,16 +372,12 @@ async function main(): Promise<void> {
       LEFT JOIN legacy_branch_mappings bm ON bm.source_key=${key} AND bm.legacy_id=s.branch_id_fk
       LEFT JOIN ${src}.tbl_members m ON m.mem_id=s.mem_id_fk
       LEFT JOIN ${src}.tbl_subscription_settings st ON st.type_id=s.subscription_type_fk
-      LEFT JOIN legacy_record_mappings mm ON mm.source_key=${key} AND mm.legacy_table='tbl_members'
-       AND mm.legacy_id=CAST(s.mem_id_fk AS CHAR) AND mm.target_table='club_members'
-      LEFT JOIN legacy_record_mappings om ON om.source_key=${key} AND om.legacy_table='legacy_orphan_members'
-       AND om.legacy_id=CAST(s.mem_id_fk AS CHAR) AND om.target_table='club_members'
-      LEFT JOIN legacy_record_mappings tm ON tm.source_key=${key} AND tm.legacy_table='tbl_subscription_settings'
-       AND tm.legacy_id=CAST(s.subscription_type_fk AS CHAR) AND tm.target_table='club_subscription_types'
+      LEFT JOIN tmp_gym_member_mapping mm ON mm.legacy_id=s.mem_id_fk
+      LEFT JOIN tmp_gym_orphan_mapping om ON om.legacy_id=s.mem_id_fk
+      LEFT JOIN tmp_gym_type_mapping tm ON tm.legacy_id=s.subscription_type_fk
       LEFT JOIN legacy_employee_mappings em ON em.source_key=${key} AND em.legacy_id=s.emp_id_fk
       LEFT JOIN legacy_user_mappings um ON um.source_key=${key} AND um.legacy_id=s.user_id
-      LEFT JOIN legacy_record_mappings lm ON lm.source_key=${key} AND lm.legacy_table='tbl_subscription_members'
-       AND lm.legacy_id=CAST(s.subs_id AS CHAR) AND lm.target_table='club_subscriptions'
+      LEFT JOIN tmp_gym_existing_sub_mapping lm ON lm.legacy_id=s.subs_id
       WHERE lm.id IS NULL
     `,
     );
@@ -373,8 +389,7 @@ async function main(): Promise<void> {
       SELECT ${runId},${key},'tbl_subscription_members',CAST(s.subs_id AS CHAR),'club_subscriptions',
              @legacy_sub_base+s.subs_id,'mapped'
       FROM ${src}.tbl_subscription_members s
-      LEFT JOIN legacy_record_mappings lm ON lm.source_key=${key} AND lm.legacy_table='tbl_subscription_members'
-       AND lm.legacy_id=CAST(s.subs_id AS CHAR) AND lm.target_table='club_subscriptions'
+      LEFT JOIN tmp_gym_existing_sub_mapping lm ON lm.legacy_id=s.subs_id
       WHERE lm.id IS NULL
     `,
     );
@@ -717,6 +732,19 @@ async function main(): Promise<void> {
         tx,
         "SET @legacy_att_base=(SELECT COALESCE(MAX(id),0)+1000 FROM club_attendance)",
       );
+      // Resolve the source-specific mappings into compact indexed tables before scanning attendance.
+      for (const name of ["tmp_gym_att_member", "tmp_gym_att_orphan", "tmp_gym_att_sub", "tmp_gym_att_existing", "tmp_gym_att_archive"])
+        await execute(tx, `DROP TEMPORARY TABLE IF EXISTS ${name}`);
+      await execute(tx, "CREATE TEMPORARY TABLE tmp_gym_att_member (legacy_id INT PRIMARY KEY, target_id INT) ENGINE=MEMORY");
+      await execute(tx, `INSERT INTO tmp_gym_att_member SELECT CAST(legacy_id AS UNSIGNED),target_id FROM legacy_record_mappings WHERE source_key=${key} AND legacy_table='tbl_members' AND target_table='club_members'`);
+      await execute(tx, "CREATE TEMPORARY TABLE tmp_gym_att_orphan (legacy_id INT PRIMARY KEY, target_id INT) ENGINE=MEMORY");
+      await execute(tx, `INSERT INTO tmp_gym_att_orphan SELECT CAST(legacy_id AS UNSIGNED),target_id FROM legacy_record_mappings WHERE source_key=${key} AND legacy_table='legacy_orphan_members' AND target_table='club_members'`);
+      await execute(tx, "CREATE TEMPORARY TABLE tmp_gym_att_sub (legacy_id INT PRIMARY KEY, target_id INT) ENGINE=MEMORY");
+      await execute(tx, `INSERT INTO tmp_gym_att_sub SELECT CAST(legacy_id AS UNSIGNED),target_id FROM legacy_record_mappings WHERE source_key=${key} AND legacy_table='tbl_subscription_members' AND target_table='club_subscriptions'`);
+      await execute(tx, "CREATE TEMPORARY TABLE tmp_gym_att_existing (legacy_id INT PRIMARY KEY, id BIGINT) ENGINE=InnoDB");
+      await execute(tx, `INSERT INTO tmp_gym_att_existing SELECT CAST(legacy_id AS UNSIGNED),id FROM legacy_record_mappings WHERE source_key=${key} AND legacy_table='tbl_hdoor_classes' AND target_table='club_attendance'`);
+      await execute(tx, "CREATE TEMPORARY TABLE tmp_gym_att_archive (legacy_id INT PRIMARY KEY, id BIGINT) ENGINE=InnoDB");
+      await execute(tx, `INSERT INTO tmp_gym_att_archive SELECT CAST(legacy_id AS UNSIGNED),id FROM legacy_record_mappings WHERE source_key=${key} AND legacy_table='tbl_hdoor_classes' AND target_table='legacy_archive'`);
       await execute(
         tx,
         `
@@ -734,16 +762,12 @@ async function main(): Promise<void> {
       FROM ${src}.tbl_hdoor_classes h
       LEFT JOIN ${src}.tbl_members m ON m.mem_id=h.member_id
       JOIN legacy_branch_mappings bm ON bm.source_key=${key} AND bm.legacy_id=h.branch_id_fk
-      LEFT JOIN legacy_record_mappings mm ON mm.source_key=${key} AND mm.legacy_table='tbl_members'
-       AND mm.legacy_id=CAST(h.member_id AS CHAR) AND mm.target_table='club_members'
-      LEFT JOIN legacy_record_mappings om ON om.source_key=${key} AND om.legacy_table='legacy_orphan_members'
-       AND om.legacy_id=CAST(h.member_id AS CHAR) AND om.target_table='club_members'
-      LEFT JOIN legacy_record_mappings sm ON sm.source_key=${key} AND sm.legacy_table='tbl_subscription_members'
-       AND sm.legacy_id=CAST(h.subs_id AS CHAR) AND sm.target_table='club_subscriptions'
+      LEFT JOIN tmp_gym_att_member mm ON mm.legacy_id=h.member_id
+      LEFT JOIN tmp_gym_att_orphan om ON om.legacy_id=h.member_id
+      LEFT JOIN tmp_gym_att_sub sm ON sm.legacy_id=h.subs_id
       LEFT JOIN ${src}.tbl_subscription_settings st ON st.type_id=h.subscription_type_fk
       LEFT JOIN legacy_user_mappings um ON um.source_key=${key} AND um.legacy_id=h.user_id
-      LEFT JOIN legacy_record_mappings lm ON lm.source_key=${key} AND lm.legacy_table='tbl_hdoor_classes'
-       AND lm.legacy_id=CAST(h.hodoor_id AS CHAR) AND lm.target_table='club_attendance'
+      LEFT JOIN tmp_gym_att_existing lm ON lm.legacy_id=h.hodoor_id
       WHERE h.type='eshtrak' AND lm.id IS NULL
     `,
       );
@@ -755,8 +779,7 @@ async function main(): Promise<void> {
       SELECT ${runId},${key},'tbl_hdoor_classes',CAST(h.hodoor_id AS CHAR),'club_attendance',
         @legacy_att_base+h.hodoor_id,'mapped',JSON_OBJECT('legacy_type',h.type)
       FROM ${src}.tbl_hdoor_classes h
-      LEFT JOIN legacy_record_mappings lm ON lm.source_key=${key} AND lm.legacy_table='tbl_hdoor_classes'
-       AND lm.legacy_id=CAST(h.hodoor_id AS CHAR) AND lm.target_table='club_attendance'
+      LEFT JOIN tmp_gym_att_existing lm ON lm.legacy_id=h.hodoor_id
       WHERE h.type='eshtrak' AND lm.id IS NULL
     `,
       );
@@ -768,8 +791,7 @@ async function main(): Promise<void> {
       SELECT ${runId},${key},'tbl_hdoor_classes',CAST(h.hodoor_id AS CHAR),'legacy_archive',NULL,
         'archived_only',JSON_OBJECT('legacy_type',COALESCE(h.type,''),'reason','no faithful canonical attendance target')
       FROM ${src}.tbl_hdoor_classes h
-      LEFT JOIN legacy_record_mappings lm ON lm.source_key=${key} AND lm.legacy_table='tbl_hdoor_classes'
-       AND lm.legacy_id=CAST(h.hodoor_id AS CHAR) AND lm.target_table='legacy_archive'
+      LEFT JOIN tmp_gym_att_archive lm ON lm.legacy_id=h.hodoor_id
       WHERE COALESCE(h.type,'')<>'eshtrak' AND lm.id IS NULL
     `,
       );

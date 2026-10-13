@@ -15,9 +15,6 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
-import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { JwtUser } from '../../common/types/jwt-user';
-import { assertSystemAdmin } from '../../common/utils/system-admin.util';
 
 @UseGuards(JwtAuthGuard)
 @Controller('users')
@@ -58,19 +55,8 @@ export class UsersController {
   }
 
   @Get(':id/permissions')
-  getPermissions(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    assertSystemAdmin(user);
+  getPermissions(@Param('id', ParseIntPipe) id: number) {
     return this.users.getPermissions(id);
   }
 
-  @Put(':id/permissions')
-  @RequiresPermission('admin.users:update')
-  putPermissions(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: { permissions?: string[]; scope?: { branchId?: number; gender?: 'male' | 'female' } },
-    @CurrentUser() user: JwtUser,
-  ) {
-    assertSystemAdmin(user);
-    return this.users.putPermissions(id, body);
-  }
 }

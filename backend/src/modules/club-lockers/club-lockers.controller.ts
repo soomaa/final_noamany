@@ -18,7 +18,6 @@ import { JwtUser } from '../../common/types/jwt-user';
 import { isDryRun } from '../../common/preview';
 import { ClubLockersService } from './club-lockers.service';
 import { ListClubLockerSubscriptionsDto } from './dto/list-club-locker-subscriptions.dto';
-import { LockerInventoryService } from './locker-inventory.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-lockers')
@@ -27,18 +26,56 @@ export class ClubLockersController {
   constructor(private readonly service: ClubLockersService) {}
 
   @Get('statistics')
-  statistics() {
-    return this.service.lockerStatistics();
+  statistics(@CurrentUser() user: JwtUser) {
+    return this.service.lockerStatistics(user);
   }
 
   @Get()
   listLockers(
+    @CurrentUser() user: JwtUser,
     @Query('mainBranchId') mainBranchId?: string,
     @Query('subBranchId') subBranchId?: string,
     @Query('lockerNumber') lockerNumber?: string,
     @Query('isAvailable') isAvailable?: string,
   ) {
-    return this.service.listLockers({ mainBranchId, subBranchId, lockerNumber, isAvailable });
+    return this.service.listLockers({ mainBranchId, subBranchId, lockerNumber, isAvailable }, user);
+  }
+
+  @Get('inventory-snapshot')
+  inventorySnapshot(@Query('branchId') branchId: string, @CurrentUser() user: JwtUser) {
+    return this.service.inventorySnapshot(Number(branchId), user);
+  }
+
+  @Get('inventory-reports')
+  inventoryReports(
+    @Query('branchId') branchId: string | undefined,
+    @Query('fromDate') fromDate: string | undefined,
+    @Query('toDate') toDate: string | undefined,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.listInventoryReports(branchId, user, fromDate, toDate);
+  }
+
+  @Post('inventory-reports')
+  @RequiresPermission('club.lockers:update')
+  createInventoryReport(@Body() body: { branchId: number; employeeId?: number | null; notes?: string; items: { lockerId: number; observedStatus: string; notes?: string }[] }, @CurrentUser() user: JwtUser) {
+    return this.service.createInventoryReport(body, user);
+  }
+
+  @Delete('inventory-reports/:id')
+  @RequiresPermission('club.lockers:update')
+  deleteInventoryReport(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.deleteInventoryReport(id, user);
+  }
+
+  @Put('inventory-reports/:id')
+  @RequiresPermission('club.lockers:update')
+  updateInventoryReport(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { employeeId?: number | null; notes?: string; items?: { lockerId: number; observedStatus: string; notes?: string }[] },
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.updateInventoryReport(id, body, user);
   }
 
   @Get(':id/details')
@@ -150,41 +187,4 @@ export class ClubLockerSubscriptionsController {
   unfreeze(@Param('id', ParseIntPipe) id: number, @Query('dryRun') dryRun?: string) {
     return this.service.unfreezeSubscription(id, isDryRun(dryRun));
   }
-}
-
-@UseGuards(JwtAuthGuard)
-@Controller('club-lockers/inventory')
-@RequiresPermission('club.lockers:view')
-export class LockerInventoryController {
-  constructor(private readonly inventory: LockerInventoryService) {}
-
-  @Get()
-  list(@Query() query: { branchId?: number; status?: string; dateFrom?: string; dateTo?: string }, @CurrentUser() user: JwtUser) {
-    return this.inventory.list(query, user);
-  }
-
-  @Get(':id')
-  detail(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    return this.inventory.detail(id, user);
-  }
-
-  @Post('drafts')
-  @RequiresPermission('club.lockers:create')
-  createDraft(@Body() body: { branchId: number; inventoryDate: string; notes?: string }, @CurrentUser() user: JwtUser) {
-    return this.inventory.createDraft(body, user);
-  }
-
-  @Patch(':id/lines')
-  @RequiresPermission('club.lockers:update')
-  upsertLine(@Param('id', ParseIntPipe) id: number, @Body() body: { lockerId: number; actualStatus: string; notes?: string }, @CurrentUser() user: JwtUser) {
-    return this.inventory.upsertLine(id, body, user);
-  }
-
-  @Patch(':id/finalize')
-  @RequiresPermission('club.lockers:update')
-  finalize(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) { return this.inventory.finalize(id, user); }
-
-  @Patch(':id/review')
-  @RequiresPermission('club.lockers:approve')
-  review(@Param('id', ParseIntPipe) id: number, @Body('action') action: 'approve' | 'reject', @CurrentUser() user: JwtUser) { return this.inventory.review(id, action, user); }
 }

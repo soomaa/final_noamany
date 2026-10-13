@@ -5,14 +5,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { randomBytes } from 'crypto';
-import { Prisma } from '@prisma/client';
+import { Prisma, club_members } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { paginated } from '../../common/dto/list-result';
 import { assertDateOrder } from '../../common/validators';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { Inject } from '@nestjs/common';
+import {
+  ClubBranchGroupReader,
+  ClubBranchGroupService,
+} from '../../common/branch-groups/club-branch-group.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { assertClubOperationBranch, clubOperationBranchIds } from '../../common/branch-groups/club-operation-scope';
 import { buildDuplicateMessage, findMemberDuplicates } from './club-member-duplicates';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
 import { isMarketingRepJobTitle } from '../employees/marketing-rep.util';
@@ -35,6 +40,7 @@ import { toNum } from '../club-subscriptions/club-subscription.utils';
 import { normalizeMembershipDocumentType } from './membership-document.utils';
 import { assertSystemAdmin } from '../../common/utils/system-admin.util';
 import { MemberDocumentStorageService } from './member-document-storage.service';
+import { canonicalClubMemberBranchId, clubMemberIdentityBranchIds, shareClubMemberIdentity } from './club-branch-groups';
 
 /** True when a P2002 unique violation came from a constraint/index whose name contains `needle`. */
 function isUniqueTarget(e: Prisma.PrismaClientKnownRequestError, needle: string): boolean {
@@ -51,6 +57,13 @@ export class ClubMembersService {
     private readonly branchScope: BranchScopeService,
     private readonly subscriptionRefunds: ClubSubscriptionRefundsService,
     private readonly memberDocumentStorage: MemberDocumentStorageService,
+    @Inject(ClubBranchGroupService)
+    private readonly branchGroups: Pick<
+      ClubBranchGroupReader,
+      'siblingBranchIds'
+    > = {
+      siblingBranchIds: async (branchId) => [branchId],
+    },
   ) {}
 
   private assertBranchAccess(user: JwtUser | undefined, branchId: number) {
@@ -59,17 +72,33 @@ export class ClubMembersService {
     }
   }
 
-  private assertMemberAccess(user: JwtUser | undefined, member: { branch_id: number; gender: string | null }) {
+  private assertMemberAccess(user: JwtUser | undefined, member: { branch_id: number; gender: string | null; created_at?: Date | null }) {
     this.assertBranchAccess(user, member.branch_id);
     if (!this.branchScope.isMemberGenderAllowed(user, member.gender)) {
       throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
     }
+    const receptionOnly = user?.level !== 1 && /(reception|ريسيبشن|استقبال)/i.test(user?.job_title ?? '');
+    if (receptionOnly && (!member.created_at || localDateString(member.created_at) !== localDateString())) {
+      throw new ForbiddenException('موظف الاستقبال يمكنه الوصول إلى أعضاء اليوم فقط');
+    }
+  }
+
+  /** Reception is a desk role: member lists are limited to registrations made today. */
+  private receptionTodayRange(user?: JwtUser): { gte: Date; lt: Date } | null {
+    if (!user || user.level === 1 || user.level === 3) return null;
+    const title = user.job_title?.normalize('NFKD').toLowerCase() ?? '';
+    if (!/(استقبال|ريسيبشن|ريسبشن|reception)/i.test(title)) return null;
+    if (/(مدير|مشرف|رئيس|manager|supervisor|head)/i.test(title)) return null;
+    const start = new Date(`${localDateString()}T00:00:00`);
+    const end = new Date(start);
+    end.setDate(end.getDate() + 1);
+    return { gte: start, lt: end };
   }
 
   async getMembershipDocument(id: number, user?: JwtUser) {
     const member = await this.prisma.club_members.findUnique({
       where: { id },
-      select: { branch_id: true, gender: true, membership_document_path: true, membership_document_uploaded_at: true },
+      select: { branch_id: true, gender: true, created_at: true, membership_document_path: true, membership_document_uploaded_at: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
     this.assertMemberAccess(user, member);
@@ -83,7 +112,7 @@ export class ClubMembersService {
   async readLegacyMembershipDocument(id: number, user?: JwtUser) {
     const member = await this.prisma.club_members.findUnique({
       where: { id },
-      select: { branch_id: true, gender: true, membership_document_path: true },
+      select: { branch_id: true, gender: true, created_at: true, membership_document_path: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
     this.assertMemberAccess(user, member);
@@ -94,7 +123,7 @@ export class ClubMembersService {
   async removeMembershipDocument(id: number, user?: JwtUser) {
     const member = await this.prisma.club_members.findUnique({
       where: { id },
-      select: { branch_id: true, gender: true },
+      select: { branch_id: true, gender: true, created_at: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
     this.assertMemberAccess(user, member);
@@ -111,14 +140,30 @@ export class ClubMembersService {
 
   async listMembershipDocuments(id: number, user?: JwtUser) {
     const member = await this.prisma.club_members.findUnique({
-      where: { id }, select: { id: true, branch_id: true, gender: true },
+      where: { id }, select: { id: true, branch_id: true, gender: true, created_at: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
     this.assertMemberAccess(user, member);
     const documents = await this.prisma.club_member_documents.findMany({
       where: { member_id: id }, orderBy: [{ uploaded_at: 'desc' }, { id: 'desc' }],
     });
-    return documents.map((document) => this.mapMembershipDocument(document));
+    const historical = await this.prisma.club_member_images.findMany({
+      where: { member_id: id, image_path: { not: null } },
+      orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+    });
+    return [
+      ...documents.map((document) => this.mapMembershipDocument(document)),
+      ...historical.filter((image) => image.image_path?.trim() && image.image_path !== '0').map((image) => ({
+        id: -image.id,
+        type: 'other',
+        label: 'مرفق سابق',
+        ...this.memberDocumentStorage.migratedAttachmentInfo(image.image_path!),
+        byteSize: 0,
+        uploadedAt: image.captured_at ?? image.created_at,
+        uploadedBy: image.uploaded_by,
+        downloadUrl: `/club-members/${id}/membership-documents/${-image.id}/file`,
+      })),
+    ];
   }
 
   private mapMembershipDocument(document: {
@@ -153,7 +198,7 @@ export class ClubMembersService {
     user?: JwtUser,
   ) {
     const member = await this.prisma.club_members.findUnique({
-      where: { id }, select: { id: true, branch_id: true, gender: true },
+      where: { id }, select: { id: true, branch_id: true, gender: true, created_at: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
     this.assertMemberAccess(user, member);
@@ -182,10 +227,17 @@ export class ClubMembersService {
 
   async readMembershipDocument(id: number, documentId: number, user?: JwtUser) {
     const member = await this.prisma.club_members.findUnique({
-      where: { id }, select: { id: true, branch_id: true, gender: true },
+      where: { id }, select: { id: true, branch_id: true, gender: true, created_at: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
     this.assertMemberAccess(user, member);
+    if (documentId < 0) {
+      const image = await this.prisma.club_member_images.findFirst({
+        where: { id: -documentId, member_id: id },
+      });
+      if (!image?.image_path) throw new NotFoundException('مرفق العضو غير موجود');
+      return this.memberDocumentStorage.readMigratedAttachment(image.image_path);
+    }
     const document = await this.prisma.club_member_documents.findFirst({
       where: { id: documentId, member_id: id },
     });
@@ -200,10 +252,18 @@ export class ClubMembersService {
 
   async removeMembershipDocumentItem(id: number, documentId: number, user?: JwtUser) {
     const member = await this.prisma.club_members.findUnique({
-      where: { id }, select: { id: true, branch_id: true, gender: true },
+      where: { id }, select: { id: true, branch_id: true, gender: true, created_at: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
     this.assertMemberAccess(user, member);
+    if (documentId < 0) {
+      const image = await this.prisma.club_member_images.findFirst({
+        where: { id: -documentId, member_id: id },
+      });
+      if (!image) throw new NotFoundException('مرفق العضو غير موجود');
+      await this.prisma.club_member_images.delete({ where: { id: image.id } });
+      return { success: true };
+    }
     const document = await this.prisma.club_member_documents.findFirst({
       where: { id: documentId, member_id: id },
     });
@@ -220,8 +280,10 @@ export class ClubMembersService {
 
   /** Reception scanner payload: compact, authoritative and audience-scoped. */
   async barcodePreview(memberCode: string, user?: JwtUser) {
+    const code = memberCode?.trim();
+    if (!code) throw new BadRequestException('أدخل كود العضو');
     const member = await this.prisma.club_members.findFirst({
-      where: { member_code: memberCode.trim(), is_deleted: false },
+      where: { member_code: code, is_deleted: false },
       select: { id: true, member_code: true, name: true, branch_id: true, gender: true, is_blocked: true, block_reason: true, profile_picture: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
@@ -366,7 +428,7 @@ export class ClubMembersService {
     };
   }
 
-  async list(q: ListClubMembersDto, user?: JwtUser) {
+  async list(q: ListClubMembersDto, user?: JwtUser, forPrintCards = false) {
     const and: Prisma.club_membersWhereInput[] = [{ is_deleted: false }];
 
     if (q.search?.trim()) {
@@ -390,7 +452,7 @@ export class ClubMembersService {
     if (audience) and.push({ gender: audience });
     else if (q.gender && q.gender !== 'all') and.push({ gender: q.gender as 'male' | 'female' });
     // Sales reps only see their own registrations on the members list — not in pickers.
-    if (!q.forSelect && user && (await this.isSalesEmployee(user.emp_code))) {
+    if (!forPrintCards && !q.forSelect && user && (await this.isSalesEmployee(user.emp_code))) {
       and.push({ created_by: user.sub });
     }
     if (q.createdFrom || q.createdTo) {
@@ -399,6 +461,8 @@ export class ClubMembersService {
       if (q.createdTo) range.lte = new Date(`${q.createdTo}T23:59:59.999`);
       and.push({ created_at: range });
     }
+    const receptionToday = forPrintCards ? null : this.receptionTodayRange(user);
+    if (receptionToday) and.push({ created_at: receptionToday });
 
     const where: Prisma.club_membersWhereInput = { AND: and };
 
@@ -427,6 +491,72 @@ export class ClubMembersService {
     return paginated(rows.map((r) => this.mapMember(r)), total, q.page, q.pageSize);
   }
 
+  /** Small identity-only lookup for member pickers; never loads subscriptions or attendance. */
+  async lookup(q: string, branch?: string, user?: JwtUser, exactBranch = false, forMembershipOperation = false, forRefundTransfer = false) {
+    const search = q.trim();
+    if (search.length < 2) return [];
+
+    const and: Prisma.club_membersWhereInput[] = [
+      { is_deleted: false },
+      {
+        OR: [
+          { name: { contains: search } },
+          { member_code: { contains: search } },
+          { phone: { contains: search } },
+        ],
+      },
+    ];
+    const selectedBranchId = Number(branch);
+    if (Number.isInteger(selectedBranchId) && selectedBranchId > 0) {
+      if (forRefundTransfer) await assertClubOperationBranch(this.branchScope, this.branchGroups, user, selectedBranchId);
+      else this.assertBranchAccess(user, selectedBranchId);
+      if (exactBranch) {
+        and.push({ branch_id: selectedBranchId });
+      } else {
+        const siblings = await this.branchGroups.siblingBranchIds(selectedBranchId);
+        const compatible = forMembershipOperation
+          ? [...new Set([...siblings, ...clubMemberIdentityBranchIds(selectedBranchId)])].sort((a, b) => a - b)
+          : siblings;
+        and.push({ branch_id: { in: compatible } });
+      }
+    } else {
+      const scope = forRefundTransfer ? await clubOperationBranchIds(this.branchScope, this.branchGroups, user) : this.branchScope.resolveListFilter(user, null);
+      if (scope !== null) and.push({ branch_id: { in: scope } });
+    }
+    const audience = this.branchScope.memberGenderFilter(user);
+    if (audience) and.push({ gender: audience });
+    const receptionToday = forMembershipOperation || forRefundTransfer ? null : this.receptionTodayRange(user);
+    if (receptionToday) and.push({ created_at: receptionToday });
+
+    const select = { id: true, member_code: true, name: true, phone: true, gender: true, branch_id: true } as const;
+    const partialWhere: Prisma.club_membersWhereInput = { AND: and };
+    const exactCodeWhere: Prisma.club_membersWhereInput = { AND: [...and, { member_code: { equals: search } }] };
+    const exactIdentityWhere: Prisma.club_membersWhereInput = { AND: [...and, { OR: [{ phone: { equals: search } }, { name: { equals: search } }] }] };
+    const lookupOptions = { select, orderBy: { name: 'asc' as const }, take: 20 };
+    type LookupRow = Pick<club_members, 'id' | 'member_code' | 'name' | 'phone' | 'gender' | 'branch_id'>;
+    const findMatches = async (where: Prisma.club_membersWhereInput): Promise<LookupRow[]> => this.prisma.club_members.findMany({ ...lookupOptions, where });
+    // A prefix like B868 may have more than twenty matches. Fetch the exact code
+    // independently with the same access filters so alphabetical truncation cannot hide it.
+    const [partialMatches, exactCodeMatches, exactIdentityMatches] = await Promise.all([
+      findMatches(partialWhere),
+      findMatches(exactCodeWhere),
+      findMatches(exactIdentityWhere),
+    ]);
+    const queryLower = search.toLowerCase();
+    const identityRank = (row: LookupRow) => row.phone === search ? 0 : row.name.toLowerCase() === queryLower ? 1 : 2;
+    exactIdentityMatches.sort((a, b) => identityRank(a) - identityRank(b));
+    const rows = [...new Map([...exactCodeMatches, ...exactIdentityMatches, ...partialMatches].map((row) => [row.id, row])).values()].slice(0, 20);
+
+    return rows.map((row) => ({
+      id: row.id,
+      memberCode: row.member_code,
+      name: row.name,
+      phone: row.phone,
+      gender: row.gender,
+      branchId: row.branch_id,
+    }));
+  }
+
   /** Members for a physical barcode print run.  Codes are compared exactly as stored. */
   async barcodeRange(codeFrom: string, codeTo: string, user?: JwtUser) {
     const from = codeFrom?.trim();
@@ -451,31 +581,80 @@ export class ClubMembersService {
     return { data: rows.map((row) => this.mapMember(row)), total: rows.length, capped: rows.length === 500 };
   }
 
-  async statistics(user?: JwtUser) {
-    const scope = this.branchScope.resolveListFilter(user, null);
-    const branchWhere: Prisma.club_membersWhereInput =
-      scope === null ? {} : { branch_id: { in: scope } };
+  async statistics(q: Partial<ListClubMembersDto> = {}, user?: JwtUser) {
+    const and: Prisma.club_membersWhereInput[] = [{ is_deleted: false }];
+    if (q.search?.trim()) {
+      const s = q.search.trim();
+      and.push({ OR: [{ name: { contains: s } }, { member_code: { contains: s } }, { phone: { contains: s } }] });
+    }
+    if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) and.push({ branch_id: { in: scope } });
+    if (q.status === 'active') and.push({ is_active: true });
+    if (q.status === 'inactive') and.push({ is_active: false });
     const audience = this.branchScope.memberGenderFilter(user);
-    const memberWhere: Prisma.club_membersWhereInput = {
-      is_deleted: false,
-      ...branchWhere,
-      ...(audience ? { gender: audience } : {}),
-    };
-    const total = await this.prisma.club_members.count({ where: memberWhere });
-
+    if (audience) and.push({ gender: audience });
+    else if (q.gender && q.gender !== 'all') and.push({ gender: q.gender as 'male' | 'female' });
+    if (!q.forSelect && user && (await this.isSalesEmployee(user.emp_code))) and.push({ created_by: user.sub });
+    if (q.createdFrom || q.createdTo) {
+      const range: { gte?: Date; lte?: Date } = {};
+      if (q.createdFrom) range.gte = new Date(`${q.createdFrom}T00:00:00`);
+      if (q.createdTo) range.lte = new Date(`${q.createdTo}T23:59:59.999`);
+      and.push({ created_at: range });
+    }
+    const receptionToday = this.receptionTodayRange(user);
+    if (receptionToday) and.push({ created_at: receptionToday });
+    const memberWhere: Prisma.club_membersWhereInput = { AND: and };
     const today = localDateString();
-    const activeSubs = await this.prisma.club_subscriptions.findMany({
-      where: {
-        member_id: { not: null },
-        member: memberWhere,
-        OR: [{ status: 'active' }, { subscription_end_date: { gte: today } }],
-      },
-      select: { member_id: true },
-      distinct: ['member_id'],
-    });
+    const [total, memberActive, memberInactive, activeSubs] = await Promise.all([
+      this.prisma.club_members.count({ where: memberWhere }),
+      this.prisma.club_members.count({ where: { AND: [...and, { is_active: true }] } }),
+      this.prisma.club_members.count({ where: { AND: [...and, { is_active: false }] } }),
+      this.prisma.club_subscriptions.findMany({
+        where: {
+          member_id: { not: null },
+          member: memberWhere,
+          OR: [{ status: 'active' }, { subscription_end_date: { gte: today } }],
+        },
+        select: { member_id: true },
+        distinct: ['member_id'],
+      }),
+    ]);
     const active = activeSubs.length;
 
-    return { total, active, inactive: total - active };
+    return { total, memberActive, memberInactive, active, inactive: total - active };
+  }
+
+  /** Today's birthdays — branch-scoped per user. System admin can filter by branchId. */
+  async birthdaysToday(user?: JwtUser, branchId?: number): Promise<Array<{
+    id: number; memberCode: string; name: string; phone: string | null;
+    gender: 'male' | 'female'; branchId: number; dateOfBirth: string;
+  }>> {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const scope = this.branchScope.resolveListFilter(user, branchId ? String(branchId) : null);
+    const audience = this.branchScope.memberGenderFilter(user);
+    const members = await this.prisma.club_members.findMany({
+      where: {
+        is_deleted: false,
+        date_of_birth: { not: null },
+        ...(scope !== null ? { branch_id: { in: scope } } : branchId ? { branch_id: branchId } : {}),
+        ...(audience ? { gender: audience } : {}),
+      },
+      select: { id: true, member_code: true, name: true, phone: true, gender: true, branch_id: true, date_of_birth: true },
+      orderBy: { name: 'asc' },
+    });
+    return members
+      .filter(m => {
+        if (!m.date_of_birth) return false;
+        const dob = new Date(m.date_of_birth);
+        return dob.getMonth() + 1 === month && dob.getDate() === day;
+      })
+      .map(m => ({
+        id: m.id, memberCode: m.member_code, name: m.name, phone: m.phone,
+        gender: m.gender as 'male' | 'female', branchId: m.branch_id, dateOfBirth: m.date_of_birth as string,
+      }));
   }
 
   /** Personal salesperson summary. Ownership and branch scope are both server-derived. */
@@ -618,7 +797,7 @@ export class ClubMembersService {
     }
     this.assertBranchAccess(user, branchId);
     const duplicates = await findMemberDuplicates(this.prisma, {
-      branchId,
+      branchId: canonicalClubMemberBranchId(branchId),
       phone: query.phone,
       cardNumber: query.cardNumber,
       excludeMemberId: query.excludeMemberId,
@@ -636,12 +815,12 @@ export class ClubMembersService {
       throw new BadRequestException('الفرع مطلوب');
     }
     this.assertBranchAccess(user, resolvedBranchId);
-    const code = await this.generateMemberCode(resolvedBranchId);
+    const code = await this.generateMemberCode(canonicalClubMemberBranchId(resolvedBranchId));
     return { memberCode: code };
   }
 
   /**
-   * Generate a member code continuing the legacy branch sequence (e.g. A012254 after A012253).
+   * Generate a member code continuing the branch sequence (e.g. A12254 after A12253).
    * Uses a MySQL advisory lock to serialize concurrent code generation.
    */
   private async generateMemberCode(branchId: number): Promise<string> {
@@ -671,9 +850,9 @@ export class ClubMembersService {
     }
   }
 
-  /** Unique temporary password for a new member; returned once in generatedCredentials. */
-  private defaultAppPassword(): string {
-    return randomBytes(9).toString('base64url');
+  /** The member phone is the configured initial mobile-app password. */
+  private defaultAppPassword(phone: string): string {
+    return phone;
   }
 
   /** Mobile app login for gym members — stored in api_users, not HR users. */
@@ -684,7 +863,7 @@ export class ClubMembersService {
     const phone = normalizePhoneForStorage(dto.phone ?? '');
     if (!phone) return null;
 
-    const plaintextPassword = this.defaultAppPassword();
+    const plaintextPassword = this.defaultAppPassword(phone);
     const existing = await tx.api_users.findFirst({ where: { user_phone: phone } });
     if (existing) {
       const otherMember = await tx.club_members.findFirst({
@@ -714,14 +893,101 @@ export class ClubMembersService {
     return { username: phone, plaintextPassword, appUserId: appUser.user_id };
   }
 
-  async findOne(id: number, user?: JwtUser) {
+  async findOne(id: number, user?: JwtUser, forMembershipOperation = false, forRefundTransfer = false) {
     const row = await this.prisma.club_members.findFirst({
       where: { id, is_deleted: false },
       include: { membership_type: { select: { id: true, name: true, price: true, duration_days: true } } },
     });
     if (!row) throw new NotFoundException('العضو غير موجود');
-    this.assertMemberAccess(user, row);
+    if (forRefundTransfer) {
+      await assertClubOperationBranch(this.branchScope, this.branchGroups, user, row.branch_id);
+    } else if (!this.branchScope.isBranchAllowed(user, row.branch_id)) {
+      const operationBranchId = Number(user?.branch ?? 0);
+      const compatibleBranchIds = await this.branchGroups.siblingBranchIds(operationBranchId);
+      if (!operationBranchId || !(compatibleBranchIds.includes(row.branch_id) || (forMembershipOperation && shareClubMemberIdentity(row.branch_id, operationBranchId)))) {
+        throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+      }
+    }
+    if (!this.branchScope.isMemberGenderAllowed(user, row.gender)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
+    }
+    const receptionOnly = user?.level !== 1 && /(reception|ريسيبشن|استقبال)/i.test(user?.job_title ?? '');
+    if (!forMembershipOperation && !forRefundTransfer && receptionOnly && localDateString(row.created_at) !== localDateString()) {
+      throw new ForbiddenException('موظف الاستقبال يمكنه الوصول إلى أعضاء اليوم فقط');
+    }
     return this.mapMember(row);
+  }
+
+  /** Operational member profile. Authorization happens before every related query. */
+  async memberWorkspace(id: number, user?: JwtUser) {
+    const member = await this.findOne(id, user);
+    const [subscriptions, lockerSubscriptions, pointRows] = await Promise.all([
+      this.prisma.club_subscriptions.findMany({
+        where: { member_id: id },
+        orderBy: [{ registration_date: 'desc' }, { id: 'desc' }],
+        select: {
+          id: true, member_id: true, subscription_number: true, subscription_type: true,
+          registration_date: true, subscription_start_date: true, subscription_end_date: true,
+          subscription_value: true, paid_amount: true, remaining_amount: true, discount_value: true,
+          status: true, is_linked_to_sessions: true, sessions_count: true, sessions_used: true,
+        },
+      }),
+      this.prisma.club_locker_subscriptions.findMany({
+        where: { member_id: id },
+        orderBy: [{ subscription_start_date: 'desc' }, { id: 'desc' }],
+        select: {
+          id: true, member_id: true, subscription_number: true, subscription_start_date: true,
+          subscription_end_date: true, paid_amount: true, status: true,
+          locker: { select: { locker_number: true } },
+          type: { select: { name: true } },
+        },
+      }),
+      this.prisma.club_member_point_transactions.findMany({
+        where: { member_id: id, is_deleted: false },
+        select: { points: true },
+      }),
+    ]);
+
+    const mappedSubscriptions = subscriptions.map((row) => ({
+      id: row.id,
+      memberId: row.member_id,
+      subscriptionNumber: row.subscription_number,
+      subscriptionType: row.subscription_type,
+      registrationDate: row.registration_date,
+      startDate: row.subscription_start_date,
+      endDate: row.subscription_end_date,
+      subscriptionValue: toNum(row.subscription_value),
+      paidAmount: toNum(row.paid_amount),
+      remainingAmount: toNum(row.remaining_amount),
+      discountValue: toNum(row.discount_value),
+      status: row.status,
+      isLinkedToSessions: row.is_linked_to_sessions,
+      sessionsCount: row.sessions_count,
+      sessionsUsed: row.sessions_used,
+    }));
+    const mappedLockerSubscriptions = lockerSubscriptions.map((row) => ({
+      id: row.id,
+      memberId: row.member_id,
+      subscriptionNumber: row.subscription_number,
+      startDate: row.subscription_start_date,
+      endDate: row.subscription_end_date,
+      paidAmount: toNum(row.paid_amount),
+      status: row.status,
+      lockerNumber: row.locker?.locker_number ?? null,
+      subscriptionType: row.type?.name ?? null,
+    }));
+
+    return {
+      member,
+      summary: {
+        subscriptionCount: mappedSubscriptions.length,
+        totalPaid: mappedSubscriptions.reduce((sum, row) => sum + row.paidAmount, 0),
+        totalRemaining: mappedSubscriptions.reduce((sum, row) => sum + row.remainingAmount, 0),
+        pointsBalance: pointRows.reduce((sum, row) => sum + row.points, 0),
+      },
+      subscriptions: mappedSubscriptions,
+      lockerSubscriptions: mappedLockerSubscriptions,
+    };
   }
 
   /** Historical and new point movements are append-only; the balance is derived, never edited. */
@@ -878,6 +1144,7 @@ export class ClubMembersService {
     }
     await this.validateMemberInput(dto);
     this.assertBranchAccess(user, dto.branchId);
+    dto.branchId = canonicalClubMemberBranchId(dto.branchId);
     if (!this.branchScope.isMemberGenderAllowed(user, dto.gender)) {
       throw new ForbiddenException('لا تملك صلاحية إنشاء عضو في هذا القسم');
     }

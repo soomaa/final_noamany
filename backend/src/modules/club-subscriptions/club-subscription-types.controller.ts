@@ -26,23 +26,19 @@ export class ClubSubscriptionTypesController {
     @CurrentUser() user: JwtUser,
     @Query('isSpecialOffer') isSpecialOffer?: string,
     @Query('branchId') branchId?: string,
+    @Query('includeInactive') includeInactive?: string,
   ) {
     return this.service.listActive(
       isSpecialOffer,
       user,
       branchId && branchId !== 'all' ? Number(branchId) : undefined,
+      includeInactive === 'true',
     );
   }
 
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
     return this.service.findOne(id, user);
-  }
-
-  @Get(':id/usage')
-  @RequiresPermission('club.subscriptions:update')
-  usage(@Param('id', ParseIntPipe) id: number) {
-    return this.service.usage(id);
   }
 
   @Post()
@@ -59,12 +55,6 @@ export class ClubSubscriptionTypesController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.service.update(id, body, user);
-  }
-
-  @Put(':id/active')
-  @RequiresPermission('club.subscriptions:update')
-  setActive(@Param('id', ParseIntPipe) id: number, @Body('isActive') isActive: boolean) {
-    return this.service.setActive(id, Boolean(isActive));
   }
 
   @Delete(':id')

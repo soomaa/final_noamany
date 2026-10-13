@@ -46,9 +46,10 @@ export function StatusBadge({ status, label, className }: StatusBadgeProps) {
   );
 }
 
-export function GenderBadge({ gender }: { gender: 1 | 2 | number | null }) {
+export function GenderBadge({ gender }: { gender: 1 | 2 | 3 | number | null }) {
   const { t } = useLocale();
   if (gender === 1) return <span className="text-xs font-medium text-blue-600 dark:text-blue-400">{t('gender.men')}</span>;
   if (gender === 2) return <span className="text-xs font-medium text-pink-600 dark:text-pink-400">{t('gender.women')}</span>;
+  if (gender === 3) return <span className="text-xs font-medium text-primary">{t('shared.all')}</span>;
   return <span className="text-xs text-muted-foreground">—</span>;
 }

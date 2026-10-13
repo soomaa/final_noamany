@@ -36,7 +36,7 @@ interface EmployeeProfile {
   qsm_n: string | null;
   mosma_wazefy_n: string | null;
   employee_type: 0 | 1 | 2;
-  emp_type: 1 | 2;
+  emp_type: 1 | 2 | 3;
   gender: number | null;
   birth_date: string | null;
   email: string | null;

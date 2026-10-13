@@ -22,6 +22,8 @@ export interface JournalInput {
   /** Unique business key per posting event (receipt no / refund invoice / transfer id). Falls back
    *  to subscriptionNumber, which is only safe for the one-off initial subscription posting. */
   sourceDocId?: string;
+  /** The chart was verified before the caller opened its database transaction. */
+  chartReady?: boolean;
 }
 
 @Injectable()
@@ -34,6 +36,14 @@ export class ClubSubscriptionAccountingService {
 
   private paymentKey(method?: string): string {
     return this.moduleLedger.paymentKeyFromString(method);
+  }
+
+  /**
+   * Chart seeding can require many independent lookups. Run it before a customer transaction so
+   * a subscription does not hold its write transaction open while infrastructure is prepared.
+   */
+  async prepareForJournal(): Promise<void> {
+    await this.moduleLedger.ensureChart();
   }
 
   /**
@@ -111,6 +121,25 @@ export class ClubSubscriptionAccountingService {
     await this.ledger.reverseEntry(entry.id, reason, postedBy ?? 0, tx);
   }
 
+  async reverseRefundEntry(
+    sourceDocId: string,
+    reason: string,
+    postedBy: number,
+    tx: Tx,
+  ): Promise<void> {
+    const entry = await tx.acc_journal_entries.findFirst({
+      where: {
+        source_module: 'club',
+        source_doc_type: 'refund',
+        source_doc_id: sourceDocId,
+        status: 'posted',
+      },
+      orderBy: { id: 'desc' },
+    });
+    if (!entry) throw new BadRequestException('القيد المالي للمسترد غير موجود أو سبق عكسه');
+    await this.ledger.reverseEntry(entry.id, reason, postedBy, tx);
+  }
+
   private sourceDocType(kind: string): string {
     switch (kind) {
       case 'payment':
@@ -171,6 +200,7 @@ export class ClubSubscriptionAccountingService {
         sourceDocType: this.sourceDocType(kind),
         lines,
         createdBy: input.createdBy,
+        chartReady: input.chartReady,
       },
       tx,
     );

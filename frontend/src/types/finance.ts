@@ -57,6 +57,14 @@ export interface ExpenseRow {
   taxAmount?: number | null;
   notes?: string | null;
   branchId?: number | null;
+  /** نطاق الجنس للمصروف (رجالي/حريمي) */
+  genderScope?: 'male' | 'female' | null;
+  /** معرف المصروف الأب (عند التوزيع بالنسب) */
+  parentId?: number | null;
+  /** نسبة هذا السجل من إجمالي المصروف المشترك */
+  nesba?: number | null;
+  /** القيمة الإجمالية قبل التوزيع */
+  mainValue?: number | null;
 }
 
 export interface ExpenseFormPayload {
@@ -73,6 +81,10 @@ export interface ExpenseFormPayload {
   taxAmount?: number;
   notes?: string;
   branchId?: number;
+  genderScope?: 'male' | 'female';
+  hasPercentage?: boolean;
+  malePercentage?: number;
+  femalePercentage?: number;
 }
 
 export interface RevenueRow {

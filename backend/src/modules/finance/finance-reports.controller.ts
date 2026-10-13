@@ -16,13 +16,19 @@ import {
   FinanceDashboardQueryDto,
   ProfitLossQueryDto,
   RevenueReportsQueryDto,
+  DailyClosingQueryDto,
+  TargetReportQueryDto,
 } from "./dto/finance.dto";
+import { DailyClosingTargetService } from './daily-closing-target.service';
 import { FinanceReportsService } from "./finance-reports.service";
 
 @UseGuards(JwtAuthGuard)
 @Controller("finance")
 export class FinanceReportsController {
-  constructor(private readonly service: FinanceReportsService) {}
+  constructor(
+    private readonly service: FinanceReportsService,
+    private readonly dailyClosingTarget: DailyClosingTargetService,
+  ) {}
 
   @Get("disbursement-orders")
   @RequiresPermission("financial-reports.reports:view")
@@ -69,6 +75,24 @@ export class FinanceReportsController {
     return this.service.revenueReports(query, user);
   }
 
+  @Get('daily-closing')
+  @RequiresPermission('financial-reports.daily_closing:view')
+  dailyClosing(
+    @Query() query: DailyClosingQueryDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.dailyClosingTarget.dailyClosing(query, user);
+  }
+
+  @Get('target-report')
+  @RequiresPermission('financial-reports.target:view')
+  targetReport(
+    @Query() query: TargetReportQueryDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.dailyClosingTarget.targetReport(query, user);
+  }
+
   @Get("analysis")
   @RequiresPermission(
     "financial-reports.analysis:view",
@@ -78,7 +102,7 @@ export class FinanceReportsController {
     @Query() query: FinanceAnalysisQueryDto,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.service.analysis(query, user);
+    return this.service.monthlyAnalysis(query, user);
   }
 
   @Get("profit-loss")

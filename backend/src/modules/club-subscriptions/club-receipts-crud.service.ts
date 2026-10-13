@@ -21,12 +21,6 @@ import {
   ListClubReceiptsDto,
   UpdateClubReceiptDto,
 } from './dto/club-receipts.dto';
-import { receiptBusinessBranchWhere, receiptMemberAudienceWhere } from './receipt-business-scope';
-import { assertClubAccountingDayOpen } from './daily-close-lock.util';
-
-type ReceiptSubscriptionWithMember = Prisma.club_subscriptionsGetPayload<{
-  include: { member: { select: { gender: true; is_deleted: true } } };
-}>;
 
 @Injectable()
 export class ClubReceiptsCrudService {
@@ -39,8 +33,15 @@ export class ClubReceiptsCrudService {
 
   private receiptScopeWhere(user?: JwtUser): Prisma.club_receiptsWhereInput {
     const allowed = this.branchScope.allowedBranchIds(user);
-    const gender = this.branchScope.memberGenderFilter?.(user) ?? null;
-    return { AND: [receiptBusinessBranchWhere(allowed), receiptMemberAudienceWhere(gender)] };
+    if (allowed === null) return {};
+    return {
+      OR: [
+        { branch_id: { in: allowed } },
+        { subscription: { branch_id: { in: allowed } } },
+        { locker_subscription: { main_branch_id: { in: allowed } } },
+        { member: { branch_id: { in: allowed } } },
+      ],
+    };
   }
 
   private assertReceiptAccess(
@@ -62,28 +63,6 @@ export class ClubReceiptsCrudService {
     }
   }
 
-  private assertReceiptAudience(
-    user: JwtUser | undefined,
-    receipt: {
-      subscription?: { member?: { gender: string | null; is_deleted: boolean } | null } | null;
-      locker_subscription?: { member?: { gender: string | null; is_deleted: boolean } | null } | null;
-      member?: { gender: string | null; is_deleted: boolean } | null;
-    },
-  ) {
-    const audience = this.branchScope.memberGenderFilter?.(user) ?? null;
-    if (!audience) return;
-    // The relation itself establishes authority. Never fall back to a direct member when a
-    // linked subscription/locker exists but its canonical member is missing or deleted.
-    const member = receipt.subscription != null
-      ? receipt.subscription.member
-      : receipt.locker_subscription != null
-        ? receipt.locker_subscription.member
-        : receipt.member;
-    if (!member || member.is_deleted || member.gender !== audience) {
-      throw new ForbiddenException('لا تملك صلاحية الوصول إلى بيانات هذا القسم');
-    }
-  }
-
   private mapReceipt(r: {
     id: number;
     receipt_number: string;
@@ -91,6 +70,7 @@ export class ClubReceiptsCrudService {
     locker_subscription_id?: number | null;
     member_id: number | null;
     member_name: string;
+    branch_id?: number | null;
     amount: unknown;
     type: string | null;
     payment_method: string | null;
@@ -108,6 +88,7 @@ export class ClubReceiptsCrudService {
       lockerSubscriptionId: r.locker_subscription_id ?? null,
       memberId: r.member_id,
       memberName: r.member_name,
+      branchId: r.branch_id ?? null,
       amount: toNum(r.amount),
       type: r.type,
       paymentMethod: r.payment_method,
@@ -126,6 +107,12 @@ export class ClubReceiptsCrudService {
     };
   }
 
+  /** Returns the next sequential receipt number (preview — not reserved). */
+  async nextNumber(): Promise<{ number: string }> {
+    const number = await this.receipts.nextReceiptNumber();
+    return { number };
+  }
+
   async list(q: ListClubReceiptsDto, user?: JwtUser) {
     const and: Prisma.club_receiptsWhereInput[] = [this.receiptScopeWhere(user)];
     const where: Prisma.club_receiptsWhereInput = {};
@@ -135,7 +122,12 @@ export class ClubReceiptsCrudService {
     // A receipt can inherit its business branch from the subscription/member;
     // filtering only the nullable receipt header would omit valid historical rows.
     if (q.branchId != null) {
-      Object.assign(where, receiptBusinessBranchWhere([q.branchId]));
+      where.OR = [
+        { branch_id: q.branchId },
+        { subscription: { branch_id: q.branchId } },
+        { locker_subscription: { main_branch_id: q.branchId } },
+        { member: { branch_id: q.branchId } },
+      ];
     }
     if (q.startDate && q.endDate && q.endDate < q.startDate) {
       throw new BadRequestException('تاريخ النهاية يجب أن يكون بعد تاريخ البداية');
@@ -167,25 +159,14 @@ export class ClubReceiptsCrudService {
     const r = await this.prisma.club_receipts.findUnique({
       where: { id },
       include: {
-        subscription: {
-          select: {
-            branch_id: true,
-            member: { select: { gender: true, is_deleted: true } },
-          },
-        },
-        locker_subscription: {
-          select: {
-            main_branch_id: true,
-            member: { select: { gender: true, is_deleted: true } },
-          },
-        },
-        member: { select: { branch_id: true, gender: true, is_deleted: true } },
+        subscription: { select: { branch_id: true } },
+        locker_subscription: { select: { main_branch_id: true } },
+        member: { select: { branch_id: true } },
         payments: { select: { method: true, amount: true }, orderBy: { id: 'asc' } },
       },
     });
     if (!r) throw new NotFoundException('الإيصال غير موجود');
     this.assertReceiptAccess(user, r);
-    this.assertReceiptAudience(user, r);
     const {
       subscription: _subscription,
       locker_subscription: _lockerSubscription,
@@ -196,47 +177,37 @@ export class ClubReceiptsCrudService {
   }
 
   async create(body: CreateClubReceiptDto, user?: JwtUser) {
-    let directMember: { branch_id: number; gender: string | null; is_deleted: boolean } | null = null;
     if (body.memberId) {
       await assertMemberExists(this.prisma, body.memberId).catch((e) => {
         throw new BadRequestException(e instanceof Error ? e.message : 'العضو غير موجود');
       });
       const member = await this.prisma.club_members.findUnique({
         where: { id: body.memberId },
-        select: { branch_id: true, gender: true, is_deleted: true },
+        select: { branch_id: true },
       });
       if (!member || !this.branchScope.isBranchAllowed(user, member.branch_id)) {
         throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
       }
-      const requiredGender = this.branchScope.memberGenderFilter?.(user) ?? null;
-      if (requiredGender && (member.is_deleted || member.gender !== requiredGender)) throw new ForbiddenException('لا تملك صلاحية الوصول إلى بيانات هذا القسم');
-      directMember = member;
     }
 
     // A receipt affects a subscription's paid/remaining ONLY when subscriptionId is explicitly
     // provided — no auto-attach to the member's latest subscription.
     const subscriptionId = body.subscriptionId;
-    let sub: ReceiptSubscriptionWithMember | null = null;
+    let sub: Awaited<ReturnType<typeof this.prisma.club_subscriptions.findUnique>> = null;
     if (subscriptionId != null) {
-      sub = await this.prisma.club_subscriptions.findUnique({
-        where: { id: subscriptionId },
-        include: { member: { select: { gender: true, is_deleted: true } } },
-      });
+      sub = await this.prisma.club_subscriptions.findUnique({ where: { id: subscriptionId } });
       if (!sub) throw new NotFoundException('الاشتراك غير موجود');
       if (!this.branchScope.isBranchAllowed(user, sub.branch_id)) {
         throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
       }
-      this.assertReceiptAudience(user, { subscription: sub });
-    }
-    if ((this.branchScope.memberGenderFilter?.(user) ?? null) && subscriptionId == null && !body.memberId) {
-      throw new ForbiddenException('لا يمكن إنشاء إيصال غير مرتبط بعضو داخل قسم محدد');
     }
 
     // Derive a branch for the GL posting: subscription's branch, else the member's branch, else
     // the branch the caller collected at (walk-in receipts have neither).
     let branchId = sub?.branch_id;
     if (branchId == null && body.memberId) {
-      branchId = directMember?.branch_id;
+      const mem = await this.prisma.club_members.findUnique({ where: { id: body.memberId } });
+      branchId = mem?.branch_id;
     }
     if (branchId == null && body.branchId != null) {
       if (!this.branchScope.isBranchAllowed(user, body.branchId)) {
@@ -250,31 +221,6 @@ export class ClubReceiptsCrudService {
     const receipt = await retryOnUniqueViolation(async () => {
       return this.prisma.$transaction(async (tx) => {
         let lockedSub = sub;
-        let lockedDirectMember = directMember;
-        if (subscriptionId == null && body.memberId != null) {
-          const locked = await tx.$queryRaw<{ id: number }[]>`
-            SELECT id FROM club_members
-            WHERE id = ${body.memberId}
-            FOR UPDATE
-          `;
-          if (!locked.length) throw new NotFoundException('العضو غير موجود');
-          lockedDirectMember = await tx.club_members.findUnique({
-            where: { id: body.memberId },
-            select: { branch_id: true, gender: true, is_deleted: true },
-          });
-          if (
-            !lockedDirectMember ||
-            lockedDirectMember.is_deleted ||
-            !this.branchScope.isBranchAllowed(user, lockedDirectMember.branch_id)
-          ) {
-            throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
-          }
-          const requiredGender = this.branchScope.memberGenderFilter?.(user) ?? null;
-          if (requiredGender && lockedDirectMember.gender !== requiredGender) {
-            throw new ForbiddenException('لا تملك صلاحية الوصول إلى بيانات هذا القسم');
-          }
-          branchId = lockedDirectMember.branch_id;
-        }
         if (subscriptionId != null) {
           // Serialize manual receipts with every other write to this subscription. The cap is
           // recomputed from the receipt ledger after the row lock, never from a stale DTO/read.
@@ -284,15 +230,11 @@ export class ClubReceiptsCrudService {
             FOR UPDATE
           `;
           if (!locked.length) throw new NotFoundException('الاشتراك غير موجود');
-          lockedSub = await tx.club_subscriptions.findUnique({
-            where: { id: subscriptionId },
-            include: { member: { select: { gender: true, is_deleted: true } } },
-          });
+          lockedSub = await tx.club_subscriptions.findUnique({ where: { id: subscriptionId } });
           if (!lockedSub) throw new NotFoundException('الاشتراك غير موجود');
           if (!this.branchScope.isBranchAllowed(user, lockedSub.branch_id)) {
             throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
           }
-          this.assertReceiptAudience(user, { subscription: lockedSub });
 
           const collected = await tx.club_receipts.aggregate({
             where: { subscription_id: subscriptionId },
@@ -313,14 +255,6 @@ export class ClubReceiptsCrudService {
             throw new BadRequestException('مبلغ الإيصال يتجاوز المبلغ المتبقي');
           }
           branchId = lockedSub.branch_id;
-        }
-
-        if (branchId != null) {
-          await assertClubAccountingDayOpen(tx, {
-            date: body.receiptDate ?? localDateString(),
-            branchId,
-            gender: lockedSub?.member?.gender ?? lockedDirectMember?.gender ?? null,
-          });
         }
 
         const receiptNumber = await this.receipts.nextReceiptNumber(tx);

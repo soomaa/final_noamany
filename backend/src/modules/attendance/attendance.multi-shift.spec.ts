@@ -94,6 +94,51 @@ describe('AttendanceService legacy multi-shift selection', () => {
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
   });
 
+  it('uses the weekly slot after rollout and does not read legacy assignments', async () => {
+    const weeklyShift = {
+      id: 30,
+      title: 'weekly',
+      hdoor_from_time: '08:00 AM',
+      hdoor_to_time: '09:00 AM',
+      hdoor_khasm_from: '08:15 AM',
+      ensraf_from_time: '04:00 PM',
+      ensraf_to_time: '05:00 PM',
+      ensraf_khasm_from: '04:00 PM',
+    };
+    const prisma = {
+      employees: { findFirst: jest.fn().mockResolvedValue({ id: 7, emp_code: 1007, branch_id_fk: 1, emp_sign: '1' }) },
+      attendance_channels: { findMany: jest.fn().mockResolvedValue([]) },
+      attendance_rules: { findMany: jest.fn().mockResolvedValue([]) },
+      attendance_weekly_schedule_settings: { findUnique: jest.fn().mockResolvedValue({ enabled: true }) },
+      employee_weekly_schedules: { findFirst: jest.fn().mockResolvedValue({ slots: [{ weekday: 3, branch_id: 1, shift_id: 30 }] }) },
+      tbl_hdoor_dawms_emps: { findMany: jest.fn() },
+      tbl_hdodr_setting: { findMany: jest.fn(), findUnique: jest.fn().mockResolvedValue(weeklyShift) },
+      tbl_emps_shef_edafi: { findMany: jest.fn().mockResolvedValue([]) },
+      tbl_hdoor_emps_history: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({ hodoor_id: 902 }) },
+      tbl_hdoor_emps: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }) => ({ hodoor_id: 90, ...data })),
+        update: jest.fn().mockResolvedValue({ hodoor_id: 90 }),
+      },
+      $transaction: jest.fn(async (callback) => callback(prisma)),
+      $queryRaw: jest.fn().mockResolvedValue([{ acquired: 1 }]),
+    };
+    const service = new AttendanceService(prisma as never);
+
+    await expect(service.manualCheck(
+      { empCode: '1007', type: 'in', checkIn: '08:30 AM', channel: 'app' },
+      9,
+      1,
+      { actionDate: '2026-09-23', time: '08:30 AM' },
+    )).resolves.toEqual(expect.objectContaining({ id: 90, type: 'in' }));
+    expect(prisma.employee_weekly_schedules.findFirst).toHaveBeenCalled();
+    expect(prisma.tbl_hdoor_dawms_emps.findMany).not.toHaveBeenCalled();
+    expect(prisma.tbl_hdoor_emps.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ dwam_id_fk: 30, sheft_type: 0 }),
+    }));
+  });
+
   it('does not use the employee home branch to select an extra shift', async () => {
     const mainShift = {
       id: 10,

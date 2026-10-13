@@ -11,6 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { JwtUser } from '../../common/types/jwt-user';
 import {
@@ -23,6 +24,7 @@ import { LegalFilesService } from './legal-files.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('legal-files')
+@RequiresPermission('affairs.legal_files:view')
 export class LegalFilesController {
   constructor(private readonly legalFiles: LegalFilesService) {}
 
@@ -42,6 +44,7 @@ export class LegalFilesController {
   }
 
   @Post()
+  @RequiresPermission('affairs.legal_files:create')
   create(@Body() dto: CreateLegalFileDto, @CurrentUser() user: JwtUser) {
     return this.legalFiles.create(dto, user);
   }
@@ -56,11 +59,13 @@ export class LegalFilesController {
   }
 
   @Patch(':id')
+  @RequiresPermission('affairs.legal_files:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateLegalFileDto) {
     return this.legalFiles.update(id, dto);
   }
 
   @Delete(':id')
+  @RequiresPermission('affairs.legal_files:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.legalFiles.remove(id);
   }

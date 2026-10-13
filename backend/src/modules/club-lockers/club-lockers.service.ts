@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertDateOrder, assertOverpayCap } from '../../common/validators';
@@ -9,9 +9,13 @@ import { addDays, deriveSubStatus, toNum } from '../club-subscriptions/club-subs
 import { lockerNetDue } from '../club-fitness/club-fitness.utils';
 import { attachMemberBrief, loadMemberBriefMap } from '../club-members/club-member-brief.utils';
 import { ClubLockerAccountingService } from './club-locker-accounting.service';
+import { ClubPointsService } from '../club-points/club-points.service';
+import { ClubDiscountCodesService } from '../club-subscriptions/club-discount-codes.service';
 import { ListClubLockerSubscriptionsDto } from './dto/list-club-locker-subscriptions.dto';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { isReceptionEmployee } from '../../common/utils/reception-user.util';
+import { cairoDayRange } from '../../common/utils/cairo-day-range.util';
 
 const STATUS_MAP: Record<string, string> = {
   نشط: 'active',
@@ -22,12 +26,26 @@ const STATUS_MAP: Record<string, string> = {
   upcoming: 'upcoming',
 };
 
+type LockerInventorySnapshot = {
+  id: number;
+  lockerNumber: string;
+  isAvailable: boolean;
+  latestCustomerName: string | null;
+  latestCustomerPhone: string | null;
+  previousCustomerName: string | null;
+  previousCustomerPhone: string | null;
+  latestSubscriptionStartDate: string | null;
+  latestSubscriptionEndDate: string | null;
+};
+
 @Injectable()
 export class ClubLockersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly accounting: ClubLockerAccountingService,
     private readonly branchScope: BranchScopeService,
+    private readonly discountCodes: ClubDiscountCodesService,
+    private readonly points: ClubPointsService,
   ) {}
 
   async listLockers(query: {
@@ -35,14 +53,194 @@ export class ClubLockersService {
     subBranchId?: string;
     lockerNumber?: string;
     isAvailable?: string;
-  }) {
+  }, user?: JwtUser) {
     const where: Prisma.club_lockersWhereInput = {};
     if (query.mainBranchId) where.main_branch_id = Number(query.mainBranchId);
     if (query.subBranchId) where.sub_branch_id = Number(query.subBranchId);
     if (query.lockerNumber) where.locker_number = { contains: query.lockerNumber };
     if (query.isAvailable === 'true') where.is_available = true;
     if (query.isAvailable === 'false') where.is_available = false;
+    const scope = this.branchScope.resolveListFilter(user, query.mainBranchId ?? null);
+    if (scope !== null) where.main_branch_id = { in: scope };
     return this.prisma.club_lockers.findMany({ where, orderBy: { locker_number: 'asc' } });
+  }
+
+  /** Current inventory context: the latest and immediately preceding booking per locker. */
+  async inventorySnapshot(branchId: number, user: JwtUser): Promise<LockerInventorySnapshot[]> {
+    if (!Number.isInteger(branchId) || branchId <= 0) {
+      throw new BadRequestException('اختر فرعًا صالحًا لجرد اللوكر');
+    }
+    if (!this.branchScope.isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية هذا الفرع');
+    }
+
+    const lockers = await this.prisma.club_lockers.findMany({
+      where: { main_branch_id: branchId },
+      orderBy: { locker_number: 'asc' },
+      select: {
+        id: true,
+        locker_number: true,
+        is_available: true,
+        subscriptions: {
+          orderBy: [{ subscription_start_date: 'desc' }, { created_at: 'desc' }, { id: 'desc' }],
+          take: 2,
+          select: {
+            customer_name: true,
+            subscription_start_date: true,
+            subscription_end_date: true,
+            member: { select: { phone: true } },
+          },
+        },
+      },
+    });
+
+    const numberCollator = new Intl.Collator('ar', { numeric: true, sensitivity: 'base' });
+    return lockers.map((locker) => {
+      const latest: (typeof locker.subscriptions)[number] | undefined = locker.subscriptions[0];
+      const previous: (typeof locker.subscriptions)[number] | undefined = locker.subscriptions[1];
+      return {
+        id: locker.id,
+        lockerNumber: locker.locker_number,
+        isAvailable: locker.is_available,
+        latestCustomerName: latest?.customer_name ?? null,
+        latestCustomerPhone: latest?.member?.phone ?? null,
+        previousCustomerName: previous?.customer_name ?? null,
+        previousCustomerPhone: previous?.member?.phone ?? null,
+        latestSubscriptionStartDate: latest?.subscription_start_date ?? null,
+        latestSubscriptionEndDate: latest?.subscription_end_date ?? null,
+      };
+    }).sort((a, b) => numberCollator.compare(a.lockerNumber, b.lockerNumber));
+  }
+
+  async createInventoryReport(body: { branchId: number | string; employeeId?: number | string | null; notes?: string; items: { lockerId: number | string; observedStatus: string; notes?: string }[] }, user: JwtUser) {
+    const branchId = Number(body.branchId);
+    if (!branchId || !Array.isArray(body.items) || !body.items.length) throw new BadRequestException('يجب إدخال جرد لوكر واحد على الأقل');
+    const scope = this.branchScope.resolveListFilter(user, branchId);
+    if (scope !== null && !scope.includes(branchId)) throw new BadRequestException('لا تملك صلاحية هذا الفرع');
+    const lockerIds = body.items.map((x) => Number(x.lockerId)).filter((id) => id > 0);
+    if (!lockerIds.length) throw new BadRequestException('يجب تحديد لوكر واحد على الأقل');
+    const snapshots = await this.inventorySnapshot(branchId, user);
+    const snapshotById = new Map(snapshots.map((locker) => [locker.id, locker]));
+    if (lockerIds.some((id) => !snapshotById.has(id))) throw new BadRequestException('يوجد لوكر خارج الفرع المحدد');
+    const validStatuses = ['available', 'occupied', 'maintenance', 'missing'];
+    const items = body.items
+      .filter((x) => x.observedStatus && validStatuses.includes(x.observedStatus))
+      .map((x) => {
+        const snapshot = snapshotById.get(Number(x.lockerId))!;
+        return {
+          locker_id: Number(x.lockerId), observed_status: x.observedStatus, notes: x.notes?.trim() || null,
+          latest_customer_name: snapshot.latestCustomerName,
+          latest_customer_phone: snapshot.latestCustomerPhone,
+          previous_customer_name: snapshot.previousCustomerName,
+          previous_customer_phone: snapshot.previousCustomerPhone,
+          latest_subscription_start_date: snapshot.latestSubscriptionStartDate,
+          latest_subscription_end_date: snapshot.latestSubscriptionEndDate,
+        };
+      });
+    if (!items.length) throw new BadRequestException('يجب تحديد حالة لوكر واحد على الأقل');
+    const employeeId = body.employeeId ? Number(body.employeeId) : null;
+    return this.prisma.club_locker_inventory_reports.create({ data: { branch_id: branchId, employee_id: employeeId, notes: body.notes?.trim() || null, created_by: user.sub ?? null, items: { create: items } }, include: { items: { include: { locker: true } } } });
+  }
+
+  async listInventoryReports(branchId: string | undefined, user: JwtUser, fromDate?: string, toDate?: string) {
+    const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
+    const dateFilter: Prisma.club_locker_inventory_reportsWhereInput = {};
+    if (fromDate || toDate) {
+      dateFilter.created_at = {
+        ...(fromDate ? { gte: new Date(fromDate) } : {}),
+        ...(toDate ? { lte: new Date(toDate) } : {}),
+      };
+    }
+    const reports = await this.prisma.club_locker_inventory_reports.findMany({ where: { ...(branchId ? { branch_id: Number(branchId) } : {}), ...(scope !== null ? { branch_id: { in: scope } } : {}), ...dateFilter }, orderBy: { created_at: 'desc' }, include: { items: { include: { locker: true } } } });
+    const empIds = [...new Set(reports.map((r) => r.employee_id).filter((id): id is number => id != null))];
+    const employees = empIds.length ? await this.prisma.employees.findMany({ where: { id: { in: empIds } }, select: { id: true, employee: true } }) : [];
+    const empMap = new Map(employees.map((e) => [e.id, e.employee]));
+    return reports.map((r) => ({ ...r, employee_name: r.employee_id != null ? empMap.get(r.employee_id) ?? null : null }));
+  }
+
+  async deleteInventoryReport(id: number, user: JwtUser) {
+    const report = await this.prisma.club_locker_inventory_reports.findUnique({ where: { id } });
+    if (!report) throw new NotFoundException('التقرير غير موجود');
+    if (!this.branchScope.isBranchAllowed(user, report.branch_id)) throw new ForbiddenException('لا تملك صلاحية هذا الفرع');
+    await this.prisma.club_locker_inventory_reports.delete({ where: { id } });
+    return { success: true };
+  }
+
+  async updateInventoryReport(
+    id: number,
+    body: {
+      employeeId?: number | null;
+      notes?: string;
+      items?: { lockerId: number | string; observedStatus: string; notes?: string }[];
+    },
+    user: JwtUser,
+  ) {
+    const report = await this.prisma.club_locker_inventory_reports.findUnique({ where: { id }, include: { items: true } });
+    if (!report) throw new NotFoundException('التقرير غير موجود');
+    if (!this.branchScope.isBranchAllowed(user, report.branch_id)) throw new ForbiddenException('لا تملك صلاحية هذا الفرع');
+
+    const validStatuses = ['available', 'occupied', 'maintenance', 'missing'];
+    const editedItems = body.items === undefined
+      ? undefined
+      : body.items
+        .filter((item) => item.observedStatus && validStatuses.includes(item.observedStatus))
+        .map((item) => ({
+          locker_id: Number(item.lockerId),
+          observed_status: item.observedStatus,
+          notes: item.notes?.trim() || null,
+        }));
+
+    let savedItems: (typeof editedItems) = editedItems;
+    if (editedItems !== undefined) {
+      if (!editedItems.length) throw new BadRequestException('يجب تحديد حالة لوكر واحد على الأقل');
+      const lockerIds = editedItems.map((item) => item.locker_id);
+      if (lockerIds.some((lockerId) => !Number.isInteger(lockerId) || lockerId <= 0)) {
+        throw new BadRequestException('بيانات اللوكر غير صالحة');
+      }
+      if (new Set(lockerIds).size !== lockerIds.length) {
+        throw new BadRequestException('لا يمكن تكرار اللوكر في تقرير الجرد');
+      }
+      const lockers = await this.prisma.club_lockers.findMany({
+        where: { id: { in: lockerIds }, main_branch_id: report.branch_id },
+        select: { id: true },
+      });
+      if (lockers.length !== lockerIds.length) {
+        throw new BadRequestException('يوجد لوكر خارج فرع التقرير');
+      }
+      const existingByLocker = new Map(report.items.map((item) => [item.locker_id, item]));
+      const snapshots = await this.inventorySnapshot(report.branch_id, user);
+      const snapshotById = new Map(snapshots.map((locker) => [locker.id, locker]));
+      savedItems = editedItems.map((item) => {
+        const existing = existingByLocker.get(item.locker_id);
+        const snapshot = snapshotById.get(item.locker_id);
+        return {
+          ...item,
+          latest_customer_name: existing ? existing.latest_customer_name : snapshot?.latestCustomerName ?? null,
+          latest_customer_phone: existing ? existing.latest_customer_phone : snapshot?.latestCustomerPhone ?? null,
+          previous_customer_name: existing ? existing.previous_customer_name : snapshot?.previousCustomerName ?? null,
+          previous_customer_phone: existing ? existing.previous_customer_phone : snapshot?.previousCustomerPhone ?? null,
+          latest_subscription_start_date: existing ? existing.latest_subscription_start_date : snapshot?.latestSubscriptionStartDate ?? null,
+          latest_subscription_end_date: existing ? existing.latest_subscription_end_date : snapshot?.latestSubscriptionEndDate ?? null,
+        };
+      });
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      if (savedItems !== undefined) {
+        await tx.club_locker_inventory_report_items.deleteMany({ where: { report_id: id } });
+        await tx.club_locker_inventory_report_items.createMany({
+          data: savedItems.map((item) => ({ ...item, report_id: id })),
+        });
+      }
+      return tx.club_locker_inventory_reports.update({
+        where: { id },
+        data: {
+          ...(body.employeeId !== undefined ? { employee_id: body.employeeId ? Number(body.employeeId) : null } : {}),
+          ...(body.notes !== undefined ? { notes: body.notes?.trim() || null } : {}),
+        },
+        include: { items: { include: { locker: true } } },
+      });
+    });
   }
 
   private mapSubDetail(
@@ -180,10 +378,17 @@ export class ClubLockersService {
     return { success: true };
   }
 
-  async lockerStatistics() {
+  async lockerStatistics(user?: JwtUser) {
+    const branchScope = this.branchScope.resolveListFilter(user, null);
+    const category = this.branchScope.memberGenderFilter(user);
     const [lockers, subs] = await Promise.all([
-      this.prisma.club_lockers.findMany(),
-      this.prisma.club_locker_subscriptions.findMany(),
+      this.prisma.club_lockers.findMany({ where: branchScope === null ? {} : { main_branch_id: { in: branchScope } } }),
+      this.prisma.club_locker_subscriptions.findMany({
+        where: {
+          ...(branchScope === null ? {} : { main_branch_id: { in: branchScope } }),
+          ...(category ? { gender: category } : {}),
+        },
+      }),
     ]);
     let activeSubscriptions = 0;
     let expiredSubscriptions = 0;
@@ -213,6 +418,7 @@ export class ClubLockersService {
     return this.prisma.club_locker_subscription_types.create({
       data: {
         name: String(body.name),
+        branch_id: body.branchId != null && body.branchId !== '' ? Number(body.branchId) : null,
         meta_value: Number(body.metaValue),
         mta_value: Number(body.mtaValue ?? body.metaValue),
         days: Number(body.days),
@@ -229,6 +435,7 @@ export class ClubLockersService {
       where: { id },
       data: {
         ...(body.name != null ? { name: String(body.name) } : {}),
+        ...(body.branchId !== undefined ? { branch_id: body.branchId != null && body.branchId !== '' ? Number(body.branchId) : null } : {}),
         ...(body.metaValue != null ? { meta_value: Number(body.metaValue) } : {}),
         ...(body.mtaValue != null ? { mta_value: Number(body.mtaValue) } : {}),
         ...(body.days != null ? { days: Number(body.days) } : {}),
@@ -248,6 +455,8 @@ export class ClubLockersService {
   private mapSub(row: Record<string, unknown>) {
     const start = row.subscription_start_date as string;
     const end = row.subscription_end_date as string;
+    const lockerRel = row.locker as { locker_number?: string } | undefined;
+    const typeRel = row.type as { name?: string } | undefined;
     return {
       id: row.id,
       subscriptionNumber: row.subscription_number,
@@ -256,6 +465,7 @@ export class ClubLockersService {
       memberId: row.member_id,
       customerName: row.customer_name,
       subscriptionTypeId: row.subscription_type_id,
+      subscriptionTypeName: typeRel?.name ?? null,
       subscriptionDays: row.subscription_days,
       subscriptionStartDate: start,
       subscriptionEndDate: end,
@@ -264,6 +474,7 @@ export class ClubLockersService {
       discountValue: toNum(row.discount_value),
       paidAmount: toNum(row.paid_amount),
       lockerId: row.locker_id,
+      lockerNumber: lockerRel?.locker_number ?? null,
       paymentMethod: row.payment_method,
       gender: row.gender,
       recommendedEmployeeId: row.recommended_employee_id,
@@ -275,14 +486,8 @@ export class ClubLockersService {
 
   async listSubscriptions(q: ListClubLockerSubscriptionsDto, user?: JwtUser) {
     const and: Prisma.club_locker_subscriptionsWhereInput[] = [];
-    if (q.gender && q.gender !== 'male' && q.gender !== 'female') {
-      throw new BadRequestException('القسم غير صحيح');
-    }
-    const lockedAudience = this.branchScope.memberGenderFilter(user);
-    if (lockedAudience && q.gender && q.gender !== lockedAudience) {
-      throw new BadRequestException('لا يمكن تغيير قسم البيانات المسموح به');
-    }
-    const audience = lockedAudience ?? (q.gender as 'male' | 'female' | undefined);
+    // Restrict the desk list by registration day, regardless of rental start date.
+    if (isReceptionEmployee(user)) and.push({ created_at: cairoDayRange() });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -295,12 +500,21 @@ export class ClubLockersService {
     }
     if (q.mainBranchId) and.push({ main_branch_id: Number(q.mainBranchId) });
     if (q.subBranchId) and.push({ sub_branch_id: Number(q.subBranchId) });
+    if (q.memberId) and.push({ member_id: Number(q.memberId) });
     // Default a branch-scoped user to their allowed branches (locker branch = main_branch_id).
     const scope = this.branchScope.resolveListFilter(user, q.mainBranchId ?? null);
     if (scope !== null) and.push({ main_branch_id: { in: scope } });
-    if (audience) and.push({ member: { is_deleted: false, gender: audience } });
-    if (q.startDate) and.push({ subscription_end_date: { gte: q.startDate } });
-    if (q.endDate) and.push({ subscription_start_date: { lte: q.endDate } });
+    const category = this.branchScope.memberGenderFilter(user);
+    if (category) and.push({ gender: category });
+    else if (q.gender === 'male' || q.gender === 'female') and.push({ gender: q.gender });
+    if (q.dateFrom || q.dateTo) {
+      and.push({
+        subscription_start_date: {
+          ...(q.dateFrom ? { gte: q.dateFrom } : {}),
+          ...(q.dateTo ? { lte: q.dateTo } : {}),
+        },
+      });
+    }
 
     // Translate the status filter into a date-range predicate so it runs in the DB BEFORE pagination
     // — applying it in-memory to an already-paginated page corrupts both the page and the total.
@@ -324,9 +538,38 @@ export class ClubLockersService {
       }),
       this.prisma.club_locker_subscriptions.count({ where }),
     ]);
-    const memberMap = await loadMemberBriefMap(this.prisma, rows.map((r) => r.member_id));
+    const userIds = [...new Set(rows.map((r) => r.created_by).filter((id): id is number => id != null))];
+    const employeeIds = [...new Set(rows.map((r) => r.recommended_employee_id).filter((id): id is number => id != null))];
+    const [memberMap, users, employees] = await Promise.all([
+      loadMemberBriefMap(this.prisma, rows.map((r) => r.member_id)),
+      userIds.length
+        ? this.prisma.users.findMany({
+            where: { user_id: { in: userIds } },
+            select: { user_id: true, name: true },
+          })
+        : [],
+      employeeIds.length
+        ? this.prisma.employees.findMany({
+            where: { id: { in: employeeIds } },
+            select: { id: true, employee: true },
+          })
+        : [],
+    ]);
+    const userNameById = new Map<number, string | null>(
+      users.map((user) => [user.user_id, user.name ?? null] as const),
+    );
+    const employeeNameById = new Map<number, string | null>(
+      employees.map((employee) => [employee.id, employee.employee ?? null] as const),
+    );
     return paginated(
-      rows.map((r) => ({ ...this.mapSub(r), ...attachMemberBrief(r.member_id as number | null, memberMap) })),
+      rows.map((r) => ({
+        ...this.mapSub(r),
+        ...attachMemberBrief(r.member_id, memberMap),
+        bookedByName: r.created_by != null ? userNameById.get(r.created_by) ?? null : null,
+        recommendedEmployeeName: r.recommended_employee_id != null
+          ? employeeNameById.get(r.recommended_employee_id) ?? null
+          : null,
+      })),
       total,
       q.page,
       q.pageSize,
@@ -342,7 +585,8 @@ export class ClubLockersService {
         SELECT MAX(CAST(SUBSTRING(subscription_number, 5) AS UNSIGNED)) AS maxNum
         FROM club_locker_subscriptions WHERE subscription_number LIKE 'LOCK%'
       `;
-      const next = (rows[0]?.maxNum ?? 0) + 1;
+      // $queryRaw returns MySQL UNSIGNED aggregates as BigInt; coerce to Number before arithmetic.
+      const next = Number(rows[0]?.maxNum ?? 0) + 1;
       return `LOCK${String(next).padStart(6, '0')}`;
     } finally {
       await tx.$queryRaw`SELECT RELEASE_LOCK('club_locker_sub_number')`;
@@ -380,8 +624,35 @@ export class ClubLockersService {
     if (!type) throw new BadRequestException('نوع اشتراك اللوكر غير موجود');
 
     const subscriptionValue = toNum(type.meta_value);
-    const discountEnabled = Boolean(body.discountEnabled);
-    const discountValue = Number(body.discountValue ?? 0);
+    const memberId = body.memberId == null || body.memberId === '' ? null : Number(body.memberId);
+    const requestedPoints = body.pointsToRedeem == null || body.pointsToRedeem === '' ? null : Number(body.pointsToRedeem);
+    const memberGrantId = body.memberDiscountGrantId == null || body.memberDiscountGrantId === '' ? null : Number(body.memberDiscountGrantId);
+    if (body.discountCodeId != null && body.discountCodeId !== '') {
+      throw new BadRequestException('كود خصم اللوكر يجب أن يكون ممنوحًا لعضو محدد');
+    }
+    if (requestedPoints != null && (memberGrantId != null || body.discountEnabled === true || Number(body.discountValue ?? 0) > 0)) {
+      throw new BadRequestException('اختر خصم النقاط أو كود الخصم أو الخصم اليدوي، وليس أكثر من نوع واحد');
+    }
+    if (memberGrantId != null && (!Number.isInteger(memberGrantId) || memberGrantId < 1 || memberId == null)) {
+      throw new BadRequestException('كود خصم اللوكر يجب أن يكون ممنوحًا لعضو محدد');
+    }
+    if (requestedPoints != null && (!Number.isInteger(requestedPoints) || requestedPoints < 1 || memberId == null)) {
+      throw new BadRequestException('خصم نقاط اللوكر يتطلب عضوًا وعدد نقاط صحيحًا');
+    }
+    const resolvedDiscount = requestedPoints != null
+      ? await (async () => {
+          const account = await this.points.memberAccount(memberId!);
+          if (!account.conversion) throw new BadRequestException('إعداد تحويل النقاط غير موجود');
+          const quote = this.points.quoteRedemption({ availablePoints: account.points, requestedPoints, subscriptionValue, conversion: account.conversion });
+          return { discountEnabled: true, discountCodeId: null, discountPercentage: null, discountValue: quote.value };
+        })()
+      : memberGrantId != null
+        ? await this.discountCodes.resolveMemberGrant(memberGrantId, memberId!, subscriptionValue)
+        : { discountEnabled: Boolean(body.discountEnabled), discountCodeId: null, discountPercentage: null, discountValue: Number(body.discountValue ?? 0) };
+    const discountEnabled = resolvedDiscount.discountEnabled;
+    const discountValue = resolvedDiscount.discountValue;
+    const discountCodeId = resolvedDiscount.discountCodeId;
+    const discountPercentage = resolvedDiscount.discountPercentage;
     const netDue = lockerNetDue(subscriptionValue, discountEnabled, discountValue);
     const paidAmount = Number(body.paidAmount ?? 0);
     if (!Number.isFinite(paidAmount) || paidAmount < 0) {
@@ -414,6 +685,7 @@ export class ClubLockersService {
               registrationDate: start,
               createdBy: userId,
               subscriptionNumber: subNumber,
+              receiptNumber: body.receiptNumber != null ? String(body.receiptNumber) : undefined,
             })
           : body.receiptNumber
             ? String(body.receiptNumber)
@@ -424,7 +696,7 @@ export class ClubLockersService {
           subscription_number: subNumber,
           main_branch_id: Number(body.mainBranchId),
           sub_branch_id: Number(body.subBranchId),
-          member_id: body.memberId != null ? Number(body.memberId) : null,
+          member_id: memberId,
           customer_name: String(body.customerName),
           subscription_type_id: typeId,
           subscription_days: type.days,
@@ -432,6 +704,8 @@ export class ClubLockersService {
           subscription_end_date: end,
           subscription_value: subscriptionValue,
           discount_enabled: discountEnabled,
+          ...(discountCodeId != null ? { discount_code_id: discountCodeId } : {}),
+          ...(discountPercentage != null ? { discount_percentage: discountPercentage } : {}),
           discount_value: discountValue,
           paid_amount: paidAmount,
           locker_id: lockerId,
@@ -444,19 +718,43 @@ export class ClubLockersService {
         },
       });
 
+      const member = memberId != null
+        ? await tx.club_members.findUnique({ where: { id: memberId }, select: { member_code: true } })
+        : null;
+      if (requestedPoints != null && memberId != null) {
+        await this.points.redeemForSubscription({ memberId, memberCode: member?.member_code ?? null, subscriptionId: row.id, subscriptionTypeId: typeId, subscriptionTypeName: type.name, requestedPoints, subscriptionValue, publisher: userId }, tx);
+      }
+      if (memberGrantId != null && memberId != null) {
+        await this.discountCodes.consumeMemberGrant({ grantId: memberGrantId, memberId, memberCode: member?.member_code ?? null, subscriptionId: row.id, subscriptionValue, publisher: userId }, tx);
+      }
+
       await tx.club_lockers.update({ where: { id: lockerId }, data: { is_available: false } });
       return this.mapSub(row);
-    });
+    }, { maxWait: 10000, timeout: 15000 });
   }
 
   async updateSubscription(id: number, body: Record<string, unknown>) {
     const existing = await this.prisma.club_locker_subscriptions.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('اشتراك اللوكر غير موجود');
+    if (body.customerName !== undefined && !String(body.customerName).trim()) {
+      throw new BadRequestException('اسم العميل مطلوب');
+    }
+    if (body.gender !== undefined && body.gender !== 'male' && body.gender !== 'female') {
+      throw new BadRequestException('الفئة غير صالحة');
+    }
+    const employeeId = body.recommendedEmployeeId == null || body.recommendedEmployeeId === ''
+      ? null
+      : Number(body.recommendedEmployeeId);
+    if (body.recommendedEmployeeId !== undefined && employeeId !== null && (!Number.isInteger(employeeId) || employeeId < 1)) {
+      throw new BadRequestException('الموظف غير صالح');
+    }
     const start = body.subscriptionStartDate ? String(body.subscriptionStartDate) : existing.subscription_start_date;
     const end = body.subscriptionEndDate ? String(body.subscriptionEndDate) : existing.subscription_end_date;
     assertDateOrder(start, end);
-    const newStatus = deriveSubStatus(start, end);
-    const oldStatus = deriveSubStatus(existing.subscription_start_date, existing.subscription_end_date);
+    const newStatus = existing.status === 'frozen' ? 'frozen' : deriveSubStatus(start, end);
+    const oldStatus = existing.status === 'frozen'
+      ? 'frozen'
+      : deriveSubStatus(existing.subscription_start_date, existing.subscription_end_date);
 
     // A change to paid_amount must go through a receipt + GL, not a silent column write.
     // Only an INCREASE (an additional payment) is allowed here; a decrease requires a refund flow.
@@ -493,6 +791,8 @@ export class ClubLockersService {
         data: {
           ...(body.customerName != null ? { customer_name: String(body.customerName) } : {}),
           ...(body.memberId !== undefined ? { member_id: body.memberId != null ? Number(body.memberId) : null } : {}),
+          ...(body.gender !== undefined ? { gender: body.gender as 'male' | 'female' } : {}),
+          ...(body.recommendedEmployeeId !== undefined ? { recommended_employee_id: employeeId } : {}),
           ...(body.subscriptionStartDate != null ? { subscription_start_date: start } : {}),
           ...(body.subscriptionEndDate != null ? { subscription_end_date: end } : {}),
           ...(body.paidAmount != null ? { paid_amount: Number(body.paidAmount) } : {}),

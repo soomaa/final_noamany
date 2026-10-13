@@ -5,13 +5,17 @@ import { useClubT } from '@/hooks/use-club-t';
 import { api } from '@/lib/api';
 import { MEMBER_SEARCH_MIN_CHARS, searchClubMembers } from '@/lib/club-member-search';
 import { cn, toArabicDigits } from '@/lib/utils';
-import type { ClubMemberListItem } from '@/types/club';
-import type { ClubSearchHit } from '@/types/gym-ops';
+import type { ClubMemberListItem, ClubMemberLookupItem } from '@/types/club';
 
 interface MemberSearchComboboxProps {
   selectedMember: ClubMemberListItem | null;
   onSelect: (member: ClubMemberListItem) => void;
   onClear: () => void;
+  branchId?: number;
+  exactBranch?: boolean;
+  forMembershipOperation?: boolean;
+  forRefundTransfer?: boolean;
+  forMeasurementOperation?: boolean;
   disabled?: boolean;
   className?: string;
 }
@@ -20,15 +24,21 @@ export function MemberSearchCombobox({
   selectedMember,
   onSelect,
   onClear,
+  branchId,
+  exactBranch = false,
+  forMembershipOperation = false,
+  forRefundTransfer = false,
+  forMeasurementOperation = false,
   disabled,
   className,
 }: MemberSearchComboboxProps) {
   const ct = useClubT();
   const rootRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<ClubSearchHit[]>([]);
+  const [hits, setHits] = useState<ClubMemberLookupItem[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
@@ -42,31 +52,40 @@ export function MemberSearchCombobox({
   useEffect(() => {
     if (disabled || selectedMember) return;
     const trimmed = query.trim();
+    setLoading(false);
+    setSearchFailed(false);
     if (trimmed.length < MEMBER_SEARCH_MIN_CHARS) {
       setHits([]);
       setOpen(false);
       return;
     }
 
+    let cancelled = false;
     const timer = window.setTimeout(() => {
       void (async () => {
         setLoading(true);
         try {
-          const result = await searchClubMembers(trimmed);
+          const result = await searchClubMembers(trimmed, branchId, exactBranch, forMembershipOperation, forRefundTransfer, forMeasurementOperation);
+          if (cancelled) return;
           setHits(result.hits);
           setOpen(result.hits.length > 0);
           setActiveIndex(0);
         } catch {
+          if (cancelled) return;
           setHits([]);
           setOpen(false);
+          setSearchFailed(true);
         } finally {
-          setLoading(false);
+          if (!cancelled) setLoading(false);
         }
       })();
     }, 250);
 
-    return () => window.clearTimeout(timer);
-  }, [query, disabled, selectedMember]);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [query, disabled, selectedMember, branchId, exactBranch, forMembershipOperation, forRefundTransfer, forMeasurementOperation]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -76,14 +95,21 @@ export function MemberSearchCombobox({
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  const pickHit = async (hit: ClubSearchHit) => {
+  const pickHit = async (hit: ClubMemberLookupItem) => {
     setLoading(true);
     try {
-      const { data } = await api.get<ClubMemberListItem>(`/club-members/${hit.id}`);
+      const { data } = await api.get<ClubMemberListItem>(forMeasurementOperation
+        ? `/club-members/measurement-operation-member/${hit.id}` : forRefundTransfer
+        ? `/club-members/refund-transfer-member/${hit.id}` : forMembershipOperation
+        ? `/club-members/membership-operation-member/${hit.id}`
+        : `/club-members/${hit.id}`);
       onSelect(data);
       setQuery(`${data.name} · ${data.memberCode}`);
       setOpen(false);
       setHits([]);
+    } catch {
+      setSearchFailed(true);
+      setOpen(false);
     } finally {
       setLoading(false);
     }
@@ -94,6 +120,7 @@ export function MemberSearchCombobox({
     setQuery('');
     setHits([]);
     setOpen(false);
+    setSearchFailed(false);
   };
 
   const onInputChange = (value: string) => {
@@ -171,7 +198,9 @@ export function MemberSearchCombobox({
                 onClick={() => void pickHit(hit)}
               >
                 <span className="font-medium">{hit.name}</span>
-                <span className="nums text-xs text-muted-foreground font-mono">{hit.memberCode}</span>
+                <span className="nums text-xs text-muted-foreground font-mono">
+                  {hit.memberCode}{hit.phone ? ` · ${toArabicDigits(hit.phone)}` : ''}
+                </span>
               </button>
             </li>
           ))}
@@ -182,7 +211,11 @@ export function MemberSearchCombobox({
         <p className="mt-1 text-xs text-muted-foreground">{ct('subscriptions.memberSearchMinChars')}</p>
       )}
 
-      {!loading && !selectedMember && query.trim().length >= MEMBER_SEARCH_MIN_CHARS && hits.length === 0 && (
+      {!loading && !selectedMember && searchFailed && (
+        <p className="mt-1 text-xs text-destructive">تعذر البحث عن العضو، حاول مرة أخرى</p>
+      )}
+
+      {!loading && !selectedMember && !searchFailed && query.trim().length >= MEMBER_SEARCH_MIN_CHARS && hits.length === 0 && (
         <p className="mt-1 text-xs text-muted-foreground">{ct('members.noMemberFound')}</p>
       )}
 

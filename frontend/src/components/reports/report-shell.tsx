@@ -2,7 +2,6 @@ import { Download } from 'lucide-react';
 import { ReactNode } from 'react';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
-import { toCsvWithBom } from '@/lib/csv';
 
 export interface ReportStat {
   label: string;
@@ -65,7 +64,13 @@ export function ReportShell({
  */
 export function downloadCsv(filename: string, rows: (string | number)[][]) {
   if (!rows.length) return;
-  const blob = new Blob([toCsvWithBom(rows)], { type: 'text/csv;charset=utf-8;' });
+  const escape = (v: string | number) => {
+    const s = String(v ?? '');
+    if (/[",\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  };
+  const body = rows.map((r) => r.map(escape).join(',')).join('\n');
+  const blob = new Blob(['﻿' + body], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

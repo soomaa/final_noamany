@@ -706,18 +706,10 @@ export class AttendanceService {
 
   async manualOptions(user: JwtUser, requestedBranch?: string) {
     const scope = await this.manualEmployeeScope(user, requestedBranch);
-    const audienceEmployeeType = user.level === 1
-      ? null
-      : user.man_women_type === 0
-        ? 1
-        : user.man_women_type === 1
-          ? 2
-          : (() => { throw new ForbiddenException('نطاق القسم غير مضبوط لهذا المستخدم'); })();
     const employees = await this.prisma.employees.findMany({
       where: {
         ...scope.where,
         employee_type: 1,
-        ...(audienceEmployeeType != null ? { emp_type: audienceEmployeeType } : {}),
         AND: [{ OR: [{ leave_emp: null }, { leave_emp: 0 }] }],
       },
       select: {
@@ -742,55 +734,6 @@ export class AttendanceService {
         section: employee.qsm_n,
       })),
     };
-  }
-
-  /** Scan is preview-only. A separate explicit POST /attendance/check performs the punch. */
-  async barcodePreviewForUser(empCode: string, user: JwtUser, requestedBranch?: string) {
-    const code = parseEmployeeCode(empCode);
-    const options = await this.manualOptions(user, requestedBranch);
-    const employee = options.employees.find((item) => item.empCode === code);
-    if (!employee) throw new ForbiddenException('الموظف غير تابع للفرع أو خارج نطاق صلاحياتك');
-    const today = todayIso();
-    const yesterdayDate = new Date(`${today}T12:00:00.000Z`);
-    yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
-    const yesterday = yesterdayDate.toISOString().slice(0, 10);
-    const [recent, attendanceRows] = await Promise.all([
-      this.prisma.tbl_hdoor_emps_history.findMany({
-        where: { member_code: code }, orderBy: { hodoor_id: 'desc' }, take: 10,
-        select: { hodoor_id: true, action_date: true, action_date_s: true, action_time: true, hdoor_ensraf_time: true, ttype: true },
-      }),
-      this.prisma.tbl_hdoor_emps.findMany({
-        where: {
-          member_code: code,
-          action_date_s: { in: [...legacyDateMatchValues(today), ...legacyDateMatchValues(yesterday)] },
-        },
-        orderBy: { hodoor_id: 'desc' },
-        select: { hodoor_id: true, action_date_s: true, hdoor_time: true, ensraf_time: true },
-      }),
-    ]);
-    const hasOpenAttendance = attendanceRows.some((row) => Boolean(row.hdoor_time) && !row.ensraf_time);
-    const nextAction = hasOpenAttendance ? 'out' : 'in';
-    return {
-      employee,
-      branchId: options.branchId ?? employee.branchId ?? null,
-      nextAction,
-      nextActionLabel: nextAction === 'in' ? 'تأكيد الدخول' : 'تأكيد الخروج',
-      recentPunches: recent.map((row) => ({
-        id: row.hodoor_id,
-        date: row.action_date_s ?? row.action_date,
-        time: row.action_time,
-        action: /^(ensraf|out)$/i.test(String(row.ttype ?? ''))
-          ? 'خروج'
-          : /^(hdoor|in)$/i.test(String(row.ttype ?? ''))
-            ? 'دخول'
-            : 'بصمة',
-      })),
-    };
-  }
-
-  /** Dedicated scanner punch: direction is always server-derived; browser input cannot force it. */
-  async barcodePunchForUser(body: Pick<CheckPunchDto, 'empCode' | 'branchId'>, user: JwtUser) {
-    return this.manualCheckForUser({ empCode: body.empCode, branchId: body.branchId, channel: 'qr' }, user);
   }
 
   async manualCheckForUser(body: CheckPunchDto, user: JwtUser) {
@@ -916,20 +859,7 @@ export class AttendanceService {
       if (scope === 0) return assignedBranch === 'all';
       return assignedBranch === 'all' || Number(assignedBranch) === scope;
     };
-    const assignments = await db.tbl_hdoor_dawms_emps.findMany({
-      where: { OR: [{ emp_code_fk: code }, { emp_id_fk: emp.id }] },
-      orderBy: { id: 'asc' },
-    });
-    const assignedIds = [...new Set(assignments
-      .filter((row) => assignmentMatchesScheduleScope(row.branch_id_fk, assignmentBranchScope))
-      .map((row) => row.dwam_id_fk)
-      .filter((id): id is number => Boolean(id)))];
-    const mainShifts: ShiftRow[] = assignedIds.length
-      ? await db.tbl_hdodr_setting.findMany({ where: { id: { in: assignedIds } } })
-      : [];
-    if (!mainShifts.length) {
-      throw new BadRequestException('لا يوجد دوام مسجل لهذا الموظف في موقع البصمة');
-    }
+    let mainShifts: ShiftRow[] = [];
 
     const explicitTime = capturedClock?.time ?? (body.type === 'out' ? body.checkOut : body.checkIn);
     const punchMin = explicitTime ? parseTimeToMinutes(explicitTime) : nowMinutes();
@@ -966,6 +896,44 @@ export class AttendanceService {
     };
 
     const today = capturedClock?.actionDate ?? todayIso();
+    // Optional chaining keeps older test fixtures and database clients compatible until
+    // the migration has been applied; production Prisma clients always expose this delegate.
+    const weeklySettings = await (db as any).attendance_weekly_schedule_settings?.findUnique({ where: { id: 1 } });
+    if (weeklySettings?.enabled) {
+      const weekday = (new Date(`${today}T12:00:00Z`).getUTCDay() + 1) % 7;
+      const weeklySchedule = await db.employee_weekly_schedules.findFirst({
+        where: {
+          employee_id: emp.id,
+          status: 'active',
+          effective_from: { lte: today },
+          OR: [{ effective_to: null }, { effective_to: { gte: today } }],
+        },
+        orderBy: { effective_from: 'desc' },
+        include: { slots: { where: { weekday } } },
+      });
+      if (!weeklySchedule) throw new BadRequestException('لا يوجد جدول أسبوعي فعال لهذا الموظف');
+      const slot = weeklySchedule.slots[0];
+      if (slot && slot.shift_id != null) {
+        if (slot.branch_id !== assignmentBranchScope) throw new BadRequestException('الدوام المحدد ليس في فرع البصمة');
+        const shift = await db.tbl_hdodr_setting.findUnique({ where: { id: slot.shift_id } });
+        if (!shift) throw new BadRequestException('الدوام المحدد غير موجود');
+        mainShifts = [shift];
+      } else {
+        mainShifts = [];
+      }
+    } else {
+      const assignments = await db.tbl_hdoor_dawms_emps.findMany({
+        where: { OR: [{ emp_code_fk: code }, { emp_id_fk: emp.id }] },
+        orderBy: { id: 'asc' },
+      });
+      const assignedIds = [...new Set(assignments
+        .filter((row) => assignmentMatchesScheduleScope(row.branch_id_fk, assignmentBranchScope))
+        .map((row) => row.dwam_id_fk)
+        .filter((id): id is number => Boolean(id)))];
+      mainShifts = assignedIds.length
+        ? await db.tbl_hdodr_setting.findMany({ where: { id: { in: assignedIds } } })
+        : [];
+    }
     const yesterdayValue = new Date(today + 'T12:00:00');
     yesterdayValue.setDate(yesterdayValue.getDate() - 1);
     const yesterday = yesterdayValue.toISOString().slice(0, 10);
@@ -1021,6 +989,10 @@ export class AttendanceService {
       buildCandidates(yesterday),
     ]);
     const allCandidates = [...todayCandidates, ...yesterdayCandidates];
+    if (!allCandidates.length) {
+      if (weeklySettings?.enabled) throw new BadRequestException('اليوم المحدد راحة أسبوعية ولا يوجد شيفت إضافي');
+      throw new BadRequestException('لا يوجد دوام مسجل لهذا الموظف في موقع البصمة');
+    }
     for (const candidate of allCandidates) {
       assertShiftTimingIsComplete(candidate.shift);
     }
@@ -1388,6 +1360,37 @@ export class AttendanceService {
     const channels: Record<string, boolean> = {};
     for (const r of rows) channels[r.key] = r.enabled === 1;
     return { channels };
+  }
+
+  async getWeeklyScheduleRollout() {
+    const settings = await this.prisma.attendance_weekly_schedule_settings.findUnique({ where: { id: 1 } });
+    return { enabled: settings?.enabled ?? false };
+  }
+
+  async activateWeeklyScheduleRollout() {
+    const today = todayIso();
+    const employees = await this.prisma.employees.findMany({ where: { employee_type: 1 }, select: { id: true } });
+    const schedules = await this.prisma.employee_weekly_schedules.findMany({
+      where: {
+        employee_id: { in: employees.map((employee) => employee.id) },
+        status: 'active',
+        effective_from: { lte: today },
+        OR: [{ effective_to: null }, { effective_to: { gte: today } }],
+      },
+      include: { slots: true },
+    });
+    const complete = new Set(schedules
+      .filter((schedule) => {
+        const days = new Set(schedule.slots.map((slot) => slot.weekday));
+        return days.size === 7 && [0, 1, 2, 3, 4, 5, 6].every((day) => days.has(day));
+      })
+      .map((schedule) => schedule.employee_id));
+    const missingEmployeeIds = employees.filter((employee) => !complete.has(employee.id)).map((employee) => employee.id);
+    if (missingEmployeeIds.length) {
+      throw new BadRequestException('لا يمكن تفعيل الجدول الأسبوعي قبل اكتمال جداول جميع الموظفين');
+    }
+    await this.prisma.attendance_weekly_schedule_settings.upsert({ where: { id: 1 }, create: { id: 1, enabled: true }, update: { enabled: true } });
+    return { enabled: true, employeeCount: employees.length };
   }
 
   async patchSettings(body: { channels?: Record<string, boolean> }) {
@@ -1837,7 +1840,8 @@ export class AttendanceService {
     const ids = employees.map((employee) => employee.id);
     const branchIds = [...new Set(employees.map((employee) => employee.branch_id_fk).filter((id): id is number => id != null))];
 
-    const [attendance, weeklyOffs, leaveOrders, branches] = await Promise.all([
+    const weeklyScheduleSettings = await (this.prisma as any).attendance_weekly_schedule_settings?.findUnique({ where: { id: 1 } });
+    const [attendance, weeklyOffs, leaveOrders, branches, weeklySchedules] = await Promise.all([
       this.prisma.tbl_hdoor_emps.findMany({
         where: {
           member_code: { in: codes },
@@ -1848,10 +1852,12 @@ export class AttendanceService {
         },
         orderBy: { hodoor_id: 'asc' },
       }),
-      this.prisma.hr_emp_agazat_dayes.findMany({
-        where: { OR: [{ emp_id_fk: { in: ids } }, { emp_code_fk: { in: codes } }] },
-        select: { emp_id_fk: true, emp_code_fk: true, off_day: true },
-      }),
+      weeklyScheduleSettings?.enabled
+        ? Promise.resolve([])
+        : this.prisma.hr_emp_agazat_dayes.findMany({
+          where: { OR: [{ emp_id_fk: { in: ids } }, { emp_code_fk: { in: codes } }] },
+          select: { emp_id_fk: true, emp_code_fk: true, off_day: true },
+        }),
       this.prisma.hr_all_agzat_orders.findMany({
         where: {
           emp_code_fk: { in: codes.map(BigInt) },
@@ -1873,10 +1879,22 @@ export class AttendanceService {
         where: { branch_id: { in: branchIds } },
         select: { branch_id: true, branch_name: true },
       }),
+      weeklyScheduleSettings?.enabled
+        ? (this.prisma as any).employee_weekly_schedules?.findMany({
+          where: { employee_id: { in: ids }, status: 'active', effective_from: { lte: to }, OR: [{ effective_to: null }, { effective_to: { gte: from } }] },
+          include: { slots: true },
+        }) ?? Promise.resolve([])
+        : Promise.resolve([]),
     ]);
 
     const branchMap = new Map(branches.map((branch) => [branch.branch_id, branch.branch_name]));
     const offDayByCode = new Map<number, string>();
+    const weeklySchedulesByEmployee = new Map<number, Array<{ effective_from: string; effective_to: string | null; slots: Array<{ weekday: number; shift_id: number | null }> }>>();
+    for (const schedule of weeklySchedules as Array<{ employee_id: number; effective_from: string; effective_to: string | null; slots: Array<{ weekday: number; shift_id: number | null }> }>) {
+      const list = weeklySchedulesByEmployee.get(schedule.employee_id) ?? [];
+      list.push(schedule);
+      weeklySchedulesByEmployee.set(schedule.employee_id, list);
+    }
     const codeById = new Map(employees.map((employee) => [employee.id, employee.emp_code]));
     for (const off of weeklyOffs) {
       const code = off.emp_code_fk || codeById.get(off.emp_id_fk);
@@ -1931,8 +1949,11 @@ export class AttendanceService {
         const key = `${employee.emp_code}|${date}`;
         const punches = attendanceByDay.get(key) ?? [];
         const configuredOffDay = offDayByCode.get(employee.emp_code);
-        const weeklyOff = configuredOffDay != null
-          && weeklyDayAliases[day.getDay()].includes(configuredOffDay);
+        const weeklySchedule = weeklySchedulesByEmployee.get(employee.id)?.find((schedule) => schedule.effective_from <= date && (schedule.effective_to == null || schedule.effective_to >= date));
+        const weeklySlot = weeklySchedule?.slots.find((slot) => slot.weekday === (day.getDay() + 1) % 7);
+        const weeklyOff = weeklyScheduleSettings?.enabled
+          ? weeklySlot?.shift_id === null
+          : configuredOffDay != null && weeklyDayAliases[day.getDay()].includes(configuredOffDay);
         const swappedLeave = swappedDays.has(key);
         const approvedLeave = leaveDays.has(key);
         const firstIn = punches.find((punch) => punch.hdoor_time || punch.second_hdoor_time);

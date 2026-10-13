@@ -1,8 +1,6 @@
 import { Slot } from '@radix-ui/react-slot';
 import { cva, type VariantProps } from 'class-variance-authority';
 import * as React from 'react';
-import { useLocation } from 'react-router-dom';
-import { usePermission } from '@/hooks/use-permission';
 import { cn } from '@/lib/utils';
 
 const buttonVariants = cva(
@@ -36,43 +34,10 @@ export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean;
-  permissionAction?: StandardAction | null;
-  permissionResource?: string;
-}
-
-type StandardAction = 'create' | 'update' | 'delete' | 'approve' | 'reject' | 'export' | 'print' | 'audit' | 'configure' | 'execute';
-
-function nodeText(node: React.ReactNode): string {
-  if (typeof node === 'string' || typeof node === 'number') return String(node);
-  if (Array.isArray(node)) return node.map(nodeText).join(' ');
-  if (React.isValidElement<{ children?: React.ReactNode }>(node)) return nodeText(node.props.children);
-  return '';
-}
-
-function inferAction(label: string): StandardAction | null {
-  if (/رفض|reject/i.test(label)) return 'reject';
-  if (/اعتماد|موافقة|approve/i.test(label)) return 'approve';
-  if (/حذف|إزالة|ازالة|delete|remove/i.test(label)) return 'delete';
-  if (/تصدير|export|excel/i.test(label)) return 'export';
-  if (/طباعة|print/i.test(label)) return 'print';
-  if (/سجل التدقيق|السجلات|audit/i.test(label)) return 'audit';
-  if (/مزامنة|تنفيذ|تشغيل|فتح الدخول|فتح الخروج|ترحيل|عكس القيد|execute|sync|run/i.test(label)) return 'execute';
-  if (/إعداد|اعداد|token|configure/i.test(label)) return 'configure';
-  if (/إضافة|اضافة|جديد|جديدة|إنشاء|انشاء|\badd\b|\bnew\b|create/i.test(label)) return 'create';
-  if (/تعديل|حفظ|\bedit\b|\bsave\b/i.test(label)) return 'update';
-  return null;
 }
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, permissionAction, permissionResource, ...props }, ref) => {
-    const { pathname } = useLocation();
-    const { can, isReady, hasError, resourceActions, resourceForRoute } = usePermission();
-    const label = `${String(props['aria-label'] ?? '')} ${String(props.title ?? '')} ${nodeText(props.children)}`;
-    const inferred = permissionAction === undefined ? inferAction(label) : permissionAction;
-    if (inferred && (!isReady || hasError)) return null;
-    const resource = permissionResource ?? resourceForRoute(pathname);
-    const applicable = Boolean(inferred && resource && resourceActions[resource]?.includes(inferred));
-    if (applicable && (!isReady || !can(`${resource}:${inferred}`))) return null;
+  ({ className, variant, size, asChild = false, ...props }, ref) => {
     const Comp = asChild ? Slot : 'button';
     return <Comp className={cn(buttonVariants({ variant, size, className }))} ref={ref} {...props} />;
   },

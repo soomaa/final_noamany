@@ -97,17 +97,36 @@ export class UpsertClubSubscriptionDto {
   @Min(1)
   discountCodeId?: number | null;
 
+  /** ID of a code grant that was issued to this member by an employee. */
+  @IsOptional()
+  @Transform(({ value }) => (value != null && value !== '' ? Number(value) : null))
+  @IsInt()
+  @Min(1)
+  memberDiscountGrantId?: number | null;
+
   @IsOptional()
   @Transform(({ value }) => Number(value))
   @IsNumber()
   @Min(0)
   discountValue?: number;
 
+  /** Points to spend instead of a coupon or manual discount. */
+  @IsOptional()
+  @Transform(({ value }) => (value != null && value !== '' ? Number(value) : undefined))
+  @IsInt()
+  @Min(1)
+  pointsToRedeem?: number;
+
   @IsOptional()
   @Transform(({ value }) => Number(value))
   @IsNumber()
   @Min(0)
   paidAmount?: number;
+
+  /** Required by the create workflow whenever a payment is collected. */
+  @IsOptional()
+  @IsString()
+  receiptNumber?: string;
 
   @IsOptional()
   @IsIn(['male', 'female'])

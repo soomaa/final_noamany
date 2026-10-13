@@ -3,16 +3,12 @@ import { api, apiError } from '@/lib/api';
 import { toast } from 'sonner';
 
 /** Backend upload categories (POST /api/uploads/:category → { path, filename, url }). */
-export type UploadCategory = 'emp-photo' | 'emp-bank' | 'signature' | 'document' | 'club-member' | 'product-image' | 'portal-image' | 'portal-file' | 'storage-doc' | 'inbody' | 'circular' | 'warning';
+export type UploadCategory = 'emp-photo' | 'emp-bank' | 'signature' | 'document' | 'club-member' | 'membership-document' | 'product-image' | 'portal-image' | 'portal-file' | 'storage-doc' | 'inbody' | 'circular' | 'warning';
 
-export interface UploadResult {
+interface UploadResult {
   path: string;
   filename: string;
   url: string;
-  originalFilename: string;
-  mimeType: string;
-  byteSize: number;
-  sha256: string;
 }
 
 /**
@@ -23,13 +19,13 @@ export interface UploadResult {
 export function useFileUpload() {
   const [uploading, setUploading] = useState(false);
 
-  const uploadDetailed = async (category: UploadCategory, file: File): Promise<UploadResult | null> => {
+  const upload = async (category: UploadCategory, file: File): Promise<string | null> => {
     setUploading(true);
     try {
       const fd = new FormData();
       fd.append('file', file);
       const { data } = await api.post<UploadResult>(`/uploads/${category}`, fd);
-      return data;
+      return data.path;
     } catch (e) {
       toast.error(apiError(e));
       return null;
@@ -38,12 +34,7 @@ export function useFileUpload() {
     }
   };
 
-  const upload = async (category: UploadCategory, file: File): Promise<string | null> => {
-    const result = await uploadDetailed(category, file);
-    return result?.path ?? null;
-  };
-
-  return { upload, uploadDetailed, uploading };
+  return { upload, uploading };
 }
 
 /** Public URL for a stored upload path (handles already-absolute paths). */

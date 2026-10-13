@@ -13,6 +13,8 @@ import { MEMBER_DEFAULT_PASSWORD, MEMBER_MIN_PASSWORD_LENGTH } from '../../commo
 import { normalizePhoneForStorage } from '../club-members/club-member.utils';
 
 const LOGIN_FAILED = 'رقم الجوال أو كلمة المرور غير صحيحة';
+const INVALID_PHONE = 'رقم الهاتف غير صحيح';
+const INCORRECT_PASSWORD = 'كلمة المرور غير صحيحة';
 
 @Injectable()
 export class MemberAuthService {
@@ -24,17 +26,17 @@ export class MemberAuthService {
 
   async login(phone: string, password: string): Promise<MemberLoginResult> {
     const normalized = normalizePhoneForStorage(phone);
-    if (!normalized) throw new UnauthorizedException(LOGIN_FAILED);
+    if (!normalized) throw new UnauthorizedException(INVALID_PHONE);
 
     const appUser = await this.prisma.api_users.findFirst({
       where: { user_phone: normalized },
     });
     if (!appUser || appUser.status !== 1) {
-      throw new UnauthorizedException(LOGIN_FAILED);
+      throw new UnauthorizedException(INVALID_PHONE);
     }
 
     const valid = await bcrypt.compare(password, appUser.user_pass ?? '');
-    if (!valid) throw new UnauthorizedException(LOGIN_FAILED);
+    if (!valid) throw new UnauthorizedException(INCORRECT_PASSWORD);
 
     const member = await this.prisma.club_members.findFirst({
       where: { app_user_id: appUser.user_id, is_deleted: false },

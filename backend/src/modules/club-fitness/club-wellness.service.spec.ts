@@ -104,3 +104,18 @@ describe('ClubWellnessService subscription benefits', () => {
     }));
   });
 });
+
+describe('ClubWellnessService InBody file numbers', () => {
+  it('returns the next database-backed number for a new InBody file', async () => {
+    const prisma = {
+      club_inbody_measurements: {
+        aggregate: jest.fn().mockResolvedValue({ _max: { id: 4694 } }),
+      },
+    };
+    const service = new ClubWellnessService(prisma as never, {} as never) as unknown as {
+      nextInbodyFileNumber: () => Promise<number>;
+    };
+
+    await expect(service.nextInbodyFileNumber()).resolves.toBe(4695);
+  });
+});

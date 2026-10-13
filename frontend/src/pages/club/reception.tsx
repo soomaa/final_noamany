@@ -7,7 +7,6 @@ import {
   CreditCard,
   LogIn,
   LockKeyhole,
-  Phone,
   Plus,
   RefreshCw,
   Search,
@@ -24,6 +23,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { MemberAvatar } from '@/components/club/member-avatar';
+import { ReceptionMemberProfile } from '@/components/club/reception-member-profile';
 import type { ClubPaymentMethod } from '@/components/club/club-payment-method-select';
 import {
   buildClubPaymentSplit,
@@ -66,18 +66,16 @@ import { useArrayResource } from '@/lib/api-hooks';
 import { CLUB_ROUTES as CR } from '@/lib/club-routes';
 import { confirm, confirmWithPreview } from '@/lib/confirm';
 import { formatMoney, localToday } from '@/lib/formatters';
-import { consumeReceptionScanSearch } from '@/lib/persistent-scanner-model';
 import { subscriptionTypesForBranch } from '@/lib/club-subscription-branches';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
-import type { ClubMemberListItem, ClubSubscriptionListItem, ClubSubscriptionType } from '@/types/club';
+import type { ClubMemberOverview, ClubSubscriptionListItem, ClubSubscriptionType } from '@/types/club';
 import type {
   CheckInResponse,
   ClubSearchHit,
   EntitlementReason,
   EntitlementResult,
-  RecentCheckIn,
 } from '@/types/gym-ops';
 import type { ClubQuickServiceRow } from './reception-quick-services';
 
@@ -110,25 +108,6 @@ type RefundPreview = {
   consumedDays: number;
   consumedValue: number;
   paidAmount?: number;
-};
-
-type BarcodeReceptionPreview = {
-  member?: { id: number; memberCode: string; name: string; branchId: number; gender: string; isBlocked: boolean; blockReason: string | null; profilePicture: string | null };
-  latestSubscriptions: Array<{
-    id: number;
-    subscriptionNumber: string;
-    subscriptionType: string | null;
-    registrationDate: string;
-    startDate: string;
-    endDate: string;
-    status: string;
-    subscriptionValue: number;
-    paidAmount: number;
-    remainingAmount: number;
-  }>;
-  transactions: Array<{ id: number; receiptNumber: string | null; amount: number; date: string; paymentMethod: string | null }>;
-  lockerSubscriptions: Array<{ id: number; subscriptionNumber: string; lockerNumber: string | null; type: string | null; endDate: string; status: string }>;
-  freezes: Array<{ subscriptionId: number; subscriptionNumber: string | null; subscriptionType: string | null; startDate: string; endDate: string | null; days: number | null; isActive: boolean }>;
 };
 
 function EntitlementBanner({
@@ -258,7 +237,6 @@ export function ClubReceptionPage() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const inputRef = useRef<HTMLInputElement>(null);
-  const consumedScanRef = useRef('');
   const tabletMode = searchParams.get('tablet') === '1';
   const [receptionBranch, setReceptionBranch] = useState('');
   const effectiveReceptionBranch = isSystemAdmin
@@ -292,11 +270,11 @@ export function ClubReceptionPage() {
   const [payAmount, setPayAmount] = useState('');
   const [payRows, setPayRows] = useState<ClubPaymentSplitRow[]>(singlePaymentRow());
   const [freezeOpen, setFreezeOpen] = useState(false);
+  const [editingFreeze, setEditingFreeze] = useState(false);
   const [freezeSubId, setFreezeSubId] = useState<number | null>(null);
-  const [freezeForm, setFreezeForm] = useState({ reason: '' });
+  const [freezeForm, setFreezeForm] = useState({ startDate: localToday(), endDate: localToday(), reason: '' });
   const [renewOpen, setRenewOpen] = useState(false);
   const [renewSubId, setRenewSubId] = useState<number | null>(null);
-  const [renewQuote, setRenewQuote] = useState<{ grossValue: number; netValue: number; quoteVersion: string } | null>(null);
   const [renewForm, setRenewForm] = useState({ paidAmount: '' });
   const [renewRows, setRenewRows] = useState<ClubPaymentSplitRow[]>(singlePaymentRow());
   const [refundOpen, setRefundOpen] = useState(false);
@@ -327,7 +305,6 @@ export function ClubReceptionPage() {
   const [blockReason, setBlockReason] = useState('');
   const [blockSaving, setBlockSaving] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [submittingSearch, setSubmittingSearch] = useState(false);
 
   const { data: subTypes } = useArrayResource<ClubSubscriptionType>('club-subscription-types');
 
@@ -355,17 +332,6 @@ export function ClubReceptionPage() {
     }
     setSearchParams(searchParams, { replace: true });
   };
-
-  const { data: recent } = useQuery({
-    queryKey: ['club-recent-checkins', effectiveReceptionBranch || 'all'],
-    queryFn: async () => {
-      const { data } = await api.get<RecentCheckIn[]>('/club/search/recent-checkins', {
-        params: { limit: 20, branchId: effectiveReceptionBranch || undefined },
-      });
-      return data;
-    },
-    refetchInterval: 60_000,
-  });
 
   const { data: quickServices = [] } = useQuery({
     queryKey: ['club-quick-services', 'catalog', effectiveReceptionBranch || 'all'],
@@ -403,16 +369,17 @@ export function ClubReceptionPage() {
     },
   });
 
-  const { data: member, refetch: refetchMember, isFetching: loadingMember } = useQuery({
-    queryKey: ['club-reception-member', effectiveReceptionBranch || 'all', selectedId],
-    enabled: selectedId != null,
-    queryFn: async () => {
-      const { data: m } = await api.get(`/club-members/${selectedId}`);
-      return m as ClubMemberListItem;
-    },
+  const { data: overview, refetch: refetchOverview, isPending: loadingOverview, isFetching: loadingMember, isError: overviewError, error: profileError } = useQuery({
+    queryKey: ['club-reception-profile', effectiveReceptionBranch || 'all', selectedId],
+    enabled: selectedId != null && memberOpen,
+    queryFn: async () => (await api.get<ClubMemberOverview>('/club-attendance/member-overview', {
+      params: { memberId: selectedId },
+    })).data,
   });
+  const member = overview?.member;
+  const refetchMember = refetchOverview;
 
-  const { data: subs, refetch: refetchSubs, isFetching: loadingSubs } = useQuery({
+  const { data: subs, refetch: reloadSubs, isFetching: loadingSubs } = useQuery({
     queryKey: ['club-reception-subs', effectiveReceptionBranch || 'all', selectedId],
     enabled: selectedId != null,
     queryFn: async () => {
@@ -427,14 +394,10 @@ export function ClubReceptionPage() {
     },
   });
 
-  const { data: barcodePreview, refetch: refetchBarcodePreview } = useQuery({
-    queryKey: ['club-reception-barcode-preview', member?.memberCode],
-    enabled: memberOpen && !!member?.memberCode,
-    queryFn: async () => {
-      const { data } = await api.get<BarcodeReceptionPreview>('/club-members/barcode-preview', { params: { memberCode: member!.memberCode } });
-      return data;
-    },
-  });
+  const refetchSubs = () => {
+    void refetchOverview();
+    return reloadSubs();
+  };
 
   /** Active / frozen first; expired (and exhausted sessions) sink to the bottom. */
   const sortedSubs = useMemo(() => {
@@ -493,7 +456,7 @@ export function ClubReceptionPage() {
     [member?.branchId, quickServices],
   );
 
-  const renewNetValue = renewQuote?.netValue ?? (renewSub ? subscriptionNetValue(renewSub) : 0);
+  const renewNetValue = renewSub ? subscriptionNetValue(renewSub) : 0;
   const renewPaidNow = Math.max(0, Number(renewForm.paidAmount) || 0);
   const renewRemaining = Math.max(0, renewNetValue - renewPaidNow);
 
@@ -555,7 +518,7 @@ export function ClubReceptionPage() {
         try {
           const { data } = await api.post<{ preview?: RefundPreview } & RefundPreview>(
             '/club-subscription-refunds?dryRun=true',
-            { subscriptionId: refundSubId, stopDate: refundStopDate },
+            { subscriptionId: refundSubId, stopDate: refundStopDate, branchId: activeReceptionBranchId ?? undefined },
           );
           const p = (data as { preview?: RefundPreview }).preview ?? data;
           if (p && typeof p === 'object' && 'refundAmount' in p) {
@@ -621,6 +584,7 @@ export function ClubReceptionPage() {
   const refreshMemberAfterBlockChange = async () => {
     await Promise.all([
       qc.invalidateQueries({ queryKey: ['club-reception-member'] }),
+      qc.invalidateQueries({ queryKey: ['club-reception-profile'] }),
       qc.invalidateQueries({ queryKey: ['club-universal-search'] }),
       qc.invalidateQueries({ queryKey: ['club-members'] }),
     ]);
@@ -669,53 +633,23 @@ export function ClubReceptionPage() {
     }
   };
 
-  const runSearch = async (rawQuery = query) => {
-    const q = rawQuery.trim();
+  const runSearch = async () => {
+    const q = query.trim();
     if (q.length < 2) {
       toast.error(ct('members.enterCode'));
       return;
     }
-    setSubmittingSearch(true);
     try {
-      const { data } = await api.get<{
-        hits: ClubSearchHit[];
-        entitlement: EntitlementResult | null;
-        topMatch: ClubSearchHit | null;
-      }>('/club/search', {
-        params: {
-          q,
-          withEntitlement: true,
-          branchId: effectiveReceptionBranch || undefined,
-        },
+      const { data } = await api.get<{ topMatch: ClubSearchHit | null; hits: ClubSearchHit[] }>('/club/search', {
+        params: { q, withEntitlement: true, branchId: effectiveReceptionBranch || undefined },
       });
-      const hit = data.topMatch ?? data.hits?.[0];
-      if (hit) {
-        await selectMember(hit);
-        return;
-      }
-      toast.error(ct('members.noMemberFound'));
+      const hit = data.topMatch ?? data.hits[0];
+      if (hit) await selectMember(hit);
+      else toast.error(ct('members.noMemberFound'));
     } catch (error) {
       toast.error(apiError(error));
-    } finally {
-      setSubmittingSearch(false);
     }
   };
-
-  useEffect(() => {
-    if (!searchParams.has('scan')) {
-      consumedScanRef.current = '';
-      return;
-    }
-    const consumed = consumeReceptionScanSearch(`?${searchParams.toString()}`);
-    setSearchParams(consumed.search, { replace: true });
-    if (!consumed.code || consumedScanRef.current === consumed.code) return;
-    consumedScanRef.current = consumed.code;
-    setMemberOpen(false);
-    setQuery(consumed.code);
-    void runSearch(consumed.code);
-    // The query parameter is the one-shot trigger; runSearch uses the current authenticated branch.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchParams, setSearchParams]);
 
   const openGrace = (subscriptionId?: number | null) => {
     const subId =
@@ -873,9 +807,18 @@ export function ClubReceptionPage() {
     if (!freezeSubId || !canUpdateSubscription) return;
     setSaving(true);
     try {
-      await api.post(`/club-subscriptions/${freezeSubId}/freeze`, {
-        reason: freezeForm.reason.trim() || undefined,
-      });
+      if (editingFreeze) {
+        await api.patch(`/club-subscriptions/${freezeSubId}/freeze`, {
+          freezeEndDate: freezeForm.endDate,
+          reason: freezeForm.reason.trim() || undefined,
+        });
+      } else {
+        await api.post(`/club-subscriptions/${freezeSubId}/freeze`, {
+          freezeStartDate: freezeForm.startDate,
+          freezeEndDate: freezeForm.endDate,
+          reason: freezeForm.reason.trim() || undefined,
+        });
+      }
       toast.success(ct('common.success'));
       setFreezeOpen(false);
       void refetchSubs();
@@ -917,8 +860,7 @@ export function ClubReceptionPage() {
     }
     setSaving(true);
     try {
-      const { data: quote } = await api.post<typeof renewQuote>(`/club-subscriptions/${renewSubId}/renewal-quote`, body);
-      await api.patch(`/club-subscriptions/${renewSubId}/renew`, { ...body, quoteVersion: quote?.quoteVersion });
+      await api.patch(`/club-subscriptions/${renewSubId}/renew`, body);
       toast.success(ct('common.success'));
       setRenewOpen(false);
       void qc.invalidateQueries({ queryKey: ['me', 'workspace', 'widgets'] });
@@ -962,6 +904,7 @@ export function ClubReceptionPage() {
         async () => {
           const { data } = await api.post('/club-subscription-refunds?dryRun=true', {
             subscriptionId: refundSubId,
+            branchId: activeReceptionBranchId ?? undefined,
             stopDate: refundStopDate,
             reason: refundReason || undefined,
             notes: refundNotes || undefined,
@@ -974,6 +917,7 @@ export function ClubReceptionPage() {
         async () => {
           await api.post('/club-subscription-refunds', {
             subscriptionId: refundSubId,
+            branchId: activeReceptionBranchId ?? undefined,
             stopDate: refundStopDate,
             reason: refundReason || undefined,
             notes: refundNotes || undefined,
@@ -1133,8 +1077,11 @@ export function ClubReceptionPage() {
               className={cn(tabletMode ? 'h-16 ps-12 text-xl' : 'h-14 ps-11 text-lg', 'rounded-2xl')}
               placeholder={ui('اسم · موبايل · كود · باركود · رقم قومي')}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && void runSearch(e.currentTarget.value)}
+              onChange={(e) => {
+                if (memberOpen) { setMemberOpen(false); setSelectedId(null); setEntitlement(null); }
+                setQuery(e.target.value);
+              }}
+              onKeyDown={(e) => e.key === 'Enter' && void runSearch()}
               autoFocus
             />
           </div>
@@ -1143,7 +1090,7 @@ export function ClubReceptionPage() {
             size="lg"
             className={cn('rounded-2xl px-8', tabletMode ? 'h-16' : 'h-14')}
             onClick={() => void runSearch()}
-            disabled={searching || submittingSearch}
+            disabled={searching}
           >
             <Search className="size-5" /> {ui('بحث')}
           </Button>
@@ -1183,167 +1130,25 @@ export function ClubReceptionPage() {
           </div>
         )}
 
-        {recent && recent.length > 0 && (
-          <div className="mt-6">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {ui('آخر الداخلين')}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {recent.slice(0, 12).map((r) => (
-                <Button
-                  key={`${r.memberId}-${r.checkInTime}`}
-                  variant="secondary"
-                  size="sm"
-                  className="rounded-full"
-                  onClick={() => {
-                    void selectMember({
-                      id: r.memberId,
-                      memberCode: r.memberCode,
-                      name: r.memberName,
-                      phone: null,
-                      cardNumber: null,
-                      branchId: r.branchId,
-                      isActive: true,
-                      matchType: 'code',
-                      activeSubscriptionType: null,
-                      subscriptionStatus: null,
-                      remainingAmount: null,
-                      lastCheckIn: r.checkInTime,
-                      score: 100,
-                    });
-                  }}
-                >
-                  <span>{r.memberName}</span>
-                  {isSystemAdmin && !effectiveReceptionBranch ? (
-                    <span className="text-[10px] text-muted-foreground">
-                      {branches.find((branch) => branch.id === r.branchId)?.name?.trim()
-                        || `${ui('فرع رقم')} ${toArabicDigits(r.branchId)}`}
-                    </span>
-                  ) : null}
-                </Button>
-              ))}
-            </div>
-          </div>
-        )}
+
       </div>
 
-      {(canSellQuick || canManageQuick) && (quickServices.length > 0 || canManageQuick) ? (
-        <div className="relative overflow-hidden rounded-3xl border bg-card p-5 shadow-sm md:p-6">
-          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Zap className="size-4 text-primary" />
-              <h2 className="text-base font-semibold tracking-tight">{ui('خدمات سريعة')}</h2>
-              <span className="text-xs text-muted-foreground">{ui('بيع فوري من الاستقبال')}</span>
+      {memberOpen && selectedId != null ? (
+        <section id="reception-member-profile" className="space-y-4 rounded-2xl border bg-card p-4 shadow-sm sm:p-6" aria-label={ui('بروفايل العضو')}>
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-xl font-bold">{ui('بروفايل العضو')}</h2>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" disabled={loadingMember || loadingSubs} onClick={() => { void refetchSubs(); if (selectedId) void refreshEntitlement(selectedId); }}><RefreshCw className={cn('size-4', loadingMember && 'animate-spin')} />{ui('تحديث')}</Button>
+              <Button variant="outline" size="sm" onClick={() => closeMemberPanel(false)}>{ui('إغلاق البروفايل')}</Button>
             </div>
-            {canManageQuick ? (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="gap-1.5 text-muted-foreground"
-                onClick={() => navigate(CR.members.quickServices)}
-              >
-                <Settings2 className="size-4" />
-                {ui('إعدادات')}
-              </Button>
-            ) : null}
           </div>
-          {quickServices.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {ui('لا توجد خدمات ظاهرة — أضف خدمة من الإعدادات')}
-            </p>
-          ) : (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
-              {quickServices.map((service) => (
-                <button
-                  key={service.id}
-                  type="button"
-                  disabled={!canSellQuick || saving}
-                  onClick={() => openQuickSell(service, null)}
-                  className={cn(
-                    'flex flex-col items-start gap-1 rounded-2xl border bg-muted/20 px-3.5 py-3 text-start transition',
-                    'hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                    'disabled:cursor-not-allowed disabled:opacity-50',
-                  )}
-                >
-                  <span className="text-sm font-semibold leading-snug">{service.name}</span>
-                  <span className="nums text-sm text-primary">{formatMoney(service.price)}</span>
-                  {isSystemAdmin && !effectiveReceptionBranch && service.branchId != null ? (
-                    <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
-                      <Building2 className="size-3" />
-                      {branches.find((branch) => branch.id === service.branchId)?.name?.trim()
-                        || `${ui('فرع رقم')} ${toArabicDigits(service.branchId)}`}
-                    </span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      ) : null}
+          {member && overview ? <ReceptionMemberProfile member={member} overview={overview} branches={branches} section="profile" /> : null}
+          {entitlement ? <EntitlementBanner entitlement={entitlement} canGrace={canCheckIn && !member?.isBlocked} onGrace={() => openGrace()} /> : null}
+          {loadingOverview ? <p role="status" className="text-sm text-muted-foreground">{ui('جاري تحميل سجلات العضو…')}</p> : null}
+          {overviewError ? <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 p-3 text-sm text-destructive"><span>{ui('تعذر تحميل بروفايل العضو')}: {apiError(profileError)}</span><Button size="sm" variant="outline" onClick={() => void refetchOverview()}>{ui('إعادة المحاولة')}</Button></div> : null}
 
-      <AttendanceSummaryCards statistics={todayAttendanceStats} />
-
-      <ReceptionDailyAttendanceTable
-        branchId={effectiveReceptionBranch || undefined}
-        branches={branches}
-        showBranch={isSystemAdmin}
-      />
-
-      <Dialog open={memberOpen} onOpenChange={closeMemberPanel}>
-        <DialogContent size="xl" className="gap-4" aria-describedby={undefined}>
-          <DialogHeader className="space-y-4 text-start">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <MemberAvatar
-                  name={member?.name}
-                  profilePicture={member?.profilePicture ?? barcodePreview?.member?.profilePicture}
-                  size="lg"
-                  className="size-16 text-xl"
-                />
-                <div className="space-y-1">
-                  <DialogTitle className="text-2xl leading-tight">
-                    {member?.name ?? ui('جاري التحميل…')}
-                  </DialogTitle>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-                    <span className="font-mono nums">{member?.memberCode}</span>
-                    {member?.phone && (
-                      <span className="inline-flex items-center gap-1 nums">
-                        <Phone className="size-3.5" />
-                        {toArabicDigits(member.phone)}
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-              <Button
-                variant="outline"
-                size="icon"
-                disabled={loadingMember || loadingSubs}
-                onClick={() => {
-                  void refetchMember();
-                  void refetchSubs();
-                  void refetchBarcodePreview();
-                  if (selectedId) void refreshEntitlement(selectedId);
-                }}
-              >
-                <RefreshCw className={cn('size-4', (loadingMember || loadingSubs) && 'animate-spin')} />
-              </Button>
-            </div>
-            {entitlement && (
-              <EntitlementBanner
-                entitlement={entitlement}
-                canGrace={canCheckIn && !member?.isBlocked}
-                onGrace={() => openGrace()}
-              />
-            )}
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <section className="grid gap-3 rounded-xl border bg-muted/15 p-3 sm:grid-cols-3" aria-label="ملخص الباركود">
-              <div><p className="text-xs font-medium text-muted-foreground">آخر ١٠ اشتراكات</p><div className="mt-2 max-h-52 space-y-1.5 overflow-y-auto pe-1">{barcodePreview?.latestSubscriptions.length ? barcodePreview.latestSubscriptions.map((subscription) => <div key={subscription.id} className="rounded-lg border bg-background/70 px-2.5 py-2"><p className="truncate text-sm font-medium nums">{subscription.subscriptionNumber} · {subscription.subscriptionType || 'اشتراك'}</p><p className="mt-0.5 text-xs text-muted-foreground nums">حتى {toArabicDigits(subscription.endDate)} · متبقي {formatMoney(subscription.remainingAmount)}</p></div>) : <p className="text-sm text-muted-foreground">لا توجد اشتراكات سابقة</p>}</div></div>
-              <div><p className="text-xs font-medium text-muted-foreground">اشتراكات اللوكر</p><div className="mt-2 space-y-1.5">{barcodePreview?.lockerSubscriptions.length ? barcodePreview.lockerSubscriptions.map((locker) => <p key={locker.id} className="truncate text-sm">لوكر {locker.lockerNumber || '—'} · {locker.type || locker.status}</p>) : <p className="text-sm text-muted-foreground">لا توجد خزائن</p>}</div></div>
-              <div><p className="text-xs font-medium text-muted-foreground">التجميد</p><div className="mt-2 space-y-1.5">{barcodePreview?.freezes.length ? barcodePreview.freezes.slice(0, 5).map((freeze) => <p key={`${freeze.subscriptionId}-${freeze.startDate}`} className="truncate text-sm nums">{freeze.isActive ? 'مجمّد الآن' : `${freeze.days ?? 0} يوم`} · {toArabicDigits(freeze.startDate)}</p>) : <p className="text-sm text-muted-foreground">لا يوجد سجل تجميد</p>}</div></div>
-            </section>
+          <details className="space-y-3 rounded-2xl border p-4">
+            <summary className="cursor-pointer font-bold">{ui('عمليات الاشتراكات وتسجيل الدخول')}</summary>
             <div
               className={cn(
                 'flex items-center gap-2 rounded-xl px-3 py-2',
@@ -1396,6 +1201,7 @@ export function ClubReceptionPage() {
                 const status = s.status as string;
                 const active = status === 'active';
                 const frozen = status === 'frozen';
+                const activeFreeze = s.activeFreeze;
                 const expired = isExpiredLikeSubscription(s);
                 return (
                   <div
@@ -1524,7 +1330,8 @@ export function ClubReceptionPage() {
                           variant="outline"
                           onClick={() => {
                             setFreezeSubId(s.id);
-                            setFreezeForm({ reason: '' });
+                            setEditingFreeze(false);
+                            setFreezeForm({ startDate: localToday(), endDate: localToday(), reason: '' });
                             setFreezeOpen(true);
                           }}
                         >
@@ -1533,32 +1340,34 @@ export function ClubReceptionPage() {
                         </Button>
                       )}
                       {frozen && (
-                        <Button size="sm" variant="outline" disabled={saving} onClick={() => void unfreeze(s.id)}>
-                          <Sun className="size-4" />
-                          {ct('subscriptions.unfreeze')}
-                        </Button>
+                        <>
+                          {activeFreeze ? <Button size="sm" variant="outline" disabled={saving} onClick={() => {
+                            setFreezeSubId(s.id);
+                            setEditingFreeze(true);
+                            setFreezeForm({ startDate: activeFreeze.startDate, endDate: activeFreeze.plannedEndDate ?? activeFreeze.startDate, reason: activeFreeze.reason ?? '' });
+                            setFreezeOpen(true);
+                          }}><Snowflake className="size-4" /> تعديل الإيقاف</Button> : null}
+                          <Button size="sm" variant="outline" disabled={saving} onClick={() => void unfreeze(s.id)}>
+                            <Sun className="size-4" />
+                            {ct('subscriptions.unfreeze')}
+                          </Button>
+                        </>
                       )}
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => { void (async () => {
+                        onClick={() => {
                           setRenewSubId(s.id);
-                          setRenewQuote(null);
                           const net = subscriptionNetValue(s);
-                          let price = net;
-                          try {
-                            const { data: quote } = await api.post<typeof renewQuote>(`/club-subscriptions/${s.id}/renewal-quote`, {});
-                            if (quote) { setRenewQuote(quote); price = quote.netValue; }
-                          } catch (error) { toast.error(apiError(error)); return; }
-                          setRenewForm({ paidAmount: String(price) });
+                          setRenewForm({ paidAmount: String(net) });
                           setRenewRows(
                             singlePaymentRow(
                               (s.paymentMethod as ClubPaymentMethod) || 'cash',
-                              price,
+                              net,
                             ),
                           );
                           setRenewOpen(true);
-                        })() }}
+                        }}
                       >
                         <RefreshCw className="size-4" />
                         {ct('subscriptions.renew')}
@@ -1679,9 +1488,72 @@ export function ClubReceptionPage() {
                 ) : null}
               </div>
             ) : null}
+          </details>
+        </section>
+      ) : null}
+
+      {(canSellQuick || canManageQuick) && (quickServices.length > 0 || canManageQuick) ? (
+        <div className="relative overflow-hidden rounded-3xl border bg-card p-5 shadow-sm md:p-6">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Zap className="size-4 text-primary" />
+              <h2 className="text-base font-semibold tracking-tight">{ui('خدمات سريعة')}</h2>
+              <span className="text-xs text-muted-foreground">{ui('بيع فوري من الاستقبال')}</span>
+            </div>
+            {canManageQuick ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="gap-1.5 text-muted-foreground"
+                onClick={() => navigate(CR.members.quickServices)}
+              >
+                <Settings2 className="size-4" />
+                {ui('إعدادات')}
+              </Button>
+            ) : null}
           </div>
-        </DialogContent>
-      </Dialog>
+          {quickServices.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              {ui('لا توجد خدمات ظاهرة — أضف خدمة من الإعدادات')}
+            </p>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4">
+              {quickServices.map((service) => (
+                <button
+                  key={service.id}
+                  type="button"
+                  disabled={!canSellQuick || saving}
+                  onClick={() => openQuickSell(service, null)}
+                  className={cn(
+                    'flex flex-col items-start gap-1 rounded-2xl border bg-muted/20 px-3.5 py-3 text-start transition',
+                    'hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
+                    'disabled:cursor-not-allowed disabled:opacity-50',
+                  )}
+                >
+                  <span className="text-sm font-semibold leading-snug">{service.name}</span>
+                  <span className="nums text-sm text-primary">{formatMoney(service.price)}</span>
+                  {isSystemAdmin && !effectiveReceptionBranch && service.branchId != null ? (
+                    <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">
+                      <Building2 className="size-3" />
+                      {branches.find((branch) => branch.id === service.branchId)?.name?.trim()
+                        || `${ui('فرع رقم')} ${toArabicDigits(service.branchId)}`}
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      <AttendanceSummaryCards statistics={todayAttendanceStats} />
+
+      <ReceptionDailyAttendanceTable
+        branchId={effectiveReceptionBranch || undefined}
+        branches={branches}
+        showBranch={isSystemAdmin}
+      />
+
 
       <Dialog
         open={blockOpen}
@@ -1894,10 +1766,14 @@ export function ClubReceptionPage() {
       <Dialog open={freezeOpen} onOpenChange={setFreezeOpen}>
         <DialogContent size="sm" aria-describedby={undefined}>
           <DialogHeader>
-            <DialogTitle>{ct('subscriptions.freezeTitle')}</DialogTitle>
+            <DialogTitle>{editingFreeze ? 'تعديل الإيقاف' : ct('subscriptions.freezeTitle')}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-3">
             <p className="text-sm text-muted-foreground">{ct('subscriptions.freezePreserveHint')}</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-2"><Label>بداية الإيقاف</Label><Input type="date" className="nums" disabled={editingFreeze} value={freezeForm.startDate} onChange={(e) => setFreezeForm((f) => ({ ...f, startDate: e.target.value }))} /></div>
+              <div className="grid gap-2"><Label>نهاية الإيقاف</Label><Input type="date" className="nums" min={freezeForm.startDate} value={freezeForm.endDate} onChange={(e) => setFreezeForm((f) => ({ ...f, endDate: e.target.value }))} /></div>
+            </div>
             <div className="grid gap-2">
               <Label>{ct('subscriptions.freezeReason')}</Label>
               <Input
@@ -1911,7 +1787,7 @@ export function ClubReceptionPage() {
               {ct('common.cancel')}
             </Button>
             <Button variant="brand" onClick={() => void submitFreeze()} disabled={saving}>
-              {saving ? ct('common.saving') : ct('subscriptions.freeze')}
+              {saving ? ct('common.saving') : editingFreeze ? 'حفظ التعديل' : ct('subscriptions.freeze')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1921,7 +1797,7 @@ export function ClubReceptionPage() {
         open={renewOpen}
         onOpenChange={(open) => {
           setRenewOpen(open);
-          if (!open) { setRenewSubId(null); setRenewQuote(null); }
+          if (!open) setRenewSubId(null);
         }}
       >
         <DialogContent size="md" aria-describedby={undefined}>
@@ -1933,8 +1809,8 @@ export function ClubReceptionPage() {
               <DialogFormSummary
                 items={[
                   {
-                    label: renewQuote ? 'قيمة الباقة الحالية' : ct('subscriptions.value'),
-                    value: formatMoney(renewQuote?.grossValue ?? renewNetValue),
+                    label: ct('subscriptions.value'),
+                    value: formatMoney(renewNetValue),
                   },
                   {
                     label: ct('subscriptions.paid'),

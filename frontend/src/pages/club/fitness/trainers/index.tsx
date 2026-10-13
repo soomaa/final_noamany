@@ -1,7 +1,6 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Eye, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
 import { PageHeader } from '@/components/common/page-header';
@@ -10,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Combobox } from '@/components/common/combobox';
 import { useFitnessT } from '@/hooks/use-fitness-t';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList, useArrayResource } from '@/lib/api-hooks';
@@ -18,13 +18,12 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClubTrainerRow } from '@/types/fitness';
 import { RowActions } from '../shared';
-import { profilePath } from './trainer-workspace-model';
 
 export function FitnessTrainersPage() {
   const ft = useFitnessT();
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<ClubTrainerRow>('club-trainers', params);
-  const { data: employees } = useArrayResource<{ id: number; name: string }>('employees');
+  const { data: employees } = useArrayResource<{ id: number; employee: string }>('employees/pos-options');
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
@@ -113,21 +112,16 @@ export function FitnessTrainersPage() {
         id: 'actions',
         header: ft('common.actions'),
         cell: ({ row }) => (
-          <div className="flex items-center gap-1">
-            <Button asChild variant="ghost" size="sm" aria-label="عرض ملف المدرب">
-              <Link to={profilePath(row.original.id)}><Eye className="size-4" />عرض الملف</Link>
-            </Button>
-            <RowActions
-              editLabel={ft('common.edit')}
-              deleteLabel={ft('common.delete')}
-              onEdit={() => openEdit(row.original)}
-              onDelete={() =>
-                void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
-                  if (ok) deleteMutation.mutate(row.original.id);
-                })
-              }
-            />
-          </div>
+          <RowActions
+            editLabel={ft('common.edit')}
+            deleteLabel={ft('common.delete')}
+            onEdit={() => openEdit(row.original)}
+            onDelete={() =>
+              void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
+                if (ok) deleteMutation.mutate(row.original.id);
+              })
+            }
+          />
         ),
       },
     ],
@@ -171,16 +165,16 @@ export function FitnessTrainersPage() {
             </div>
             <div className="grid gap-2">
               <Label>{ft('trainers.employee')}</Label>
-              <select
-                className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+              <Combobox
                 value={form.employeeId}
-                onChange={(e) => setForm((f) => ({ ...f, employeeId: e.target.value }))}
-              >
-                <option value="">—</option>
-                {(employees ?? []).map((e) => (
-                  <option key={e.id} value={e.id}>{e.name}</option>
-                ))}
-              </select>
+                onValueChange={(v) => setForm((f) => ({ ...f, employeeId: v }))}
+                options={[
+                  { value: '', label: '—' },
+                  ...(employees ?? []).map((e) => ({ value: String(e.id), label: e.employee })),
+                ]}
+                placeholder="اختر موظفاً…"
+                searchPlaceholder="بحث عن موظف…"
+              />
             </div>
             <div className="grid gap-2">
               <Label>{ft('trainers.specialization')}</Label>

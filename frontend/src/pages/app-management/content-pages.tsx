@@ -77,6 +77,7 @@ export function AppOffersPage() {
           </div>
           <div className="grid gap-1">
             <Label>{ui('صورة')}</Label>
+            {form.imageUrl ? <img src={uploadUrl(String(form.imageUrl)) ?? ''} alt={ui('معاينة العرض')} className="h-32 w-48 rounded-lg border bg-muted object-cover" /> : null}
             <Input
               type="file"
               accept="image/*"
@@ -295,7 +296,7 @@ export function AppAdsPage() {
       title={ui('إدارة الإعلانات')}
       description={ui('إعلانات البنر في التطبيق')}
       resource="app/ads"
-      emptyForm={{ title: '', description: '', linkUrl: '', startDate: '', endDate: '', isActive: false, imageUrl: '' }}
+      emptyForm={{ title: '', description: '', linkUrl: '', startDate: '', endDate: '', isActive: true, imageUrl: '' }}
       columns={[
         { key: 'title', header: ui('العنوان') },
         { key: 'linkUrl', header: ui('الرابط') },
@@ -318,6 +319,16 @@ export function AppAdsPage() {
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1"><Label>{ui('من')}</Label><Input className="nums" type="date" value={String(form.startDate ?? '')} onChange={(e) => setForm({ ...form, startDate: e.target.value })} /></div>
             <div className="grid gap-1"><Label>{ui('إلى')}</Label><Input className="nums" type="date" value={String(form.endDate ?? '')} onChange={(e) => setForm({ ...form, endDate: e.target.value })} /></div>
+          </div>
+          <div className="grid gap-1">
+            <Label>{ui('الحالة')}</Label>
+            <Select value={form.isActive ? 'active' : 'inactive'} onValueChange={(value) => setForm({ ...form, isActive: value === 'active' })}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">{ui('نشط')}</SelectItem>
+                <SelectItem value="inactive">{ui('غير نشط')}</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
         </div>
       )}

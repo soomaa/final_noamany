@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import {
   CalendarDays,
   CheckCircle2,
-  Contact,
+  Clock3,
   LogOut,
   TrendingUp,
   UserCheck,
@@ -35,8 +35,6 @@ interface TrainerPortalData {
     averageAttendance: number;
     adherenceRate: number;
     totalEarnings: number;
-    privateSessions?: number;
-    privateClients?: number;
   };
   attendance: Array<{
     classId: number;
@@ -46,10 +44,6 @@ interface TrainerPortalData {
     absent: number;
     registered: number;
     attendanceRate: number;
-  }>;
-  privateClients?: Array<{
-    subscriptionId: number; subscriptionNumber: string; memberName: string; memberCode: string | null; memberPhone: string | null;
-    packageName: string; startDate: string; endDate: string; isLinkedToSessions: boolean; sessionsCount: number | null; sessionsUsed: number; sessionsRemaining: number | null; isActive: boolean;
   }>;
   earnings: {
     total: number;
@@ -65,7 +59,6 @@ interface TrainerPortalData {
       revenue: number;
       amount: number;
     }>;
-    privateItems: Array<{ id: number; subscriptionType: string | null; attendanceDate: string; sequence: number; commissionPercentage: number; amount: number }>;
     payments: Array<{ id: number; amount: number; paymentDate: string; notes: string | null }>;
   };
 }
@@ -167,21 +160,15 @@ export function TrainerPortalPage() {
               <ClubStatCard label="متوسط الحضور" value={data.statistics.averageAttendance.toFixed(1)} icon={UserCheck} />
               <ClubStatCard label="نسبة الالتزام" value={data.statistics.adherenceRate.toFixed(0)} suffix="%" icon={TrendingUp} />
               <ClubStatCard label="إجمالي المستحقات" value={money(data.statistics.totalEarnings)} icon={Wallet} />
-              <ClubStatCard label="جلسات برايفت" value={data.statistics.privateSessions ?? 0} icon={Contact} />
             </div>
 
-            <Tabs defaultValue="clients">
+            <Tabs defaultValue="schedule">
               <TabsList className="h-auto flex-wrap">
-                <TabsTrigger value="clients"><Contact className="me-2 size-4" /> مشتركين البرايفت</TabsTrigger>
-                <TabsTrigger value="schedule"><CalendarDays className="me-2 size-4" /> التقويم والحصص</TabsTrigger>
+                <TabsTrigger value="schedule"><CalendarDays className="me-2 size-4" /> جدولي</TabsTrigger>
                 <TabsTrigger value="attendance"><UserCheck className="me-2 size-4" /> الحضور</TabsTrigger>
-                <TabsTrigger value="private"><Contact className="me-2 size-4" /> جلسات وعمولات Private</TabsTrigger>
-                <TabsTrigger value="earnings"><Wallet className="me-2 size-4" /> المستحقات</TabsTrigger>
+                <TabsTrigger value="earnings"><Wallet className="me-2 size-4" /> مستحقاتي</TabsTrigger>
+                <TabsTrigger value="statistics"><TrendingUp className="me-2 size-4" /> الإحصائيات</TabsTrigger>
               </TabsList>
-
-              <TabsContent value="clients">
-                <Card><CardHeader><CardTitle>المشتركين معك برايفت</CardTitle><p className="text-sm text-muted-foreground">الأعضاء والباقة والحصص المتبقية فقط؛ قيمة الاشتراك ومديونيته لا تظهر في بوابة المدرب.</p></CardHeader><CardContent className="overflow-x-auto p-0"><table className="w-full min-w-[700px] text-sm"><thead className="bg-muted/50"><tr><th className="p-3 text-start">العضو</th><th className="p-3 text-start">الباقة</th><th className="p-3 text-start">المدة</th><th className="p-3 text-center">الحصص</th><th className="p-3 text-center">الحالة</th></tr></thead><tbody>{(data.privateClients ?? []).map((row) => <tr key={row.subscriptionId} className="border-t"><td className="p-3 font-medium">{row.memberName}<p className="text-xs font-normal text-muted-foreground nums">{row.memberCode ?? '—'}{row.memberPhone ? ` · ${row.memberPhone}` : ''}</p></td><td className="p-3">{row.packageName}</td><td className="p-3 nums">{toArabicDigits(row.startDate)} — {toArabicDigits(row.endDate)}</td><td className="p-3 text-center nums">{row.isLinkedToSessions ? `${toArabicDigits(row.sessionsRemaining ?? 0)} / ${toArabicDigits(row.sessionsCount ?? 0)}` : 'بالمدة'}</td><td className="p-3 text-center">{row.isActive ? 'نشط' : 'منتهي'}</td></tr>)}</tbody></table>{!(data.privateClients ?? []).length ? <p className="py-10 text-center text-sm text-muted-foreground">لا يوجد مشتركين برايفت معك.</p> : null}</CardContent></Card>
-              </TabsContent>
 
               <TabsContent value="schedule" className="pt-2">
                 {isCalendarLoading ? <PageSkeleton /> : null}
@@ -250,8 +237,8 @@ export function TrainerPortalPage() {
                 <Card><CardHeader><CardTitle>سجل المبالغ المصروفة</CardTitle></CardHeader><CardContent className="space-y-2">{data.earnings.payments.map((row) => <div key={row.id} className="flex items-center gap-3 rounded-xl border p-3"><Wallet className="size-4 text-primary" /><div><b className="nums">{money(row.amount)}</b><p className="text-xs text-muted-foreground nums">{toArabicDigits(row.paymentDate)}</p></div>{row.notes ? <span className="ms-auto text-sm text-muted-foreground">{row.notes}</span> : null}</div>)}{!data.earnings.payments.length ? <p className="py-8 text-center text-sm text-muted-foreground">لم يتم تسجيل مبالغ مصروفة في الفترة.</p> : null}</CardContent></Card>
               </TabsContent>
 
-              <TabsContent value="private">
-                <Card><CardHeader><CardTitle>جلسات وعمولات Private</CardTitle><p className="text-sm text-muted-foreground">تظهر الجلسات التي سجّلها الاستقبال فقط، والعمولة المحفوظة وقت الحضور.</p></CardHeader><CardContent className="overflow-x-auto p-0"><table className="w-full min-w-[640px] text-sm"><thead className="bg-muted/50"><tr><th className="p-3 text-start">الباقة</th><th className="p-3 text-start">التاريخ</th><th className="p-3 text-center">رقم الجلسة</th><th className="p-3 text-center">النسبة</th><th className="p-3 text-start">المستحق</th></tr></thead><tbody>{data.earnings.privateItems.map((row) => <tr key={row.id} className="border-t"><td className="p-3">{row.subscriptionType ?? 'Private'}</td><td className="p-3 nums">{toArabicDigits(row.attendanceDate)}</td><td className="p-3 text-center nums">{toArabicDigits(row.sequence)}</td><td className="p-3 text-center nums">{toArabicDigits(row.commissionPercentage.toFixed(2))}%</td><td className="p-3 font-bold nums">{money(row.amount)}</td></tr>)}</tbody></table>{!data.earnings.privateItems.length ? <p className="py-10 text-center text-sm text-muted-foreground">لا توجد جلسات برايفت في الفترة المحددة.</p> : null}</CardContent></Card>
+              <TabsContent value="statistics">
+                <Card><CardHeader><CardTitle>ملخص الأداء</CardTitle></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><div className="rounded-xl border p-4"><Clock3 className="mb-3 size-5 text-primary" /><p className="text-sm text-muted-foreground">الحصص المنفذة</p><b className="mt-1 block text-2xl nums">{toArabicDigits(data.statistics.completedClasses)}</b></div><div className="rounded-xl border p-4"><UserCheck className="mb-3 size-5 text-primary" /><p className="text-sm text-muted-foreground">إجمالي الحضور</p><b className="mt-1 block text-2xl nums">{toArabicDigits(data.statistics.totalAttendance)}</b></div><div className="rounded-xl border p-4"><TrendingUp className="mb-3 size-5 text-primary" /><p className="text-sm text-muted-foreground">نسبة الالتزام</p><b className="mt-1 block text-2xl nums">{toArabicDigits(data.statistics.adherenceRate.toFixed(0))}%</b></div></CardContent></Card>
               </TabsContent>
             </Tabs>
           </>

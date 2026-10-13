@@ -13,6 +13,7 @@ const expectedRoutes = [
   '/club/members/barcode-management/print-range',
   '/club/members/barcode-management/spa-attendance',
   '/club/members/barcode-management/classes-attendance',
+  '/club/members/barcode-management/scan-times',
 ];
 
 if (JSON.stringify(routes) !== JSON.stringify(expectedRoutes)) {

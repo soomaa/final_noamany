@@ -113,16 +113,12 @@ export async function seedFoundation(): Promise<void> {
   log('foundation', `cities: ${cityNames.length}`);
 
   // ---- branches ----
-  // Noamany CLUB — two branches with codes A1 and B2 (per client spec).
-  // Additional legacy branches kept for existing seed data compatibility.
+  // Match the four branches shown in the authenticated online dashboard.
   const branchDefs: Array<{ name: string; code: string }> = [
-    { name: 'Noamany CLUB - فرع A1', code: 'A1' },
-    { name: 'Noamany CLUB - فرع B2', code: 'B2' },
-    { name: 'الفرع الرئيسي - العليا', code: 'A' },
-    { name: 'فرع الرجال - النخيل', code: 'B' },
-    { name: 'فرع السيدات - الياسمين', code: 'C' },
-    { name: 'فرع حي الملقا', code: 'D' },
-    { name: 'فرع جدة - الروضة', code: 'E' },
+    { name: 'فرع طنطا', code: 'A' },
+    { name: 'فرع البر الشرقي- شبين الكوم', code: 'B' },
+    { name: 'فرع الجلاء- شبين الكوم', code: 'C' },
+    { name: 'فرع طنطا الفرعي', code: 'D' },
   ];
   const branchIds: number[] = [];
   for (const def of branchDefs) {

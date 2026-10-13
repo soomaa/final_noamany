@@ -137,15 +137,6 @@ export class ProductRecipeLineDto {
   @IsString() unit!: string;
 }
 
-export class PackagedMaterialSizeDto {
-  @IsOptional() @IsInt() @Min(1) id?: number;
-  @IsNumber() @Min(0.001) packageSize!: number;
-  @IsIn(['g', 'kg', 'oz', 'ml', 'L', 'fl_oz', 'piece']) packageUnit!: string;
-  @IsNumber() @Min(0.01) packagePrice!: number;
-  @IsOptional() @IsNumber() @Min(0) initialPackageCount?: number;
-  @IsOptional() @IsNumber() @Min(0) reorderPoint?: number;
-}
-
 export class UpsertProductDto {
   @IsOptional() @IsString() productCode?: string;
   @IsString() nameAr!: string;
@@ -174,12 +165,6 @@ export class UpsertProductDto {
   @IsOptional() @IsString() model?: string;
   @IsOptional() @IsString() color?: string;
   @IsOptional() @IsString() size?: string;
-  @IsOptional() @IsBoolean() isPackaged?: boolean;
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => PackagedMaterialSizeDto)
-  packages?: PackagedMaterialSizeDto[];
   @IsOptional() @IsString() material?: string;
   @IsOptional() @IsNumber() weightKg?: number;
   @IsOptional() dimensions?: Record<string, unknown>;
@@ -409,8 +394,7 @@ export class UpsertCountItemDto {
   @IsString() itemName!: string;
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsNumber() systemQuantity?: number;
-  @IsNumber() @Min(0) countedQuantity!: number;
-  @IsOptional() @IsString() @MaxLength(255) varianceReason?: string;
+  @IsNumber() countedQuantity!: number;
   @IsOptional() @IsString() status?: string;
 }
 
@@ -520,4 +504,3 @@ export class DailyStockQueryDto {
   @IsOptional() @IsString() search?: string;
   @IsOptional() @IsIn(['raw_material', 'ready_product', 'manufactured_internal', 'all']) inventoryKind?: string;
 }
-

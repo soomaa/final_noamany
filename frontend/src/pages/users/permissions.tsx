@@ -1,5 +1,5 @@
 import { ArrowRight, Loader2, Save } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useMemo } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { PageHeader } from '@/components/common/page-header';
 import { ErrorState, NotImplementedState } from '@/components/common/states';
@@ -9,10 +9,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
-import { togglePermissionSet } from '@/lib/user-permissions-editor-model';
 import { isNotImplemented, useMutationWithToast, useResource } from '@/lib/api-hooks';
 import { useLocale } from '@/store/locale';
-import { useBranches } from '@/hooks/use-branches';
 
 interface MenuNodeApi {
   id: number;
@@ -27,7 +25,6 @@ interface UserPermissions {
   fullName?: string;
   tree?: MenuNodeApi[];
   permissions?: string[];
-  scope?: { branchId: number | null; gender: 'male' | 'female' | null; editable: boolean };
 }
 
 function PermissionTree({
@@ -72,26 +69,19 @@ export function UserPermissionsPage() {
   const { ui } = useLocale();
   const { id } = useParams<{ id: string }>();
   const { data, isLoading, isError, error, refetch } = useResource<UserPermissions>('users', id, 'permissions');
-  const { data: branches = [] } = useBranches();
-  const [scope, setScope] = useState<{ branchId: string; gender: 'male' | 'female' }>({ branchId: '', gender: 'male' });
-  const [checked, setChecked] = useState<Set<string>>(() => new Set());
-  useEffect(() => {
-    if (data?.scope?.editable) setScope({ branchId: data.scope.branchId ? String(data.scope.branchId) : '', gender: data.scope.gender ?? 'male' });
-  }, [data?.scope?.editable, data?.scope?.branchId, data?.scope?.gender]);
-  useEffect(() => {
-    setChecked(new Set(data?.permissions ?? []));
-  }, [data?.permissions]);
 
   const saveMutation = useMutationWithToast(
-    (permissionIds: string[]) => api.put(`/users/${id}/permissions`, {
-      permissions: permissionIds,
-      ...(data?.scope?.editable ? { scope: { branchId: Number(scope.branchId), gender: scope.gender } } : {}),
-    }),
+    (permissionIds: string[]) => api.put(`/users/${id}/permissions`, { permissions: permissionIds }),
     { success: ui('تم حفظ الصلاحيات'), invalidate: ['users', id ?? '', 'permissions'] },
   );
 
+  const checked = useMemo(() => new Set(data?.permissions ?? []), [data?.permissions]);
+
   const handleToggle = (permId: string, value: boolean) => {
-    setChecked((current) => togglePermissionSet(current, permId, value));
+    const next = new Set(checked);
+    if (value) next.add(permId);
+    else next.delete(permId);
+    saveMutation.mutate([...next]);
   };
 
   if (isError && isNotImplemented(error)) {
@@ -116,7 +106,7 @@ export function UserPermissionsPage() {
         description={
           isLoading
             ? ui('جاري التحميل…')
-            : `${data?.fullName ?? data?.username ?? ui('المستخدم')} — ${ui('تحديد الصلاحيات')} (${toArabicCount(checked.size, ui('٠١٢٣٤٥٦٧٨٩'))})`
+            : `${data?.fullName ?? data?.username ?? ui('المستخدم')} — ${ui('تحديد الصلاحيات')} (${toArabicCount(checked.size)})`
         }
         actions={
           <div className="flex gap-2">
@@ -128,7 +118,7 @@ export function UserPermissionsPage() {
             <Button
               variant="brand"
               size="sm"
-              disabled={saveMutation.isPending || isLoading || Boolean(data?.scope?.editable && !scope.branchId)}
+              disabled={saveMutation.isPending || isLoading}
               onClick={() => saveMutation.mutate([...checked])}
             >
               {saveMutation.isPending ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
@@ -139,15 +129,6 @@ export function UserPermissionsPage() {
       />
 
       <Card>
-        {data?.scope?.editable ? (
-          <CardContent className="border-b bg-muted/20 pt-5">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div><Label htmlFor="user-scope-branch">الفرع المسموح</Label><select id="user-scope-branch" className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={scope.branchId} onChange={(event) => setScope((current) => ({ ...current, branchId: event.target.value }))}><option value="">اختر الفرع</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></div>
-              <div><Label htmlFor="user-scope-gender">القسم المسموح</Label><select id="user-scope-gender" className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={scope.gender} onChange={(event) => setScope((current) => ({ ...current, gender: event.target.value as 'male' | 'female' }))}><option value="male">رجالي</option><option value="female">حريمي</option></select></div>
-            </div>
-            <p className="mt-3 text-xs text-muted-foreground">يُطبّق النطاق بعد الحفظ وتحديث جلسة المستخدم، وأي نطاق ناقص يُمنع تلقائيًا.</p>
-          </CardContent>
-        ) : null}
         <CardHeader>
           <CardTitle className="text-base">{ui('شجرة الصلاحيات (من النظام القديم)')}</CardTitle>
         </CardHeader>
@@ -169,6 +150,7 @@ export function UserPermissionsPage() {
   );
 }
 
-function toArabicCount(n: number, digits: string) {
-  return String(n).replace(/\d/g, (d) => digits[Number(d)]);
+function toArabicCount(n: number) {
+  const { ui } = useLocale();
+  return String(n).replace(/\d/g, (d) => ui('٠١٢٣٤٥٦٧٨٩')[Number(d)]);
 }

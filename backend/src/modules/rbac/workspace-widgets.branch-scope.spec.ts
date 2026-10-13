@@ -2,6 +2,7 @@ import { WorkspaceWidgetsService } from './workspace-widgets.service';
 
 function makeService() {
   const prisma = {
+    users: { findUnique: jest.fn().mockResolvedValue({ branch_id_fk: 2 }) },
     club_members: { count: jest.fn().mockResolvedValue(4) },
     club_subscriptions: { count: jest.fn().mockResolvedValue(3) },
     club_attendance: { count: jest.fn().mockResolvedValue(2) },
@@ -44,6 +45,17 @@ describe('workspace widget branch isolation', () => {
     });
   });
 
+  it('uses the employee current branch from the database instead of a stale token claim', async () => {
+    const { service, prisma } = makeService();
+    prisma.users.findUnique.mockResolvedValue({ branch_id_fk: 3 });
+
+    await service.getWidgets({ sub: 20, level: 2, branch: 2 } as never);
+
+    expect(prisma.club_members.count).toHaveBeenCalledWith({
+      where: { is_deleted: false, branch_id: { in: [3] } },
+    });
+  });
+
   it('returns the current user daily net after subtracting their expenses', async () => {
     const prisma = {
       club_receipts: {
@@ -53,7 +65,7 @@ describe('workspace widget branch isolation', () => {
         findMany: jest.fn().mockResolvedValue([{ total_amount: 300 }]),
       },
       users: {
-        findUnique: jest.fn().mockResolvedValue({ name: 'موظف الاستقبال', username: 'reception' }),
+        findUnique: jest.fn().mockResolvedValue({ branch_id_fk: 2, name: 'موظف الاستقبال', username: 'reception' }),
       },
     };
     const workspace = {
@@ -89,5 +101,28 @@ describe('workspace widget branch isolation', () => {
       expenseCount: 1,
       userScoped: true,
     }));
+  });
+
+  it('counts only subscriptions created by the signed-in employee today', async () => {
+    const prisma = {
+      users: { findUnique: jest.fn().mockResolvedValue({ branch_id_fk: 2 }) },
+      club_subscriptions: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 1, paid_amount: 500 },
+          { id: 2, paid_amount: 250 },
+        ]),
+      },
+    };
+    const workspace = {
+      getWorkspace: jest.fn().mockResolvedValue({ widgets: ['my_subscriptions_today'] }),
+    };
+    const service = new WorkspaceWidgetsService(prisma as never, workspace as never, {} as never);
+
+    const result = await service.getWidgets({ sub: 20, level: 2, branch: 2 } as never);
+
+    expect(prisma.club_subscriptions.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ created_by: 20, branch_id: { in: [2] } }),
+    }));
+    expect(result.data.my_subscriptions_today).toEqual({ count: 2, paidTotal: 750 });
   });
 });

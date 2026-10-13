@@ -1,11 +1,12 @@
 import { ForbiddenException, Injectable } from "@nestjs/common";
 import { JwtUser } from "../types/jwt-user";
+import { isSystemAdmin } from '../utils/system-admin.util';
 
 /**
  * Resolves the set of branches a user is allowed to read/write.
  *
  * Strict isolation rules:
- *  - level === 1 (super-admin) → ALL branches (no restriction).
+ *  - level === 1 or an active RBAC super-admin role → ALL branches (no restriction).
  *  - a non-admin with no branch assigned (branch 0/null) → NO branches (fail closed).
  *  - every other non-admin → exactly the branch stored in their JWT.
  *
@@ -14,14 +15,21 @@ import { JwtUser } from "../types/jwt-user";
 @Injectable()
 export class BranchScopeService {
   /**
-   * Normalized employee scope: 0 = men, 1 = women. This is an
-   * authorization constraint, not a UI default. System administrators keep
-   * their existing unrestricted audience.
+   * Employee scope: 1 = men, 2 = women, 3 = both. This is an authorization
+   * constraint, not a UI default. System administrators keep their existing
+   * unrestricted audience.
    */
   memberGenderFilter(user: JwtUser | undefined | null): 'male' | 'female' | null {
-    if (!user || user.level === 1) return null;
-    if (user.man_women_type === 0) return 'male';
-    if (user.man_women_type === 1) return 'female';
+    if (!user || isSystemAdmin(user)) return null;
+    if (user.member_sections?.length) {
+      if (user.member_sections.includes('male') && user.member_sections.includes('female')) return null;
+      return user.member_sections[0];
+    }
+    // 0 is retained as men only for legacy claims. A value of 3 deliberately
+    // has no gender filter, while branch scoping still applies.
+    if (user.man_women_type === 0 || user.man_women_type === 1) return 'male';
+    if (user.man_women_type === 2) return 'female';
+    if (user.man_women_type === 3) return null;
     throw new ForbiddenException('نطاق القسم غير مضبوط لهذا المستخدم');
   }
 
@@ -33,7 +41,7 @@ export class BranchScopeService {
   /** `null` ⇒ unrestricted super-admin. `[]` ⇒ fail-closed/no branch access. */
   allowedBranchIds(user: JwtUser | undefined | null): number[] | null {
     if (!user) return [];
-    if (user.level === 1) return null; // super-admin sees everything
+    if (isSystemAdmin(user)) return null; // super-admin sees everything
     const base = Number(user.branch ?? 0);
     if (!Number.isInteger(base) || base <= 0) return [];
 

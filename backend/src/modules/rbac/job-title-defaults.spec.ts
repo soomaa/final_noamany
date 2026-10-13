@@ -7,32 +7,19 @@ describe('job-title starter permissions', () => {
     ]);
   });
 
-  it('gives personal sales staff the portal and read-only reception preview', () => {
+  it('gives sales staff the member-to-subscription workflow', () => {
     const cells = defaultPermissionCellsForJobTitle('موظف مبيعات');
-    expect(cells).toEqual([
-      { resourceKey: 'sales.portal', actionKey: 'view', effect: 'allow' },
-      { resourceKey: 'sales.portal', actionKey: 'update', effect: 'allow' },
-      { resourceKey: 'club.reception', actionKey: 'view', effect: 'allow' },
-      { resourceKey: 'club.members.attendance', actionKey: 'view', effect: 'allow' },
-    ]);
-  });
-
-  it.each(['Sales', 'sales specialist', 'SALES REPRESENTATIVE'])('recognizes imported personal sales title %s', (title) => {
-    expect(defaultPermissionCellsForJobTitle(title)).toEqual(expect.arrayContaining([
-      { resourceKey: 'sales.portal', actionKey: 'view', effect: 'allow' },
-      { resourceKey: 'sales.portal', actionKey: 'update', effect: 'allow' },
-    ]));
-  });
-
-  it.each(['مدير مبيعات', 'Sales Manager'])('does not turn the management title %s into a personal portal role', (title) => {
-    expect(defaultPermissionCellsForJobTitle(title).some((cell) => cell.resourceKey === 'sales.portal')).toBe(false);
-  });
-
-  it('keeps the exact preview-only sales title read-only', () => {
-    expect(defaultPermissionCellsForJobTitle('السيلز — معاينة الأعضاء فقط')).toEqual([
-      { resourceKey: 'club.reception', actionKey: 'view', effect: 'allow' },
-      { resourceKey: 'club.members.attendance', actionKey: 'view', effect: 'allow' },
-    ]);
+    expect(cells).toContainEqual({
+      resourceKey: 'club.members',
+      actionKey: 'create',
+      effect: 'allow',
+    });
+    expect(cells).toContainEqual({
+      resourceKey: 'club.subscriptions',
+      actionKey: 'create',
+      effect: 'allow',
+    });
+    expect(cells.some((cell) => cell.actionKey === 'delete')).toBe(false);
   });
 
   it('does not infer broad access for an unknown title', () => {

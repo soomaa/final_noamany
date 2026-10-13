@@ -10,6 +10,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { BranchScopeGuard } from './common/guards/branch-scope.guard';
 import { BranchScopeModule } from './common/branch-scope/branch-scope.module';
+import { ClubBranchGroupModule } from './common/branch-groups/club-branch-group.module';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { ExportModule } from './common/export/export.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -24,6 +25,7 @@ import { PayrollModule } from './modules/payroll/payroll.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { RbacAdminModule } from './modules/rbac/admin/rbac-admin.module';
 import { SettingsModule } from './modules/settings/settings.module';
+import { CustomerServiceModule } from './modules/customer-service/customer-service.module';
 import { UsersModule } from './modules/users/users.module';
 // Wave 2 — HR operations
 import { LoansModule } from './modules/loans/loans.module';
@@ -48,6 +50,7 @@ import { HrWarningsModule } from './modules/hr-warnings/hr-warnings.module';
 import { CircularsModule } from './modules/circulars/circulars.module';
 import { TerminationModule } from './modules/termination/termination.module';
 import { EvaluationsModule } from './modules/evaluations/evaluations.module';
+import { EvaluationManagementModule } from './modules/evaluation-management/evaluation-management.module';
 import { CustodyModule } from './modules/custody/custody.module';
 import { JobRequestsModule } from './modules/job-requests/job-requests.module';
 import { InsuranceSettingsModule } from './modules/insurance-settings/insurance-settings.module';
@@ -76,8 +79,6 @@ import { ClubDashboardModule } from './modules/club-dashboard/club-dashboard.mod
 import { ClubEventsModule } from './modules/club-events/club-events.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { CafeProductsModule } from './modules/cafe/cafe-products.module';
-import { CafeDashboardModule } from './modules/cafe-dashboard/cafe-dashboard.module';
-import { CafeWasteModule } from './modules/cafe-waste/cafe-waste.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { FinanceModule } from './modules/finance/finance.module';
@@ -91,8 +92,9 @@ import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { JobsModule } from './modules/jobs/jobs.module';
 import { AdministrativeDecisionsModule } from './modules/administrative-decisions/administrative-decisions.module';
 import { HrMobileContentModule } from './modules/hr-mobile-content/hr-mobile-content.module';
-import { TargetsModule } from './modules/targets/targets.module';
-import { CustomerServiceModule } from './modules/customer-service/customer-service.module';
+import { PaymentMethodsModule } from './modules/payment-methods/payment-methods.module';
+import { OnlineSubscriptionsModule } from './modules/online-subscriptions/online-subscriptions.module';
+import { ClubPointsModule } from './modules/club-points/club-points.module';
 
 @Module({
   imports: [
@@ -103,6 +105,7 @@ import { CustomerServiceModule } from './modules/customer-service/customer-servi
     ExportModule,
     PrismaModule,
     BranchScopeModule,
+    ClubBranchGroupModule,
     AuthModule,
     RbacModule,
     RbacAdminModule,
@@ -112,6 +115,7 @@ import { CustomerServiceModule } from './modules/customer-service/customer-servi
     OrgModule,
     LookupsModule,
     SettingsModule,
+    CustomerServiceModule,
     NotificationsModule,
     EmployeesModule,
     PartnersModule,
@@ -140,6 +144,7 @@ import { CustomerServiceModule } from './modules/customer-service/customer-servi
     CircularsModule,
     TerminationModule,
     EvaluationsModule,
+    EvaluationManagementModule,
     CustodyModule,
     JobRequestsModule,
     InsuranceSettingsModule,
@@ -159,6 +164,7 @@ import { CustomerServiceModule } from './modules/customer-service/customer-servi
     MobileModule,
     MemberModule,
     ClubMembersModule,
+    ClubPointsModule,
     ClubSubscriptionsModule,
     ClubQuickServicesModule,
     ClubCustomerSourcesModule,
@@ -169,8 +175,6 @@ import { CustomerServiceModule } from './modules/customer-service/customer-servi
     // --- Wave 5 — gym-sales retail ---
     InventoryModule,
     CafeProductsModule,
-    CafeDashboardModule,
-    CafeWasteModule,
     // --- Wave 5 — gym-sales: procurement ---
     ProcurementModule,
     SalesModule,
@@ -185,8 +189,8 @@ import { CustomerServiceModule } from './modules/customer-service/customer-servi
     JobsModule,
     AdministrativeDecisionsModule,
     HrMobileContentModule,
-    TargetsModule,
-    CustomerServiceModule,
+    PaymentMethodsModule,
+    OnlineSubscriptionsModule,
   ],
   controllers: [AppController],
   providers: [

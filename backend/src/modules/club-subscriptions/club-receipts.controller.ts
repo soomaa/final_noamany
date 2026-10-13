@@ -35,6 +35,11 @@ export class ClubReceiptsController {
     return this.service.statistics(user);
   }
 
+  @Get('next-number')
+  nextNumber() {
+    return this.service.nextNumber();
+  }
+
   @Get()
   list(@Query() query: ListClubReceiptsDto, @CurrentUser() user: JwtUser) {
     return this.service.list(query, user);

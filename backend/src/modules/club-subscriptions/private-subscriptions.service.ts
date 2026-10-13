@@ -221,6 +221,7 @@ export class PrivateSubscriptionsService {
       discountEnabled: discountValue > 0,
       discountValue,
       paidAmount: body.paidAmount,
+      receiptNumber: body.receiptNumber,
       gender: body.gender ?? (member.gender as ClubGender),
       paymentMethod: body.paymentMethod,
       payments: body.payments,

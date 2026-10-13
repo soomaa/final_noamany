@@ -1,11 +1,12 @@
 import {
   Body,
   Controller,
-  ForbiddenException,
+  Delete,
   Get,
   Param,
   ParseIntPipe,
   Post,
+  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -13,20 +14,17 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { JwtUser } from '../../common/types/jwt-user';
-import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
 import { PermissionsService } from './permissions.service';
 import { CreatePermissionDto } from './dto/create-permission.dto';
 import { ActionPermissionDto } from './dto/action-permission.dto';
 import { ListPermissionsDto } from './dto/list-permissions.dto';
+import { UpdatePermissionDto } from './dto/update-permission.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('permissions')
 @RequiresPermission('leaves.permissions:view')
 export class PermissionsController {
-  constructor(
-    private readonly permissions: PermissionsService,
-    private readonly permissionEngine: PermissionEngineService,
-  ) {}
+  constructor(private readonly permissions: PermissionsService) {}
 
   @Get()
   list(@Query() query: ListPermissionsDto, @CurrentUser('sub') userId: number) {
@@ -41,24 +39,34 @@ export class PermissionsController {
     return this.permissions.available(empId, eznDate);
   }
 
+  @Get(':id')
+  details(@Param('id', ParseIntPipe) id: number) {
+    return this.permissions.details(id);
+  }
+
   @Post()
   create(@Body() body: CreatePermissionDto, @CurrentUser() user: JwtUser) {
     return this.permissions.create(body, user.sub, user.name ?? undefined);
   }
 
+  @Put(':id')
+  @RequiresPermission('leaves.permissions:update')
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: UpdatePermissionDto) {
+    return this.permissions.update(id, body);
+  }
+
+  @Delete(':id')
+  @RequiresPermission('leaves.permissions:delete')
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.permissions.remove(id);
+  }
+
   @Post(':id/action')
-  async action(
+  action(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: ActionPermissionDto,
     @CurrentUser() user: JwtUser,
   ) {
-    // The single multi-stage endpoint must require the same permission as the
-    // equivalent single-stage /approve or /reject route it stands in for, not just
-    // the controller's baseline :view — otherwise any viewer who happens to be the
-    // current approval-chain recipient could approve/reject without that grant.
-    const requiredAction = body.action === 'accept' ? 'approve' : 'reject';
-    const allowed = await this.permissionEngine.can(user.sub, 'leaves.permissions', requiredAction);
-    if (!allowed) throw new ForbiddenException('لا تملك صلاحية تنفيذ هذا الإجراء');
     return this.permissions.action(id, body, user.sub, user.name ?? undefined);
   }
 

@@ -66,10 +66,7 @@ describe('ClubSubscriptionsService.dailyCashierReport', () => {
     },
   };
   const permissions = { isSuperAdmin: jest.fn() };
-  const branchScope = {
-    resolveListFilter: jest.fn().mockReturnValue([3]),
-    memberGenderFilter: jest.fn().mockReturnValue('male'),
-  };
+  const branchScope = { resolveListFilter: jest.fn().mockReturnValue([3]) };
   const service = new ClubSubscriptionsService(
     prisma as unknown as PrismaService,
     {} as ClubReceiptsService,
@@ -79,6 +76,7 @@ describe('ClubSubscriptionsService.dailyCashierReport', () => {
     branchScope as unknown as BranchScopeService,
     permissions as unknown as PermissionEngineService,
     { resolveDiscount: jest.fn() } as unknown as import('./club-discount-codes.service').ClubDiscountCodesService,
+    {} as never,
   );
   const user = {
     sub: 7,
@@ -109,21 +107,12 @@ describe('ClubSubscriptionsService.dailyCashierReport', () => {
           transferred_credit_amount: 0,
           created_by: 7,
           branch_id: { in: [3] },
-          member: { is: { is_deleted: false, gender: 'male' } },
         }),
       }),
     );
     expect(prisma.club_receipts.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({
-          receipt_date: today,
-          created_by: 7,
-          subscription: {
-            is: expect.objectContaining({
-              member: { is: { is_deleted: false, gender: 'male' } },
-            }),
-          },
-        }),
+        where: expect.objectContaining({ receipt_date: today, created_by: 7 }),
       }),
     );
     expect(result).toMatchObject({
@@ -141,7 +130,6 @@ describe('ClubSubscriptionsService.dailyCashierReport', () => {
 
   it('lets a system administrator select a specific user without branch restriction', async () => {
     permissions.isSuperAdmin.mockResolvedValue(true);
-    branchScope.memberGenderFilter.mockReturnValue(null);
 
     const result = await service.dailyCashierReport({ ...user, level: 1 }, '9');
 
@@ -162,7 +150,6 @@ describe('ClubSubscriptionsService.dailyCashierReport', () => {
 
   it('lets a system administrator view all users together', async () => {
     permissions.isSuperAdmin.mockResolvedValue(true);
-    branchScope.memberGenderFilter.mockReturnValue(null);
 
     const result = await service.dailyCashierReport({ ...user, level: 1 });
     const where = prisma.club_subscriptions.findMany.mock.calls[0][0].where;

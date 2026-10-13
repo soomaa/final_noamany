@@ -47,7 +47,6 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBranches } from "@/hooks/use-branches";
 import { useCurrentShiftSession } from "@/hooks/use-shift-session";
-import { usePermission } from "@/hooks/use-permission";
 import { api, apiError } from "@/lib/api";
 import { formatDateTime, formatTime, localToday } from "@/lib/formatters";
 import { confirm, confirmWithPreview } from "@/lib/confirm";
@@ -147,10 +146,6 @@ const SHIFT_TIME_PRESETS = [
 
 export function SalesShiftsPage() {
   const { ui, locale } = useLocale();
-  const { can } = usePermission();
-  const canCreate = can("gym-sales.sales.shifts:create");
-  const canUpdate = can("gym-sales.sales.shifts:update");
-  const canDelete = can("gym-sales.sales.shifts:delete");
   const queryClient = useQueryClient();
   const { data: branches } = useBranches();
   const [branchFilter, setBranchFilter] = useState("");
@@ -254,7 +249,6 @@ export function SalesShiftsPage() {
     totalCash: number;
     expectedClosingBalance: number | null;
   }) => {
-    if (!canUpdate) return;
     const expected =
       session.expectedClosingBalance ??
       session.totalCash + session.openingBalance;
@@ -276,7 +270,6 @@ export function SalesShiftsPage() {
   );
 
   const deleteShiftTemplate = async (shift: ShiftRow) => {
-    if (!canDelete) return;
     const accepted = await confirm({
       title: ui(`حذف قالب «${shift.shiftName}»؟`),
       description: ui(
@@ -329,10 +322,9 @@ export function SalesShiftsPage() {
       {
         id: "actions",
         header: ui("إجراء"),
-        cell: ({ row }) => !canUpdate && !canDelete ? null : (
+        cell: ({ row }) => (
           <div className="flex items-center gap-1">
-            {canUpdate ? <Button
-              permissionAction="update"
+            <Button
               variant="ghost"
               size="sm"
               onClick={() => {
@@ -352,9 +344,8 @@ export function SalesShiftsPage() {
             >
               <Pencil className="ms-1 h-3 w-3" />
               {ui("تعديل")}
-            </Button> : null}
-            {canDelete ? <Button
-              permissionAction="delete"
+            </Button>
+            <Button
               variant="ghost"
               size="sm"
               className="text-destructive hover:bg-destructive/10 hover:text-destructive"
@@ -363,16 +354,16 @@ export function SalesShiftsPage() {
             >
               <Trash2 className="ms-1 size-3.5" />
               {ui("حذف")}
-            </Button> : null}
+            </Button>
           </div>
         ),
       },
     ],
-    [canDelete, canUpdate, deleteMutation, effectiveBranch, params.page, params.pageSize, ui],
+    [deleteMutation, effectiveBranch, params.page, params.pageSize, ui],
   );
 
   const startSession = async () => {
-    if (!canCreate || !startShiftId || !effectiveBranch || startingSession) return;
+    if (!startShiftId || !effectiveBranch || startingSession) return;
     setStartingSession(true);
     try {
       await api.post("/shift-sessions/start", {
@@ -391,7 +382,7 @@ export function SalesShiftsPage() {
   };
 
   const closeSession = async () => {
-    if (!canUpdate || !closeId || closingSession) return;
+    if (!closeId || closingSession) return;
     if (
       Math.abs(
         Number(cashDropAmount) +
@@ -459,7 +450,7 @@ export function SalesShiftsPage() {
   };
 
   const createShift = async () => {
-    if ((editingShiftId ? !canUpdate : !canCreate) || creatingShift) return;
+    if (creatingShift) return;
     setCreatingShift(true);
     try {
       const payload = {
@@ -503,8 +494,7 @@ export function SalesShiftsPage() {
       )}
       actions={
         <div className="flex gap-2">
-          {canCreate ? <Button
-            permissionAction="create"
+          <Button
             variant="outline"
             onClick={() => {
               setEditingShiftId(null);
@@ -522,15 +512,14 @@ export function SalesShiftsPage() {
           >
             <Plus className="ms-1 h-4 w-4" />
             {ui("وردية جديدة")}
-          </Button> : null}
-          {canCreate ? <Button
-            permissionAction="create"
+          </Button>
+          <Button
             onClick={() => setShiftOpen(true)}
             disabled={!!currentSession}
           >
             <Play className="ms-1 h-4 w-4" />
             {ui("فتح جلسة")}
-          </Button> : null}
+          </Button>
         </div>
       }
     >
@@ -614,22 +603,20 @@ export function SalesShiftsPage() {
                 </div>
 
                 <div className="flex shrink-0 flex-col gap-2 sm:flex-row lg:flex-col xl:flex-row">
-                  {canUpdate ? <Button
-                    permissionAction="update"
+                  <Button
                     type="button"
                     size="lg"
                     className="h-12 gap-2 rounded-xl px-5 shadow-md"
                     onClick={() =>
                       window.dispatchEvent(
-                        new CustomEvent("noamany:open-shift-switcher"),
+                        new CustomEvent("one80:open-shift-switcher"),
                       )
                     }
                   >
                     <ArrowLeftRight className="size-5" />
                     {ui("تسليم وتبديل الشيفت")}
-                  </Button> : null}
-                  {canUpdate ? <Button
-                    permissionAction="update"
+                  </Button>
+                  <Button
                     type="button"
                     size="lg"
                     variant="outline"
@@ -638,7 +625,7 @@ export function SalesShiftsPage() {
                   >
                     <Square className="size-4" />
                     {ui("إغلاق اليوم")}
-                  </Button> : null}
+                  </Button>
                 </div>
               </div>
 
@@ -739,10 +726,10 @@ export function SalesShiftsPage() {
                   </p>
                 </div>
               </div>
-              {canCreate ? <Button permissionAction="create" onClick={() => setShiftOpen(true)}>
+              <Button onClick={() => setShiftOpen(true)}>
                 <Play className="ms-1 size-4" />
                 {ui("فتح جلسة الآن")}
-              </Button> : null}
+              </Button>
             </section>
           )}
 
@@ -1132,7 +1119,7 @@ export function SalesShiftsPage() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={shiftOpen && canCreate} onOpenChange={setShiftOpen}>
+      <Dialog open={shiftOpen} onOpenChange={setShiftOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{ui("فتح جلسة وردية")}</DialogTitle>
@@ -1166,7 +1153,6 @@ export function SalesShiftsPage() {
           </div>
           <DialogFooter>
             <Button
-              permissionAction="create"
               onClick={() => void startSession()}
               disabled={startingSession}
             >
@@ -1177,7 +1163,7 @@ export function SalesShiftsPage() {
       </Dialog>
 
       <Dialog
-        open={closeId != null && canUpdate}
+        open={closeId != null}
         onOpenChange={(o) => !o && setCloseId(null)}
       >
         <DialogContent>
@@ -1241,7 +1227,6 @@ export function SalesShiftsPage() {
           </div>
           <DialogFooter>
             <Button
-              permissionAction="update"
               onClick={() => void closeSession()}
               disabled={
                 closingSession ||
@@ -1255,7 +1240,7 @@ export function SalesShiftsPage() {
       </Dialog>
 
       <Dialog
-        open={createOpen && (editingShiftId ? canUpdate : canCreate)}
+        open={createOpen}
         onOpenChange={(open) => {
           setCreateOpen(open);
           if (!open) setEditingShiftId(null);
@@ -1428,7 +1413,7 @@ export function SalesShiftsPage() {
           </div>
 
           <DialogFooter className="border-t bg-muted/20 px-6 py-4 sm:justify-start">
-            <Button permissionAction={editingShiftId ? "update" : "create"} onClick={() => void createShift()} disabled={creatingShift}>
+            <Button onClick={() => void createShift()} disabled={creatingShift}>
               {ui(editingShiftId ? "حفظ التعديلات" : "حفظ الوردية")}
             </Button>
             <Button

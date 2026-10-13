@@ -234,6 +234,7 @@ export class ChangeGoodsReceiptStatusDto {
 }
 
 export class PurchaseInvoiceItemDto {
+  @Type(() => Number) @IsInt() @Min(1) productId!: number;
   @IsString() name!: string;
   @IsNumber() @Min(0.001) quantity!: number;
   @IsNumber() @Min(0) price!: number;
@@ -336,7 +337,6 @@ export class UpsertSupplierContractDto {
 
 export class SupplierInvoiceItemDto {
   @IsOptional() @IsInt() productId?: number;
-  @IsOptional() @IsInt() @Min(1) packageId?: number;
   @IsOptional() @IsString() productName?: string;
   @IsNumber() @Min(0.001) quantity!: number;
   @IsOptional() @IsString() unit?: string;
@@ -438,4 +438,3 @@ export class SupplierReportsQueryDto extends PaginationDto {
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsString() riskLevel?: string;
 }
-

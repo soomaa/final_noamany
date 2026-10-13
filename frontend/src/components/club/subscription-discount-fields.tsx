@@ -1,4 +1,4 @@
-import { BadgePercent, Banknote, CircleOff } from 'lucide-react';
+import { BadgePercent, Banknote, CircleOff, HandCoins, Percent } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -6,7 +6,7 @@ import { formatMoney } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import type { ClubDiscountCode } from '@/types/club';
 
-export type SubscriptionDiscountMode = 'none' | 'code' | 'fixed';
+export type SubscriptionDiscountMode = 'none' | 'code' | 'fixed' | 'percentage' | 'points';
 
 export function calculateSubscriptionDiscount(
   grossValue: number,
@@ -14,6 +14,8 @@ export function calculateSubscriptionDiscount(
   codes: ClubDiscountCode[],
   codeId: string,
   fixedValue: string,
+  pointsToRedeem = '',
+  pointsConversion?: { points: number; value: number } | null,
 ): number {
   const gross = Math.max(0, Number(grossValue) || 0);
   if (mode === 'code') {
@@ -22,6 +24,13 @@ export function calculateSubscriptionDiscount(
   }
   if (mode === 'fixed') {
     return Math.min(gross, Math.max(0, Number(fixedValue) || 0));
+  }
+  if (mode === 'percentage') {
+    const percentage = Math.min(100, Math.max(0, Number(fixedValue) || 0));
+    return Math.round((gross * percentage) / 100 * 100) / 100;
+  }
+  if (mode === 'points' && pointsConversion && pointsConversion.points > 0) {
+    return Math.min(gross, Math.max(0, Number(pointsToRedeem) || 0) / pointsConversion.points * pointsConversion.value);
   }
   return 0;
 }
@@ -32,6 +41,9 @@ export function SubscriptionDiscountFields({
   mode,
   codeId,
   fixedValue,
+  pointsToRedeem = '',
+  pointsBalance = 0,
+  pointsConversion = null,
   onChange,
 }: {
   grossValue: number;
@@ -39,22 +51,28 @@ export function SubscriptionDiscountFields({
   mode: SubscriptionDiscountMode;
   codeId: string;
   fixedValue: string;
+  pointsToRedeem?: string;
+  pointsBalance?: number;
+  pointsConversion?: { points: number; value: number } | null;
   onChange: (next: {
     mode: SubscriptionDiscountMode;
     codeId: string;
     fixedValue: string;
+    pointsToRedeem: string;
   }) => void;
 }) {
-  const discount = calculateSubscriptionDiscount(grossValue, mode, codes, codeId, fixedValue);
+  const discount = calculateSubscriptionDiscount(grossValue, mode, codes, codeId, fixedValue, pointsToRedeem, pointsConversion);
   const activeCodes = codes.filter((item) => item.isActive);
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-2 sm:grid-cols-3">
+      <div className="grid gap-2 sm:grid-cols-5">
         {([
           { value: 'none', label: 'بدون خصم', icon: CircleOff },
           { value: 'code', label: 'كود خصم', icon: BadgePercent },
           { value: 'fixed', label: 'قيمة بالجنيه', icon: Banknote },
+          { value: 'percentage', label: 'نسبة مئوية', icon: Percent },
+          { value: 'points', label: 'استبدال نقاط', icon: HandCoins },
         ] as const).map((item) => {
           const Icon = item.icon;
           return (
@@ -63,7 +81,7 @@ export function SubscriptionDiscountFields({
               type="button"
               variant={mode === item.value ? 'brand' : 'outline'}
               className="justify-start"
-              onClick={() => onChange({ mode: item.value, codeId, fixedValue })}
+              onClick={() => onChange({ mode: item.value, codeId, fixedValue, pointsToRedeem })}
             >
               <Icon className="size-4" /> {item.label}
             </Button>
@@ -78,7 +96,7 @@ export function SubscriptionDiscountFields({
             id="subscription-discount-code"
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={codeId}
-            onChange={(event) => onChange({ mode, codeId: event.target.value, fixedValue })}
+            onChange={(event) => onChange({ mode, codeId: event.target.value, fixedValue, pointsToRedeem })}
           >
             <option value="">—</option>
             {activeCodes.map((code) => (
@@ -104,8 +122,44 @@ export function SubscriptionDiscountFields({
             max={grossValue || undefined}
             step="0.01"
             value={fixedValue}
-            onChange={(event) => onChange({ mode, codeId, fixedValue: event.target.value })}
+            onChange={(event) => onChange({ mode, codeId, fixedValue: event.target.value, pointsToRedeem })}
           />
+        </div>
+      ) : null}
+
+      {mode === 'percentage' ? (
+        <div className="grid gap-2">
+          <Label htmlFor="subscription-percentage-discount">نسبة الخصم</Label>
+          <Input
+            id="subscription-percentage-discount"
+            className="nums"
+            type="number"
+            min={0}
+            max={100}
+            step="0.01"
+            value={fixedValue}
+            onChange={(event) => onChange({ mode, codeId, fixedValue: event.target.value, pointsToRedeem })}
+          />
+          <p className="text-xs text-muted-foreground">أدخل النسبة من 0 إلى 100. مثال: 10 تعني خصم 10%.</p>
+        </div>
+      ) : null}
+
+      {mode === 'points' ? (
+        <div className="grid gap-2">
+          <Label htmlFor="subscription-points-redemption">عدد النقاط المراد استبدالها</Label>
+          <Input
+            id="subscription-points-redemption"
+            className="nums"
+            type="number"
+            min={1}
+            max={Math.max(0, pointsBalance)}
+            step={1}
+            value={pointsToRedeem}
+            onChange={(event) => onChange({ mode, codeId: '', fixedValue: '', pointsToRedeem: event.target.value })}
+          />
+          <p className="text-xs text-muted-foreground">
+            الرصيد الصالح: {pointsBalance} نقطة{pointsConversion ? ` — كل ${pointsConversion.points} نقطة = ${pointsConversion.value} جنيه` : ' — إعداد التحويل غير موجود'}.
+          </p>
         </div>
       ) : null}
 
@@ -122,4 +176,3 @@ export function SubscriptionDiscountFields({
     </div>
   );
 }
-

@@ -5,6 +5,7 @@ import { WorkspaceService } from './workspace.service';
 import { WorkspaceWidgetsService } from './workspace-widgets.service';
 import { PermissionCacheService } from './engine/permission-cache.service';
 import { PermissionEngineService } from './engine/permission-engine.service';
+import { OperationalScopeService } from './engine/operational-scope.service';
 
 /**
  * Global so the app-level PermissionsGuard (registered in AppModule) and any feature
@@ -13,7 +14,7 @@ import { PermissionEngineService } from './engine/permission-engine.service';
 @Global()
 @Module({
   controllers: [MeController],
-  providers: [MenuService, WorkspaceService, WorkspaceWidgetsService, PermissionCacheService, PermissionEngineService],
-  exports: [MenuService, WorkspaceService, WorkspaceWidgetsService, PermissionCacheService, PermissionEngineService],
+  providers: [MenuService, WorkspaceService, WorkspaceWidgetsService, PermissionCacheService, PermissionEngineService, OperationalScopeService],
+  exports: [MenuService, WorkspaceService, WorkspaceWidgetsService, PermissionCacheService, PermissionEngineService, OperationalScopeService],
 })
 export class RbacModule {}

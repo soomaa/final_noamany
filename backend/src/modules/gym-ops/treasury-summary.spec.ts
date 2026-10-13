@@ -47,7 +47,6 @@ describe('large treasury periods', () => {
     };
     const branchScope = {
       resolveListFilter: jest.fn().mockReturnValue([2]),
-      memberGenderFilter: jest.fn().mockReturnValue(null),
     };
     const permissions = { isSuperAdmin: jest.fn().mockResolvedValue(false) };
     const service = new ClubDashboardService(
@@ -82,22 +81,7 @@ describe('large treasury periods', () => {
       expect.objectContaining({
         where: expect.objectContaining({
           created_by: 9,
-          AND: expect.arrayContaining([
-            expect.objectContaining({
-              OR: expect.arrayContaining([
-                {
-                  subscription_id: { not: null },
-                  subscription: { is: { branch_id: { in: [2] } } },
-                },
-                {
-                  subscription_id: null,
-                  locker_subscription_id: null,
-                  member_id: null,
-                  branch_id: { in: [2] },
-                },
-              ]),
-            }),
-          ]),
+          OR: expect.arrayContaining([{ branch_id: { in: [2] } }]),
         }),
       }),
     );

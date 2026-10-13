@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Deprecated legacy deploy entrypoint. Use server-deploy.sh for Noamany.
+# ONE80 Gym — one-shot deploy for cPanel (run from the backend app root).
 #   1) install deps  2) generate Prisma client  3) apply versioned migrations
 #   4) sync RBAC reference permissions  5) build
 # Prerequisite: a ".env" file exists here with a valid DATABASE_URL (see .env.production).
@@ -8,9 +8,6 @@
 # ============================================================================
 set -euo pipefail
 cd "$(dirname "$0")"
-
-echo "This legacy deploy command is retired. Use: bash server-deploy.sh" >&2
-exit 1
 
 if [ ! -f .env ]; then
   echo "!! No .env found. Copy .env.production to .env and fill DATABASE_URL + domain first."

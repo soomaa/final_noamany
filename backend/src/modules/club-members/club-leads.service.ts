@@ -135,7 +135,7 @@ export class ClubLeadsService {
       ]);
       return this.map(row, subscription, creatorNames);
     }
-    const row = await this.prisma.club_leads.create({ data: { full_name: member.name.trim(), phone, source: 'walk_in', status: 'converted', assigned_to_id: user.emp_code, converted_member_id: member.id, notes: 'ملف متابعة تجديد العضوية', branch_id: member.branch_id, created_by: user.sub }, include: { follow_ups: true } });
+    const row = await this.prisma.club_leads.create({ data: { full_name: member.name.trim(), name: member.name.trim(), phone, source: 'walk_in', status: 'converted', assigned_to_id: user.emp_code, converted_member_id: member.id, notes: 'ملف متابعة تجديد العضوية', branch_id: member.branch_id, created_by: user.sub }, include: { follow_ups: true } });
     const [subscription, creatorNames] = await Promise.all([
       this.subscriptionForMember(member.id, member.branch_id),
       this.creatorNames(row.follow_ups),

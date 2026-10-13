@@ -47,7 +47,7 @@ export class HrMobileContentService {
     if (existing) return existing;
     return this.prisma.hr_mobile_app_content.upsert({
       where: { id: 1 },
-      create: { id: 1 },
+      create: { id: 1, about_body: '', privacy_body: '' },
       update: {},
     });
   }

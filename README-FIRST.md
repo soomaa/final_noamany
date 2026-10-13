@@ -1,29 +1,55 @@
-# تشغيل وتسليم نظام النعماني
+# تسليم وتشغيل المشروع بنفس البيانات الحقيقية
 
-هذه هي النسخة الموحّدة لنظام النعماني: الموقع العام، لوحة الإدارة، بوابة السيلز، والكافيه المنقول من أحدث نسخة ONE80 مع الحفاظ على بيانات وهوية النعماني.
+ملف `noamany-ready-data-20260803.sql.gz` يحتوي قاعدة التطبيق بعد تحويل بيانات البرنامج القديم وإزالة معاملات الاختبار. نسخ كود المشروع وحده لا ينقل قاعدة MySQL الموجودة على الجهاز الأصلي.
 
-## محتويات التسليم
+قبل إرسال الفولدر تأكد من وجود هذه الملفات:
 
-- `backend` و`frontend` و`website-redesign`: المصدر الكامل.
-- `backend/public`: نسخة الإنتاج الموحّدة؛ `/` للموقع و`/login` للنظام الإداري.
-- `backups/noamany_final_new-before-20260909-upgrade.sql.gz`: نسخة البيانات التي سبقت ترقية سبتمبر.
-- `restore-ready-data.sh`: استرجاع آمن يرفض قاعدة غير فارغة ويتحقق من checksum والأعداد.
-- `backend/uploads`: الملفات العامة الموجودة محليًا. مسارات المستندات وإثباتات الدفع الخاصة يجب نسخها من التخزين الخاص في بيئة التشغيل أيضًا.
+- `noamany-ready-data-20260803.sql.gz`
+- `restore-ready-data.sh`
+- فولدرا `backend` و`frontend`
+- `backend/uploads` إذا كانت الصور والملفات المرفوعة مطلوبة أيضًا؛ الملفات المرفوعة ليست جزءًا من MySQL.
 
-لا تُرسل ملفات `.env` أو `env_server.txt`، ولا تُضمّن أي كلمة مرور في حزمة التسليم.
+لا ترسل `backend/.env` أو أي `.env` خاص بالسيرفر. المهندس ينشئ إعداداته المحلية بنفسه.
 
-## استعادة قاعدة البيانات على قاعدة جديدة فقط
+## 1. استعادة قاعدة البيانات
 
-المتطلبات: MySQL 8، Node.js 20 أو أحدث، وعميل `mysql`.
+ثبت MySQL 8 وNode.js 20 أو أحدث، ثم افتح Terminal داخل فولدر المشروع وشغّل:
 
 ```bash
-NOAMANY_TARGET_DATABASE=noamany_app \
+chmod +x restore-ready-data.sh
 NOAMANY_DATABASE_USER=root \
 NOAMANY_DATABASE_PASSWORD='MYSQL_PASSWORD' \
-bash restore-ready-data.sh
+./restore-ready-data.sh
 ```
 
-بعد نجاح الاسترجاع، أنشئ `backend/.env` محليًا بأسرار جديدة واجعل `DATABASE_URL` تشير إلى القاعدة الجديدة، ثم:
+إذا كان مستخدم MySQL `root` بدون كلمة مرور:
+
+```bash
+./restore-ready-data.sh
+```
+
+السكربت يرفض الكتابة فوق أي قاعدة غير فارغة، ويتأكد بعد الاستعادة من وجود 56,296 قيدًا و49,139 إيرادًا و7,171 مصروفًا و487 اشتراك برايفت قديمًا مرتبطًا بالقائمة الجديدة.
+
+## 2. ضبط اتصال الـ backend
+
+أنشئ `backend/.env` محليًا واجعل `DATABASE_URL` يشير إلى القاعدة المستعادة. استخدم أسرار JWT محلية جديدة، وليس أسرار السيرفر:
+
+```env
+DATABASE_URL="mysql://root:MYSQL_PASSWORD@localhost:3306/noamany_app"
+PORT=4000
+NODE_ENV=development
+CORS_ORIGINS="http://localhost:5173"
+JWT_ACCESS_SECRET="LOCAL_RANDOM_SECRET_AT_LEAST_32_CHARS"
+JWT_REFRESH_SECRET="ANOTHER_LOCAL_RANDOM_SECRET_AT_LEAST_32_CHARS"
+JWT_ACCESS_TTL="2h"
+JWT_REFRESH_TTL="7d"
+UPLOAD_DIR="./uploads"
+PUBLIC_UPLOAD_BASE="/uploads"
+```
+
+## 3. تشغيل المشروع
+
+Terminal أول:
 
 ```bash
 cd backend
@@ -31,25 +57,17 @@ npm ci
 npx prisma generate
 npx prisma migrate deploy
 npm run db:seed:rbac
-npm run build:unified
-NODE_ENV=production npm run start:prod
+npm run start:dev
 ```
 
-فحص التشغيل:
+Terminal ثانٍ:
 
-- `/api/health` يعيد حالة سليمة.
-- `/` يفتح موقع النعماني، و`/login` يفتح لوحة الإدارة.
-- `/sales` للكافيه، و`/sales-portal` لبوابة فريق المبيعات.
-- `/api/docs` يجب ألا يكون متاحًا في وضع production.
+```bash
+cd frontend
+npm ci
+npm run dev
+```
 
-بيانات الدخول لا تُحفظ في المستودع؛ ينشئها مسؤول النظام أو يسلّمها عبر قناة أسرار منفصلة.
+افتح `http://127.0.0.1:5173` وسجل الدخول باسم `admin` وكلمة المرور `Noamany@2026`.
 
-## تشغيل التطوير محليًا
-
-شغّل الـbackend على `4000`، والواجهة الإدارية على `5176`، والموقع على `5175` حسب المنافذ المتاحة في Vite. اضبط `CORS_ORIGINS` لهذه العناوين فقط.
-
-## تحذير بيانات العميل
-
-لا تشغّل `deploy-fresh.sh` أو `prisma migrate reset` أو `prisma db push --force-reset` أو `db:reseed` أو `npm run db:seed` على بيانات العميل. المسموح بعد الاسترجاع هو `npx prisma migrate deploy` ثم `npm run db:seed:rbac` فقط.
-
-الـrollback يكون باستعادة نسخة قاعدة موثقة إلى قاعدة جديدة، ثم تحويل `DATABASE_URL` بعد التحقق. لا تُستعاد فوق قاعدة مستخدمة.
+لا تشغّل `deploy-fresh.sh` أو `prisma migrate reset` أو `prisma db push --force-reset` أو `db:reseed` أو `npm run db:seed` لأنها تمسح البيانات المستعادة أو تضيف بيانات تجريبية. المسموح هنا هو `npm run db:seed:rbac` فقط لأنه يزامن تعريفات الصلاحيات.

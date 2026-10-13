@@ -20,7 +20,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useClubT } from '@/hooks/use-club-t';
 import { api } from '@/lib/api';
-import { toCsvWithBom } from '@/lib/csv';
 import { useArrayResource } from '@/lib/api-hooks';
 import { BranchFilter, normalizeBranchParam } from '@/components/reports/branch-filter';
 import { localDateStr, localToday } from '@/lib/formatters';
@@ -133,7 +132,8 @@ export function ClubFinancialReportsPage() {
         rows.push([r.typeName, String(r.receiptsCount), String(r.gross), String(r.refunds), String(r.net)]),
       );
     }
-    const blob = new Blob([toCsvWithBom(rows)], { type: 'text/csv;charset=utf-8' });
+    const csv = rows.map((r) => r.join(',')).join('\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

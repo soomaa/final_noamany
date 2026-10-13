@@ -235,6 +235,45 @@ export class AccountingReportsService {
       orderBy: { code: "asc" },
     });
 
+    if (!accounts.length) return { sections: [] };
+    const accountIds = accounts.map((account) => account.id);
+    const entryFilter = {
+      status: { in: LEDGER_REPORT_STATUSES },
+      ...this.branchEntryFilter(q.branchId, user),
+    };
+    const [openingRows, allLines] = await Promise.all([
+      q.dateFrom
+        ? this.prisma.acc_journal_entry_lines.groupBy({
+            by: ['account_id'],
+            where: { account_id: { in: accountIds }, entry: { ...entryFilter, date: { lt: q.dateFrom } } },
+            _sum: { debit: true, credit: true },
+          })
+        : Promise.resolve([]),
+      this.prisma.acc_journal_entry_lines.findMany({
+        where: {
+          account_id: { in: accountIds },
+          entry: {
+            ...entryFilter,
+            ...(q.dateFrom || q.dateTo ? { date: {
+              ...(q.dateFrom ? { gte: q.dateFrom } : {}),
+              ...(q.dateTo ? { lte: q.dateTo } : {}),
+            } } : {}),
+          },
+        },
+        include: { entry: { select: { entry_no: true, date: true, description: true } } },
+        orderBy: [{ account_id: 'asc' }, { entry: { date: 'asc' } }, { line_order: 'asc' }],
+      }),
+    ]);
+    const openings = new Map<number, { debit: number; credit: number }>(openingRows.map((row) => [row.account_id, {
+      debit: roundMoney(row._sum.debit ?? 0), credit: roundMoney(row._sum.credit ?? 0),
+    }] as const));
+    const linesByAccount = new Map<number, typeof allLines>();
+    for (const line of allLines) {
+      const lines = linesByAccount.get(line.account_id) ?? [];
+      lines.push(line);
+      linesByAccount.set(line.account_id, lines);
+    }
+
     const sections: Array<{
       accountId: number;
       code: string;
@@ -252,40 +291,8 @@ export class AccountingReportsService {
       closingBalance: number;
     }> = [];
     for (const acc of accounts) {
-      const opening = q.dateFrom
-        ? await this.sumLines(
-            {
-              account_id: acc.id,
-              entry: {
-                status: { in: LEDGER_REPORT_STATUSES },
-                ...this.branchEntryFilter(q.branchId, user),
-              },
-            },
-            q.dateFrom,
-          )
-        : { debit: 0, credit: 0 };
-
-      const lines = await this.prisma.acc_journal_entry_lines.findMany({
-        where: {
-          account_id: acc.id,
-          entry: {
-            status: { in: LEDGER_REPORT_STATUSES },
-            ...this.branchEntryFilter(q.branchId, user),
-            ...(q.dateFrom || q.dateTo
-              ? {
-                  date: {
-                    ...(q.dateFrom ? { gte: q.dateFrom } : {}),
-                    ...(q.dateTo ? { lte: q.dateTo } : {}),
-                  },
-                }
-              : {}),
-          },
-        },
-        include: {
-          entry: { select: { entry_no: true, date: true, description: true } },
-        },
-        orderBy: [{ entry: { date: "asc" } }, { line_order: "asc" }],
-      });
+      const opening = openings.get(acc.id) ?? { debit: 0, credit: 0 };
+      const lines = linesByAccount.get(acc.id) ?? [];
 
       if (lines.length === 0 && opening.debit === 0 && opening.credit === 0)
         continue;

@@ -27,20 +27,10 @@ interface SupplierMaterial {
   unitOfMeasure: string;
   costPrice: number;
   currentStock: number;
-  isPackaged?: boolean;
-  packages?: Array<{
-    id: number;
-    packageSize: number;
-    packageUnit: string;
-    packageBaseQuantity: number;
-    packagePrice: number;
-    reorderPoint: number;
-    isDefault: boolean;
-  }>;
 }
-interface PurchaseLine { productId: string; packageId: string; quantity: string; unit: string; lineTotal: string }
+interface PurchaseLine { productId: string; quantity: string; unit: string; lineTotal: string }
 interface CostChange { productId: number; productName: string; oldCost: number; newCost: number }
-interface SupplierInvoiceItem { productId: number | null; packageId: number | null; productName: string | null; quantity: number; unit: string | null; lineTotal: number }
+interface SupplierInvoiceItem { productId: number | null; productName: string | null; quantity: number; unit: string | null; lineTotal: number }
 interface SupplierInvoice {
   id: number;
   invoiceNumber: string;
@@ -61,19 +51,11 @@ interface SupplierInvoice {
   items: SupplierInvoiceItem[];
 }
 
-const emptyLine = (): PurchaseLine => ({ productId: '', packageId: '', quantity: '1', unit: '', lineTotal: '' });
+const emptyLine = (): PurchaseLine => ({ productId: '', quantity: '1', unit: '', lineTotal: '' });
 const lineUnitPrice = (line: PurchaseLine) => {
   const quantity = Number(line.quantity) || 0;
   const total = Number(line.lineTotal) || 0;
   return quantity > 0 ? Math.round((total / quantity) * 10000) / 10000 : 0;
-};
-
-const purchaseBaseQuantity = (line: PurchaseLine, material: SupplierMaterial) => {
-  const selectedPackage = material.packages?.find((pack) => pack.id === Number(line.packageId));
-  if (line.unit === 'package' && material.isPackaged && selectedPackage) {
-    return (Number(line.quantity) || 0) * selectedPackage.packageBaseQuantity;
-  }
-  return convertCafeUnit(Number(line.quantity), line.unit, material.unitOfMeasure) ?? 0;
 };
 
 const invoiceStatusLabel = (status: string) => ({
@@ -162,7 +144,6 @@ export function CafePurchasesPage() {
     setPaidAmount(String(invoice.paidAmount));
     setLines(invoice.items.map((item) => ({
       productId: String(item.productId ?? ''),
-      packageId: String(item.packageId ?? ''),
       quantity: String(item.quantity),
       unit: item.unit ?? '',
       lineTotal: String(item.lineTotal),
@@ -191,29 +172,16 @@ export function CafePurchasesPage() {
   const save = async (costUpdateMode?: 'replace' | 'keep') => {
     if (!effectiveBranchId) return toast.error(ui('حساب المستخدم غير مرتبط بفرع'));
     if (!supplierId) return toast.error(ui('اختر المورد'));
-    if (lines.some((line) => {
-      const material = allMaterials.find((item) => item.id === Number(line.productId));
-      return !line.productId
-        || Number(line.quantity) <= 0
-        || Number(line.lineTotal) < 0
-        || !line.unit
-        || (material?.isPackaged === true && !line.packageId);
-    })) return toast.error(ui('راجع بنود الفاتورة واختر حجم العبوة لكل خامة معبأة'));
+    if (lines.some((line) => !line.productId || Number(line.quantity) <= 0 || Number(line.lineTotal) < 0 || !line.unit)) return toast.error(ui('راجع بنود الفاتورة'));
     if (!costUpdateMode) {
       const changes = lines.flatMap((line): CostChange[] => {
         const material = allMaterials.find((item) => item.id === Number(line.productId));
         if (!material) return [];
-        const baseQuantity = purchaseBaseQuantity(line, material);
+        const baseQuantity = convertCafeUnit(Number(line.quantity), line.unit, material.unitOfMeasure);
         if (!baseQuantity || baseQuantity <= 0) return [];
         const newCost = Math.round((Number(line.lineTotal) / baseQuantity) * 10000) / 10000;
         if (Math.abs(newCost - material.costPrice) < 0.0001) return [];
-        const selectedPackage = material.packages?.find((pack) => pack.id === Number(line.packageId));
-        return [{
-          productId: material.id,
-          productName: `${material.nameAr}${selectedPackage ? ` — ${selectedPackage.packageSize} ${selectedPackage.packageUnit}` : material.size ? ` — ${material.size}` : ''}`,
-          oldCost: material.costPrice,
-          newCost,
-        }];
+        return [{ productId: material.id, productName: `${material.nameAr}${material.size ? ` — ${material.size}` : ''}`, oldCost: material.costPrice, newCost }];
       });
       if (changes.length > 0) {
         setCostChanges(changes);
@@ -235,7 +203,7 @@ export function CafePurchasesPage() {
         initialPaymentMethod,
         attachmentUrl: attachmentUrl || undefined,
         paidAmount: Number(paidAmount) || 0,
-        items: lines.map((line) => ({ productId: Number(line.productId), packageId: line.packageId ? Number(line.packageId) : undefined, quantity: Number(line.quantity), unit: line.unit, lineTotal: Number(line.lineTotal), unitPrice: lineUnitPrice(line), costUpdateMode })),
+        items: lines.map((line) => ({ productId: Number(line.productId), quantity: Number(line.quantity), unit: line.unit, lineTotal: Number(line.lineTotal), unitPrice: lineUnitPrice(line), costUpdateMode })),
       };
       if (editingInvoiceId) await api.put(`/supplier-invoices/${editingInvoiceId}`, payload);
       else await api.post('/supplier-invoices', payload);
@@ -281,27 +249,24 @@ export function CafePurchasesPage() {
             <section className="rounded-2xl border p-4">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2"><PackagePlus className="size-5 text-primary" /><div><h2 className="font-bold">{ui('بنود الاستلام')}</h2><p className="text-xs text-muted-foreground">{toArabicDigits(lines.length)} {ui('بند في الفاتورة')}</p></div></div>
-                <div className="flex flex-wrap gap-2"><Button permissionAction={null} type="button" size="sm" variant="outline" onClick={() => setLines((rows) => [...rows, emptyLine()])}><Plus className="size-4" />{ui('إضافة بند')}</Button>{can('gym-sales.inventory.raw_materials:create') ? <InlineRawMaterialDialog supplierId={supplierId ? Number(supplierId) : undefined} disabled={!supplierId} onCreated={(material) => setInlineMaterials((current) => [...current.filter((item) => item.id !== material.id), { id: material.id, nameAr: material.nameAr, size: material.size, unitOfMeasure: material.unitOfMeasure, costPrice: material.costPrice, currentStock: material.currentStock ?? 0 }])} /> : null}</div>
+                <div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setLines((rows) => [...rows, emptyLine()])}><Plus className="size-4" />{ui('إضافة بند')}</Button>{can('gym-sales.inventory.raw_materials:create') ? <InlineRawMaterialDialog supplierId={supplierId ? Number(supplierId) : undefined} disabled={!supplierId} onCreated={(material) => setInlineMaterials((current) => [...current.filter((item) => item.id !== material.id), { id: material.id, nameAr: material.nameAr, size: material.size, unitOfMeasure: material.unitOfMeasure, costPrice: material.costPrice, currentStock: material.currentStock ?? 0 }])} /> : null}</div>
               </div>
               <div className="space-y-3">{lines.map((line, index) => {
                 const selectedMaterial = allMaterials.find((material) => material.id === Number(line.productId));
-                const selectedPackage = selectedMaterial?.packages?.find((pack) => pack.id === Number(line.packageId));
                 return <article key={index} className="rounded-2xl border bg-muted/[0.12] p-4 shadow-sm">
                   <div className="mb-3 flex items-center justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2"><span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-sm font-black text-primary">{index + 1}</span><div className="min-w-0"><p className="truncate font-bold">{selectedMaterial ? `${selectedMaterial.nameAr}${selectedMaterial.size ? ` — ${selectedMaterial.size}` : ''}` : ui('بند شراء جديد')}</p>{selectedMaterial ? <p className="mt-0.5 text-xs text-muted-foreground">{ui('الوحدة الأساسية')}: {selectedMaterial.unitOfMeasure}</p> : null}</div></div>
-                    <Button permissionAction={null} type="button" variant="ghost" size="icon" className="size-8 text-destructive" aria-label={ui('حذف البند')} disabled={lines.length === 1} onClick={() => setLines((rows) => rows.filter((_, lineIndex) => lineIndex !== index))}><Trash2 className="size-4" /></Button>
+                    <Button type="button" variant="ghost" size="icon" className="size-8 text-destructive" aria-label={ui('حذف البند')} disabled={lines.length === 1} onClick={() => setLines((rows) => rows.filter((_, lineIndex) => lineIndex !== index))}><Trash2 className="size-4" /></Button>
                   </div>
-                  <div className={`grid gap-3 md:grid-cols-2 ${selectedMaterial?.isPackaged ? 'xl:grid-cols-[minmax(210px,1.4fr)_170px_105px_100px_145px]' : 'xl:grid-cols-[minmax(230px,1.5fr)_110px_120px_150px]'}`}>
-                    <div><Label className="text-xs">{ui('الخامة')}</Label><select className="mt-1 h-10 w-full rounded-lg border bg-background px-3 text-sm" value={line.productId} onChange={(event) => { const material = allMaterials.find((item) => item.id === Number(event.target.value)); const defaultPackage = material?.packages?.find((pack) => pack.isDefault) ?? material?.packages?.[0]; updateLine(index, { productId: event.target.value, packageId: defaultPackage ? String(defaultPackage.id) : '', unit: material?.isPackaged ? 'package' : material?.unitOfMeasure ?? '', lineTotal: defaultPackage ? String(defaultPackage.packagePrice * (Number(line.quantity) || 1)) : '' }); }}><option value="">{ui('اختر الخامة')}</option>{allMaterials.map((material) => <option key={material.id} value={material.id}>{material.nameAr}{material.size ? ` — ${material.size}` : ''}</option>)}</select></div>
-                    {selectedMaterial?.isPackaged ? <div><Label className="text-xs">{ui('حجم العبوة')}</Label><select className="mt-1 h-10 w-full rounded-lg border bg-background px-2 text-sm" value={line.packageId} onChange={(event) => { const pack = selectedMaterial.packages?.find((item) => item.id === Number(event.target.value)); updateLine(index, { packageId: event.target.value, unit: 'package', lineTotal: pack ? String(pack.packagePrice * (Number(line.quantity) || 1)) : '' }); }}><option value="">{ui('اختر الحجم')}</option>{selectedMaterial.packages?.map((pack) => <option key={pack.id} value={pack.id}>{toArabicDigits(pack.packageSize)} {pack.packageUnit} — {toArabicDigits(pack.packagePrice)}</option>)}</select></div> : null}
-                    <div><Label className="text-xs">{selectedMaterial?.isPackaged ? ui('عدد العبوات') : ui('الكمية')}</Label><Input className="nums mt-1 h-10" type="number" min={selectedMaterial?.isPackaged ? 1 : 0.001} step={selectedMaterial?.isPackaged ? 1 : 0.001} value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} /></div>
-                    <div><Label className="text-xs">{ui('الوحدة')}</Label><select className="mt-1 h-10 w-full rounded-lg border bg-background px-2 text-sm disabled:opacity-60" value={line.unit} onChange={(event) => updateLine(index, { unit: event.target.value, packageId: event.target.value === 'package' ? line.packageId : '' })} disabled={!selectedMaterial || selectedMaterial.isPackaged}><option value="">{ui('الوحدة')}</option>{selectedMaterial?.isPackaged ? <option value="package">{ui('عبوة')}</option> : compatibleCafeUnits(selectedMaterial?.unitOfMeasure ?? '').map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select></div>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(230px,1.5fr)_110px_120px_150px]">
+                    <div><Label className="text-xs">{ui('الخامة والمقاس')}</Label><select className="mt-1 h-10 w-full rounded-lg border bg-background px-3 text-sm" value={line.productId} onChange={(event) => { const material = allMaterials.find((item) => item.id === Number(event.target.value)); updateLine(index, { productId: event.target.value, unit: material?.unitOfMeasure ?? '', lineTotal: '' }); }}><option value="">{ui('اختر الخامة')}</option>{allMaterials.map((material) => <option key={material.id} value={material.id}>{material.nameAr}{material.size ? ` — ${material.size}` : ''}</option>)}</select></div>
+                    <div><Label className="text-xs">{ui('الكمية')}</Label><Input className="nums mt-1 h-10" type="number" min={0.001} step="0.001" value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} /></div>
+                    <div><Label className="text-xs">{ui('الوحدة')}</Label><select className="mt-1 h-10 w-full rounded-lg border bg-background px-2 text-sm" value={line.unit} onChange={(event) => updateLine(index, { unit: event.target.value })} disabled={!selectedMaterial}><option value="">{ui('الوحدة')}</option>{compatibleCafeUnits(selectedMaterial?.unitOfMeasure ?? '').map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select></div>
                     <div><Label className="text-xs">{ui('إجمالي تكلفة البند')}</Label><Input className="nums mt-1 h-10 font-bold" type="number" min={0} step="0.01" value={line.lineTotal} onChange={(event) => updateLine(index, { lineTotal: event.target.value })} placeholder="0.00" /></div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2 text-xs">
                     <span className="rounded-full bg-background px-3 py-1.5 text-muted-foreground">{ui('الموجود الآن')}: <b className="nums text-foreground">{selectedMaterial ? `${toArabicDigits(selectedMaterial.currentStock)} ${selectedMaterial.unitOfMeasure}` : '—'}</b></span>
                     <span className="rounded-full bg-background px-3 py-1.5 text-muted-foreground">{ui('سعر الوحدة في الفاتورة')}: <b className="nums text-primary">{toArabicDigits(lineUnitPrice(line).toFixed(4))}</b></span>
-                    {selectedPackage ? <span className="rounded-full bg-background px-3 py-1.5 text-muted-foreground">{ui('العبوة تضيف')}: <b className="nums text-foreground">{toArabicDigits(selectedPackage.packageBaseQuantity)} {selectedMaterial?.unitOfMeasure}</b></span> : null}
                     {selectedMaterial ? <span className="rounded-full bg-background px-3 py-1.5 text-muted-foreground">{ui('التكلفة الحالية')}: <b className="nums text-foreground">{toArabicDigits(selectedMaterial.costPrice.toFixed(4))}</b></span> : null}
                   </div>
                 </article>;
@@ -330,7 +295,7 @@ export function CafePurchasesPage() {
               </div>
             </section>
 
-            <Button permissionAction={editingInvoiceId ? 'update' : 'create'} className="h-12 w-full text-base font-bold shadow-lg shadow-primary/15" disabled={saving || !(editingInvoiceId ? can('gym-sales.procurement.cafe_purchases:update') : can('gym-sales.procurement.cafe_purchases:create'))} onClick={() => void save()}><CheckCircle2 className="size-5" />{saving ? ui('جاري الحفظ…') : ui(editingInvoiceId ? 'حفظ التصحيح' : 'حفظ واستلام الفاتورة')}</Button>
+            <Button className="h-12 w-full text-base font-bold shadow-lg shadow-primary/15" disabled={saving || !(editingInvoiceId ? can('gym-sales.procurement.cafe_purchases:update') : can('gym-sales.procurement.cafe_purchases:create'))} onClick={() => void save()}><CheckCircle2 className="size-5" />{saving ? ui('جاري الحفظ…') : ui(editingInvoiceId ? 'حفظ التصحيح' : 'حفظ واستلام الفاتورة')}</Button>
           </CardContent>
         </Card>
 
@@ -365,8 +330,8 @@ export function CafePurchasesPage() {
           </div>
           <DialogFooter className="flex-wrap">
             <Button type="button" variant="outline" onClick={() => setCostDialogOpen(false)}>{ui('إلغاء')}</Button>
-            <Button permissionAction={editingInvoiceId ? 'update' : 'create'} type="button" variant="secondary" disabled={saving} onClick={() => { setCostDialogOpen(false); void save('keep'); }}>{ui('سيب التكلفة زي ما هي')}</Button>
-            <Button permissionAction={editingInvoiceId ? 'update' : 'create'} type="button" disabled={saving} onClick={() => { setCostDialogOpen(false); void save('replace'); }}>{ui('اعتماد التكلفة الجديدة')}</Button>
+            <Button type="button" variant="secondary" disabled={saving} onClick={() => { setCostDialogOpen(false); void save('keep'); }}>{ui('سيب التكلفة زي ما هي')}</Button>
+            <Button type="button" disabled={saving} onClick={() => { setCostDialogOpen(false); void save('replace'); }}>{ui('اعتماد التكلفة الجديدة')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

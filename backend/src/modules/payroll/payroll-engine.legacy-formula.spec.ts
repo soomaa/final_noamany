@@ -51,73 +51,18 @@ describe('legacy gym rate calculation', () => {
         .mockResolvedValueOnce({ _sum: { amount: 1_000 } })
         .mockResolvedValueOnce({ _sum: { amount: 100 } }) },
       club_locker_subscriptions: { aggregate: jest.fn().mockResolvedValue({ _sum: { paid_amount: 500 } }) },
-      sales_quick_sale_items: { findMany: jest.fn().mockResolvedValue([
-        {
-          id: 71,
-          business_classification: 'protein',
-          line_total: 200,
-          unit_price: 100,
-          quantity: 2,
-          free_quantity: 0,
-          sale: { id: 31, collected_amount: 240 },
-        },
-        {
-          id: 72,
-          business_classification: 'bar',
-          line_total: 100,
-          unit_price: 100,
-          quantity: 1,
-          free_quantity: 0,
-          sale: { id: 31, collected_amount: 240 },
-        },
-        {
-          id: 74,
-          business_classification: null,
-          line_total: 100,
-          unit_price: 100,
-          quantity: 1,
-          free_quantity: 0,
-          sale: { id: 31, collected_amount: 240 },
-        },
-        {
-          id: 73,
-          business_classification: 'protein',
-          line_total: 80,
-          unit_price: 80,
-          quantity: 1,
-          free_quantity: 0,
-          sale: { id: 32, collected_amount: 0 },
-        },
-      ]) },
+      sales_quick_sales: { aggregate: jest.fn().mockResolvedValue({ _sum: { collected_amount: 200 } }) },
     };
     const config = { get: jest.fn().mockReturnValue(undefined) };
     const engine = new PayrollEngineService(prisma as never, config as never);
 
     await expect(engine.getIncentives(4, 1004, '2026-07-26', '2026-08-25')).resolves.toEqual({
       targetBase: 1_500,
-      proteinBase: 120,
+      proteinBase: 200,
       classesBase: 100,
       targetCommission: 150,
-      proteinCommission: 8.4,
+      proteinCommission: 14,
       classCommission: 40,
-    });
-    expect(prisma.sales_quick_sale_items.findMany).toHaveBeenCalledWith({
-      where: {
-        sale: {
-          business_date: { gte: '2026-07-26', lte: '2026-08-25' },
-          status: 'completed',
-          target_employee_id: 4,
-        },
-      },
-      select: {
-        id: true,
-        business_classification: true,
-        line_total: true,
-        unit_price: true,
-        quantity: true,
-        free_quantity: true,
-        sale: { select: { id: true, collected_amount: true } },
-      },
     });
   });
 });

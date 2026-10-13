@@ -1,5 +1,6 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Eye, FileText, Plus, Upload, X } from 'lucide-react';
+import { FileText, Plus, Upload, X } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
@@ -10,6 +11,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useFitnessT } from '@/hooks/use-fitness-t';
+import { usePermission } from '@/hooks/use-permission';
+import { useAuth } from '@/store/auth';
 import { api, apiError } from '@/lib/api';
 import { useFileUpload, uploadUrl } from '@/components/employees/use-uploads';
 import { localToday } from '@/lib/formatters';
@@ -19,15 +22,14 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import type { InbodyMeasurementRow } from '@/types/fitness';
 import type { ClubMemberListItem } from '@/types/club';
-import { InbodyMemberDetailDialog } from './inbody-member-detail-dialog';
-import { RowActions, memberColumnDef } from './shared';
-
-function numCell(v: number | null | undefined) {
-  return v != null ? <span className="nums">{toArabicDigits(v)}</span> : '—';
-}
+import { RowActions } from './shared';
 
 export function FitnessInbodyPage() {
   const ft = useFitnessT();
+  const { user } = useAuth();
+  const { superAdmin } = usePermission();
+  const title = user?.job_title?.normalize('NFKD') ?? '';
+  const todayOnly = !superAdmin && user?.level !== 3 && /(استقبال|ريسيبشن|ريسبشن|reception)/i.test(title) && !/(مدير|مشرف|رئيس|manager|supervisor|head)/i.test(title);
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<InbodyMeasurementRow>(
     'club-inbody-measurements',
@@ -36,28 +38,18 @@ export function FitnessInbodyPage() {
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
-  const [detailMemberId, setDetailMemberId] = useState<number | null>(null);
   const [selectedMember, setSelectedMember] = useState<ClubMemberListItem | null>(null);
+  const { data: nextFileNumber } = useQuery({
+    queryKey: ['club-inbody-measurements', 'next-file-number'],
+    enabled: open && editId == null,
+    queryFn: async () => (await api.get<{ nextFileNumber: number }>('/club-inbody-measurements/next-file-number')).data.nextFileNumber,
+  });
   const { upload, uploading } = useFileUpload();
   const [form, setForm] = useState({
     memberCode: '',
     measurementDate: localToday(),
-    weight: '',
-    heightCm: '',
-    bodyFat: '',
-    muscleMass: '',
-    bmi: '',
-    notes: '',
     reportUrl: '',
   });
-
-  const computedBmi = (() => {
-    const w = Number(form.weight);
-    const h = Number(form.heightCm);
-    if (!w || !h) return '';
-    const bmi = w / ((h / 100) * (h / 100));
-    return String(Math.round(bmi * 100) / 100);
-  })();
 
   const deleteMutation = useMutationWithToast(
     (id: number) => api.delete(`/club-inbody-measurements/${id}`),
@@ -70,30 +62,18 @@ export function FitnessInbodyPage() {
     setForm({
       memberCode: '',
       measurementDate: localToday(),
-      weight: '',
-      heightCm: '',
-      bodyFat: '',
-      muscleMass: '',
-      bmi: '',
-      notes: '',
       reportUrl: '',
     });
     setOpen(true);
   };
 
   const openEdit = async (row: InbodyMeasurementRow) => {
-    const { data: member } = await api.get<ClubMemberListItem>(`/club-members/${row.memberId}`);
+    const { data: member } = await api.get<ClubMemberListItem>(`/club-members/measurement-operation-member/${row.memberId}`);
     setSelectedMember(member);
     setEditId(row.id);
     setForm({
       memberCode: row.memberCode ?? String(row.memberId),
       measurementDate: row.measurementDate,
-      weight: row.weight != null ? String(row.weight) : '',
-      heightCm: row.heightCm != null ? String(row.heightCm) : '',
-      bodyFat: row.bodyFat != null ? String(row.bodyFat) : '',
-      muscleMass: row.muscleMass != null ? String(row.muscleMass) : '',
-      bmi: row.bmi != null ? String(row.bmi) : '',
-      notes: row.notes ?? '',
       reportUrl: row.reportUrl ?? '',
     });
     setOpen(true);
@@ -106,8 +86,8 @@ export function FitnessInbodyPage() {
   };
 
   const save = async () => {
-    if (!selectedMember || !form.measurementDate) {
-      toast.error(ft('common.member'));
+    if (!selectedMember || !form.measurementDate || !form.reportUrl) {
+      toast.error(!selectedMember ? ft('inbody.selectMemberFirst') : !form.reportUrl ? ft('inbody.uploadFileFirst') : ft('inbody.measurementDateRequired'));
       return;
     }
     setSaving(true);
@@ -115,13 +95,7 @@ export function FitnessInbodyPage() {
       const payload = {
         memberId: selectedMember.id,
         measurementDate: form.measurementDate,
-        weight: form.weight ? Number(form.weight) : undefined,
-        heightCm: form.heightCm ? Number(form.heightCm) : undefined,
-        bodyFat: form.bodyFat ? Number(form.bodyFat) : undefined,
-        muscleMass: form.muscleMass ? Number(form.muscleMass) : undefined,
-        bmi: computedBmi ? Number(computedBmi) : undefined,
-        notes: form.notes || undefined,
-        reportUrl: form.reportUrl || null,
+        reportUrl: form.reportUrl,
       };
       if (editId) await api.put(`/club-inbody-measurements/${editId}`, payload);
       else await api.post('/club-inbody-measurements', payload);
@@ -137,48 +111,24 @@ export function FitnessInbodyPage() {
 
   const columns = useMemo<ColumnDef<InbodyMeasurementRow>[]>(
     () => [
-      memberColumnDef<InbodyMeasurementRow>(ft('common.member')),
+      {
+        accessorKey: 'memberCode',
+        header: ft('common.memberCode'),
+        cell: ({ getValue }) => <span className="font-mono" dir="ltr">{String(getValue() ?? '—')}</span>,
+      },
+      {
+        accessorKey: 'memberName',
+        header: ft('common.member'),
+        cell: ({ getValue }) => <span className="font-medium">{String(getValue() ?? '—')}</span>,
+      },
       {
         accessorKey: 'measurementDate',
         header: ft('common.date'),
         cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string)}</span>,
       },
       {
-        accessorKey: 'weight',
-        header: ft('progress.weight'),
-        cell: ({ getValue }) => numCell(getValue() as number | null),
-      },
-      {
-        accessorKey: 'heightCm',
-        header: ft('inbody.height'),
-        cell: ({ getValue }) => numCell(getValue() as number | null),
-      },
-      {
-        accessorKey: 'bmi',
-        header: ft('inbody.bmi'),
-        cell: ({ getValue }) => numCell(getValue() as number | null),
-      },
-      {
-        accessorKey: 'bodyFat',
-        header: ft('progress.bodyFat'),
-        cell: ({ getValue }) => numCell(getValue() as number | null),
-      },
-      {
-        accessorKey: 'muscleMass',
-        header: ft('inbody.muscleMass'),
-        cell: ({ getValue }) => numCell(getValue() as number | null),
-      },
-      {
-        accessorKey: 'notes',
-        header: ft('common.notes'),
-        cell: ({ getValue }) => {
-          const v = getValue() as string | null;
-          return v ? <span className="max-w-[120px] truncate">{v}</span> : '—';
-        },
-      },
-      {
         accessorKey: 'reportUrl',
-        header: ft('inbody.report'),
+        header: ft('inbody.details'),
         cell: ({ getValue }) => {
           const v = getValue() as string | null | undefined;
           const href = uploadUrl(v);
@@ -187,10 +137,10 @@ export function FitnessInbodyPage() {
               href={href}
               target="_blank"
               rel="noreferrer"
-              title={ft('inbody.viewReport')}
-              className="inline-flex text-brand"
+              title={ft('inbody.viewFile')}
+              className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2 py-1 text-xs font-medium text-white hover:bg-amber-600"
             >
-              <FileText className="size-4" />
+              <FileText className="size-4" /> {ft('inbody.fileLabel')}
             </a>
           ) : (
             '—'
@@ -202,14 +152,6 @@ export function FitnessInbodyPage() {
         header: ft('common.actions'),
         cell: ({ row }) => (
           <div className="flex items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              title={ft('inbody.viewDetails')}
-              onClick={() => setDetailMemberId(row.original.memberId)}
-            >
-              <Eye className="size-4" />
-            </Button>
             <RowActions
               editLabel={ft('common.edit')}
               deleteLabel={ft('common.delete')}
@@ -230,11 +172,11 @@ export function FitnessInbodyPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={ft('inbody.title')}
-        description={ft('inbody.searchMemberHint')}
+        title={ft('inbody.memberMeasurementsTitle')}
+        description={ft('inbody.memberMeasurementsDescription')}
         actions={
           <Button variant="brand" onClick={openCreate}>
-            <Plus className="size-4" /> {ft('common.add')}
+            <Plus className="size-4" /> {ft('inbody.addMemberMeasurement')}
           </Button>
         }
       />
@@ -254,21 +196,20 @@ export function FitnessInbodyPage() {
         emptyTitle={ft('common.noData')}
       />
 
-      <InbodyMemberDetailDialog
-        memberId={detailMemberId}
-        open={detailMemberId != null}
-        onOpenChange={(v) => { if (!v) setDetailMemberId(null); }}
-      />
-
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader>
-            <DialogTitle>{editId ? ft('common.edit') : ft('common.add')}</DialogTitle>
+            <DialogTitle>{editId ? ft('inbody.editMemberMeasurement') : ft('inbody.addMemberMeasurement')}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             <div className="grid gap-2">
-              <Label>{ft('common.memberCode')}</Label>
+              <Label>{ft('inbody.fileNumber')}</Label>
+              <Input className="nums" readOnly value={editId ? toArabicDigits(editId) : nextFileNumber ? toArabicDigits(nextFileNumber) : ft('inbody.determiningFileNumber')} />
+            </div>
+            <div className="grid gap-2">
+              <Label>{ft('common.name')}</Label>
               <MemberSearchCombobox
+                forMeasurementOperation
                 selectedMember={selectedMember}
                 onSelect={(member) => {
                   setSelectedMember(member);
@@ -283,36 +224,10 @@ export function FitnessInbodyPage() {
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.date')}</Label>
-              <Input type="date" className="nums" value={form.measurementDate} onChange={(e) => setForm((f) => ({ ...f, measurementDate: e.target.value }))} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-2">
-                <Label>{ft('progress.weight')}</Label>
-                <Input className="nums" value={form.weight} onChange={(e) => setForm((f) => ({ ...f, weight: e.target.value }))} />
-              </div>
-              <div className="grid gap-2">
-                <Label>{ft('inbody.height')}</Label>
-                <Input className="nums" value={form.heightCm} onChange={(e) => setForm((f) => ({ ...f, heightCm: e.target.value }))} />
-              </div>
-              <div className="grid gap-2">
-                <Label>{ft('inbody.bmi')}</Label>
-                <Input className="nums" readOnly value={computedBmi || form.bmi} />
-              </div>
-              <div className="grid gap-2">
-                <Label>{ft('progress.bodyFat')}</Label>
-                <Input className="nums" value={form.bodyFat} onChange={(e) => setForm((f) => ({ ...f, bodyFat: e.target.value }))} />
-              </div>
-              <div className="grid gap-2">
-                <Label>{ft('inbody.muscleMass')}</Label>
-                <Input className="nums" value={form.muscleMass} onChange={(e) => setForm((f) => ({ ...f, muscleMass: e.target.value }))} />
-              </div>
+              <Input type="date" className="nums" disabled={todayOnly} value={form.measurementDate} onChange={(e) => setForm((f) => ({ ...f, measurementDate: e.target.value }))} />
             </div>
             <div className="grid gap-2">
-              <Label>{ft('common.notes')}</Label>
-              <Input value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
-            </div>
-            <div className="grid gap-2">
-              <Label>{ft('inbody.report')}</Label>
+              <Label>{ft('inbody.file')}</Label>
               {form.reportUrl ? (
                 <div className="flex items-center gap-2">
                   <a

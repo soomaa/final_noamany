@@ -6,7 +6,6 @@ import { ClubStatCard } from '@/components/club/stat-card';
 import { ReportShell, downloadCsv } from '@/components/reports/report-shell';
 import { DateRangeFilter, firstOfMonth, todayLocal } from '@/components/reports/date-range-filter';
 import { BranchFilter, normalizeBranchParam } from '@/components/reports/branch-filter';
-import { ReportAudienceFilter, useReportAudience } from '@/components/reports/audience-filter';
 import { fetchAllReportRows } from '@/lib/report-fetch';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
@@ -30,17 +29,15 @@ export function ClubMembersReportPage() {
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
   const [branch, setBranch] = useState('all');
-  const audience = useReportAudience();
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-members-daily', startDate, endDate, branch, audience.gender],
+    queryKey: ['reports', 'club-members-daily', startDate, endDate, branch],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const data = await fetchAllReportRows<MemberRow>('/club-members', {
         createdFrom: startDate,
         createdTo: endDate,
         ...(branchId ? { branch: String(branchId) } : {}),
-        ...(audience.gender ? { gender: audience.gender } : {}),
       });
       return { data, total: data.length };
     },
@@ -95,10 +92,7 @@ export function ClubMembersReportPage() {
           endDate={endDate}
           onStartChange={setStartDate}
           onEndChange={setEndDate}
-          extra={<>
-            <BranchFilter value={branch} onChange={setBranch} />
-            <ReportAudienceFilter value={audience.value} onChange={audience.setValue} locked={audience.locked} />
-          </>}
+          extra={<BranchFilter value={branch} onChange={setBranch} />}
         />
       }
       stats={

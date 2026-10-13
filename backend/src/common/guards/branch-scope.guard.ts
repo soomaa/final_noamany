@@ -3,14 +3,18 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  Inject,
 } from "@nestjs/common";
+import { Reflector } from '@nestjs/core';
+import { ClubBranchGroupService, ClubBranchGroupReader } from '../branch-groups/club-branch-group.service';
+import { CLUB_GROUP_OPERATION, clubOperationBranchIds } from '../branch-groups/club-operation-scope';
 import { BranchScopeService } from "../branch-scope/branch-scope.service";
 import { JwtUser } from "../types/jwt-user";
 
 /**
- * Global guard: every non-admin user may not read or write
- * another branch's data by passing a foreign branch id. Any request that explicitly
- * targets a branch outside the user's allowed set is rejected with 403.
+ * Global guard: non-admins are restricted to their branch. Explicitly marked club
+ * refund/transfer routes may target branches in the same active persisted group.
+ * Requests outside the applicable allowed set are rejected with 403.
  *
  * This closes the active cross-branch access vector on every endpoint at once. It only
  * REJECTS clearly-unauthorized requests — it never changes a service's own logic, so it
@@ -33,16 +37,23 @@ export class BranchScopeGuard implements CanActivate {
     "branch",
   ];
 
-  constructor(private readonly scope: BranchScopeService) {}
+  constructor(
+    private readonly scope: BranchScopeService,
+    private readonly reflector: Reflector = new Reflector(),
+    @Inject(ClubBranchGroupService) private readonly branchGroups: Pick<ClubBranchGroupReader, 'siblingBranchIds'> = { siblingBranchIds: async (id) => [id] },
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
     const user = req?.user as JwtUser | undefined;
     // Public routes run through the global guard chain without an authenticated user.
     // Authentication is handled by JwtAuthGuard; branch scoping has nothing to do here.
     if (!user) return true;
 
-    const allowed = this.scope.allowedBranchIds(user);
+    const groupOperation = context.getHandler && this.reflector.getAllAndOverride<boolean>(CLUB_GROUP_OPERATION, [context.getHandler(), context.getClass()]);
+    const allowed = groupOperation
+      ? await clubOperationBranchIds(this.scope, this.branchGroups, user)
+      : this.scope.allowedBranchIds(user);
 
     // Expose the resolved scope for services that opt into default scoping.
     req.branchScope = allowed;

@@ -6,6 +6,11 @@ export class AppController {
   @Public()
   @Get('health')
   health() {
-    return { status: 'ok', app: 'Noamany HR API', ts: new Date().toISOString() };
+    return {
+      status: 'ok',
+      app: 'Noamany HR API',
+      release: 'noamany-update-20261001-r1',
+      ts: new Date().toISOString(),
+    };
   }
 }

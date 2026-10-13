@@ -1,22 +1,22 @@
-NOAMANY ENGINEER HANDOFF — 2026-09-09
+NOAMANY ENGINEER HANDOFF — 2026-08-09
 
 Start with README-FIRST.md.
 
 Included:
-- Backend, admin frontend, and public website source with locked dependencies.
-- Current unified production bundle in backend/public.
-- Versioned Prisma schema and migrations.
-- Reviewed database snapshot: backups/noamany_final_new-before-20260909-upgrade.sql.gz
-- Safe restore script with checksum, empty-target, GTID, and record-count guards.
-- Locally available public uploads.
+- Complete backend and frontend source code.
+- Locked npm dependency manifests.
+- Prisma schema and versioned migrations.
+- Real migrated database snapshot: noamany-ready-data-20260803.sql.gz
+- Safe restore script that refuses to overwrite a non-empty database.
+- backend/uploads for locally referenced images/files.
 
-Snapshot SHA-256:
-ca21148d16d0a4dc5b8bc7b2632371cbd4e96828763051f1dda730e29adaea30
+Intentionally excluded:
+- backend/.env and every production/local secret file.
+- node_modules, build output and Git history (regenerated locally).
+- server backups and production deployment artifacts.
 
-Excluded from every client delivery:
-- backend/.env, env_server.txt, and all credentials/secrets.
-- node_modules and machine-local runtime state.
-- private upload roots unless transferred separately through approved secure storage.
+Database snapshot SHA-256:
+d9dbd02aa30e3aaf3bc56438563d797a74d69217620b2a52962e4dca0e260930
 
-Never run demo seed/reset/fresh-deploy commands against restored client data.
-Use prisma migrate deploy followed by npm run db:seed:rbac.
+Never run prisma migrate reset, prisma db push --force-reset, db:reseed,
+npm run db:seed, or deploy-fresh.sh against the restored database.

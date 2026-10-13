@@ -128,6 +128,7 @@ export class EntitlementService {
     const {
       memberId,
       branchId,
+      branchIds,
       subscriptionId,
       at = new Date(),
       blockOnOutstanding,
@@ -146,7 +147,13 @@ export class EntitlementService {
     const reasons: EntitlementReason[] = [];
     const warnings: EntitlementReason[] = [];
 
-    if (branchId != null && member.branch_id !== branchId) {
+    const permittedBranchIds = branchIds?.length
+      ? [...new Set(branchIds)]
+      : branchId != null
+        ? [branchId]
+        : null;
+
+    if (permittedBranchIds != null && !permittedBranchIds.includes(member.branch_id)) {
       reasons.push(
         this.reason(
           'member_branch_mismatch',
@@ -181,7 +188,7 @@ export class EntitlementService {
     const subs = await this.prisma.club_subscriptions.findMany({
       where: {
         member_id: memberId,
-        ...(branchId != null ? { branch_id: branchId } : {}),
+        ...(permittedBranchIds != null ? { branch_id: { in: permittedBranchIds } } : {}),
       },
       orderBy: { subscription_end_date: 'desc' },
     });
@@ -313,7 +320,11 @@ export class EntitlementService {
         }
       }
 
-      if (branchId != null && snapshot.branchId !== branchId) {
+      if (
+        branchId != null &&
+        !branchIds?.length &&
+        snapshot.branchId !== branchId
+      ) {
         reasons.push(
           this.reason(
             'subscription_branch_mismatch',

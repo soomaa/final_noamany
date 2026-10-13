@@ -3,9 +3,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ListQueryDto } from '../../common/dto/list-query.dto';
 import { paginated } from '../../common/dto/list-result';
-import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { JwtUser } from '../../common/types/jwt-user';
 import { diffDaysFromToday, parseLegacyDate, todayIso, toIsoDate } from '../../common/utils/legacy-date.util';
 
 const REPORT_KEYS = [
@@ -43,69 +41,14 @@ interface ReportRow {
 
 @Injectable()
 export class ReportsService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly branchScope: BranchScopeService,
-  ) {}
+  constructor(private readonly prisma: PrismaService) {}
 
-  async run(key: string, q: ListQueryDto, user: JwtUser) {
+  async run(key: string, q: ListQueryDto) {
     if (!REPORT_KEYS.includes(key as ReportKey)) {
       throw new BadRequestException('تقرير غير معروف');
     }
     const handler = this.handlers[key as ReportKey].bind(this);
-    return handler(q, user);
-  }
-
-  /** The department is an authorization constraint derived from the JWT, never the URL. */
-  private employeeScope(q: ListQueryDto, user: JwtUser): Prisma.employeesWhereInput {
-    const branches = this.branchScope.resolveListFilter(user, q.branchId);
-    const requiredGender = this.branchScope.memberGenderFilter(user);
-    const gender = requiredGender ?? q.gender;
-    return {
-      ...(branches !== null ? { branch_id_fk: { in: branches } } : {}),
-      ...(gender ? { emp_type: gender === 'male' ? 1 : 2 } : {}),
-    };
-  }
-
-  private activeEmployeeScope(q: ListQueryDto, user: JwtUser): Prisma.employeesWhereInput {
-    return {
-      AND: [
-        this.employeeScope(q, user),
-        { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
-      ],
-    };
-  }
-
-  private async payrollEmployeeScope(q: ListQueryDto, user: JwtUser): Promise<Prisma.hr_mosayer_detailsWhereInput> {
-    const employees = await this.prisma.employees.findMany({
-      where: this.employeeScope(q, user),
-      select: { id: true, emp_code: true },
-    });
-    // `hr_mosayer_details` has no Prisma relation to employees. A code-only
-    // legacy row is attributable only when its employee code is globally
-    // unique; duplicate codes must fail closed instead of leaking a row.
-    const knownEmployees = await this.prisma.employees.findMany({
-      select: { id: true, emp_code: true },
-    });
-    const legacyCodes = employees.flatMap((employee) => {
-      if (employee.emp_code == null) return [];
-      return knownEmployees.filter((known) => known.emp_code === employee.emp_code).length === 1
-        ? [employee.emp_code]
-        : [];
-    });
-    return {
-      OR: [
-        { emp_id: { in: employees.map((employee) => employee.id) } },
-        {
-          // emp_code is a legacy fallback only. An explicit employee id is
-          // authoritative, so a reused code must never override it.
-          AND: [
-            { OR: [{ emp_id: null }, { emp_id: { notIn: knownEmployees.map((employee) => employee.id) } }] },
-            { emp_code: { in: legacyCodes } },
-          ],
-        },
-      ],
-    };
+    return handler(q);
   }
 
   private paginateRows(rows: ReportRow[], q: ListQueryDto) {
@@ -128,10 +71,10 @@ export class ReportsService {
     return Number(v);
   }
 
-  private handlers: Record<ReportKey, (q: ListQueryDto, user: JwtUser) => Promise<ReturnType<typeof paginated>>> = {
-    'employees-list': async (q, user) => {
+  private handlers: Record<ReportKey, (q: ListQueryDto) => Promise<ReturnType<typeof paginated>>> = {
+    'employees-list': async (q) => {
       const rows = await this.prisma.employees.findMany({
-        where: this.activeEmployeeScope(q, user),
+        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
         select: { id: true, employee: true, emp_code: true, edara_n: true },
         orderBy: { id: 'desc' },
       });
@@ -146,9 +89,9 @@ export class ReportsService {
       );
     },
 
-    'employees-data': async (q, user) => {
+    'employees-data': async (q) => {
       const rows = await this.prisma.employees.findMany({
-        where: this.activeEmployeeScope(q, user),
+        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
         select: {
           id: true,
           employee: true,
@@ -172,9 +115,9 @@ export class ReportsService {
       );
     },
 
-    'employees-new': async (q, user) => {
+    'employees-new': async (q) => {
       const rows = await this.prisma.employees.findMany({
-        where: this.activeEmployeeScope(q, user),
+        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
         select: { id: true, employee: true, start_work_date_m: true, date: true },
         orderBy: { id: 'desc' },
         take: 500,
@@ -195,9 +138,9 @@ export class ReportsService {
       );
     },
 
-    'employees-expiring': async (q, user) => {
+    'employees-expiring': async (q) => {
       const rows = await this.prisma.employees.findMany({
-        where: this.activeEmployeeScope(q, user),
+        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
         select: { id: true, employee: true, end_contract_date_m: true },
         orderBy: { id: 'desc' },
       });
@@ -216,9 +159,9 @@ export class ReportsService {
       );
     },
 
-    'employees-resigned': async (q, user) => {
+    'employees-resigned': async (q) => {
       const rows = await this.prisma.employees.findMany({
-        where: { AND: [this.employeeScope(q, user), { OR: [{ leave_emp: 1 }, { employee_type: { not: 1 } }] }] },
+        where: { OR: [{ leave_emp: 1 }, { employee_type: { not: 1 } }] },
         select: { id: true, employee: true, end_service_date_m: true, reason: true },
         orderBy: { id: 'desc' },
       });
@@ -233,23 +176,22 @@ export class ReportsService {
       );
     },
 
-    'attendance-daily': async (q, user) => {
+    'attendance-daily': async (q) => {
       const date = q.date ?? q.dateFrom ?? todayIso();
       const matches = [date, String(Math.floor(new Date(date + 'T00:00:00').getTime() / 1000))];
-      const branches = this.branchScope.resolveListFilter(user, q.branchId);
-      const emps = await this.prisma.employees.findMany({
-        where: this.employeeScope(q, user),
-        select: { emp_code: true, employee: true },
-      });
-      const scopedCodes = emps.flatMap((employee) => employee.emp_code == null ? [] : [employee.emp_code]);
       const rows = await this.prisma.tbl_hdoor_emps.findMany({
-        where: { action_date_s: { in: matches }, member_code: { in: scopedCodes }, ...(branches !== null ? { branch_id_fk: { in: branches } } : {}) },
+        where: { action_date_s: { in: matches } },
         orderBy: { hodoor_id: 'desc' },
         take: 1000,
       });
+      const empCodes = [...new Set(rows.map((r) => r.member_code).filter(Boolean))] as number[];
+      const emps = await this.prisma.employees.findMany({
+        where: { emp_code: { in: empCodes } },
+        select: { emp_code: true, employee: true },
+      });
       const byCode = new Map(emps.map((e) => [e.emp_code, e.employee]));
       return this.paginateRows(
-        rows.filter((r) => byCode.has(r.member_code ?? 0)).map((r) => ({
+        rows.map((r) => ({
           id: r.hodoor_id,
           name: byCode.get(r.member_code ?? 0) ?? String(r.member_code ?? '—'),
           value: r.hdoor_time ?? '—',
@@ -260,7 +202,7 @@ export class ReportsService {
       );
     },
 
-    'attendance-absence': async (q, user) => {
+    'attendance-absence': async (q) => {
       const date = q.date ?? q.dateFrom ?? todayIso();
       const matches = [date, String(Math.floor(new Date(date + 'T00:00:00').getTime() / 1000))];
       const present = await this.prisma.tbl_hdoor_emps.findMany({
@@ -269,7 +211,7 @@ export class ReportsService {
       });
       const presentCodes = new Set(present.map((p) => p.member_code));
       const emps = await this.prisma.employees.findMany({
-        where: { AND: [this.activeEmployeeScope(q, user), { emp_code: { not: null } }] },
+        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }], emp_code: { not: null } },
         select: { id: true, employee: true, emp_code: true, edara_n: true },
       });
       const absent = emps.filter((e) => e.emp_code != null && !presentCodes.has(e.emp_code));
@@ -285,15 +227,8 @@ export class ReportsService {
       );
     },
 
-    'attendance-late': async (q, user) => {
+    'attendance-late': async (q) => {
       const dateFilter: Prisma.tbl_hdoor_empsWhereInput = { late_min: { gt: 0 } };
-      const branches = this.branchScope.resolveListFilter(user, q.branchId);
-      const emps = await this.prisma.employees.findMany({
-        where: this.employeeScope(q, user),
-        select: { emp_code: true, employee: true },
-      });
-      dateFilter.member_code = { in: emps.flatMap((employee) => employee.emp_code == null ? [] : [employee.emp_code]) };
-      if (branches !== null) dateFilter.branch_id_fk = { in: branches };
       if (q.dateFrom || q.dateTo) {
         const from = q.dateFrom ?? '1970-01-01';
         const to = q.dateTo ?? todayIso();
@@ -304,9 +239,14 @@ export class ReportsService {
         orderBy: { hodoor_id: 'desc' },
         take: 1000,
       });
+      const empCodes = [...new Set(rows.map((r) => r.member_code).filter(Boolean))] as number[];
+      const emps = await this.prisma.employees.findMany({
+        where: { emp_code: { in: empCodes } },
+        select: { emp_code: true, employee: true },
+      });
       const byCode = new Map(emps.map((e) => [e.emp_code, e.employee]));
       return this.paginateRows(
-        rows.filter((r) => byCode.has(r.member_code ?? 0)).map((r) => ({
+        rows.map((r) => ({
           id: r.hodoor_id,
           name: byCode.get(r.member_code ?? 0) ?? String(r.member_code ?? '—'),
           value: Math.round(r.late_min ?? 0),
@@ -316,9 +256,8 @@ export class ReportsService {
       );
     },
 
-    'attendance-hours': async (q, user) => {
+    'attendance-hours': async (q) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
-        where: await this.payrollEmployeeScope(q, user),
         select: { id: true, emp_name: true, sa3at_amal: true, ayam_amal: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -334,21 +273,20 @@ export class ReportsService {
       );
     },
 
-    'attendance-overtime': async (q, user) => {
-      const branches = this.branchScope.resolveListFilter(user, q.branchId);
-      const emps = await this.prisma.employees.findMany({
-        where: this.employeeScope(q, user),
-        select: { emp_code: true, employee: true },
-      });
-      const scopedCodes = emps.flatMap((employee) => employee.emp_code == null ? [] : [employee.emp_code]);
+    'attendance-overtime': async (q) => {
       const rows = await this.prisma.tbl_hdoor_emps.findMany({
-        where: { num_min: { gt: 0 }, member_code: { in: scopedCodes }, ...(branches !== null ? { branch_id_fk: { in: branches } } : {}) },
+        where: { num_min: { gt: 0 } },
         orderBy: { hodoor_id: 'desc' },
         take: 1000,
       });
+      const empCodes = [...new Set(rows.map((r) => r.member_code).filter(Boolean))] as number[];
+      const emps = await this.prisma.employees.findMany({
+        where: { emp_code: { in: empCodes } },
+        select: { emp_code: true, employee: true },
+      });
       const byCode = new Map(emps.map((e) => [e.emp_code, e.employee]));
       return this.paginateRows(
-        rows.filter((r) => byCode.has(r.member_code ?? 0)).map((r) => ({
+        rows.map((r) => ({
           id: r.hodoor_id,
           name: byCode.get(r.member_code ?? 0) ?? String(r.member_code ?? '—'),
           value: Math.round(r.num_min ?? 0),
@@ -358,21 +296,20 @@ export class ReportsService {
       );
     },
 
-    'attendance-shift': async (q, user) => {
-      const branches = this.branchScope.resolveListFilter(user, q.branchId);
-      const emps = await this.prisma.employees.findMany({
-        where: this.employeeScope(q, user),
-        select: { emp_code: true, employee: true },
-      });
-      const scopedCodes = emps.flatMap((employee) => employee.emp_code == null ? [] : [employee.emp_code]);
+    'attendance-shift': async (q) => {
       const rows = await this.prisma.tbl_hdoor_emps.findMany({
-        where: { sheft_type: { not: 0 }, member_code: { in: scopedCodes }, ...(branches !== null ? { branch_id_fk: { in: branches } } : {}) },
+        where: { sheft_type: { not: 0 } },
         orderBy: { hodoor_id: 'desc' },
         take: 1000,
       });
+      const empCodes = [...new Set(rows.map((r) => r.member_code).filter(Boolean))] as number[];
+      const emps = await this.prisma.employees.findMany({
+        where: { emp_code: { in: empCodes } },
+        select: { emp_code: true, employee: true },
+      });
       const byCode = new Map(emps.map((e) => [e.emp_code, e.employee]));
       return this.paginateRows(
-        rows.filter((r) => byCode.has(r.member_code ?? 0)).map((r) => ({
+        rows.map((r) => ({
           id: r.hodoor_id,
           name: byCode.get(r.member_code ?? 0) ?? String(r.member_code ?? '—'),
           value: r.sheft_type,
@@ -382,9 +319,8 @@ export class ReportsService {
       );
     },
 
-    'payroll-sheet': async (q, user) => {
+    'payroll-sheet': async (q) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
-        where: await this.payrollEmployeeScope(q, user),
         select: { id: true, emp_name: true, rateb_asasy: true, safi: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -400,9 +336,8 @@ export class ReportsService {
       );
     },
 
-    'payroll-deductions': async (q, user) => {
+    'payroll-deductions': async (q) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
-        where: await this.payrollEmployeeScope(q, user),
         select: {
           id: true,
           emp_name: true,
@@ -427,9 +362,8 @@ export class ReportsService {
       );
     },
 
-    'payroll-incentives': async (q, user) => {
+    'payroll-incentives': async (q) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
-        where: await this.payrollEmployeeScope(q, user),
         select: { id: true, emp_name: true, tot_mokafaa: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -444,9 +378,8 @@ export class ReportsService {
       );
     },
 
-    'payroll-allowances': async (q, user) => {
+    'payroll-allowances': async (q) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
-        where: await this.payrollEmployeeScope(q, user),
         select: {
           id: true,
           emp_name: true,
@@ -474,9 +407,8 @@ export class ReportsService {
       );
     },
 
-    'payroll-commissions': async (q, user) => {
+    'payroll-commissions': async (q) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
-        where: await this.payrollEmployeeScope(q, user),
         select: { id: true, emp_name: true, tot_entdab: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -491,9 +423,8 @@ export class ReportsService {
       );
     },
 
-    'payroll-taxes': async (q, user) => {
+    'payroll-taxes': async (q) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
-        where: await this.payrollEmployeeScope(q, user),
         select: { id: true, emp_name: true, khasm_keyab: true, agaza_bdon_rateb: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -508,9 +439,8 @@ export class ReportsService {
       );
     },
 
-    'payroll-insurance': async (q, user) => {
+    'payroll-insurance': async (q) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
-        where: await this.payrollEmployeeScope(q, user),
         select: { id: true, emp_name: true, khasm_tamen: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -525,18 +455,14 @@ export class ReportsService {
       );
     },
 
-    'leaves-balance': async (q, user) => {
+    'leaves-balance': async (q) => {
+      const contracts = await this.prisma.contract_employe.findMany({ take: 1000 });
       const emps = await this.prisma.employees.findMany({
-        where: this.employeeScope(q, user),
         select: { id: true, emp_code: true, employee: true },
-      });
-      const contracts = await this.prisma.contract_employe.findMany({
-        where: { emp_code: { in: emps.flatMap((employee) => employee.emp_code == null ? [] : [String(employee.emp_code)]) } },
-        take: 1000,
       });
       const byCode = new Map(emps.map((e) => [String(e.emp_code), e]));
       return this.paginateRows(
-        contracts.filter((contract) => byCode.has(contract.emp_code)).map((c, i) => {
+        contracts.map((c, i) => {
           const emp = byCode.get(c.emp_code);
           const total =
             (parseFloat(c.year_vacation_num) || 0) + (c.vacation_previous_balance || 0);
@@ -551,13 +477,9 @@ export class ReportsService {
       );
     },
 
-    'leaves-used': async (q, user) => {
-      const emps = await this.prisma.employees.findMany({
-        where: this.employeeScope(q, user),
-        select: { id: true, employee: true },
-      });
+    'leaves-used': async (q) => {
       const rows = await this.prisma.hr_all_agzat_orders.findMany({
-        where: { suspend: SuspendStatus.APPROVED, emp_id_fk: { in: emps.map((employee) => employee.id) } },
+        where: { suspend: SuspendStatus.APPROVED },
         select: {
           id: true,
           emp_id_fk: true,
@@ -569,7 +491,11 @@ export class ReportsService {
         take: 1000,
       });
       const empIds = [...new Set(rows.map((r) => r.emp_id_fk).filter(Boolean))] as number[];
-      const byId = new Map(emps.filter((employee) => empIds.includes(employee.id)).map((e) => [e.id, e.employee]));
+      const emps = await this.prisma.employees.findMany({
+        where: { id: { in: empIds } },
+        select: { id: true, employee: true },
+      });
+      const byId = new Map(emps.map((e) => [e.id, e.employee]));
       return this.paginateRows(
         rows.map((r) => ({
           id: r.id,
@@ -582,23 +508,19 @@ export class ReportsService {
       );
     },
 
-    'leaves-remaining': async (q, user) => {
-      const emps = await this.prisma.employees.findMany({
-        where: this.employeeScope(q, user),
-        select: { id: true, emp_code: true, employee: true },
-      });
-      const contracts = await this.prisma.contract_employe.findMany({
-        where: { emp_code: { in: emps.flatMap((employee) => employee.emp_code == null ? [] : [String(employee.emp_code)]) } },
-        take: 1000,
-      });
+    'leaves-remaining': async (q) => {
+      const contracts = await this.prisma.contract_employe.findMany({ take: 1000 });
       const usedRows = await this.prisma.hr_all_agzat_orders.groupBy({
         by: ['emp_id_fk'],
-        where: { suspend: SuspendStatus.APPROVED, emp_id_fk: { in: emps.map((employee) => employee.id) } },
+        where: { suspend: SuspendStatus.APPROVED },
         _sum: { num_days: true },
       });
       const usedByEmp = new Map(usedRows.map((u) => [u.emp_id_fk, u._sum.num_days ?? 0]));
+      const emps = await this.prisma.employees.findMany({
+        select: { id: true, emp_code: true, employee: true },
+      });
       const byCode = new Map(emps.map((e) => [String(e.emp_code), e]));
-      const rows: ReportRow[] = contracts.filter((contract) => byCode.has(contract.emp_code)).map((c, i) => {
+      const rows: ReportRow[] = contracts.map((c, i) => {
         const emp = byCode.get(c.emp_code);
         const total =
           (parseFloat(c.year_vacation_num) || 0) + (c.vacation_previous_balance || 0);

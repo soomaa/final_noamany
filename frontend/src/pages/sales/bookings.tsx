@@ -25,7 +25,6 @@ import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
-import { usePermission } from '@/hooks/use-permission';
 
 interface BookingRow {
   id: number;
@@ -58,9 +57,6 @@ interface EmployeeOption {
 
 export function SalesBookingsPage() {
   const { ui } = useLocale();
-  const { can } = usePermission();
-  const canCreate = can('gym-sales.sales.bookings:create');
-  const canUpdate = can('gym-sales.sales.bookings:update');
   const { data: branches } = useBranches();
   const [branchId, setBranchId] = useState('');
   const effectiveBranch = branchId || String(branches?.[0]?.id ?? '');
@@ -142,17 +138,16 @@ export function SalesBookingsPage() {
         header: ui('الإجراءات'),
         cell: ({ row }) => (
           <div className="flex gap-1">
-            {canUpdate && row.original.outstandingAmount > 0 && row.original.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => openPayment(row.original, 'payment')}><Wallet className="size-3" />{ui('تحصيل')}</Button>}
-            {canUpdate && row.original.netCollected > 0 && <Button size="sm" variant="outline" onClick={() => openPayment(row.original, 'refund')}><RotateCcw className="size-3" />{ui('استرداد')}</Button>}
+            {row.original.outstandingAmount > 0 && row.original.status !== 'cancelled' && <Button size="sm" variant="outline" onClick={() => openPayment(row.original, 'payment')}><Wallet className="size-3" />{ui('تحصيل')}</Button>}
+            {row.original.netCollected > 0 && <Button size="sm" variant="outline" onClick={() => openPayment(row.original, 'refund')}><RotateCcw className="size-3" />{ui('استرداد')}</Button>}
           </div>
         ),
       },
     ],
-    [canUpdate, params.page, params.pageSize, ui],
+    [params.page, params.pageSize, ui],
   );
 
   const openPayment = (booking: BookingRow, kind: 'payment' | 'refund') => {
-    if (!canUpdate) return;
     setSelectedBooking(booking);
     setPaymentKind(kind);
     setPaymentForm({
@@ -165,7 +160,7 @@ export function SalesBookingsPage() {
   };
 
   const savePayment = async () => {
-    if (!canUpdate || !selectedBooking || Number(paymentForm.amount) <= 0) return;
+    if (!selectedBooking || Number(paymentForm.amount) <= 0) return;
     setSaving(true);
     try {
       const endpoint = paymentKind === 'payment' ? 'payments' : 'refunds';
@@ -186,7 +181,6 @@ export function SalesBookingsPage() {
   };
 
   const save = async () => {
-    if (!canCreate) return;
     const dateErr = validateNotPastDate(form.bookingDate);
     if (dateErr) {
       toast.error(ui(dateErr));
@@ -224,10 +218,10 @@ export function SalesBookingsPage() {
       title={ui('حجوزات المبيعات')}
       description={ui('حجز خدمات من الكتالوج مع ربط موظف المبيعات')}
       actions={
-        canCreate ? <Button onClick={() => setOpen(true)}>
+        <Button onClick={() => setOpen(true)}>
           <Plus className="ms-1 h-4 w-4" />
           {ui('حجز جديد')}
-        </Button> : null
+        </Button>
       }
     >
       <div className="mb-4 flex items-center gap-3">
@@ -260,7 +254,7 @@ export function SalesBookingsPage() {
         onRetry={() => void refetch()}
       />
 
-      <Dialog open={canCreate && open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{ui('حجز جديد')}</DialogTitle>
@@ -329,14 +323,14 @@ export function SalesBookingsPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button permissionAction="create" onClick={() => void save()} disabled={saving}>
+            <Button onClick={() => void save()} disabled={saving}>
               {ui('حفظ')}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={canUpdate && paymentOpen} onOpenChange={setPaymentOpen}>
+      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
         <DialogContent>
           <DialogHeader><DialogTitle>{ui(paymentKind === 'payment' ? 'تحصيل دفعة حجز' : 'استرداد دفعة حجز')}</DialogTitle></DialogHeader>
           <div className="grid gap-3 py-2">
@@ -346,7 +340,7 @@ export function SalesBookingsPage() {
             <div className="grid gap-1"><Label>{ui('التاريخ')}</Label><Input type="date" className="nums" value={paymentForm.paymentDate} onChange={(event) => setPaymentForm((current) => ({ ...current, paymentDate: event.target.value }))} /></div>
             <div className="grid gap-1"><Label>{ui('ملاحظات')}</Label><Input value={paymentForm.notes} onChange={(event) => setPaymentForm((current) => ({ ...current, notes: event.target.value }))} /></div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setPaymentOpen(false)}>{ui('إلغاء')}</Button><Button permissionAction="update" onClick={() => void savePayment()} disabled={saving}>{ui('حفظ')}</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setPaymentOpen(false)}>{ui('إلغاء')}</Button><Button onClick={() => void savePayment()} disabled={saving}>{ui('حفظ')}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </GymSalesPageShell>

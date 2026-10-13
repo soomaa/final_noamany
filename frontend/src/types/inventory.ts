@@ -1,36 +1,11 @@
 export type InventorySection = 'general' | 'preparation_ingredients' | 'serving_packaging' | 'gym_operations' | 'ready_products';
 
-export interface PackagedMaterialSizeForm {
-  id?: number;
-  packageSize: number;
-  packageUnit: string;
-  packagePrice: number;
-  initialPackageCount: number;
-  reorderPoint: number;
-  currentStock?: number;
-  packageBaseQuantity?: number;
-}
-
-export interface PackagedMaterialSize {
-  id: number;
-  packageSize: number;
-  packageUnit: string;
-  packagePrice: number;
-  packageBaseQuantity: number;
-  reorderPoint: number;
-  isDefault: boolean;
-  isActive: boolean;
-}
-
 export interface ProductListItem {
   id: number;
   productCode: string;
-  barcode?: string | null;
   nameAr: string;
   nameEn?: string | null;
   size?: string | null;
-  isPackaged?: boolean;
-  packages?: PackagedMaterialSize[];
   costPrice: number;
   sellingPrice: number;
   wholesalePrice?: number | null;
@@ -72,8 +47,6 @@ export interface ProductFormData {
   barcode: string;
   description: string;
   size?: string;
-  isPackaged?: boolean;
-  packages?: PackagedMaterialSizeForm[];
   reorderPoint: number;
   applyToAllBranches: boolean;
   inventoryKind?: 'general' | 'raw_material' | 'ready_product' | 'manufactured_internal';

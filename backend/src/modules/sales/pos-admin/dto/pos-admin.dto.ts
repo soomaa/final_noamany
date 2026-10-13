@@ -38,7 +38,6 @@ export class UpsertPosPaymentMethodDto {
   @IsOptional() @IsNumber() maxAmount?: number;
   @IsOptional() @IsNumber() minAmount?: number;
   @IsOptional() @IsBoolean() supportsMixedPayment?: boolean;
-  @IsOptional() @IsBoolean() requiresReference?: boolean;
   @IsOptional() @IsBoolean() requiresApproval?: boolean;
   @IsOptional() @IsNumber() approvalThreshold?: number;
   @IsOptional() @IsString() providerName?: string;
@@ -141,4 +140,3 @@ export class TestNotificationDto {
   @IsOptional() recipients?: unknown[];
   @IsOptional() channels?: unknown[];
 }
-

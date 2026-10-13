@@ -17,7 +17,6 @@ import { isDryRun, previewResponse, PreviewRow } from '../../common/preview';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
 import { assertPositive } from '../../common/validators';
 import { convertToBaseUnit, type RecipeUnit } from '../../common/utils/units';
-import { cairoDateBounds } from '../../common/utils/cairo-date';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
 import { InventoryStockService } from '../inventory/inventory-stock.service';
 import { InventoryLocationService } from '../inventory/inventory-location.service';
@@ -37,8 +36,6 @@ import { SellCafeCartDto } from './dto/sell-cafe-cart.dto';
 import { UpsertCafePartnerDto } from './dto/upsert-cafe-partner.dto';
 import { ProduceCafeProductDto } from './dto/produce-cafe-product.dto';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
-import { savedSalePaymentInvoice, shiftPaymentSummary } from '../sales/sale-payment-summary.util';
-import { allocateCollectedCafeSale } from '../targets/cafe-target-classification';
 
 type IngredientStockSelect = {
   id: true;
@@ -89,44 +86,6 @@ function reportHourLabel(hour: number) {
   return `${hour12}:00 ${period}`.replace(/\d/g, (digit) => '٠١٢٣٤٥٦٧٨٩'[Number(digit)]!);
 }
 
-type CafeWasteTransactionLike = {
-  id: number;
-  reference: string;
-  txn_date: Date;
-  total_amount: Prisma.Decimal | number;
-  reason: string | null;
-  items: Array<{
-    product_id: number | null;
-    item_name: string;
-    quantity: Prisma.Decimal | number;
-    total: Prisma.Decimal | number;
-    unit: string | null;
-  }>;
-};
-
-type ManualCafeWasteLike = {
-  status: string;
-  total_cost: Prisma.Decimal | number;
-  transaction: CafeWasteTransactionLike;
-};
-
-export function combineCafeWasteReport(
-  automaticTransactions: CafeWasteTransactionLike[],
-  manualRecords: ManualCafeWasteLike[],
-) {
-  const activeManual = manualRecords.filter((row) => row.status === 'active');
-  const automaticCost = roundMoney(automaticTransactions.reduce((sum, row) => sum + invToNumber(row.total_amount), 0));
-  const manualCost = roundMoney(activeManual.reduce((sum, row) => sum + invToNumber(row.total_cost), 0));
-  const transactions = [...automaticTransactions, ...activeManual.map((row) => row.transaction)]
-    .sort((a, b) => b.txn_date.getTime() - a.txn_date.getTime());
-  return {
-    automaticCost,
-    manualCost,
-    totalCost: roundMoney(automaticCost + manualCost),
-    transactions,
-  };
-}
-
 @Injectable()
 export class CafeProductsService {
   constructor(
@@ -152,7 +111,6 @@ export class CafeProductsService {
     name: string;
     category_id: number | null;
     product_type: string;
-    business_classification: 'protein' | 'bar' | 'management_withdrawal' | null;
     inventory_product_id: number | null;
     sell_price: Prisma.Decimal;
     image_url: string | null;
@@ -224,7 +182,6 @@ export class CafeProductsService {
       categoryId: row.category_id,
       categoryName: row.category?.name_ar ?? null,
       productType: row.product_type,
-      businessClassification: row.business_classification,
       inventoryProductId: row.inventory_product_id,
       sellPrice: Number(row.sell_price),
       cost,
@@ -292,143 +249,52 @@ export class CafeProductsService {
     });
   }
 
-  async reports(dateFrom?: string, dateTo?: string, branchId?: string, user?: JwtUser, shiftSessionId?: string, section?: 'protein' | 'bar' | 'management_withdrawals', requestedGender?: 'male' | 'female') {
+  async reports(dateFrom?: string, dateTo?: string, branchId?: string, user?: JwtUser) {
     const scopedBranches = this.branchScope.resolveListFilter(user, branchId ?? null);
     const branchWhere = scopedBranches ? { branch_id: { in: scopedBranches } } : {};
-    // Filter on the operating day, not the calendar day: a shift running past
-    // midnight belongs to the day it opened, so these totals line up with shift
-    // close. Sales written before `business_date` existed fall back to sale_date.
-    const dateRange = { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) };
     const dateFilter = dateFrom || dateTo
-      ? {
-          OR: [
-            { business_date: dateRange },
-            { business_date: null, sale_date: dateRange },
-          ],
-        }
+      ? { sale_date: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
       : {};
-    const wasteBounds = cairoDateBounds(dateFrom, dateTo);
     const wasteDateFilter = dateFrom || dateTo
       ? {
           txn_date: {
-            ...(wasteBounds.start ? { gte: wasteBounds.start } : {}),
-            ...(wasteBounds.endExclusive ? { lt: wasteBounds.endExclusive } : {}),
+            ...(dateFrom ? { gte: new Date(`${dateFrom}T00:00:00`) } : {}),
+            ...(dateTo ? { lte: new Date(`${dateTo}T23:59:59.999`) } : {}),
           },
         }
       : {};
-    const manualWasteDateFilter = dateFrom || dateTo
-      ? {
-          created_at: {
-            ...(wasteBounds.start ? { gte: wasteBounds.start } : {}),
-            ...(wasteBounds.endExclusive ? { lt: wasteBounds.endExclusive } : {}),
-          },
-        }
-      : {};
-    let allSales = await this.prisma.sales_quick_sales.findMany({
+    const allSales = await this.prisma.sales_quick_sales.findMany({
       where: { ...dateFilter, ...branchWhere },
-      include: { items: true, feedback: true, payments: true },
+      include: { items: true, feedback: true },
     });
-    // Cashier reports never accept a client-selected audience. When an account is
-    // scoped to Men/Women, only sales tied to a member in that same persisted
-    // audience are visible; unlinked walk-in sales are deliberately not leaked.
-    const lockedAudience = this.branchScope.memberGenderFilter(user);
-    if (requestedGender && requestedGender !== 'male' && requestedGender !== 'female') throw new BadRequestException('قسم الأعضاء غير صحيح');
-    if (lockedAudience && requestedGender && requestedGender !== lockedAudience) throw new BadRequestException('لا يمكنك تغيير قسم الأعضاء');
-    const audience = lockedAudience ?? requestedGender ?? null;
-    const filterToAudience = async <T extends { customer_member_id: number | null }>(rows: T[]): Promise<T[]> => {
-      if (!audience) return rows;
-      const memberIds = [...new Set(rows.flatMap((row) => row.customer_member_id ? [row.customer_member_id] : []))];
-      const allowedMembers = memberIds.length
-        ? await this.prisma.club_members.findMany({ where: { id: { in: memberIds }, gender: audience }, select: { id: true } })
-        : [];
-      const allowed = new Set(allowedMembers.map((member) => member.id));
-      return rows.filter((row) => row.customer_member_id != null && allowed.has(row.customer_member_id));
-    };
-    allSales = await filterToAudience(allSales);
     const sales = allSales.filter((sale) => sale.status === QuickSaleStatus.completed);
-    // Partner orders are sales like any other; they only become *revenue* once the
-    // partner settles, which `collected_amount` already reflects (0 until settled).
-    const revenueSales = sales;
+    const revenueSales = sales.filter((sale) => sale.sale_type !== 'partner');
     const refunded = allSales.filter((sale) => sale.status === QuickSaleStatus.refunded);
-    // Shared by the period-wide product lists and by the shift-scoped sold summary, so
-    // Free units keep their discount on the original line; any remaining invoice
-    // discount is allocated only to paid amounts in both summaries.
-    const aggregateProductRows = (rows: typeof revenueSales) => {
-      const map = new Map<number, { productId: number; name: string; quantity: number; revenue: number; cost: number; profit: number }>();
-      for (const sale of rows) {
-        const pricedLines = sale.items.map((item) => {
-          const quantity = invToNumber(item.quantity);
-          const freeQuantity = Math.min(quantity, Math.max(0, item.free_quantity ?? 0));
-          const gross = invToNumber(item.line_total);
-          const freeAmount = Math.min(gross, freeQuantity * invToNumber(item.unit_price));
-          return { item, freeAmount, paidAmount: Math.max(0, gross - freeAmount) };
-        });
-        const freeAmount = roundMoney(pricedLines.reduce((sum, line) => sum + line.freeAmount, 0));
-        const paidSubtotal = Math.max(0, roundMoney(invToNumber(sale.subtotal) - freeAmount));
-        const remainingDiscount = Math.max(0, invToNumber(sale.discount_amount) - freeAmount);
-        const paidRatio = paidSubtotal > 0 ? Math.max(0, 1 - remainingDiscount / paidSubtotal) : 0;
-        let cumulativeRevenue = 0;
-        let allocatedRevenue = 0;
-        for (const { item, paidAmount } of pricedLines) {
-          const key = item.cafe_product_id ?? item.product_id;
-          const current = map.get(key) ?? {
-            productId: key,
-            name: item.name,
-            quantity: 0,
-            revenue: 0,
-            cost: 0,
-            profit: 0,
-          };
-          current.quantity += invToNumber(item.quantity);
-          // Cumulative rounding keeps line revenues equal to the saved invoice net.
-          cumulativeRevenue += paidAmount * paidRatio;
-          const roundedRevenue = roundMoney(cumulativeRevenue);
-          current.revenue += roundedRevenue - allocatedRevenue;
-          allocatedRevenue = roundedRevenue;
-          current.cost += invToNumber(item.line_cost);
-          current.profit = current.revenue - current.cost;
-          map.set(key, current);
-        }
+    const products = new Map<number, { productId: number; name: string; quantity: number; revenue: number; cost: number; profit: number }>();
+    for (const sale of revenueSales) {
+      for (const item of sale.items) {
+        const key = item.cafe_product_id ?? item.product_id;
+        const current = products.get(key) ?? {
+          productId: key,
+          name: item.name,
+          quantity: 0,
+          revenue: 0,
+          cost: 0,
+          profit: 0,
+        };
+        current.quantity += invToNumber(item.quantity);
+        const subtotal = invToNumber(sale.subtotal);
+        const discountRatio = subtotal > 0 ? invToNumber(sale.discount_amount) / subtotal : 0;
+        current.revenue += invToNumber(item.line_total) * Math.max(0, 1 - discountRatio);
+        current.cost += invToNumber(item.line_cost);
+        current.profit = current.revenue - current.cost;
+        products.set(key, current);
       }
-      return [...map.values()].map((row) => ({
-        ...row,
-        quantity: Math.round(row.quantity * 1000) / 1000,
-        profit: roundMoney(row.profit),
-        revenue: roundMoney(row.revenue),
-        cost: roundMoney(row.cost),
-      }));
-    };
-    const products = aggregateProductRows(revenueSales);
-    // Classification is the immutable invoice-line fact, never a product name or a
-    // current category. Collected value is allocated across the already-discounted
-    // line totals so Protein + Bar reconciles exactly to invoice collection.
-    const sectionRows = (classification: 'protein' | 'bar') => {
-      let billed = 0; let collected = 0; let cost = 0; let quantity = 0;
-      for (const sale of revenueSales) {
-        const allocated = allocateCollectedCafeSale(sale.items.map((item) => ({
-          item,
-          classification: item.business_classification,
-          grossAmount: invToNumber(item.line_total),
-          paidAmount: invToNumber(item.unit_price) * Math.max(
-            0,
-            invToNumber(item.quantity) - Number(item.free_quantity ?? 0),
-          ),
-        })), invToNumber(sale.collected_amount));
-        for (const { item, amount, classification: lineClassification, grossAmount } of allocated) {
-          if (lineClassification !== classification) continue;
-          billed += grossAmount;
-          collected += amount;
-          cost += invToNumber(item.line_cost); quantity += invToNumber(item.quantity);
-        }
-      }
-      return { classification, quantity: Math.round(quantity * 1000) / 1000, billed: roundMoney(billed), collected: roundMoney(collected), cost: roundMoney(cost), profit: roundMoney(collected - cost) };
-    };
+    }
 
-    const [catalog, stockRows, purchases, debts, users, expiring, automaticWasteTransactions, manualWasteRecords, managementWithdrawals] = await Promise.all([
-      audience
-        ? Promise.resolve([] as any[])
-        : this.prisma.cafe_products.findMany({ where: { is_active: true, product_type: { not: 'internal' } }, select: { id: true, name: true, sell_price: true } }),
-      audience ? Promise.resolve([] as any[]) : this.prisma.inv_products.findMany({
+    const [catalog, stockRows, purchases, debts, users, expiring, wasteTransactions] = await Promise.all([
+      this.prisma.cafe_products.findMany({ where: { is_active: true, product_type: { not: 'internal' } }, select: { id: true, name: true, sell_price: true } }),
+      this.prisma.inv_products.findMany({
         where: { is_deleted: false, status: 'active' },
         select: {
           id: true,
@@ -442,10 +308,10 @@ export class CafeProductsService {
           },
         },
       }),
-      audience ? Promise.resolve({ _sum: { total_amount: null } }) : this.prisma.prc_supplier_invoices.aggregate({ where: { is_deleted: false, ...branchWhere }, _sum: { total_amount: true } }),
-      audience ? Promise.resolve({ _sum: { remaining_amount: null } }) : this.prisma.prc_supplier_invoices.aggregate({ where: { is_deleted: false, ...branchWhere }, _sum: { remaining_amount: true } }),
+      this.prisma.prc_supplier_invoices.aggregate({ where: { is_deleted: false, ...branchWhere }, _sum: { total_amount: true } }),
+      this.prisma.prc_supplier_invoices.aggregate({ where: { is_deleted: false, ...branchWhere }, _sum: { remaining_amount: true } }),
       this.prisma.users.findMany({ where: { user_id: { in: [...new Set(sales.map((sale) => sale.cashier_id).filter((id): id is number => id != null))] } }, select: { user_id: true, name: true, username: true } }),
-      audience ? Promise.resolve([] as any[]) : this.prisma.inv_products.findMany({
+      this.prisma.inv_products.findMany({
         where: {
           is_deleted: false,
           expiry_date: { gte: new Date(), lte: new Date(Date.now() + 30 * 86400000) },
@@ -453,71 +319,19 @@ export class CafeProductsService {
         },
         select: { id: true, name_ar: true, expiry_date: true },
       }),
-      audience ? Promise.resolve([] as any[]) : this.prisma.inv_transactions.findMany({
+      this.prisma.inv_transactions.findMany({
         where: {
           is_deleted: false,
           status: 'approved',
           txn_type: InventoryTxnType.damage,
           reference: { startsWith: 'WASTE-' },
-          cafe_waste_record: { is: null },
           ...wasteDateFilter,
           ...(scopedBranches ? { branch_id: { in: scopedBranches } } : {}),
         },
         include: { items: true },
         orderBy: { txn_date: 'desc' },
       }),
-      audience ? Promise.resolve([] as any[]) : this.prisma.cafe_waste_records.findMany({
-        where: {
-          status: 'active',
-          ...manualWasteDateFilter,
-          ...(scopedBranches ? { branch_id: { in: scopedBranches } } : {}),
-        },
-        include: { transaction: { include: { items: true } } },
-        orderBy: { created_at: 'desc' },
-      }),
-      audience ? Promise.resolve([] as any[]) : this.prisma.inv_transactions.findMany({
-        where: { is_deleted: false, business_classification: 'management_withdrawal', ...wasteDateFilter, ...(scopedBranches ? { branch_id: { in: scopedBranches } } : {}) },
-        include: { items: true }, orderBy: { txn_date: 'desc' },
-      }),
     ]);
-    // Employee/partner invoices are rung up with collected_amount = 0 and only turn
-    // into revenue when their statement is settled. Recognise that revenue on the
-    // settlement date so previously issued reports never change retroactively.
-    // Attributed by the collecting shift's operating day so a 02:00 settlement lands
-    // on the same day as the drawer movement it created, not on the next calendar day.
-    const settledAccountsRevenueBetween = async (from?: string, to?: string) => {
-      const bounds = cairoDateBounds(from, to);
-      const periodFilter = from || to
-        ? {
-            OR: [
-              { session: { session_date: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } },
-              {
-                shift_session_id: null,
-                settled_at: {
-                  ...(bounds.start ? { gte: bounds.start } : {}),
-                  ...(bounds.endExclusive ? { lt: bounds.endExclusive } : {}),
-                },
-              },
-            ],
-          }
-        : {};
-      const statements = await this.prisma.sales_billing_statements.findMany({
-        where: {
-          status: 'settled',
-          ...periodFilter,
-          ...branchWhere,
-        },
-        include: { items: { include: { sale: { select: { total_amount: true, tax_amount: true, customer_member_id: true } } } } },
-      });
-      const statementSales = statements.flatMap((statement) => statement.items.map((item) => item.sale));
-      const visibleSales = await filterToAudience(statementSales);
-      return visibleSales.reduce(
-        (sum, sale) => sum + invToNumber(sale.total_amount) - invToNumber(sale.tax_amount),
-        0,
-      );
-    };
-    const settledAccountsRevenue = await settledAccountsRevenueBetween(dateFrom, dateTo);
-
     const partnerSales = sales.filter((sale) => sale.sale_type === 'partner');
     const totalCollected = revenueSales.reduce((sum, sale) => sum + invToNumber(sale.collected_amount), 0);
     const totalSales = revenueSales.reduce((sum, sale) => sum + invToNumber(sale.subtotal), 0);
@@ -526,9 +340,7 @@ export class CafeProductsService {
     const totalTaxes = revenueSales.reduce((sum, sale) => sum + invToNumber(sale.tax_amount), 0);
     const totalRefunds = refunded.reduce((sum, sale) => sum + invToNumber(sale.collected_amount), 0);
     const partnerConsumptionCost = partnerSales.reduce((sum, sale) => sum + invToNumber(sale.cost_total), 0);
-    const wasteBreakdown = combineCafeWasteReport(automaticWasteTransactions, manualWasteRecords);
-    const wasteTransactions = wasteBreakdown.transactions;
-    const wasteCost = wasteBreakdown.totalCost;
+    const wasteCost = roundMoney(wasteTransactions.reduce((sum, row) => sum + invToNumber(row.total_amount), 0));
     const wasteItemMap = new Map<number | string, { productId: number | null; name: string; quantity: number; cost: number; unit: string | null }>();
     for (const transaction of wasteTransactions) {
       for (const item of transaction.items) {
@@ -556,73 +368,28 @@ export class CafeProductsService {
       const previousTo = new Date(fromDate); previousTo.setDate(previousTo.getDate() - 1);
       const previousFrom = new Date(previousTo); previousFrom.setDate(previousFrom.getDate() - periodDays + 1);
       const previous = await this.prisma.sales_quick_sales.findMany({
-        where: {
-          status: QuickSaleStatus.completed,
-          OR: [
-            { business_date: { gte: localDateString(previousFrom), lte: localDateString(previousTo) } },
-            { business_date: null, sale_date: { gte: localDateString(previousFrom), lte: localDateString(previousTo) } },
-          ],
-          ...branchWhere,
-        },
-        select: { collected_amount: true, tax_amount: true, customer_member_id: true },
+        where: { status: QuickSaleStatus.completed, sale_type: { not: 'partner' }, sale_date: { gte: localDateString(previousFrom), lte: localDateString(previousTo) }, ...branchWhere },
+        select: { collected_amount: true, tax_amount: true },
       });
-      // Same formula as netRevenue below, otherwise growth % compares two different
-      // measures and reads negative whenever account settlements carry the period.
-      const visiblePrevious = await filterToAudience(previous);
-      previousRevenue = visiblePrevious.reduce((sum, sale) => sum + invToNumber(sale.collected_amount) - invToNumber(sale.tax_amount), 0)
-        + await settledAccountsRevenueBetween(localDateString(previousFrom), localDateString(previousTo));
+      previousRevenue = previous.reduce((sum, sale) => sum + invToNumber(sale.collected_amount) - invToNumber(sale.tax_amount), 0);
     }
-    const netRevenue = totalCollected - totalTaxes + settledAccountsRevenue;
-    const uncollectedAccountsValue = roundMoney(
-      revenueSales
-        .filter((sale) => sale.sale_type !== 'customer' && sale.billing_status !== 'settled')
-        .reduce((sum, sale) => sum + invToNumber(sale.total_amount) - invToNumber(sale.collected_amount), 0),
-    );
+    const netRevenue = totalCollected - totalTaxes;
     const revenueGrowth = previousRevenue > 0 ? roundMoney(((netRevenue - previousRevenue) / previousRevenue) * 100) : netRevenue > 0 ? 100 : 0;
 
-    const productRows = products;
-
-    // Shift picker for the sold-products summary, so the list can be lined up against a
-    // single shift-close receipt instead of the whole period.
-    const sessionIdsInPeriod = [...new Set(
-      revenueSales.map((sale) => sale.shift_session_id).filter((id): id is number => id != null),
-    )];
-    const sessionRows = sessionIdsInPeriod.length
-      ? await this.prisma.sales_shift_sessions.findMany({
-          where: { id: { in: sessionIdsInPeriod } },
-          select: { id: true, session_date: true, session_sequence: true, shift: { select: { shift_name: true } } },
-          orderBy: [{ session_date: 'desc' }, { id: 'desc' }],
-        })
-      : [];
-    const shiftOptions = sessionRows.map((row) => ({
-      sessionId: row.id,
-      label: `${row.shift.shift_name} — ${row.session_date}${row.session_sequence > 1 ? ` (${row.session_sequence})` : ''}`,
-    }));
-
-    const selectedSessionId = Number(shiftSessionId);
-    const soldSales = Number.isInteger(selectedSessionId) && selectedSessionId > 0
-      ? revenueSales.filter((sale) => sale.shift_session_id === selectedSessionId)
-      : revenueSales;
-    const soldOrderCount = soldSales.length;
-    const soldRows = (soldSales === revenueSales ? [...productRows] : aggregateProductRows(soldSales))
-      .sort((a, b) => b.quantity - a.quantity);
-    const soldProductIds = new Set(products.map((row) => row.productId));
-    const neverSold = catalog.filter((product) => !soldProductIds.has(product.id)).map((product) => ({ productId: product.id, name: product.name, sellPrice: invToNumber(product.sell_price) }));
+    const productRows = [...products.values()].map((row) => ({ ...row, profit: roundMoney(row.profit), revenue: roundMoney(row.revenue), cost: roundMoney(row.cost) }));
+    const neverSold = catalog.filter((product) => !products.has(product.id)).map((product) => ({ productId: product.id, name: product.name, sellPrice: invToNumber(product.sell_price) }));
     const byHour = Array.from({ length: 24 }, (_, hour) => ({
       hour,
       label: reportHourLabel(hour),
       orders: revenueSales.filter((sale) => Number(sale.sale_time.slice(0, 2)) === hour).length,
       sales: roundMoney(revenueSales.filter((sale) => Number(sale.sale_time.slice(0, 2)) === hour).reduce((sum, sale) => sum + invToNumber(sale.collected_amount), 0)),
     }));
-    const businessDateOf = (sale: { business_date: string | null; sale_date: string }) =>
-      sale.business_date ?? sale.sale_date;
     const dailyMap = new Map<string, { date: string; orders: number; sales: number }>();
     for (const sale of revenueSales) {
-      const date = businessDateOf(sale);
-      const row = dailyMap.get(date) ?? { date, orders: 0, sales: 0 };
+      const row = dailyMap.get(sale.sale_date) ?? { date: sale.sale_date, orders: 0, sales: 0 };
       row.orders += 1;
       row.sales += invToNumber(sale.collected_amount);
-      dailyMap.set(date, row);
+      dailyMap.set(sale.sale_date, row);
     }
     const byDay = [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date)).map((row) => ({ ...row, sales: roundMoney(row.sales) }));
     const aggregatePeriods = (keyOf: (date: string) => string) => {
@@ -644,7 +411,7 @@ export class CafeProductsService {
     const byMonth = aggregatePeriods((date) => date.slice(0, 7));
     const weekdayNames = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
     const weekday = weekdayNames.map((name, day) => {
-      const matching = revenueSales.filter((sale) => new Date(`${businessDateOf(sale)}T12:00:00`).getDay() === day);
+      const matching = revenueSales.filter((sale) => new Date(`${sale.sale_date}T12:00:00`).getDay() === day);
       return { day, name, orders: matching.length, sales: roundMoney(matching.reduce((sum, sale) => sum + invToNumber(sale.collected_amount), 0)) };
     });
     const customerGroups = new Map<string, { name: string; phone: string | null; orders: number; spend: number }>();
@@ -703,13 +470,12 @@ export class CafeProductsService {
       worstDay ? `أهدأ يوم مبيعات هو ${worstDay.name}؛ يمكن تجربة عرض ترويجي مخصص له.` : null,
       neverSold.length ? `${neverSold.length} منتج لم يُبع خلال الفترة ويحتاج مراجعة الظهور أو التسعير.` : null,
       productRows.length ? `المنتج الأقل مبيعًا هو ${[...productRows].sort((a, b) => a.quantity - b.quantity)[0].name}؛ راجع مكانه أو العرض الخاص به.` : null,
-      wasteCost > 0 ? `تكلفة الهالك والفاقد خلال الفترة ${wasteCost.toFixed(2)} ج.م؛ راجع الأسباب والأصناف الأعلى لتقليل الفاقد.` : null,
+      wasteCost > 0 ? `تكلفة هالك التحضير خلال الفترة ${wasteCost.toFixed(2)} ج.م؛ راجع أعلى الخامات هالكًا لتقليل الفاقد.` : null,
       `نمو الإيراد مقارنة بالفترة السابقة ${revenueGrowth >= 0 ? 'ارتفع' : 'انخفض'} بنسبة ${Math.abs(revenueGrowth).toFixed(1)}%.`,
     ].filter((row): row is string => Boolean(row));
 
     return {
       range: { dateFrom: dateFrom ?? null, dateTo: dateTo ?? null },
-      paymentSummary: shiftPaymentSummary(allSales.map(savedSalePaymentInvoice)),
       salesCount: revenueSales.length,
       totalOrders: revenueSales.length,
       totalSales: roundMoney(totalSales),
@@ -717,45 +483,18 @@ export class CafeProductsService {
       netRevenue: roundMoney(netRevenue),
       previousRevenue: roundMoney(previousRevenue),
       revenueGrowth,
-      // Average *order* value, so it is comparable with totalSales on the same tile
-      // row. It used to divide collected cash by order count, which read ~10% low
-      // whenever there were discounts or unsettled account orders.
-      averageOrderValue: revenueSales.length ? roundMoney(totalSales / revenueSales.length) : 0,
+      averageOrderValue: revenueSales.length ? roundMoney(totalCollected / revenueSales.length) : 0,
       totalDiscounts: roundMoney(totalDiscounts),
       totalTaxes: roundMoney(totalTaxes),
       totalRefunds: roundMoney(totalRefunds),
       totalCost: roundMoney(totalCost),
-      materialsCost: roundMoney(totalCost),
-      materialsCostPercentage: netRevenue > 0 ? roundMoney((totalCost / netRevenue) * 100) : 0,
-      settledAccountsRevenue: roundMoney(settledAccountsRevenue),
-      uncollectedAccountsValue,
       wasteCost,
       grossProfit: roundMoney(netRevenue - totalCost - wasteCost),
-      section: section ?? 'summary',
-      sectionBreakdown: {
-        protein: sectionRows('protein'),
-        bar: sectionRows('bar'),
-        managementWithdrawals: managementWithdrawals.map((row) => ({ id: row.id, reference: row.reference, date: row.txn_date, status: row.status, amount: invToNumber(row.total_amount), reason: row.reason, items: row.items.map((item) => ({ name: item.item_name, quantity: invToNumber(item.quantity), cost: invToNumber(item.total) })) })),
-      },
       marginPercentage: netRevenue > 0
-        ? roundMoney(((netRevenue - totalCost - wasteCost) / netRevenue) * 100)
+        ? roundMoney(((netRevenue - totalCost) / netRevenue) * 100)
         : 0,
       partnerConsumptionCost: roundMoney(partnerConsumptionCost),
       products: {
-        // Full list, not a top-10 slice: the owner reconciles the period against the
-        // shift-close product summary, which lists every line that was rung up.
-        // Only this block honours `shiftSessionId` — the rest of the report stays
-        // period-wide so picking a shift never silently changes the headline figures.
-        soldSummary: soldRows,
-        soldTotals: {
-          items: soldRows.length,
-          quantity: Math.round(soldRows.reduce((sum, row) => sum + row.quantity, 0) * 1000) / 1000,
-          revenue: roundMoney(soldRows.reduce((sum, row) => sum + row.revenue, 0)),
-          cost: roundMoney(soldRows.reduce((sum, row) => sum + row.cost, 0)),
-          profit: roundMoney(soldRows.reduce((sum, row) => sum + row.profit, 0)),
-          orders: soldOrderCount,
-        },
-        shifts: shiftOptions,
         bestSelling: [...productRows].sort((a, b) => b.quantity - a.quantity).slice(0, 10),
         worstSelling: [...productRows].sort((a, b) => a.quantity - b.quantity).slice(0, 10),
         highestRevenue: [...productRows].sort((a, b) => b.revenue - a.revenue).slice(0, 10),
@@ -786,8 +525,6 @@ export class CafeProductsService {
         nearExpiration: expiring.map((row) => ({ productId: row.id, name: row.name_ar, expiryDate: row.expiry_date })),
         waste: {
           totalCost: wasteCost,
-          manualCost: wasteBreakdown.manualCost,
-          automaticCost: wasteBreakdown.automaticCost,
           transactionCount: wasteTransactions.length,
           topItems: wasteItems.slice(0, 10),
           recent: wasteTransactions.slice(0, 10).map((row) => ({
@@ -806,12 +543,8 @@ export class CafeProductsService {
     };
   }
 
-  async itemFeedbackReport(dateFrom?: string, dateTo?: string, branchId?: string, user?: JwtUser, requestedGender?: 'male' | 'female') {
-    if (requestedGender && requestedGender !== 'male' && requestedGender !== 'female') throw new BadRequestException('القسم غير صحيح');
+  async itemFeedbackReport(dateFrom?: string, dateTo?: string, branchId?: string, user?: JwtUser) {
     const scopedBranches = this.branchScope.resolveListFilter(user, branchId ?? null);
-    const lockedGender = this.branchScope.memberGenderFilter(user);
-    const gender = lockedGender ?? requestedGender;
-    if (lockedGender && requestedGender && requestedGender !== lockedGender) throw new BadRequestException('لا يمكن تغيير قسم البيانات المسموح به');
     const rows = await this.prisma.sales_invoice_item_feedback.findMany({
       where: {
         invoice: {
@@ -825,14 +558,11 @@ export class CafeProductsService {
       },
       include: {
         item: true,
-        invoice: { select: { id: true, daily_number: true, sale_number: true, sale_date: true, customer_member_id: true } },
+        invoice: { select: { id: true, daily_number: true, sale_number: true, sale_date: true } },
       },
       orderBy: { feedback_date: 'desc' },
     });
 
-    const memberIds = [...new Set(rows.map((row) => row.invoice.customer_member_id).filter((id): id is number => id != null))];
-    const allowedMemberIds = gender ? new Set((await this.prisma.club_members.findMany({ where: { id: { in: memberIds }, gender, is_deleted: false }, select: { id: true } })).map((member) => member.id)) : null;
-    const visibleRows = allowedMemberIds ? rows.filter((row) => row.invoice.customer_member_id != null && allowedMemberIds.has(row.invoice.customer_member_id)) : rows;
     const byProduct = new Map<string, {
       productId: number;
       name: string;
@@ -840,7 +570,7 @@ export class CafeProductsService {
       comments: Array<{ comment: string; rating: number; date: Date; invoiceId: number; dailyNumber: number }>;
     }>();
     const distribution = [1, 2, 3, 4, 5].map((rating) => ({ rating, count: 0 }));
-    for (const row of visibleRows) {
+    for (const row of rows) {
       distribution[row.rating - 1].count += 1;
       const productId = row.item.cafe_product_id ?? row.item.product_id;
       const key = `${row.item.item_type}:${productId}:${row.item.cafe_variant_id ?? 'base'}`;
@@ -872,15 +602,15 @@ export class CafeProductsService {
       .sort((a, b) => b.ratingsCount - a.ratingsCount || b.averageRating - a.averageRating);
 
     return {
-      totalRatings: visibleRows.length,
-      averageRating: visibleRows.length
-        ? roundMoney(visibleRows.reduce((sum, row) => sum + row.rating, 0) / visibleRows.length)
+      totalRatings: rows.length,
+      averageRating: rows.length
+        ? roundMoney(rows.reduce((sum, row) => sum + row.rating, 0) / rows.length)
         : 0,
       distribution,
       products,
       bestRated: [...products].filter((row) => row.ratingsCount > 0).sort((a, b) => b.averageRating - a.averageRating).slice(0, 10),
       needsAttention: [...products].filter((row) => row.averageRating < 3.5).sort((a, b) => a.averageRating - b.averageRating).slice(0, 10),
-      recent: visibleRows.slice(0, 30).map((row) => ({
+      recent: rows.slice(0, 30).map((row) => ({
         id: row.id,
         invoiceId: row.invoice.id,
         dailyNumber: row.invoice.daily_number,
@@ -1378,11 +1108,6 @@ export class CafeProductsService {
     this.validateRecipes(dto.recipes);
     this.validateVariants(dto);
     const productType = dto.productType ?? 'prepared';
-    if (productType !== 'internal' && !dto.businessClassification) {
-      throw new BadRequestException(
-        'اختر تصنيف Protein أو Bar قبل إنشاء منتج قابل للبيع',
-      );
-    }
     const defaultVariant = this.defaultVariant(dto);
     const effectiveRecipes = defaultVariant?.recipes ?? dto.recipes ?? [];
     const effectiveSellPrice = defaultVariant?.sellPrice ?? dto.sellPrice;
@@ -1470,7 +1195,6 @@ export class CafeProductsService {
           product_code: productCode,
           name: dto.name.trim(),
           product_type: productType,
-          business_classification: productType === 'internal' ? null : dto.businessClassification ?? null,
           inventory_product_id: inventoryProductId,
           category_id: dto.categoryId ?? null,
           sell_price: productType === 'internal' ? 0 : effectiveSellPrice,
@@ -1582,7 +1306,6 @@ export class CafeProductsService {
         data: {
           name: dto.name.trim(),
           product_type: productType,
-          business_classification: productType === 'internal' ? null : dto.businessClassification ?? existing.business_classification,
           inventory_product_id: inventoryProductId,
           category_id: dto.categoryId ?? null,
           sell_price: productType === 'internal' ? 0 : effectiveSellPrice,
@@ -2013,20 +1736,39 @@ export class CafeProductsService {
     }
   }
 
+  private async assertInvoiceCategory(
+    cafeCategoryId: number,
+    lines: Array<{ product: { name: string; category_id: number | null } }>,
+  ) {
+    const category = await this.prisma.inv_categories.findFirst({
+      where: { id: cafeCategoryId, is_active: true, is_deleted: false },
+      select: { id: true },
+    });
+    if (!category) {
+      throw new BadRequestException('فئة فاتورة الكافيه المختارة غير متاحة');
+    }
+    const mismatched = lines.find(
+      ({ product }) => product.category_id !== cafeCategoryId,
+    );
+    if (mismatched) {
+      throw new BadRequestException(
+        `المنتج ${mismatched.product.name} لا ينتمي إلى فئة الفاتورة المختارة`,
+      );
+    }
+  }
+
   async sellCart(dto: SellCafeCartDto, userId: number, dryRun = false) {
     if (!dto.items?.length) throw new BadRequestException('السلة فارغة');
 
     const branch = await this.prisma.tbl_branches.findUnique({ where: { branch_id: dto.branchId } });
     if (!branch) throw new BadRequestException('الفرع غير موجود');
-    const inventoryTrackingEnabled = await this.posSettings.isInventoryTrackingEnabled(dto.branchId);
 
     const lines = await this.loadProductsForCart(dto.items);
-    const warehouseId = inventoryTrackingEnabled
-      ? await this.resolveWarehouse(this.prisma, dto.branchId, dto.warehouseId)
-      : null;
+    await this.assertInvoiceCategory(dto.cafeCategoryId, lines);
+    const warehouseId = await this.resolveWarehouse(this.prisma, dto.branchId, dto.warehouseId);
     const consumptionParts = await Promise.all(
       lines.map(({ product, variant, quantity }) =>
-        this.resolveSaleConsumption(this.prisma, product, quantity, warehouseId ?? 0, variant),
+        this.resolveSaleConsumption(this.prisma, product, quantity, warehouseId, variant),
       ),
     );
     const allConsumption = this.mergeConsumption(consumptionParts.flat());
@@ -2065,25 +1807,16 @@ export class CafeProductsService {
     if (isDryRun(dryRun)) {
       return previewResponse(
         { subtotal, taxAmount, totalAmount, consumption: allConsumption },
-        {
-          rows: inventoryTrackingEnabled
-            ? previewRows
-            : previewRows.filter((row) => !row.label.startsWith('خصم:')),
-          warning: inventoryTrackingEnabled
-            ? 'سيتم خصم المخزون وإنشاء فاتورة بيع'
-            : 'سيتم إنشاء فاتورة البيع وحساب التكلفة دون إنشاء حركة مخزون',
-        },
+        { rows: previewRows, warning: 'سيتم خصم المخزون وإنشاء فاتورة بيع' },
       );
     }
 
     return retryOnUniqueViolation(() => this.prisma.$transaction(async (tx) => {
       // Re-resolve inside the transaction so stock checks/movements stay consistent.
-      const txWarehouseId = inventoryTrackingEnabled
-        ? await this.resolveWarehouse(tx, dto.branchId, dto.warehouseId)
-        : null;
+      const txWarehouseId = await this.resolveWarehouse(tx, dto.branchId, dto.warehouseId);
       const txConsumptionParts = await Promise.all(
         lines.map(({ product, variant, quantity }) =>
-          this.resolveSaleConsumption(tx, product, quantity, txWarehouseId ?? 0, variant),
+          this.resolveSaleConsumption(tx, product, quantity, txWarehouseId, variant),
         ),
       );
       const txConsumption = this.mergeConsumption(txConsumptionParts.flat());
@@ -2097,6 +1830,8 @@ export class CafeProductsService {
           sale_number: saleNumber,
           daily_number: dailyNumber,
           customer_name: 'عميل كافيه',
+          gender: dto.gender,
+          cafe_category_id: dto.cafeCategoryId,
           branch_id: dto.branchId,
           cashier_id: userId,
           sale_date: saleDate,
@@ -2111,7 +1846,6 @@ export class CafeProductsService {
           payment_method: paymentMethod,
           status: QuickSaleStatus.completed,
           warehouse_id: txWarehouseId,
-          inventory_posted: inventoryTrackingEnabled,
           created_by: userId,
           items: {
             create: lines.map(({ product, variant, quantity }, idx) => ({
@@ -2138,13 +1872,11 @@ export class CafeProductsService {
         include: { items: true },
       });
 
-      if (inventoryTrackingEnabled) {
-        await this.assertStockInWarehouse(tx, txWarehouseId!, txConsumption);
-        for (const c of txConsumption) {
-          await this.stock.applyMovement(
+      for (const c of txConsumption) {
+        await this.stock.applyMovement(
           {
             productId: c.ingredientId,
-            warehouseId: txWarehouseId!,
+            warehouseId: txWarehouseId,
             direction: MovementDirection.out,
             quantity: c.needed,
             txnType: InventoryTxnType.issue,
@@ -2156,7 +1888,6 @@ export class CafeProductsService {
           },
           tx,
         );
-        }
       }
 
       await this.moduleLedger.postQuickSale(
@@ -2170,7 +1901,7 @@ export class CafeProductsService {
           totalAmount,
           paymentMethod,
           payments: [{ method: paymentMethod, amount: totalAmount }],
-          cogsAmount: inventoryTrackingEnabled ? txCogs : 0,
+          cogsAmount: txCogs,
           createdBy: userId,
         },
         tx,
@@ -2201,6 +1932,8 @@ export class CafeProductsService {
     return this.sellCart(
       {
         branchId: dto.branchId,
+        gender: dto.gender,
+        cafeCategoryId: dto.cafeCategoryId,
         warehouseId: dto.warehouseId,
         paymentMethod: dto.paymentMethod,
         items: [{ productId: id, quantity: dto.quantity }],

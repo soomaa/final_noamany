@@ -16,7 +16,6 @@ describe('Club money mutation locks', () => {
           id: 41,
           paid_amount: 100,
           branch_id: 1,
-          member: { gender: 'male', is_deleted: false },
         }),
       },
       club_subscription_refunds: {
@@ -32,10 +31,7 @@ describe('Club money mutation locks', () => {
       {} as ClubSubscriptionAccountingService,
       {} as ClubReceiptsService,
       {} as BusinessAuditService,
-      {
-        isBranchAllowed: jest.fn().mockReturnValue(true),
-        memberGenderFilter: jest.fn().mockReturnValue(null),
-      } as unknown as BranchScopeService,
+      {} as BranchScopeService,
     );
 
     await expect(

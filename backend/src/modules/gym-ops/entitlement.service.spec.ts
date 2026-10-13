@@ -21,7 +21,7 @@ describe('EntitlementService branch isolation', () => {
     expect(result.reasons.map((reason) => reason.code)).toContain('member_branch_mismatch');
     expect(prisma.club_subscriptions.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ member_id: 10, branch_id: 2 }),
+        where: expect.objectContaining({ member_id: 10, branch_id: { in: [2] } }),
       }),
     );
   });

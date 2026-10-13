@@ -62,27 +62,6 @@ export class StockTakingController {
     return this.service.addCountItem(id, body);
   }
 
-  @Patch(':sessionId/items/:itemId')
-  @RequiresPermission('gym-sales.inventory.stock_taking:update')
-  updateCountItem(
-    @Param('sessionId', ParseIntPipe) sessionId: number,
-    @Param('itemId', ParseIntPipe) itemId: number,
-    @Body() body: UpsertCountItemDto,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.service.updateCountItem(sessionId, itemId, body, user);
-  }
-
-  @Delete(':sessionId/items/:itemId')
-  @RequiresPermission('gym-sales.inventory.stock_taking:delete')
-  removeCountItem(
-    @Param('sessionId', ParseIntPipe) sessionId: number,
-    @Param('itemId', ParseIntPipe) itemId: number,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.service.removeCountItem(sessionId, itemId, user);
-  }
-
   @Delete(':id')
   @RequiresPermission('gym-sales.inventory.stock_taking:delete')
   removeSession(@Param('id', ParseIntPipe) id: number) {

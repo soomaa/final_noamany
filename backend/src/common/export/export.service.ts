@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
 import { Response } from 'express';
-import { csvCell } from './csv.util';
 
 export interface ExportColumn {
   key: string;
@@ -20,9 +19,9 @@ export class ExportService {
   /** Build CSV string with UTF-8 BOM for Excel Arabic compatibility. */
   toCsv(columns: ExportColumn[], rows: Record<string, unknown>[]): string {
     const bom = '\uFEFF';
-    const header = columns.map((c) => csvCell(c.header)).join(',');
+    const header = columns.map((c) => this.escapeCsv(c.header)).join(',');
     const lines = rows.map((row) =>
-      columns.map((c) => csvCell(row[c.key])).join(','),
+      columns.map((c) => this.escapeCsv(String(row[c.key] ?? ''))).join(','),
     );
     return bom + [header, ...lines].join('\r\n');
   }
@@ -61,5 +60,12 @@ export class ExportService {
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.send(buf);
+  }
+
+  private escapeCsv(val: string): string {
+    if (val.includes(',') || val.includes('"') || val.includes('\n')) {
+      return `"${val.replace(/"/g, '""')}"`;
+    }
+    return val;
   }
 }

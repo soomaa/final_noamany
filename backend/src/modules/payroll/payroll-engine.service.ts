@@ -4,7 +4,6 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { allocateCollectedCafeSale } from '../targets/cafe-target-classification';
 import { decimal, payrollPeriod } from './payroll-status.util';
 
 /** Allowance/deduction codes (badl) keyed in hr_finance_employes. */
@@ -798,9 +797,8 @@ export class PayrollEngineService {
   // ── Incentives / gym commissions ───────────────────────────────────────────
 
   /**
-   * Gym incentives are calculated from Noamany documents. Subscription/class attribution
-   * keeps the legacy employee/user bridge. Café attribution is the immutable employee and
-   * explicit Protein classification captured when the completed sale was approved.
+   * Gym incentives are calculated from the live ONE80 documents. Attribution accepts either
+   * the employee selected on the document or the authenticated user linked to that employee.
    */
   async getIncentives(
     employeeId: number,
@@ -850,23 +848,13 @@ export class PayrollEngineService {
         },
         _sum: { paid_amount: true },
       }),
-      this.prisma.sales_quick_sale_items.findMany({
+      this.prisma.sales_quick_sales.aggregate({
         where: {
-          sale: {
-            business_date: { gte: fromDate, lte: toDate },
-            status: 'completed',
-            target_employee_id: employeeId,
-          },
+          sale_date: { gte: fromDate, lte: toDate },
+          status: 'completed',
+          OR: [{ employee_id: employeeId }, { created_by: createdBy }],
         },
-        select: {
-          id: true,
-          business_classification: true,
-          line_total: true,
-          unit_price: true,
-          quantity: true,
-          free_quantity: true,
-          sale: { select: { id: true, collected_amount: true } },
-        },
+        _sum: { collected_amount: true },
       }),
       this.prisma.club_receipts.aggregate({
         where: {
@@ -885,25 +873,7 @@ export class PayrollEngineService {
 
     const targetBase =
       decimal(targetReceipts._sum.amount) + decimal(lockers._sum.paid_amount);
-    const cafeLinesBySale = new Map<number, typeof sales>();
-    for (const line of sales) {
-      const group = cafeLinesBySale.get(line.sale.id) ?? [];
-      group.push(line);
-      cafeLinesBySale.set(line.sale.id, group);
-    }
-    const salesBase = [...cafeLinesBySale.values()].reduce((total, saleLines) => {
-      const allocated = allocateCollectedCafeSale(saleLines.map((line) => ({
-        classification: line.business_classification,
-        grossAmount: decimal(line.line_total),
-        paidAmount: decimal(line.unit_price) * Math.max(
-          0,
-          decimal(line.quantity) - Number(line.free_quantity ?? 0),
-        ),
-      })), decimal(saleLines[0].sale.collected_amount));
-      return total + allocated
-        .filter((line) => line.classification === 'protein')
-        .reduce((sum, line) => sum + line.amount, 0);
-    }, 0);
+    const salesBase = decimal(sales._sum.collected_amount);
     const classesBase = decimal(classReceipts._sum.amount);
     return {
       targetBase: roundMoney(targetBase),

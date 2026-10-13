@@ -51,24 +51,3 @@ export async function recordSystemExpense(
     },
   });
 }
-
-/** Keep the display-only finance register aligned when its authoritative module document is reversed. */
-export async function reverseSystemExpense(
-  tx: Prisma.TransactionClient,
-  invoiceNumber: string,
-  reason: string,
-) {
-  const expense = await tx.fin_expenses.findFirst({
-    where: { invoice_number: invoiceNumber, is_deleted: false },
-    select: { id: true, notes: true },
-  });
-  if (!expense) return;
-  await tx.fin_expenses.update({
-    where: { id: expense.id },
-    data: {
-      is_deleted: true,
-      deleted_at: new Date(),
-      notes: [expense.notes, `عكس تلقائي: ${reason}`].filter(Boolean).join('\n'),
-    },
-  });
-}

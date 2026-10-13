@@ -15,11 +15,18 @@ export { FitnessClassBookingPage } from './class-booking';
 export { FitnessRoomBookingsPage } from './room-bookings';
 export { FitnessPersonalSessionsPage } from './personal-sessions';
 export { FitnessTrainersPage } from './trainers/index';
-export { FitnessTrainerProfilePage } from './trainers/profile';
 export { FitnessTrainerPaymentsPage } from './trainers/payments';
 export { FitnessTrainerSearchPage } from './trainers/search';
 export { FitnessTrainerRatingsPage } from './trainers/ratings';
 export { FitnessTrainerSettingsPage } from './trainers/settings';
+export {
+  FitnessBranchAnalysisPage,
+  FitnessReceptionAnalysisPage,
+  FitnessShiftAnalysisPage,
+  FitnessTrainerEvaluationCriteriaPage,
+  FitnessTrainerEvaluationsPage,
+  FitnessTrainerTargetsPage,
+} from './trainers/performance';
 export { FitnessFacilitiesPage } from './facilities/index';
 export { FitnessEquipmentPage } from './facilities/equipment';
 export { FitnessMaintenancePage } from './facilities/maintenance';

@@ -18,6 +18,7 @@ export class ListExpensesDto extends PaginationDto {
   @IsOptional() @IsString() paymentStatus?: string;
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
+  @IsOptional() @IsIn(['male', 'female', 'all']) genderScope?: string;
 }
 
 export class UpsertExpenseDto {
@@ -37,6 +38,14 @@ export class UpsertExpenseDto {
   @IsOptional() @IsBoolean() isRecurring?: boolean;
   @IsOptional() @IsString() recurringFrequency?: string;
   @IsOptional() @IsString() nextRecurringDate?: string;
+  /** نطاق الجنس: تحديد ما إذا كان المصروف خاصاً بقسم الرجال أو الحريم */
+  @IsOptional() @IsIn(['male', 'female']) genderScope?: 'male' | 'female';
+  /** تفعيل التوزيع بالنسب بين الرجال والحريم */
+  @IsOptional() @IsBoolean() hasPercentage?: boolean;
+  /** نسبة الرجال (0-100) — مطلوبة عند hasPercentage=true */
+  @IsOptional() @IsNumber() @Min(0) malePercentage?: number;
+  /** نسبة الحريم (0-100) — مطلوبة عند hasPercentage=true */
+  @IsOptional() @IsNumber() @Min(0) femalePercentage?: number;
 }
 
 export class UpsertExpenseCategoryDto {
@@ -133,10 +142,32 @@ export class RevenueReportsQueryDto {
 
 export class FinanceAnalysisQueryDto {
   @IsOptional() @IsString() branchId?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) cafeCategoryId?: number;
+  @IsOptional() @IsIn(['male', 'female']) gender?: 'male' | 'female';
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
   @IsOptional() @IsDateString() startDate?: string;
   @IsOptional() @IsDateString() endDate?: string;
+}
+
+export class DailyClosingQueryDto {
+  @IsOptional() @IsString() branchId?: string;
+  @IsOptional() @IsDateString() fromDate?: string;
+  @IsOptional() @IsDateString() toDate?: string;
+  @IsOptional() @IsIn(['male', 'female']) gender?: 'male' | 'female';
+}
+
+export class TargetReportQueryDto {
+  @IsOptional() @IsString() branchId?: string;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) employeeId?: number;
+  /** Compatibility alias for clients that name the selected salesperson explicitly. */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) targetEmployeeId?: number;
+  @IsOptional() @IsIn(['subscriptions', 'sales', 'all'])
+  operationType?: 'subscriptions' | 'sales' | 'all';
+  @IsOptional() @IsIn(['subscriptions', 'sales', 'all'])
+  operation?: 'subscriptions' | 'sales' | 'all';
+  @IsOptional() @IsDateString() fromDate?: string;
+  @IsOptional() @IsDateString() toDate?: string;
 }
 
 export class ProfitLossQueryDto {

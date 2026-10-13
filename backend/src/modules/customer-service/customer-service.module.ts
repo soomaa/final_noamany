@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
+import { PrismaModule } from '../../common/prisma/prisma.module';
 import { CustomerServiceController } from './customer-service.controller';
 import { CustomerServiceService } from './customer-service.service';
 
-/** Register this leaf module in AppModule during the master integration pass. */
-@Module({ controllers: [CustomerServiceController], providers: [CustomerServiceService], exports: [CustomerServiceService] })
+@Module({ imports: [PrismaModule], controllers: [CustomerServiceController], providers: [CustomerServiceService] })
 export class CustomerServiceModule {}

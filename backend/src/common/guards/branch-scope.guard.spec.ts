@@ -10,12 +10,12 @@ describe("BranchScopeGuard strict isolation", () => {
       switchToHttp: () => ({ getRequest: () => request }),
     }) as never;
 
-  it("allows public routes without an authenticated staff user", () => {
-    expect(guard.canActivate(context({ query: {}, body: {} }))).toBe(true);
+  it("allows public routes without an authenticated staff user", async () => {
+    await expect(guard.canActivate(context({ query: {}, body: {} }))).resolves.toBe(true);
   });
 
-  it("allows a super-admin to target any branch", () => {
-    expect(
+  it("allows a super-admin to target any branch", async () => {
+    await expect(
       guard.canActivate(
         context({
           user: { level: 1, branch: 0 },
@@ -23,11 +23,11 @@ describe("BranchScopeGuard strict isolation", () => {
           body: {},
         }),
       ),
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
-  it("allows a non-admin to target only their exact branch", () => {
-    expect(
+  it("allows a non-admin to target only their exact branch", async () => {
+    await expect(
       guard.canActivate(
         context({
           user: { level: 2, branch: 2 },
@@ -35,11 +35,11 @@ describe("BranchScopeGuard strict isolation", () => {
           body: { branchId: 2 },
         }),
       ),
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
-  it("rejects a foreign branch even if it was previously a fanout child", () => {
-    expect(() =>
+  it("rejects a foreign branch even if it was previously a fanout child", async () => {
+    await expect(
       guard.canActivate(
         context({
           user: { level: 2, branch: 2 },
@@ -47,14 +47,14 @@ describe("BranchScopeGuard strict isolation", () => {
           body: {},
         }),
       ),
-    ).toThrow(ForbiddenException);
+    ).rejects.toThrow(ForbiddenException);
   });
 
-  it("rejects an unassigned non-admin before the request reaches a service", () => {
-    expect(() =>
+  it("rejects an unassigned non-admin before the request reaches a service", async () => {
+    await expect(
       guard.canActivate(
         context({ user: { level: 2, branch: 0 }, query: {}, body: {} }),
       ),
-    ).toThrow(ForbiddenException);
+    ).rejects.toThrow(ForbiddenException);
   });
 });

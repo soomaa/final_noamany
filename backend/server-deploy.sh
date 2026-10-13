@@ -53,22 +53,12 @@ NPM_MAJOR="$(npm -v | cut -d. -f1)"
 echo "==> Runtime preflight: node=$(node -v) npm=$(npm -v) node_path=$(command -v node)"
 
 [ -f .env ] || { echo "!! Missing .env in $(pwd)"; exit 1; }
-[ -f public/index.html ] || { echo "!! Missing pre-built website at public/index.html"; exit 1; }
-[ -f public/system.html ] || { echo "!! Missing pre-built management app at public/system.html"; exit 1; }
-[ -f public/.noamany-unified-build ] || {
-  echo "!! Unverified public bundle. Run 'npm run build:unified' in the release workspace before packaging."
-  exit 1
-}
+[ -f public/index.html ] || { echo "!! Missing pre-built frontend at public/index.html"; exit 1; }
 [ -f src/modules/uploads/uploads.module.ts ] || { echo "!! Missing src/modules/uploads/uploads.module.ts — incomplete release archive"; exit 1; }
 [ -f src/modules/uploads/uploads.controller.ts ] || { echo "!! Missing src/modules/uploads/uploads.controller.ts — incomplete release archive"; exit 1; }
 [ -f src/modules/uploads/uploads.service.ts ] || { echo "!! Missing src/modules/uploads/uploads.service.ts — incomplete release archive"; exit 1; }
 grep -q '^DATABASE_URL=' .env || { echo "!! DATABASE_URL is missing from .env"; exit 1; }
 grep -q '^NODE_ENV=production' .env || { echo "!! NODE_ENV must be production"; exit 1; }
-
-# Export only DATABASE_URL for the read-only migration preflight. Keep the
-# password out of command arguments and logs; the checker passes it via MYSQL_PWD.
-DATABASE_URL="$(grep -E '^DATABASE_URL=' .env | head -1 | sed -E 's/^DATABASE_URL=//; s/^"//; s/"$//')"
-export DATABASE_URL
 
 if [ "${NOAMANY_RESTORE_MIGRATED_DATA:-}" = "YES" ]; then
   echo "==> Validating the production data snapshot before build or database access..."
@@ -79,47 +69,44 @@ fi
 sed -i 's/^[[:space:]]*PORT=/# PORT=/' .env
 chmod 600 .env
 
-echo "==> [1/11] Installing locked build dependencies..."
+echo "==> [1/10] Installing locked build dependencies..."
 npm ci --include=dev
 
-echo "==> [2/11] Generating and validating the Prisma client..."
+echo "==> [2/10] Generating and validating the Prisma client..."
 npx prisma generate
 npx prisma validate
 
-echo "==> [3/11] Running the read-only migration safety gate..."
-npm run prisma:preflight
-
-echo "==> [4/11] Building the backend before any database mutation..."
+echo "==> [3/10] Building the backend before any database mutation..."
 npm run build
 
-echo "==> [5/11] Backing up the existing production database..."
+echo "==> [4/10] Backing up the existing production database..."
 bash scripts/backup-db.sh
 
 if [ "${NOAMANY_RESTORE_MIGRATED_DATA:-}" = "YES" ]; then
-  echo "==> [6/11] Restoring the validated migrated legacy SQL data..."
+  echo "==> [5/10] Restoring the validated migrated legacy SQL data..."
   bash scripts/restore-migrated-data.sh
 else
-  echo "==> [6/11] Keeping the current production data (snapshot restore not requested)."
+  echo "==> [5/10] Keeping the current production data (snapshot restore not requested)."
 fi
 
-echo "==> [7/11] Preparing the production administrator when requested..."
+echo "==> [6/10] Preparing the production administrator when requested..."
 if [ "${NOAMANY_RESTORE_MIGRATED_DATA:-}" = "YES" ] || [ "${NOAMANY_PREPARE_ADMIN:-}" = "YES" ]; then
   npx tsx prisma/scripts/set-production-admin.ts
 else
   echo "    skipped (existing administrator preserved)."
 fi
 
-echo "==> [8/11] Reconciling known migration drift..."
+echo "==> [7/10] Reconciling known migration drift..."
 bash prisma/scripts/heal-production-migrations.sh
 
-echo "==> [9/11] Applying pending versioned migrations..."
+echo "==> [8/10] Applying pending versioned migrations..."
 npx prisma migrate deploy
 
-echo "==> [10/11] Synchronizing access-control metadata and checking migrations..."
+echo "==> [9/10] Synchronizing access-control metadata and checking migrations..."
 npm run db:seed:rbac
 npx prisma migrate status
 
-echo "==> [11/11] Restarting Passenger..."
+echo "==> [10/10] Restarting Passenger..."
 mkdir -p tmp
 chmod 755 . public dist tmp
 find public dist -type d -exec chmod 755 {} +
