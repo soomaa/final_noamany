@@ -1,11 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { ClubGender, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { assertDateOrder } from '../../common/validators';
 import { localDateString } from '../club-members/club-member.utils';
-import { expandClubReportBranchIds } from '../club-members/club-branch-groups';
 import { toNum } from './club-subscription.utils';
 
 export interface SubscriptionReportQuery {
@@ -34,14 +33,7 @@ type ServiceInvoiceReportRow = {
 };
 
 function missingOptionalTable(error: unknown): boolean {
-  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021') {
-    return true;
-  }
-  // Split receipt payments are an optional enhancement for existing installations.
-  // If an older generated client lacks either relation, fall back to the receipt
-  // header's payment method instead of failing the whole subscriptions report.
-  return error instanceof Prisma.PrismaClientValidationError &&
-    /Unknown (?:argument|field) `(?:receipt|payments)`/.test(error.message);
+  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2021';
 }
 
 /** Club payment methods that SPA/InBody (SalesPaymentMethod) cannot store as-is. */
@@ -91,19 +83,7 @@ export class SubscriptionReportsService {
   }
 
   private branchIds(q: SubscriptionReportQuery, user?: JwtUser) {
-    const branchIds = this.branchScope.resolveListFilter(user, q.branch ?? null);
-    // Preserve the legacy Tanta report group: main (2), Up (5), Down (6).
-    // A direct Up/Down selection remains isolated to that section.
-    return expandClubReportBranchIds(branchIds);
-  }
-
-  private categoryFilter(gender: ClubGender): Prisma.club_subscriptionsWhereInput {
-    return {
-      OR: [
-        { gender },
-        { gender: null, member: { is: { gender } } },
-      ],
-    };
+    return this.branchScope.resolveListFilter(user, q.branch ?? null);
   }
 
   private subscriptionWhere(
@@ -121,9 +101,7 @@ export class SubscriptionReportsService {
     if (q.subscriptionTypeId && q.subscriptionTypeId !== 'all') {
       and.push({ subscription_type_id: Number(q.subscriptionTypeId) });
     }
-    const audienceGender = this.branchScope.memberGenderFilter(user);
-    if (audienceGender) and.push(this.categoryFilter(audienceGender));
-    else if (q.gender === 'male' || q.gender === 'female') and.push(this.categoryFilter(q.gender as ClubGender));
+    if (q.gender === 'male' || q.gender === 'female') and.push({ gender: q.gender });
     if (q.salesId && q.salesId !== 'all') and.push({ member: { sales_id: Number(q.salesId) } });
     if (q.userId && q.userId !== 'all') and.push({ created_by: Number(q.userId) });
     if (q.customerSourceId && q.customerSourceId !== 'all') {
@@ -208,6 +186,7 @@ export class SubscriptionReportsService {
       refunds,
       waivers,
       sourceRows,
+      quickServiceReceipts,
     ] = await Promise.all([
       this.prisma.club_subscriptions.findMany({
         where,
@@ -248,14 +227,14 @@ export class SubscriptionReportsService {
       }),
       this.prisma.club_receipts.groupBy({
         by: ['created_by'],
-        where: this.receiptWhere(q, user),
+        where: { ...this.receiptWhere(q, user), NOT: { type: 'quick_service' } },
         _count: { _all: true },
         _sum: { amount: true },
       }),
       this.prisma.club_receipt_payments.groupBy({
           by: ['method'],
           where: {
-            receipt: { is: this.receiptWhere(q, user) },
+            receipt: { is: { ...this.receiptWhere(q, user), NOT: { type: 'quick_service' } } },
             ...(q.paymentMethod && q.paymentMethod !== 'all' ? { method: q.paymentMethod as never } : {}),
           },
           _count: { _all: true },
@@ -275,6 +254,7 @@ export class SubscriptionReportsService {
         .findMany({
           where: {
             ...this.receiptWhere(q, user),
+            NOT: { type: 'quick_service' },
             payments: { none: {} },
             ...(q.paymentMethod && q.paymentMethod !== 'all'
               ? { payment_method: q.paymentMethod as never }
@@ -287,6 +267,7 @@ export class SubscriptionReportsService {
           return this.prisma.club_receipts.findMany({
             where: {
               ...this.receiptWhere(q, user),
+              NOT: { type: 'quick_service' },
               ...(q.paymentMethod && q.paymentMethod !== 'all'
                 ? { payment_method: q.paymentMethod as never }
                 : {}),
@@ -360,6 +341,28 @@ export class SubscriptionReportsService {
         _count: true,
       }),
       this.prisma.club_customer_sources.findMany({ select: { id: true, name: true } }),
+      this.prisma.club_receipts
+        .findMany({
+          where: {
+            ...this.receiptWhere(q, user),
+            type: 'quick_service',
+          },
+          select: {
+            receipt_date: true,
+            amount: true,
+            payment_method: true,
+            payments: { select: { method: true, amount: true } },
+          },
+        })
+        .catch((error) => {
+          if (!missingOptionalTable(error)) throw error;
+          return [] as Array<{
+            receipt_date: string;
+            amount: Prisma.Decimal;
+            payment_method: string | null;
+            payments: Array<{ method: string; amount: Prisma.Decimal }>;
+          }>;
+        }),
     ]);
 
     const employeeIds = [
@@ -506,6 +509,21 @@ export class SubscriptionReportsService {
     if (sourceEnabled('spa')) spaInvoices.forEach((row) => addPayment(row.payment_method, 1, row.total_amount));
     if (sourceEnabled('inbody')) inbodyInvoices.forEach((row) => addPayment(row.payment_method, 1, row.total_amount));
     if (sourceEnabled('locker')) lockerSubscriptions.forEach((row) => addPayment(row.payment_method, 1, row.paid_amount));
+    const paymentMethodFilter = q.paymentMethod && q.paymentMethod !== 'all' ? q.paymentMethod : null;
+    const matchingQuickServiceReceipts = quickServiceReceipts.filter((row) => {
+      if (!paymentMethodFilter) return true;
+      if (row.payments?.length) return row.payments.some((line) => line.method === paymentMethodFilter);
+      return (row.payment_method ?? 'cash') === paymentMethodFilter;
+    });
+    if (sourceEnabled('quick_service')) {
+      matchingQuickServiceReceipts.forEach((row) => {
+        if (row.payments?.length) {
+          row.payments.forEach((line) => addPayment(line.method, 1, line.amount));
+        } else {
+          addPayment(row.payment_method, 1, row.amount);
+        }
+      });
+    }
 
     const typeMap = new Map<string, { id: number | null; name: string; count: number; value: number; collected: number }>();
     const sourceNameById = new Map(sourceRows.map((row) => [row.id, row.name]));
@@ -546,10 +564,14 @@ export class SubscriptionReportsService {
     spaInvoices.forEach((row) => addTrend(row.invoice_date, 'services', toNum(row.total_amount)));
     inbodyInvoices.forEach((row) => addTrend(row.invoice_date, 'services', toNum(row.total_amount)));
     lockerSubscriptions.forEach((row) => addTrend(row.subscription_start_date, 'services', toNum(row.paid_amount)));
+    matchingQuickServiceReceipts.forEach((row) => {
+      if (sourceEnabled('quick_service')) addTrend(row.receipt_date, 'services', toNum(row.amount));
+    });
 
     const spaRevenue = spaInvoices.reduce((sum, row) => sum + toNum(row.total_amount), 0);
     const inbodyRevenue = inbodyInvoices.reduce((sum, row) => sum + toNum(row.total_amount), 0);
     const lockerRevenue = lockerSubscriptions.reduce((sum, row) => sum + toNum(row.paid_amount), 0);
+    const quickServiceRevenue = matchingQuickServiceReceipts.reduce((sum, row) => sum + toNum(row.amount), 0);
     // Prefer cash collected in the period (receipts) over contract paid_amount so the pie matches
     // "وسائل الدفع" and installment collections on older subscriptions.
     const subscriptionCollected = sourceEnabled('subscriptions')
@@ -559,6 +581,7 @@ export class SubscriptionReportsService {
       : 0;
     const services = [
       { key: 'subscriptions', name: 'الاشتراكات', count: subscriptions.length, amount: subscriptionCollected },
+      { key: 'quick_service', name: 'بيع سريع (ID / Session)', count: matchingQuickServiceReceipts.length, amount: sourceEnabled('quick_service') ? quickServiceRevenue : 0 },
       { key: 'spa', name: 'فواتير SPA', count: spaInvoices.length, amount: sourceEnabled('spa') ? spaRevenue : 0 },
       { key: 'inbody', name: 'فواتير InBody', count: inbodyInvoices.length, amount: sourceEnabled('inbody') ? inbodyRevenue : 0 },
       { key: 'locker', name: 'اشتراكات اللوكر', count: lockerSubscriptions.length, amount: sourceEnabled('locker') ? lockerRevenue : 0 },
@@ -750,13 +773,20 @@ export class SubscriptionReportsService {
     const take = page * pageSize;
     const receiptWhere = this.receiptWhere(q, user);
     const source = q.source && q.source !== 'all' ? q.source : null;
+    const receiptTypeWhere: Prisma.club_receiptsWhereInput =
+      source === 'quick_service'
+        ? { type: 'quick_service' }
+        : source === 'subscriptions'
+          ? { NOT: { type: 'quick_service' } }
+          : {};
+    const scopedReceiptWhere = { ...receiptWhere, ...receiptTypeWhere };
+    const includeReceipts = !source || source === 'subscriptions' || source === 'quick_service';
     const salesMethod = toSalesPaymentMethod(method);
     const [paymentRows, legacyRows, spaRows, inbodyRows, lockerRows] = await Promise.all([
-      source && source !== 'subscriptions'
-        ? []
-        : this.prisma.club_receipt_payments
+      includeReceipts
+        ? this.prisma.club_receipt_payments
             .findMany({
-              where: { method: method as never, receipt: { is: receiptWhere } },
+              where: { method: method as never, receipt: { is: scopedReceiptWhere } },
               orderBy: { created_at: 'desc' },
               take,
               include: {
@@ -778,12 +808,12 @@ export class SubscriptionReportsService {
             .catch((error) => {
               if (missingOptionalTable(error)) return [];
               throw error;
-            }),
-      source && source !== 'subscriptions'
-        ? []
-        : this.prisma.club_receipts
+            })
+        : [],
+      includeReceipts
+        ? this.prisma.club_receipts
             .findMany({
-              where: { ...receiptWhere, payments: { none: {} }, payment_method: method as never },
+              where: { ...scopedReceiptWhere, payments: { none: {} }, payment_method: method as never },
               orderBy: { created_at: 'desc' },
               take,
               select: {
@@ -801,7 +831,7 @@ export class SubscriptionReportsService {
             .catch((error) => {
               if (!missingOptionalTable(error)) throw error;
               return this.prisma.club_receipts.findMany({
-                where: { ...receiptWhere, payment_method: method as never },
+                where: { ...scopedReceiptWhere, payment_method: method as never },
                 orderBy: { created_at: 'desc' },
                 take,
                 select: {
@@ -816,7 +846,8 @@ export class SubscriptionReportsService {
                   subscription: { select: { subscription_type: true, branch_id: true } },
                 },
               });
-            }),
+            })
+        : [],
       source && source !== 'spa'
         ? []
         : salesMethod == null

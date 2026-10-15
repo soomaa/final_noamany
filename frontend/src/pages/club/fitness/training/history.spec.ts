@@ -1,0 +1,13 @@
+import { registerBrandProfile } from '../../../../ports/brand-registry';
+registerBrandProfile({ name: 'Nomany', tagline: '', mark: 'N', logoSrc: '/one-logo.png', opaqueLogoSrc: null });
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {sessionProgress,latestDaySession} from './history-model';
+import {sessionReportHtml,measurementReportHtml} from './history-report';
+import type {Session,PlanDay} from './model';
+const entry={key:'club:1',name:'الرفعة المميتة',kind:'strength' as const,primary:['glutes'],secondary:[],instructions:'',videoUrl:null,skipped:false,note:'<script>note</script>',coachNote:'Keep control',sets:[{weight:25,reps:10,seconds:0,done:true},{weight:25,reps:8,seconds:0,done:false}]};
+const session:Session={id:'session-test',revision:2,assignment_id:3,day_id:'one',date:'2026-10-08',status:'completed',entries:[entry,{...entry,key:'club:2',skipped:true}],note:'Finished early',author:'member:1'};
+test('finishing a session does not erase remaining or skipped sets',()=>{assert.deepEqual(sessionProgress(session.entries),{done:1,total:4,skipped:2,remaining:1,exercisesDone:0,exercisesTotal:2});assert.equal(sessionProgress([]).total,0);});
+test('day progress excludes older assignments and preserves newest server ordering on the same date',()=>{const day={id:'one'} as PlanDay;assert.equal(latestDaySession(day,[{...session,id:'new'},session,{...session,id:'wrong',assignment_id:4,date:'2026-10-09'}],3)?.id,'new');});
+test('performance report includes unfinished sets, notes, brand, locale and escaped custom content',()=>{const html=sessionReportHtml(session,{locale:'en',memberName:'<img src=x>',dayName:'Day 1'});assert.match(html,/Remaining/);assert.match(html,/Skipped/);assert.match(html,/Deadlift/);assert.match(html,/Keep control/);assert.match(html,/&lt;script&gt;/);assert.match(html,/one-logo.png/);assert.doesNotMatch(html,/<img src=x>/);assert.match(html,/lang="en"/);});
+test('measurement report records actual check-in values separately from the current target',()=>{const html=measurementReportHtml({id:'m',date:'2026-10-01',measurements:{weight:100,waist:120},note:'Tape method'}, {revision:1,measurements:{weight:85,waist:90},target_date:'2026-12-01',note:'Current target'},'ar','Member');assert.match(html,/dir="rtl"/);assert.match(html,/120/);assert.match(html,/90/);assert.match(html,/Tape method/);});

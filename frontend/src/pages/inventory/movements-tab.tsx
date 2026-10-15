@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useMemo } from 'react';
 import { DataTable } from '@/components/common/data-table';
@@ -81,7 +82,7 @@ export function MovementsTab() {
       {
         accessorKey: 'actorName',
         header: ui('نفّذها'),
-        cell: ({ row }) => row.original.actorName ?? (row.original.createdBy ? `#${row.original.createdBy}` : ui('النظام')),
+        cell: ({ row }) => row.original.actorName ?? (row.original.createdBy ? `#${formatDisplayNumber(row.original.createdBy)}` : ui('النظام')),
       },
       {
         accessorKey: 'product',
@@ -103,6 +104,7 @@ export function MovementsTab() {
     >
       <FilterBar fields={filters} searchPlaceholder={ui('بحث برقم المستند أو الملاحظات…')} />
       <DataTable
+        exportSource={{ resource: 'inventory-movements', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}

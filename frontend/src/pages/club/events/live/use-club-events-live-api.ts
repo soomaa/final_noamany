@@ -22,7 +22,6 @@ export function useClubEventsLiveApi() {
       remove: (id: number | string) => clubEventsLiveApi.deleteProgramSegment(eventId, id),
       getByPhone: (phone: string) => clubEventsLiveApi.getAttendeeByPhone(eventId, phone),
       listAttendees: () => clubEventsLiveApi.listRecentAttendees(eventId),
-      listPrivateAttendees: () => clubEventsLiveApi.listPrivateRecentAttendees(eventId),
       guestCheckin: (data: { name: string; phone: string; title?: string | null; source?: string }) =>
         clubEventsLiveApi.guestCheckin(eventId, data),
     }),

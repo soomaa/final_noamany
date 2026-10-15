@@ -25,7 +25,7 @@ export class PushController {
 
   /** Admin compose → broadcast to all users or a single branch. */
   @Post('broadcast')
-  @RequiresPermission('admin:configure')
+  @RequiresPermission('admin.push:configure')
   broadcast(@Body() dto: BroadcastDto, @CurrentUser() user: JwtUser) {
     return this.push.broadcast(
       { title: dto.title, body: dto.body, branchId: dto.branchId },

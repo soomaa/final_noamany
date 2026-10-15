@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import type { ColumnDef } from '@tanstack/react-table';
 import { AlertTriangle, Bell, CheckCheck } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -18,7 +19,7 @@ import { useAlerts, useNotifications } from '@/hooks/use-notifications';
 import { clientPaginate, isNotImplemented, useMutationWithToast } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
 import type { AlertGroupKey, NotificationItem } from '@/types/notifications';
-import { cn, toArabicDigits } from '@/lib/utils';
+import { cn, toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 export function NotificationsPage() {
@@ -122,7 +123,7 @@ export function NotificationsPage() {
               onClick={async () => {
                 const ok = await confirm({
                   title: ui('حذف كل الإشعارات؟'),
-                  description: ui(`سيتم حذف ${paged.total} إشعار نهائيًا.`),
+                  description: `${ui('سيتم حذف ')}${formatDisplayNumber(paged.total)}${ui(' إشعار نهائيًا.')}`,
                   confirmLabel: ui('حذف الكل'),
                   variant: 'destructive',
                 });

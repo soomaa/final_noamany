@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useClubT } from '@/hooks/use-club-t';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useArrayResource } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
@@ -31,6 +32,10 @@ interface GroupRow {
 export function ClubMemberGroupsPage() {
   const { ui } = useLocale();
   const ct = useClubT();
+  const { can } = usePermission();
+  const canCreate = can('club.members.groups:create');
+  const canUpdate = can('club.members.groups:update');
+  const canDelete = can('club.members.groups:delete');
   const { data: groups, refetch } = useArrayResource<GroupRow>('club-member-groups');
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
@@ -40,6 +45,7 @@ export function ClubMemberGroupsPage() {
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.name.trim()) return;
     setSaving(true);
     try {
@@ -65,6 +71,7 @@ export function ClubMemberGroupsPage() {
   };
 
   const remove = async (id: number) => {
+    if (!canDelete) return;
     const ok = await confirm({ title: ct('common.confirmDelete'), variant: 'destructive' });
     if (!ok) return;
     try {
@@ -77,6 +84,7 @@ export function ClubMemberGroupsPage() {
   };
 
   const assignMember = async () => {
+    if (!canUpdate) return;
     if (!assignGroupId || !assignMemberId.trim()) return;
     try {
       await api.post(`/club-member-groups/${assignGroupId}/members`, {
@@ -108,11 +116,11 @@ export function ClubMemberGroupsPage() {
       <PageHeader
         title={ct('members.groupsTitle')}
         description={ct('members.groupsDesc')}
-        actions={
+        actions={canCreate ? (
           <Button variant="brand" onClick={openCreate}>
             <Plus className="size-4" /> {ct('common.add')}
           </Button>
-        }
+        ) : undefined}
       />
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {(groups ?? []).map((g) => (
@@ -127,17 +135,17 @@ export function ClubMemberGroupsPage() {
                 {toArabicDigits(g.current_members)} / {g.max_members > 0 ? toArabicDigits(g.max_members) : '∞'}
               </p>
             </div>
-            <div className="flex gap-1">
-              <Button variant="ghost" size="icon" title={ui('إضافة عضو')} onClick={() => { setAssignGroupId(g.id); setAssignMemberId(''); }}>
+            {(canUpdate || canDelete) && <div className="flex gap-1">
+              {canUpdate && <Button variant="ghost" size="icon" title={ui('إضافة عضو')} onClick={() => { setAssignGroupId(g.id); setAssignMemberId(''); }}>
                 <Users className="size-4" />
-              </Button>
-              <Button variant="ghost" size="icon" onClick={() => openEdit(g)}>
+              </Button>}
+              {canUpdate && <Button variant="ghost" size="icon" onClick={() => openEdit(g)}>
                 <Pencil className="size-4" />
-              </Button>
-              <Button variant="ghost" size="icon" className="text-destructive" onClick={() => void remove(g.id)}>
+              </Button>}
+              {canDelete && <Button variant="ghost" size="icon" className="text-destructive" onClick={() => void remove(g.id)}>
                 <Trash2 className="size-4" />
-              </Button>
-            </div>
+              </Button>}
+            </div>}
           </div>
         ))}
       </div>
@@ -163,9 +171,9 @@ export function ClubMemberGroupsPage() {
             />
           </div>
           <DialogFooter>
-            <Button variant="brand" onClick={() => void save()} disabled={saving}>
+            {(editId ? canUpdate : canCreate) && <Button permissionAction={editId ? 'update' : 'create'} variant="brand" onClick={() => void save()} disabled={saving}>
               {ct('common.save')}
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -181,9 +189,9 @@ export function ClubMemberGroupsPage() {
             onChange={(e) => setAssignMemberId(e.target.value)}
           />
           <DialogFooter>
-            <Button variant="brand" onClick={() => void assignMember()}>
+            {canUpdate && <Button variant="brand" onClick={() => void assignMember()}>
               {ct('common.save')}
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

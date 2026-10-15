@@ -100,7 +100,7 @@ function SettingsCrudTab<T extends { id: number }>({
       const payload = mapFormToPayload(form);
       if (editId) await api.put(`/${resource}/${editId}`, payload);
       else await api.post(`/${resource}`, payload);
-      toast.success(uiStatic(editId ? 'تم التحديث' : uiStatic('تم الإنشاء')));
+      toast.success(uiStatic(editId ? uiStatic('تم التحديث') : uiStatic('تم الإنشاء')));
       setOpen(false);
       void refetch();
     } catch (e) {
@@ -125,6 +125,7 @@ function SettingsCrudTab<T extends { id: number }>({
         </Button>
       </div>
       <DataTable
+        exportSource={{ resource: resource, params }}
         columns={tableColumns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -141,7 +142,7 @@ function SettingsCrudTab<T extends { id: number }>({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent size="lg">
           <DialogHeader>
-            <DialogTitle>{uiStatic(editId ? 'تعديل' : 'إضافة')}</DialogTitle>
+            <DialogTitle>{uiStatic(editId ? uiStatic('تعديل') : uiStatic('إضافة'))}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             {fields.map((f) => (

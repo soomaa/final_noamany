@@ -1,14 +1,40 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { paginated } from '../../common/dto/list-result';
-import { toNum, assertMemberExists } from './club-fitness.utils';
+import { toNum } from './club-fitness.utils';
 import { attachMemberBrief, loadMemberBriefMap, searchMemberIds } from '../club-members/club-member-brief.utils';
 import { ListClubFitnessDto } from './dto/list-club-fitness.dto';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @Injectable()
 export class ClubWorkoutsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
+
+  private async allowedMemberIds(user?: JwtUser): Promise<number[] | null> {
+    const scope = this.branchScope.allowedBranchIds(user);
+    if (scope === null) return null;
+    const rows = await this.prisma.club_members.findMany({
+      where: { branch_id: { in: scope }, is_deleted: false },
+      select: { id: true },
+    });
+    return rows.map((row) => row.id);
+  }
+
+  private async assertMemberAccess(memberId: number, user?: JwtUser) {
+    const member = await this.prisma.club_members.findFirst({
+      where: { id: memberId, is_deleted: false },
+      select: { branch_id: true },
+    });
+    if (!member) throw new NotFoundException('العضو غير موجود');
+    if (!this.branchScope.isBranchAllowed(user, member.branch_id)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
+  }
 
   // --- Exercises ---
 
@@ -116,13 +142,17 @@ export class ClubWorkoutsService {
 
   // --- Workout programs ---
 
-  async listPrograms(q: ListClubFitnessDto) {
+  async listPrograms(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_workout_programsWhereInput = {};
     if (q.memberId) where.member_id = Number(q.memberId);
     if (q.search?.trim()) {
       const s = q.search.trim();
       const memberIds = await searchMemberIds(this.prisma, s);
       where.OR = [{ name: { contains: s } }, ...(memberIds.length ? [{ member_id: { in: memberIds } }] : [])];
+    }
+    const scopedIds = await this.allowedMemberIds(user);
+    if (scopedIds !== null) {
+      where.AND = [{ OR: [{ member_id: null }, { member_id: { in: scopedIds } }] }];
     }
 
     const [rows, total] = await Promise.all([
@@ -156,9 +186,10 @@ export class ClubWorkoutsService {
     );
   }
 
-  async findProgram(id: number) {
+  async findProgram(id: number, user?: JwtUser) {
     const row = await this.prisma.club_workout_programs.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('برنامج التمرين غير موجود');
+    if (row.member_id != null) await this.assertMemberAccess(row.member_id, user);
     const memberMap = await loadMemberBriefMap(this.prisma, [row.member_id]);
     return {
       id: row.id,
@@ -176,10 +207,10 @@ export class ClubWorkoutsService {
     };
   }
 
-  async createProgram(body: Record<string, unknown>) {
+  async createProgram(body: Record<string, unknown>, user?: JwtUser) {
     if (!body.name) throw new BadRequestException('اسم البرنامج مطلوب');
     if (body.memberId != null) {
-      await assertMemberExists(this.prisma, Number(body.memberId));
+      await this.assertMemberAccess(Number(body.memberId), user);
     }
     if (body.trainerId != null) {
       const trainer = await this.prisma.club_trainers.findFirst({
@@ -199,13 +230,13 @@ export class ClubWorkoutsService {
         is_active: body.isActive !== false,
       },
     });
-    return this.findProgram(row.id);
+    return this.findProgram(row.id, user);
   }
 
-  async updateProgram(id: number, body: Record<string, unknown>) {
-    await this.findProgram(id);
+  async updateProgram(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    await this.findProgram(id, user);
     if (body.memberId != null) {
-      await assertMemberExists(this.prisma, Number(body.memberId));
+      await this.assertMemberAccess(Number(body.memberId), user);
     }
     if (body.trainerId != null) {
       const trainer = await this.prisma.club_trainers.findFirst({
@@ -226,11 +257,11 @@ export class ClubWorkoutsService {
         ...(body.isActive !== undefined ? { is_active: Boolean(body.isActive) } : {}),
       },
     });
-    return this.findProgram(id);
+    return this.findProgram(id, user);
   }
 
-  async removeProgram(id: number) {
-    await this.findProgram(id);
+  async removeProgram(id: number, user?: JwtUser) {
+    await this.findProgram(id, user);
     await this.prisma.club_workout_programs.delete({ where: { id } });
     return { success: true };
   }
@@ -315,7 +346,7 @@ export class ClubWorkoutsService {
 
   // --- Member progress ---
 
-  async listProgress(q: ListClubFitnessDto) {
+  async listProgress(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_member_progressWhereInput = {};
     if (q.memberId) where.member_id = Number(q.memberId);
     if (q.search?.trim()) {
@@ -325,6 +356,8 @@ export class ClubWorkoutsService {
       }
       where.member_id = { in: memberIds };
     }
+    const scopedIds = await this.allowedMemberIds(user);
+    if (scopedIds !== null) where.AND = [{ member_id: { in: scopedIds } }];
 
     const [rows, total] = await Promise.all([
       this.prisma.club_member_progress.findMany({
@@ -357,9 +390,10 @@ export class ClubWorkoutsService {
     );
   }
 
-  async findProgress(id: number) {
+  async findProgress(id: number, user?: JwtUser) {
     const row = await this.prisma.club_member_progress.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('سجل التقدم غير موجود');
+    await this.assertMemberAccess(row.member_id, user);
     const memberMap = await loadMemberBriefMap(this.prisma, [row.member_id]);
     return {
       id: row.id,
@@ -377,11 +411,11 @@ export class ClubWorkoutsService {
     };
   }
 
-  async createProgress(body: Record<string, unknown>) {
+  async createProgress(body: Record<string, unknown>, user?: JwtUser) {
     if (!body.memberId || !body.recordDate) {
       throw new BadRequestException('كود العضو وتاريخ السجل مطلوبان');
     }
-    await assertMemberExists(this.prisma, Number(body.memberId));
+    await this.assertMemberAccess(Number(body.memberId), user);
     const row = await this.prisma.club_member_progress.create({
       data: {
         member_id: Number(body.memberId),
@@ -394,13 +428,13 @@ export class ClubWorkoutsService {
         notes: body.notes ? String(body.notes) : null,
       },
     });
-    return this.findProgress(row.id);
+    return this.findProgress(row.id, user);
   }
 
-  async updateProgress(id: number, body: Record<string, unknown>) {
-    await this.findProgress(id);
+  async updateProgress(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    await this.findProgress(id, user);
     if (body.memberId != null) {
-      await assertMemberExists(this.prisma, Number(body.memberId));
+      await this.assertMemberAccess(Number(body.memberId), user);
     }
     await this.prisma.club_member_progress.update({
       where: { id },
@@ -415,18 +449,18 @@ export class ClubWorkoutsService {
         ...(body.notes !== undefined ? { notes: body.notes ? String(body.notes) : null } : {}),
       },
     });
-    return this.findProgress(id);
+    return this.findProgress(id, user);
   }
 
-  async removeProgress(id: number) {
-    await this.findProgress(id);
+  async removeProgress(id: number, user?: JwtUser) {
+    await this.findProgress(id, user);
     await this.prisma.club_member_progress.delete({ where: { id } });
     return { success: true };
   }
 
   // --- Physical assessments ---
 
-  async listAssessments(q: ListClubFitnessDto) {
+  async listAssessments(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_physical_assessmentsWhereInput = {};
     if (q.memberId) where.member_id = Number(q.memberId);
     if (q.search?.trim()) {
@@ -436,6 +470,8 @@ export class ClubWorkoutsService {
       }
       where.member_id = { in: memberIds };
     }
+    const scopedIds = await this.allowedMemberIds(user);
+    if (scopedIds !== null) where.AND = [{ member_id: { in: scopedIds } }];
 
     const [rows, total] = await Promise.all([
       this.prisma.club_physical_assessments.findMany({
@@ -465,9 +501,10 @@ export class ClubWorkoutsService {
     );
   }
 
-  async findAssessment(id: number) {
+  async findAssessment(id: number, user?: JwtUser) {
     const row = await this.prisma.club_physical_assessments.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('التقييم البدني غير موجود');
+    await this.assertMemberAccess(row.member_id, user);
     const memberMap = await loadMemberBriefMap(this.prisma, [row.member_id]);
     return {
       id: row.id,
@@ -482,10 +519,11 @@ export class ClubWorkoutsService {
     };
   }
 
-  async createAssessment(body: Record<string, unknown>) {
+  async createAssessment(body: Record<string, unknown>, user?: JwtUser) {
     if (!body.memberId || !body.assessDate) {
       throw new BadRequestException('كود العضو وتاريخ التقييم مطلوبان');
     }
+    await this.assertMemberAccess(Number(body.memberId), user);
     const row = await this.prisma.club_physical_assessments.create({
       data: {
         member_id: Number(body.memberId),
@@ -495,11 +533,12 @@ export class ClubWorkoutsService {
         notes: body.notes ? String(body.notes) : null,
       },
     });
-    return this.findAssessment(row.id);
+    return this.findAssessment(row.id, user);
   }
 
-  async updateAssessment(id: number, body: Record<string, unknown>) {
-    await this.findAssessment(id);
+  async updateAssessment(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    await this.findAssessment(id, user);
+    if (body.memberId != null) await this.assertMemberAccess(Number(body.memberId), user);
     await this.prisma.club_physical_assessments.update({
       where: { id },
       data: {
@@ -510,12 +549,13 @@ export class ClubWorkoutsService {
         ...(body.notes !== undefined ? { notes: body.notes ? String(body.notes) : null } : {}),
       },
     });
-    return this.findAssessment(id);
+    return this.findAssessment(id, user);
   }
 
-  async removeAssessment(id: number) {
-    await this.findAssessment(id);
+  async removeAssessment(id: number, user?: JwtUser) {
+    await this.findAssessment(id, user);
     await this.prisma.club_physical_assessments.delete({ where: { id } });
     return { success: true };
   }
 }
+

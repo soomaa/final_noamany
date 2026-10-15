@@ -22,10 +22,8 @@ export class ActionScreenController {
     return this.service.listGrades();
   }
 
-  // Catalog assigns only view/execute/audit to affairs.action_screen —
-  // all mutations therefore require the `execute` action.
   @Post()
-  @RequiresPermission('affairs.action_screen:execute')
+  @RequiresPermission('affairs.action_screen:create')
   create(
     @Body()
     body: {
@@ -45,7 +43,7 @@ export class ActionScreenController {
   }
 
   @Patch(':id')
-  @RequiresPermission('affairs.action_screen:execute')
+  @RequiresPermission('affairs.action_screen:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body()
@@ -65,7 +63,7 @@ export class ActionScreenController {
   }
 
   @Delete(':id')
-  @RequiresPermission('affairs.action_screen:execute')
+  @RequiresPermission('affairs.action_screen:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

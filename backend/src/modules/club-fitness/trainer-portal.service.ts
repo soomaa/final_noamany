@@ -1,14 +1,22 @@
-import { ForbiddenException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { toNum } from './club-fitness.utils';
+import { ClubAttendanceService } from '../club-members/club-attendance.service';
+import { localDateString } from '../club-members/club-member.utils';
+import { ClubTrainersService } from './club-trainers.service';
+import { trainerPaymentPeriodWhere } from './trainer-earnings';
 
 const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
 @Injectable()
 export class TrainerPortalService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() private readonly attendance?: ClubAttendanceService,
+    @Optional() private readonly trainers?: ClubTrainersService,
+  ) {}
 
   private validDateRange(dateFrom?: string, dateTo?: string) {
     if (
@@ -172,9 +180,71 @@ export class TrainerPortalService {
     );
   }
 
+  async privateClients(user: JwtUser, today = localDateString()) {
+    const trainer = await this.ownTrainer(user);
+    const rows = await this.prisma.club_subscriptions.findMany({
+      where: {
+        private_trainer_id: trainer.id,
+        member_id: { not: null },
+        status: 'active',
+        subscription_start_date: { lte: today },
+        subscription_end_date: { gte: today },
+      },
+      include: {
+        member: { select: { id: true, member_code: true, name: true, phone: true } },
+        private_package: { select: { name: true } },
+      },
+      orderBy: [{ subscription_end_date: 'asc' }, { id: 'asc' }],
+    });
+    if (!rows.length) return [];
+    const attended = await this.prisma.club_attendance.findMany({
+      where: { subscription_id: { in: rows.map((row) => row.id) }, attendance_date: today },
+      select: { subscription_id: true, status: true },
+    });
+    const checkedBySubscription = new Set(attended.filter((row) => row.status === 'checked_in').map((row) => row.subscription_id));
+    return rows.flatMap((row) => row.member ? [{
+      id: row.id,
+      memberId: row.member.id,
+      memberCode: row.member.member_code,
+      memberName: row.member.name,
+      phone: row.member.phone,
+      packageName: row.private_package?.name ?? row.subscription_type ?? 'Private',
+      endDate: row.subscription_end_date,
+      status: row.status,
+      sessionsRemaining: row.is_linked_to_sessions && row.sessions_count != null ? Math.max(0, row.sessions_count - row.sessions_used) : null,
+      checkedInToday: checkedBySubscription.has(row.id),
+    }] : []);
+  }
+
+  async privateCheckIn(user: JwtUser, subscriptionId: number) {
+    const trainer = await this.ownTrainer(user);
+    const today = localDateString();
+    const subscription = await this.prisma.club_subscriptions.findFirst({
+      where: {
+        id: subscriptionId,
+        private_trainer_id: trainer.id,
+        member_id: { not: null },
+        status: 'active',
+        subscription_start_date: { lte: today },
+        subscription_end_date: { gte: today },
+      },
+      select: { id: true, member_id: true, branch_id: true },
+    });
+    if (!subscription?.member_id) throw new BadRequestException('اشتراك التدريب الخاص غير متاح لهذا المدرب');
+    if (!this.attendance) throw new BadRequestException('خدمة الحضور غير متاحة');
+    return this.attendance.checkIn({
+      memberId: subscription.member_id,
+      branchId: subscription.branch_id,
+      subscriptionId: subscription.id,
+      consumeSession: true,
+      notes: 'تسجيل من بوابة المدرب',
+    }, user);
+  }
+
   async dashboard(user: JwtUser, query?: { dateFrom?: string; dateTo?: string }) {
     const trainer = await this.ownTrainer(user);
-    const classes = await this.prisma.club_classes.findMany({
+    const [classes, privateCommissions] = await Promise.all([
+      this.prisma.club_classes.findMany({
       where: {
         trainer_id: trainer.id,
         is_deleted: false,
@@ -188,7 +258,26 @@ export class TrainerPortalService {
         enrollments: true,
       },
       orderBy: [{ class_date: 'asc' }, { start_time: 'asc' }],
-    });
+      }),
+      this.prisma.club_private_attendance_commissions.findMany({
+        where: {
+          trainer_id: trainer.id,
+          ...(query?.dateFrom || query?.dateTo
+            ? {
+                attendance_date: {
+                  ...(query.dateFrom ? { gte: query.dateFrom } : {}),
+                  ...(query.dateTo ? { lte: query.dateTo } : {}),
+                },
+              }
+            : {}),
+        },
+        include: {
+          attendance: { select: { member_id: true, member_name: true } },
+          subscription: { select: { subscription_number: true, subscription_type: true } },
+        },
+        orderBy: [{ attendance_date: 'desc' }, { id: 'desc' }],
+      }),
+    ]);
 
     let totalEarnings = 0;
     let totalAttendance = 0;
@@ -256,18 +345,16 @@ export class TrainerPortalService {
       });
     }
 
-    const paymentWhere: Prisma.club_trainer_earning_paymentsWhereInput = {
-      trainer_id: trainer.id,
-      ...(query?.dateFrom || query?.dateTo
-        ? {
-            payment_date: {
-              ...(query.dateFrom ? { gte: query.dateFrom } : {}),
-              ...(query.dateTo ? { lte: query.dateTo } : {}),
-            },
-          }
-        : {}),
-    };
-    const [paidAgg, payments, privateCommissions] = await Promise.all([
+    privateCommissions.forEach((row) => memberIds.add(row.attendance.member_id));
+    const privateEarnings = roundMoney(
+      privateCommissions.reduce((sum, row) => sum + Math.max(0, toNum(row.commission_amount) - toNum(row.refunded_amount)), 0),
+    );
+    totalEarnings = roundMoney(totalEarnings + privateEarnings);
+
+    const paymentWhere: Prisma.club_trainer_earning_paymentsWhereInput = query?.dateFrom && query.dateTo
+      ? trainerPaymentPeriodWhere(trainer.id, query.dateFrom, query.dateTo)
+      : { trainer_id: trainer.id };
+    const [paidAgg, payments, canonicalEarnings] = await Promise.all([
       this.prisma.club_trainer_earning_payments.aggregate({
         where: paymentWhere,
         _sum: { amount: true },
@@ -276,28 +363,12 @@ export class TrainerPortalService {
         where: paymentWhere,
         orderBy: [{ payment_date: 'desc' }, { id: 'desc' }],
       }),
-      this.prisma.club_private_attendance_commissions.findMany({
-        where: {
-          trainer_id: trainer.id,
-          ...(query?.dateFrom || query?.dateTo ? {
-            attendance_date: {
-              ...(query.dateFrom ? { gte: query.dateFrom } : {}),
-              ...(query.dateTo ? { lte: query.dateTo } : {}),
-            },
-          } : {}),
-        },
-        include: {
-          subscription: { select: { subscription_type: true, member_id: true } },
-        },
-        orderBy: [{ attendance_date: 'desc' }, { id: 'desc' }],
-      }),
+      this.trainers && query?.dateFrom && query.dateTo
+        ? this.trainers.earningsSummary(trainer.id, query.dateFrom, query.dateTo)
+        : Promise.resolve(null),
     ]);
-    const privateEarnings = privateCommissions.reduce((sum, row) => sum + toNum(row.commission_amount), 0);
-    totalEarnings = roundMoney(totalEarnings + privateEarnings);
-    privateCommissions.forEach((row) => {
-      if (row.subscription.member_id) memberIds.add(row.subscription.member_id);
-    });
-    const paid = toNum(paidAgg._sum.amount);
+    const paid = canonicalEarnings?.paid ?? toNum(paidAgg._sum.amount);
+    const payableTotal = canonicalEarnings?.earned ?? totalEarnings;
     const executed = executedClassIds.size;
     const cancelled = classes.filter((row) => row.status === 'cancelled').length;
     const eligibleForAdherence = executed + cancelled;
@@ -314,10 +385,10 @@ export class TrainerPortalService {
         completedClasses: executed,
         totalTrainees: memberIds.size,
         totalAttendance,
+        privateSessions: privateCommissions.length,
         averageAttendance: classes.length ? totalAttendance / classes.length : 0,
         adherenceRate: eligibleForAdherence ? (executed / eligibleForAdherence) * 100 : 100,
-        totalEarnings,
-        privateEarnings,
+        totalEarnings: payableTotal,
       },
       schedule: classes.map((cls) => ({
         id: cls.id,
@@ -338,19 +409,26 @@ export class TrainerPortalService {
       })),
       attendance,
       earnings: {
-        total: totalEarnings,
+        total: payableTotal,
         paid,
-        remaining: roundMoney(Math.max(0, totalEarnings - paid)),
+        remaining: canonicalEarnings?.remaining ?? roundMoney(Math.max(0, payableTotal - paid)),
+        overpaid: canonicalEarnings?.overpaid ?? roundMoney(Math.max(0, paid - payableTotal)),
+        commissionMode: canonicalEarnings?.commissionMode ?? 'attendance',
         items: earningItems,
         privateItems: privateCommissions.map((row) => ({
           id: row.id,
+          attendanceId: row.attendance_id,
           subscriptionId: row.subscription_id,
+          subscriptionNumber: row.subscription.subscription_number,
           subscriptionType: row.subscription.subscription_type,
+          memberId: row.attendance.member_id,
+          memberName: row.attendance.member_name,
           attendanceDate: row.attendance_date,
           sequence: row.commission_sequence,
           revenue: toNum(row.revenue_base),
           commissionPercentage: toNum(row.commission_percentage),
-          amount: toNum(row.commission_amount),
+          amount: Math.max(0, toNum(row.commission_amount) - toNum(row.refunded_amount)),
+          refundedAmount: toNum(row.refunded_amount),
         })),
         payments: payments.map((row) => ({
           id: row.id,

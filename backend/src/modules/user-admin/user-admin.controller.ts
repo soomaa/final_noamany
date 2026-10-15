@@ -10,9 +10,11 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UserAdminService } from './user-admin.service';
 import {
   CreateSystemUserDto,
+  RevokeUserSessionsDto,
   UpdateSystemUserDto,
   UpdateUserStatusDto,
 } from './dto/user-admin.dto';
@@ -34,25 +36,35 @@ export class UserAdminController {
 
   @Post()
   @RequiresPermission('admin.users:create')
-  create(@Body() dto: CreateSystemUserDto) {
-    return this.userAdmin.create(dto);
+  create(@Body() dto: CreateSystemUserDto, @CurrentUser('sub') actor: number) {
+    return this.userAdmin.create(dto, actor);
   }
 
   @Patch(':id')
   @RequiresPermission('admin.users:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateSystemUserDto) {
-    return this.userAdmin.update(id, dto);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateSystemUserDto, @CurrentUser('sub') actor: number) {
+    return this.userAdmin.update(id, dto, actor);
   }
 
   @Delete(':id')
   @RequiresPermission('admin.users:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.userAdmin.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser('sub') actor: number) {
+    return this.userAdmin.remove(id, actor);
   }
 
   @Patch(':id/status')
   @RequiresPermission('admin.users:update')
-  updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserStatusDto) {
-    return this.userAdmin.updateStatus(id, dto);
+  updateStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserStatusDto, @CurrentUser('sub') actor: number) {
+    return this.userAdmin.updateStatus(id, dto, actor);
+  }
+
+  @Post(':id/revoke-sessions')
+  @RequiresPermission('admin.users:update')
+  revokeSessions(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: RevokeUserSessionsDto,
+    @CurrentUser('sub') actor: number,
+  ) {
+    return this.userAdmin.revokeSessions(id, dto.reason, actor);
   }
 }

@@ -1,30 +1,13 @@
 import axios, { AxiosError } from 'axios';
 import { uiStatic } from '@/lib/ui-static';
 
-/** Single axios instance. Vite proxies /api → http://127.0.0.1:4002 in dev. */
+/** Single axios instance. Vite proxies /api → http://localhost:4000 in dev. */
 export const api = axios.create({
   baseURL: '/api',
   withCredentials: true,
 });
 
-let accessToken: string | null = null;
-export function setAccessToken(token: string | null) {
-  accessToken = token;
-  // Access tokens stay in memory. Session persistence is provided by the
-  // HttpOnly refresh cookie, which JavaScript cannot read after an XSS bug.
-  localStorage.removeItem('one80_token');
-}
-export function getAccessToken(): string | null {
-  return accessToken;
-}
-
-api.interceptors.request.use((config) => {
-  const token = getAccessToken();
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
-
-let refreshing: Promise<string | null> | null = null;
+let refreshing: Promise<void> | null = null;
 
 api.interceptors.response.use(
   (res) => res,
@@ -35,22 +18,13 @@ api.interceptors.response.use(
       try {
         refreshing =
           refreshing ??
-          api.post('/auth/refresh').then((r) => {
-            const t = r.data?.accessToken ?? null;
-            setAccessToken(t);
-            return t;
-          });
-        const newToken = await refreshing;
+          api.post('/auth/refresh').then(() => undefined);
+        await refreshing;
         refreshing = null;
-        if (newToken) {
-          original.headers = original.headers ?? {};
-          original.headers.Authorization = `Bearer ${newToken}`;
-          return api(original);
-        }
+        return api(original);
       } catch {
         refreshing = null;
       }
-      setAccessToken(null);
       if (!location.pathname.startsWith('/login')) location.assign('/login');
     }
     return Promise.reject(error);

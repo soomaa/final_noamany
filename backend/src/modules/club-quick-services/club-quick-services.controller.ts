@@ -55,25 +55,18 @@ export class ClubQuickServicesController {
   }
 
   @Post()
-  @RequiresPermission(
-    'club.reception:create',
-    'club.reception:update',
-    'club.reception.quick_services:create',
-  )
+  @RequiresPermission('club.reception.quick_services:create')
   create(@Body() body: UpsertClubQuickServiceDto, @CurrentUser() user: JwtUser) {
     return this.service.create(body, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user);
   }
 
   @Put(':id')
-  @RequiresPermission(
-    'club.reception:update',
-    'club.reception.quick_services:update',
-  )
+  @RequiresPermission('club.reception.quick_services:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpsertClubQuickServiceDto,
@@ -83,12 +76,8 @@ export class ClubQuickServicesController {
   }
 
   @Delete(':id')
-  @RequiresPermission(
-    'club.reception:update',
-    'club.reception:delete',
-    'club.reception.quick_services:delete',
-  )
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.remove(id);
+  @RequiresPermission('club.reception.quick_services:delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.remove(id, user);
   }
 }

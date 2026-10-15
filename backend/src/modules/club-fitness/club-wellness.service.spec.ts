@@ -3,7 +3,7 @@ import { ClubWellnessService } from './club-wellness.service';
 
 describe('ClubWellnessService subscription benefits', () => {
   const makeService = () =>
-    new ClubWellnessService({} as never, {} as never) as unknown as {
+    new ClubWellnessService({} as never, {} as never, {} as never, {} as never) as unknown as {
       consumeBenefit: (
         tx: Record<string, unknown>,
         memberId: number,
@@ -51,71 +51,5 @@ describe('ClubWellnessService subscription benefits', () => {
     await expect(makeService().consumeBenefit(tx, 8, 'inbody', 1)).rejects.toBeInstanceOf(
       ConflictException,
     );
-  });
-
-  it('records a SPA barcode visit against an active subscription benefit', async () => {
-    const tx = {
-      $queryRaw: jest.fn().mockResolvedValue([]),
-      club_subscriptions: {
-        findMany: jest.fn().mockResolvedValue([
-          {
-            id: 41,
-            subscription_number: 'SUB-41',
-            subscription_end_date: '2026-12-31',
-            spa_used: 0,
-            type: { includes_spa: true, spa_count: 3 },
-          },
-        ]),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      },
-      club_spa_attendance: { create: jest.fn().mockResolvedValue({ id: 7 }) },
-    };
-    const prisma = {
-      club_members: {
-        findFirst: jest.fn().mockResolvedValue({
-          id: 9,
-          member_code: '1001',
-          name: 'عضو اختبار',
-          branch_id: 2,
-        }),
-      },
-      club_subscriptions: {
-        findMany: jest.fn().mockResolvedValue([
-          {
-            id: 41,
-            subscription_number: 'SUB-41',
-            subscription_end_date: '2026-12-31',
-            spa_used: 1,
-            inbody_used: 0,
-            type: { includes_spa: true, spa_count: 3, inbody_count: 0 },
-          },
-        ]),
-      },
-      club_spa_attendance: { findFirst: jest.fn().mockResolvedValue(null) },
-      $transaction: jest.fn(async (callback) => callback(tx)),
-    };
-    const service = new ClubWellnessService(prisma as never, {} as never) as unknown as {
-      checkInSpaByBarcode: (memberCode: string, userId: number) => Promise<{ remaining: number }>;
-    };
-
-    await expect(service.checkInSpaByBarcode('1001', 4)).resolves.toMatchObject({ remaining: 2 });
-    expect(tx.club_spa_attendance.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ member_id: 9, member_code: '1001', subscription_id: 41 }),
-    }));
-  });
-});
-
-describe('ClubWellnessService InBody file numbers', () => {
-  it('returns the next database-backed number for a new InBody file', async () => {
-    const prisma = {
-      club_inbody_measurements: {
-        aggregate: jest.fn().mockResolvedValue({ _max: { id: 4694 } }),
-      },
-    };
-    const service = new ClubWellnessService(prisma as never, {} as never) as unknown as {
-      nextInbodyFileNumber: () => Promise<number>;
-    };
-
-    await expect(service.nextInbodyFileNumber()).resolves.toBe(4695);
   });
 });

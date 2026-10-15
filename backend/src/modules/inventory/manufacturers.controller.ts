@@ -8,7 +8,7 @@ import { ManufacturersService } from './manufacturers.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('manufacturers')
-@RequiresPermission('gym-sales.inventory:view')
+@RequiresPermission('gym-sales.inventory.raw_materials:view')
 export class ManufacturersController {
   constructor(private readonly service: ManufacturersService) {}
 
@@ -23,25 +23,25 @@ export class ManufacturersController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.inventory:create')
+  @RequiresPermission('gym-sales.inventory.raw_materials:create')
   create(@Body() body: UpsertManufacturerDto) {
     return this.service.create(body);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertManufacturerDto>) {
     return this.service.update(id, body);
   }
 
   @Patch(':id')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   patch(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertManufacturerDto>) {
     return this.service.update(id, body);
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.inventory:delete')
+  @RequiresPermission('gym-sales.inventory.raw_materials:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

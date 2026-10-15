@@ -10,7 +10,13 @@ import { BranchScopeService } from '../../common/branch-scope/branch-scope.servi
 import { paginated } from '../../common/dto/list-result';
 import { JwtUser } from '../../common/types/jwt-user';
 import { localDateString } from '../club-members/club-member.utils';
-import { addDays, deriveSessionAwareStatus, toNum } from './club-subscription.utils';
+import {
+  addDays,
+  buildDefaultSessionPriceMatrix,
+  deriveSessionAwareStatus,
+  resolveSessionMatrixPrice,
+  toNum,
+} from './club-subscription.utils';
 import { ClubSubscriptionsService } from './club-subscriptions.service';
 import {
   CreatePrivateEnrollmentDto,
@@ -35,7 +41,15 @@ export class PrivateSubscriptionsService {
     }
   }
 
-  private mapPackage(row: Prisma.club_private_packagesGetPayload<{ include: { branches: true } }>) {
+  private mapPackage(
+    row: Prisma.club_private_packagesGetPayload<{
+      include: { branches: true; session_prices: true };
+    }>,
+  ) {
+    const sessionPrices = (row.session_prices ?? [])
+      .slice()
+      .sort((a, b) => a.sessions_count - b.sessions_count)
+      .map((price) => ({ sessionsCount: price.sessions_count, price: toNum(price.price) }));
     return {
       id: row.id,
       kind: row.kind,
@@ -43,6 +57,8 @@ export class PrivateSubscriptionsService {
       price: toNum(row.price),
       durationDays: row.duration_days,
       sessionsCount: row.sessions_count,
+      // Empty for subscription packages; session packages always expose a full 1..N matrix.
+      sessionPrices: row.kind === 'sessions' ? sessionPrices : [],
       branchIds: row.branches.map((branch) => branch.branch_id),
       isActive: row.is_active,
       legacySubscriptionTypeId: row.legacy_subscription_type_id,
@@ -64,7 +80,29 @@ export class PrivateSubscriptionsService {
       duration_days: body.durationDays,
       sessions_count: body.kind === 'sessions' ? body.sessionsCount! : null,
       branchIds: [...new Set(body.branchIds.map(Number))],
+      sessionPrices: this.parseSessionPrices(body),
     };
+  }
+
+  /**
+   * Always store a complete 1..N matrix for a session package: caller-supplied rows win,
+   * every other count falls back to the proportional default (price ÷ N × k).
+   */
+  private parseSessionPrices(body: UpsertPrivatePackageDto) {
+    if (body.kind !== 'sessions') return [];
+    const max = Math.max(1, body.sessionsCount ?? 0);
+    const supplied = new Map<number, number>();
+    for (const row of body.sessionPrices ?? []) {
+      const count = Number(row.sessionsCount);
+      const price = Number(row.price);
+      if (!Number.isInteger(count) || count < 1 || count > max) continue;
+      if (!Number.isFinite(price) || price < 0) continue;
+      supplied.set(count, price);
+    }
+    return buildDefaultSessionPriceMatrix(body.price, max).map((row) => ({
+      sessionsCount: row.sessionsCount,
+      price: supplied.get(row.sessionsCount) ?? row.price,
+    }));
   }
 
   private assertValidDate(value: string, label: string) {
@@ -92,7 +130,7 @@ export class PrivateSubscriptionsService {
         ...(includeInactive === 'true' || includeInactive === '1' ? {} : { is_active: true }),
         ...(scopedBranches ? { branches: { some: { branch_id: { in: scopedBranches } } } } : {}),
       },
-      include: { branches: true },
+      include: { branches: true, session_prices: true },
       orderBy: [{ kind: 'asc' }, { name: 'asc' }],
     });
     return rows.map((row) => this.mapPackage(row));
@@ -120,8 +158,14 @@ export class PrivateSubscriptionsService {
         sessions_count: data.sessions_count,
         created_by: user.sub,
         branches: { create: data.branchIds.map((id) => ({ branch_id: id })) },
+        session_prices: {
+          create: data.sessionPrices.map((price) => ({
+            sessions_count: price.sessionsCount,
+            price: price.price,
+          })),
+        },
       },
-      include: { branches: true },
+      include: { branches: true, session_prices: true },
     });
     return this.mapPackage(row);
   }
@@ -147,6 +191,7 @@ export class PrivateSubscriptionsService {
     }
     const row = await this.prisma.$transaction(async (tx) => {
       await tx.club_private_package_branches.deleteMany({ where: { package_id: id } });
+      await tx.club_private_package_session_prices.deleteMany({ where: { package_id: id } });
       return tx.club_private_packages.update({
         where: { id },
         data: {
@@ -156,8 +201,14 @@ export class PrivateSubscriptionsService {
           duration_days: data.duration_days,
           sessions_count: data.sessions_count,
           branches: { create: data.branchIds.map((branch_id) => ({ branch_id })) },
+          session_prices: {
+            create: data.sessionPrices.map((price) => ({
+              sessions_count: price.sessionsCount,
+              price: price.price,
+            })),
+          },
         },
-        include: { branches: true },
+        include: { branches: true, session_prices: true },
       });
     });
     return this.mapPackage(row);
@@ -181,7 +232,7 @@ export class PrivateSubscriptionsService {
       }),
       this.prisma.club_private_packages.findFirst({
         where: { id: body.packageId, is_active: true },
-        include: { branches: true },
+        include: { branches: true, session_prices: true },
       }),
       this.prisma.club_trainers.findFirst({
         where: { id: body.trainerId, is_active: true, is_deleted: false },
@@ -203,8 +254,27 @@ export class PrivateSubscriptionsService {
     if (body.registrationDate) {
       this.assertValidDate(body.registrationDate, 'تاريخ التسجيل');
     }
-    const endDate = addDays(startDate, packageRow.duration_days);
+    const endDate = addDays(startDate, Math.max(1, packageRow.duration_days) - 1);
     const discountValue = body.discountValue ?? 0;
+
+    // A session package may be sold for fewer sessions than its maximum; the stored matrix
+    // (or the proportional default) decides what those sessions cost.
+    const isSessions = packageRow.kind === 'sessions';
+    const maxSessions = Math.max(1, packageRow.sessions_count ?? 0);
+    const sessionsCount = isSessions
+      ? Math.min(Math.max(1, Math.floor(body.sessionsCount ?? maxSessions)), maxSessions)
+      : null;
+    const subscriptionValue = isSessions
+      ? resolveSessionMatrixPrice({
+          packagePrice: toNum(packageRow.price),
+          maxSessions,
+          selectedSessions: sessionsCount ?? maxSessions,
+          matrix: (packageRow.session_prices ?? []).map((row) => ({
+            sessionsCount: row.sessions_count,
+            price: toNum(row.price),
+          })),
+        })
+      : toNum(packageRow.price);
 
     const created = await this.subscriptions.create({
       branchId,
@@ -213,23 +283,23 @@ export class PrivateSubscriptionsService {
       privatePackageId: packageRow.id,
       privateTrainerId: trainer.id,
       privateDiscountType: body.discountType,
+      notes: body.notes,
       subscriptionType: packageRow.name,
       subscriptionStartDate: startDate,
       subscriptionEndDate: endDate,
       registrationDate: body.registrationDate,
-      subscriptionValue: toNum(packageRow.price),
+      subscriptionValue,
       discountEnabled: discountValue > 0,
       discountValue,
       paidAmount: body.paidAmount,
-      receiptNumber: body.receiptNumber,
       gender: body.gender ?? (member.gender as ClubGender),
       paymentMethod: body.paymentMethod,
       payments: body.payments,
       isSpecial: true,
-      isLinkedToSessions: packageRow.kind === 'sessions',
-      sessionsCount: packageRow.sessions_count ?? undefined,
+      isLinkedToSessions: isSessions,
+      sessionsCount: sessionsCount ?? undefined,
       allowMultipleDailyEntries: true,
-    }, user.sub, { privateEnrollment: true });
+    }, user, { privateEnrollment: true });
     return this.findEnrollment(Number(created.id), user);
   }
 

@@ -1,4 +1,4 @@
-import { AmExerciseDifficulty, AmInvitationStatus, AmNewsType } from '@prisma/client';
+import { AmExerciseDifficulty, AmInvitationStatus } from '@prisma/client';
 import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -10,6 +10,7 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  MinLength,
   Min,
 } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
@@ -29,6 +30,22 @@ export class ListAppItemsDto extends PaginationDto {
   @Transform(({ value }) => (value != null && value !== '' ? parseInt(value, 10) : undefined))
   @IsInt()
   categoryId?: number;
+}
+
+export const PAYMENT_METHOD_PROVIDERS = [
+  'vodafone_cash', 'instapay', 'etisalat_cash', 'orange_cash', 'we_pay', 'bank_transfer', 'other',
+] as const;
+
+export class UpsertPaymentMethodDto {
+  @IsIn(PAYMENT_METHOD_PROVIDERS as unknown as string[], { message: 'وسيلة الدفع غير مدعومة' })
+  provider!: string;
+
+  @IsString() @MinLength(1) @MaxLength(120) label!: string;
+  @IsString() @MinLength(1) @MaxLength(160) value!: string;
+  @IsOptional() @IsString() instructions?: string;
+  @IsOptional() @Transform(({ value }) => value != null && value !== '' ? parseInt(value, 10) : undefined) @IsInt() @Min(1) branchId?: number;
+  @IsOptional() @Transform(({ value }) => value != null && value !== '' ? parseInt(value, 10) : undefined) @IsInt() @Min(0) sortOrder?: number;
+  @IsOptional() @Transform(({ value }) => value === true || value === 'true') @IsBoolean() isActive?: boolean;
 }
 
 export class ListInvitationsDto extends PaginationDto {
@@ -137,7 +154,6 @@ export class UpsertExerciseDto {
 export class UpsertNewsDto {
   @IsString() title!: string;
   @IsString() content!: string;
-  @IsEnum(AmNewsType) newsType!: AmNewsType;
   @IsOptional() @IsString() publishDate?: string;
   @IsOptional() @IsString() imageUrl?: string;
   @IsOptional() @Transform(({ value }) => value === true || value === 'true')
@@ -192,6 +208,11 @@ export class CreateMemberNotificationDto {
   @IsOptional() @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   broadcast?: boolean;
+
+  /** When broadcasting, only members who have a mobile app account. */
+  @IsOptional() @Transform(({ value }) => value === true || value === 'true')
+  @IsBoolean()
+  appUsersOnly?: boolean;
 
   @IsOptional() @Transform(({ value }) => (value != null && value !== '' ? parseInt(value, 10) : undefined))
   @IsInt()

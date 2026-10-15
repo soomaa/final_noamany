@@ -1,14 +1,20 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { AmInvitationStatus, AmNewsType, Prisma } from '@prisma/client';
+import { AmInvitationStatus, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertDateOrder } from '../../common/validators/validation.util';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
+import { InvitationPhonePolicyService } from '../../common/invitations/invitation-phone-policy.service';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
+import { ClubLeadsService } from '../club-sales/club-leads.service';
+import { uploadReferenceUrl } from '../../common/uploads/upload-reference-url';
 import {
   CreateInvitationDto,
   CreateMemberNotificationDto,
@@ -23,24 +29,17 @@ import {
   UpsertNewsDto,
   UpsertOfferDto,
   UpsertTrainerDto,
+  UpsertPaymentMethodDto,
 } from './dto/app-management.dto';
-
-/** Prefix a stored relative upload path with the public /uploads base so the mobile app can load it. */
-function uploadUrl(base: string, path: string | null | undefined): string | null {
-  if (!path?.trim()) return null;
-  const trimmed = path.trim();
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) return trimmed;
-  const prefix = base.endsWith('/') ? base.slice(0, -1) : base;
-  if (trimmed === prefix || trimmed.startsWith(`${prefix}/`)) return trimmed;
-  const rel = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-  return `${prefix}${rel}`;
-}
 
 @Injectable()
 export class AppManagementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly invitationPhones: InvitationPhonePolicyService,
+    private readonly branchScope: BranchScopeService,
+    private readonly leads: ClubLeadsService,
   ) {}
 
   private publicBase(): string {
@@ -49,12 +48,79 @@ export class AppManagementService {
 
   /** Build a servable image URL from a stored relative path (bare /uploads paths 404 on the app). */
   private imgUrl(path: string | null | undefined): string | null {
-    return uploadUrl(this.publicBase(), path);
+    return uploadReferenceUrl(this.publicBase(), path);
   }
 
   private decimal(v: Prisma.Decimal | null | undefined): number | null {
     if (v == null) return null;
     return Number(v);
+  }
+
+  async listPaymentMethodsForMember(branchId?: number) {
+    const order: Prisma.am_payment_methodsOrderByWithRelationInput[] = [{ sort_order: 'asc' }, { id: 'asc' }];
+    if (branchId != null) {
+      const branchRows = await this.prisma.am_payment_methods.findMany({ where: { is_active: true, branch_id: branchId }, orderBy: order });
+      if (branchRows.length) return branchRows.map((row) => this.mapPaymentMethod(row));
+    }
+    const globalRows = await this.prisma.am_payment_methods.findMany({ where: { is_active: true, branch_id: null }, orderBy: order });
+    return globalRows.map((row) => this.mapPaymentMethod(row));
+  }
+
+  async listPaymentMethodsForAdmin(user: JwtUser) {
+    const allowed = this.branchScope.allowedBranchIds(user);
+    const rows = await this.prisma.am_payment_methods.findMany({
+      where: allowed === null ? undefined : { OR: [{ branch_id: null }, { branch_id: { in: allowed } }] },
+      orderBy: [{ branch_id: 'asc' }, { sort_order: 'asc' }, { id: 'asc' }],
+    });
+    const branchIds = [...new Set(rows.flatMap((row) => row.branch_id == null ? [] : [row.branch_id]))];
+    const branches = branchIds.length ? await this.prisma.tbl_branches.findMany({ where: { branch_id: { in: branchIds } } }) : [];
+    const names = new Map(branches.map((branch) => [branch.branch_id, branch.branch_name]));
+    return rows.map((row) => ({ ...this.mapPaymentMethod(row), isActive: row.is_active, branchId: row.branch_id, branchName: row.branch_id == null ? null : names.get(row.branch_id) ?? null }));
+  }
+
+  async createPaymentMethod(dto: UpsertPaymentMethodDto, user: JwtUser) {
+    this.assertPaymentMethodBranch(dto.branchId, user);
+    const row = await this.prisma.am_payment_methods.create({ data: {
+      provider: dto.provider, label: dto.label.trim(), value: dto.value.trim(),
+      instructions: dto.instructions?.trim() || null, branch_id: dto.branchId ?? null,
+      sort_order: dto.sortOrder ?? 0, is_active: dto.isActive ?? true,
+    } });
+    return this.mapPaymentMethod(row);
+  }
+
+  async updatePaymentMethod(id: number, dto: UpsertPaymentMethodDto, user: JwtUser) {
+    const existing = await this.requirePaymentMethod(id);
+    this.assertPaymentMethodBranch(existing.branch_id, user);
+    this.assertPaymentMethodBranch(dto.branchId, user);
+    const row = await this.prisma.am_payment_methods.update({ where: { id }, data: {
+      provider: dto.provider, label: dto.label.trim(), value: dto.value.trim(),
+      instructions: dto.instructions?.trim() || null, branch_id: dto.branchId ?? null,
+      sort_order: dto.sortOrder, is_active: dto.isActive,
+    } });
+    return this.mapPaymentMethod(row);
+  }
+
+  async deletePaymentMethod(id: number, user: JwtUser) {
+    const existing = await this.requirePaymentMethod(id);
+    this.assertPaymentMethodBranch(existing.branch_id, user);
+    await this.prisma.am_payment_methods.delete({ where: { id } });
+    return { ok: true };
+  }
+
+  private async requirePaymentMethod(id: number) {
+    const row = await this.prisma.am_payment_methods.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException('وسيلة الدفع غير موجودة');
+    return row;
+  }
+
+  private assertPaymentMethodBranch(branchId: number | null | undefined, user: JwtUser) {
+    if (user.level === 1) return;
+    if (branchId == null) throw new ForbiddenException('إدارة وسيلة دفع متاحة لكل الفروع مسموحة لمدير النظام فقط');
+    if (!this.branchScope.isBranchAllowed(user, branchId)) throw new ForbiddenException('لا تملك صلاحية إدارة وسيلة دفع لفرع آخر');
+  }
+
+  private mapPaymentMethod(row: { id: number; provider: string; label: string; value: string; instructions: string | null; sort_order: number }) {
+    return { id: row.id, provider: row.provider, label: row.label, value: row.value, instructions: row.instructions, sortOrder: row.sort_order };
   }
 
   private async branchName(branchId: number | null | undefined) {
@@ -67,7 +133,7 @@ export class AppManagementService {
 
   async getAbout() {
     let row = await this.prisma.am_about_app.findFirst();
-    if (!row) row = await this.prisma.am_about_app.create({ data: { app_name: 'Swat Gym' } });
+    if (!row) row = await this.prisma.am_about_app.create({ data: { app_name: 'ONE80' } });
     return this.mapAbout(row);
   }
 
@@ -86,7 +152,7 @@ export class AppManagementService {
     };
     if (!row) {
       row = await this.prisma.am_about_app.create({
-        data: { ...data, app_name: dto.appName ?? 'Swat Gym' },
+        data: { ...data, app_name: dto.appName ?? 'ONE80' },
       });
     } else {
       row = await this.prisma.am_about_app.update({ where: { id: row.id }, data });
@@ -148,7 +214,8 @@ export class AppManagementService {
         orderBy: { created_at: 'desc' },
       }),
     ]);
-    const data = await Promise.all(rows.map((r) => this.mapInvitation(r)));
+    const leadByInvitation = await this.leadsByInvitation(rows.map((r) => r.id));
+    const data = await Promise.all(rows.map((r) => this.mapInvitation(r, leadByInvitation)));
     return paginated(data, total, q.page, q.pageSize);
   }
 
@@ -157,88 +224,244 @@ export class AppManagementService {
       where: { status },
       orderBy: { created_at: 'desc' },
     });
-    return Promise.all(rows.map((r) => this.mapInvitation(r)));
+    const leadByInvitation = await this.leadsByInvitation(rows.map((r) => r.id));
+    return Promise.all(rows.map((r) => this.mapInvitation(r, leadByInvitation)));
   }
 
-  async createInvitation(dto: CreateInvitationDto) {
+  async invitationStatus(id: number) {
+    const invitation = await this.prisma.am_invitations.findUnique({
+      where: { id },
+      select: { status: true },
+    });
+    if (!invitation) throw new NotFoundException('الدعوة غير موجودة');
+    return invitation.status;
+  }
+
+  /**
+   * Issues a guest invitation and captures the guest as a sales lead in the same
+   * transaction. `actor` is the staff member on the admin path and undefined when the
+   * invitation comes from the member app, where nobody on staff triggered it.
+   */
+  async createInvitation(dto: CreateInvitationDto, actor?: JwtUser) {
     if (!dto.recipientEmail?.trim() && !dto.recipientPhone?.trim()) {
       throw new BadRequestException('البريد الإلكتروني أو رقم الجوال مطلوب');
     }
+    const phoneClaim = dto.recipientPhone?.trim()
+      ? await this.invitationPhones.prepare(dto.recipientPhone)
+      : null;
     const manual = dto.invitationCode?.trim();
+    const branchId = dto.branchId ?? null;
     // invitation_code is @unique — auto-generated codes retry on collision (recomputing
-    // the next code each attempt) so two concurrent invites can't clash.
+    // the next code each attempt) so two concurrent invites can't clash. The lead is
+    // written inside the same transaction so a failed invitation never leaves one behind.
     const row = await retryOnUniqueViolation(async () => {
       let code = manual;
       if (!code) {
         const last = await this.prisma.am_invitations.findFirst({ orderBy: { id: 'desc' } });
         code = `INV${String((last?.id ?? 0) + 1).padStart(6, '0')}`;
       }
-      return this.prisma.am_invitations.create({
-        data: {
-          invitation_code: code,
-          recipient_name: dto.recipientName,
-          recipient_email: dto.recipientEmail?.trim() || null,
-          recipient_phone: dto.recipientPhone?.trim() || null,
-          inviter_member_id: dto.inviterMemberId ?? null,
-          status: dto.status ?? 'pending',
-          branch_id: dto.branchId ?? null,
-        },
-      });
+      try {
+        return await this.prisma.$transaction(async (tx) => {
+          const subscriptionId = dto.inviterMemberId
+            ? await this.claimInvitationSlot(tx, dto.inviterMemberId)
+            : null;
+          const created = await tx.am_invitations.create({
+            data: {
+              invitation_code: code!,
+              recipient_name: dto.recipientName.trim(),
+              recipient_email: dto.recipientEmail?.trim() || null,
+              recipient_phone: phoneClaim?.phone ?? null,
+              recipient_phone_unique_key: phoneClaim?.uniqueKey ?? null,
+              inviter_member_id: dto.inviterMemberId ?? null,
+              subscription_id: subscriptionId,
+              status: dto.status ?? 'pending',
+              branch_id: branchId,
+            },
+          });
+          await this.captureInvitationLead(tx, created, actor);
+          return created;
+        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      } catch (error) {
+        if (this.invitationPhones.isPhoneUniqueViolation(error)) {
+          throw this.invitationPhones.duplicateError();
+        }
+        throw error;
+      }
     });
-    return this.mapInvitation(row);
+    return this.mapInvitation(row, await this.leadsByInvitation([row.id]));
   }
 
-  async updateInvitation(id: number, dto: UpdateInvitationDto, actorUserId?: number) {
+  /**
+   * Picks the member's active subscription that still has an unused invitation from its
+   * package allowance, and fails when the package includes none or they are all spent.
+   * Runs inside the caller's serializable transaction so two concurrent invitations
+   * cannot both claim the last slot.
+   */
+  private async claimInvitationSlot(
+    tx: Prisma.TransactionClient,
+    memberId: number,
+  ): Promise<number | null> {
+    const subscriptions = await tx.club_subscriptions.findMany({
+      where: { member_id: memberId, status: 'active' },
+      select: { id: true, type: { select: { invitations_count: true } } },
+      orderBy: { id: 'desc' },
+    });
+    const withAllowance = subscriptions
+      .map((row) => ({ id: row.id, allowed: Number(row.type?.invitations_count) || 0 }))
+      .filter((row) => row.allowed > 0);
+    if (!withAllowance.length) {
+      throw new BadRequestException('باقة العضو الحالية لا تتضمن دعوات');
+    }
+    const subscriptionIds = withAllowance.map((row) => row.id);
+    const [memberAppUsedRows, receptionUsedRows] = await Promise.all([
+      tx.am_invitations.groupBy({
+        by: ['subscription_id'],
+        where: { subscription_id: { in: subscriptionIds } },
+        _count: { _all: true },
+      }),
+      tx.club_guest_invitations.groupBy({
+        by: ['subscription_id'],
+        where: { subscription_id: { in: subscriptionIds } },
+        _count: { _all: true },
+      }),
+    ]);
+    const usedById = new Map<number, number>();
+    for (const row of [...memberAppUsedRows, ...receptionUsedRows]) {
+      if (row.subscription_id == null) continue;
+      usedById.set(row.subscription_id, (usedById.get(row.subscription_id) ?? 0) + row._count._all);
+    }
+    const available = withAllowance.find((row) => (usedById.get(row.id) ?? 0) < row.allowed);
+    if (!available) {
+      throw new BadRequestException('لا توجد دعوات متبقية في اشتراك العضو');
+    }
+    return available.id;
+  }
+
+  /**
+   * Turns the invited guest into a sales lead so reception can follow them up. Skipped
+   * when the invitation carries no phone or no branch, because a lead cannot exist
+   * without either — an email-only invitation stays a plain invitation.
+   */
+  private async captureInvitationLead(
+    tx: Prisma.TransactionClient,
+    invitation: {
+      id: number;
+      recipient_name: string;
+      recipient_phone: string | null;
+      inviter_member_id: number | null;
+      branch_id: number | null;
+    },
+    actor?: JwtUser,
+  ) {
+    const phone = invitation.recipient_phone?.trim();
+    if (!phone || invitation.branch_id == null) return;
+    const inviter = invitation.inviter_member_id
+      ? await tx.club_members.findFirst({
+          where: { id: invitation.inviter_member_id, is_deleted: false },
+          select: { name: true, member_code: true },
+        })
+      : null;
+    const notes = inviter
+      ? `دعوة من العضو ${inviter.name} (${inviter.member_code})`
+      : 'دعوة ضيف من إدارة التطبيق';
+    await this.leads.create(
+      {
+        fullName: invitation.recipient_name,
+        phone,
+        source: 'member_invitation',
+        notes,
+        branchId: invitation.branch_id,
+        assignmentMode: 'automatic',
+      },
+      // A member-app invitation has no staff actor; the lead is system-created and is
+      // distributed by the branch round-robin like any unowned lead.
+      actor && this.branchScope.isBranchAllowed(actor, invitation.branch_id) ? actor : undefined,
+      { invitationId: invitation.id, prisma: tx },
+    );
+  }
+
+  /** Follow-up state of the leads captured from the given invitations, keyed by invitation id. */
+  private async leadsByInvitation(invitationIds: number[]) {
+    if (!invitationIds.length) return new Map<number, { id: number; status: string }>();
+    const rows = await this.prisma.club_sales_crm_leads.findMany({
+      where: { invitation_id: { in: invitationIds } },
+      select: { id: true, status: true, invitation_id: true },
+      orderBy: { id: 'desc' },
+    });
+    const byInvitation = new Map<number, { id: number; status: string }>();
+    for (const row of rows) {
+      if (row.invitation_id != null && !byInvitation.has(row.invitation_id)) {
+        byInvitation.set(row.invitation_id, { id: row.id, status: row.status });
+      }
+    }
+    return byInvitation;
+  }
+
+  async updateInvitation(id: number, dto: UpdateInvitationDto) {
     const existing = await this.prisma.am_invitations.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الدعوة غير موجودة');
 
+    const phoneClaim = dto.recipientPhone !== undefined
+      ? dto.recipientPhone.trim()
+        ? await this.invitationPhones.prepare(dto.recipientPhone, id)
+        : null
+      : undefined;
     const data: Prisma.am_invitationsUpdateInput = {
       recipient_name: dto.recipientName,
       recipient_email: dto.recipientEmail,
-      recipient_phone: dto.recipientPhone,
+      ...(phoneClaim !== undefined
+        ? {
+            recipient_phone: phoneClaim?.phone ?? null,
+            recipient_phone_unique_key: phoneClaim?.uniqueKey ?? null,
+          }
+        : {}),
       status: dto.status,
       rejection_reason: dto.rejectionReason,
       branch_id: dto.branchId,
     };
     if (dto.status === 'accepted' && existing.status !== 'accepted') {
       data.accepted_date = new Date();
-      data.accepted_by_user_id = actorUserId ?? null;
     }
     if (dto.status === 'rejected' && existing.status !== 'rejected') {
       data.rejected_date = new Date();
-      data.rejected_by_user_id = actorUserId ?? null;
     }
     if (dto.status === 'attended' && existing.status !== 'attended') {
       data.attendance_date = new Date();
     }
 
-    const row = await this.prisma.am_invitations.update({ where: { id }, data });
-    return this.mapInvitation(row);
+    let row;
+    try {
+      row = await this.prisma.am_invitations.update({ where: { id }, data });
+    } catch (error) {
+      if (this.invitationPhones.isPhoneUniqueViolation(error)) {
+        throw this.invitationPhones.duplicateError();
+      }
+      throw error;
+    }
+    return this.mapInvitation(row, await this.leadsByInvitation([row.id]));
   }
 
-  private async mapInvitation(row: {
-    id: number;
-    invitation_code: string;
-    recipient_name: string;
-    recipient_email: string | null;
-    recipient_phone: string | null;
-    inviter_member_id: number | null;
-    sent_date: Date;
-    status: AmInvitationStatus;
-    accepted_date: Date | null;
-    rejected_date: Date | null;
-    accepted_by_user_id: number | null;
-    rejected_by_user_id: number | null;
-    rejection_reason: string | null;
-    attendance_date: Date | null;
-    branch_id: number | null;
-    created_at: Date;
-  }) {
-    const actorIds = [row.accepted_by_user_id, row.rejected_by_user_id].filter((id): id is number => id != null);
-    const actors = actorIds.length
-      ? await this.prisma.users.findMany({ where: { user_id: { in: actorIds } }, select: { user_id: true, name: true, username: true } })
-      : [];
-    const actorName = new Map(actors.map((actor) => [actor.user_id, actor.name || actor.username || `#${actor.user_id}`]));
+  private async mapInvitation(
+    row: {
+      id: number;
+      invitation_code: string;
+      recipient_name: string;
+      recipient_email: string | null;
+      recipient_phone: string | null;
+      inviter_member_id: number | null;
+      subscription_id?: number | null;
+      sent_date: Date;
+      status: AmInvitationStatus;
+      accepted_date: Date | null;
+      rejected_date: Date | null;
+      rejection_reason: string | null;
+      attendance_date: Date | null;
+      branch_id: number | null;
+      created_at: Date;
+    },
+    leadByInvitation?: Map<number, { id: number; status: string }>,
+  ) {
+    const lead = leadByInvitation?.get(row.id) ?? null;
     return {
       id: row.id,
       invitationCode: row.invitation_code,
@@ -246,18 +469,17 @@ export class AppManagementService {
       recipientEmail: row.recipient_email,
       recipientPhone: row.recipient_phone,
       inviterMemberId: row.inviter_member_id,
+      subscriptionId: row.subscription_id ?? null,
       sentDate: row.sent_date,
       status: row.status,
       acceptedDate: row.accepted_date,
       rejectedDate: row.rejected_date,
-      acceptedByUserId: row.accepted_by_user_id,
-      rejectedByUserId: row.rejected_by_user_id,
-      acceptedByName: row.accepted_by_user_id != null ? actorName.get(row.accepted_by_user_id) ?? null : null,
-      rejectedByName: row.rejected_by_user_id != null ? actorName.get(row.rejected_by_user_id) ?? null : null,
       rejectionReason: row.rejection_reason,
       attendanceDate: row.attendance_date,
       branchId: row.branch_id,
       branchName: await this.branchName(row.branch_id),
+      leadId: lead?.id ?? null,
+      leadStatus: lead?.status ?? null,
       createdAt: row.created_at,
     };
   }
@@ -668,7 +890,6 @@ export class AppManagementService {
       data: {
         title: dto.title,
         content: dto.content,
-        news_type: dto.newsType,
         publish_date: dto.publishDate,
         image_url: dto.imageUrl,
         is_published: dto.isPublished,
@@ -684,11 +905,10 @@ export class AppManagementService {
   }
 
   private newsData(dto: Partial<UpsertNewsDto>): Prisma.am_newsCreateInput {
-    if (!dto.title || !dto.content || !dto.newsType) throw new BadRequestException('العنوان والمحتوى ونوع الخبر مطلوبان');
+    if (!dto.title || !dto.content) throw new BadRequestException('العنوان والمحتوى مطلوبان');
     return {
       title: dto.title,
       content: dto.content,
-      news_type: dto.newsType,
       publish_date: dto.publishDate,
       image_url: dto.imageUrl,
       is_published: dto.isPublished ?? false,
@@ -699,7 +919,6 @@ export class AppManagementService {
     id: number;
     title: string;
     content: string;
-    news_type: AmNewsType;
     publish_date: string | null;
     image_url: string | null;
     is_published: boolean;
@@ -709,7 +928,6 @@ export class AppManagementService {
       id: row.id,
       title: row.title,
       content: row.content,
-      newsType: row.news_type,
       publishDate: row.publish_date,
       imageUrl: this.imgUrl(row.image_url),
       isPublished: row.is_published,
@@ -815,10 +1033,11 @@ export class AppManagementService {
 
   // ── Member notifications (اشعارات الأعضاء) ───────────────────────────────────
 
-  async listMemberNotifications(q: ListMemberNotificationsDto) {
+  async listMemberNotifications(q: ListMemberNotificationsDto, user?: JwtUser) {
     const where: Prisma.am_member_notificationsWhereInput = {};
     if (q.memberId != null) where.member_id = q.memberId;
-    if (q.branchId != null) where.branch_id = q.branchId;
+    const branchIds = this.branchScope.resolveListFilter(user, q.branchId);
+    if (branchIds !== null) where.branch_id = { in: branchIds };
     if (q.type?.trim()) where.type = q.type.trim();
 
     const [total, rows] = await this.prisma.$transaction([
@@ -838,7 +1057,7 @@ export class AppManagementService {
    * (`broadcast: true`, optionally scoped to `branchId`). Broadcasts fan out to one row
    * per recipient so read state stays per-member.
    */
-  async createMemberNotification(dto: CreateMemberNotificationDto, createdBy?: number) {
+  async createMemberNotification(dto: CreateMemberNotificationDto, createdBy?: number, user?: JwtUser) {
     if (!dto.title?.trim() || !dto.body?.trim()) {
       throw new BadRequestException('العنوان والنص مطلوبان');
     }
@@ -857,18 +1076,34 @@ export class AppManagementService {
         select: { id: true, branch_id: true },
       });
       if (!member) throw new NotFoundException('العضو غير موجود');
+      if (dto.branchId != null && dto.branchId !== member.branch_id) {
+        throw new BadRequestException('الفرع المحدد لا يطابق فرع العضو');
+      }
+      if (user && (member.branch_id == null || !this.branchScope.isBranchAllowed(user, member.branch_id))) {
+        throw new ForbiddenException('لا تملك صلاحية إرسال إشعار لعضو في فرع آخر');
+      }
       const row = await this.prisma.am_member_notifications.create({
-        data: { ...base, member_id: member.id, branch_id: dto.branchId ?? member.branch_id },
+        data: { ...base, member_id: member.id, branch_id: member.branch_id },
       });
       return { sent: 1, notification: this.mapMemberNotification(row) };
     }
 
     if (dto.broadcast) {
+      if (user && dto.branchId != null && !this.branchScope.isBranchAllowed(user, dto.branchId)) {
+        throw new ForbiddenException('لا تملك صلاحية إرسال إشعار لفرع آخر');
+      }
+      const allowedBranchIds = this.branchScope.allowedBranchIds(user);
+      const branchFilter = dto.branchId != null
+        ? dto.branchId
+        : allowedBranchIds !== null
+          ? { in: allowedBranchIds }
+          : undefined;
       const members = await this.prisma.club_members.findMany({
         where: {
           is_deleted: false,
           is_active: true,
-          ...(dto.branchId != null ? { branch_id: dto.branchId } : {}),
+          ...(dto.appUsersOnly ? { app_user_id: { not: null } } : {}),
+          ...(branchFilter !== undefined ? { branch_id: branchFilter } : {}),
         },
         select: { id: true, branch_id: true },
       });

@@ -28,22 +28,31 @@ import type { WarehouseOption } from '@/types/gym-sales';
 import type { InventoryTransactionRow, ProductListItem } from '@/types/inventory';
 import { useLocale } from '@/store/locale';
 import { indexColumn } from './simple-crud-tab';
+import { uiStatic } from '@/lib/ui-static';
 
 interface LineDraft {
   productId: string;
   itemName: string;
   quantity: string;
-  price: string;
+  unit: string;
+  costPrice: number;
 }
+
+const transactionTypeLabel = (type: string) => ({
+  issue: uiStatic('استهلاك / صرف مباشر'),
+  damage: uiStatic('هالك أو فاقد'),
+  transfer: uiStatic('تحويل بين المخازن'),
+}[type] ?? type);
 
 const TXN_EMPTY = {
   reference: '',
-  txnType: 'receipt',
+  txnType: 'damage',
   txnDate: '',
   branchId: '',
   sourceWarehouseId: '',
   targetWarehouseId: '',
   notes: '',
+  reason: '',
 };
 
 export function TransactionsTab() {
@@ -85,7 +94,7 @@ export function TransactionsTab() {
 
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(TXN_EMPTY);
-  const [lines, setLines] = useState<LineDraft[]>([{ productId: '', itemName: '', quantity: '1', price: '0' }]);
+  const [lines, setLines] = useState<LineDraft[]>([{ productId: '', itemName: '', quantity: '1', unit: '', costPrice: 0 }]);
   const [saving, setSaving] = useState(false);
   // Tracks the transaction id being approved/rejected so the row action can't be double-clicked.
   const [actingId, setActingId] = useState<number | null>(null);
@@ -135,7 +144,7 @@ export function TransactionsTab() {
     () => [
       indexColumn(params.page, params.pageSize) as ColumnDef<InventoryTransactionRow>,
       { accessorKey: 'reference', header: ui('المرجع') },
-      { accessorKey: 'txnType', header: ui('النوع') },
+      { accessorKey: 'txnType', header: ui('النوع'), cell: ({ getValue }) => ui(transactionTypeLabel(getValue() as string)) },
       {
         accessorKey: 'status',
         header: ui('الحالة'),
@@ -184,8 +193,12 @@ export function TransactionsTab() {
 
   const save = async () => {
     const validLines = lines.filter((l) => l.itemName && Number(l.quantity) > 0);
-    if (!form.reference || !form.branchId || !validLines.length) {
+    if (!form.reference || !form.txnDate || !form.branchId || !validLines.length) {
       toast.error(ui('يرجى تعبئة المرجع والفرع وبند واحد على الأقل'));
+      return;
+    }
+    if ((form.txnType === 'damage' || form.txnType === 'issue') && !form.reason.trim()) {
+      toast.error(ui('اكتب سبب الهالك أو الاستهلاك المباشر لتوثيق فرق المخزون'));
       return;
     }
     if (form.txnType === 'transfer') {
@@ -208,13 +221,12 @@ export function TransactionsTab() {
         sourceWarehouseId: form.sourceWarehouseId ? Number(form.sourceWarehouseId) : undefined,
         targetWarehouseId: form.targetWarehouseId ? Number(form.targetWarehouseId) : undefined,
         notes: form.notes || undefined,
+        reason: form.reason.trim() || undefined,
         items: validLines.map((l) => ({
           productId: l.productId ? Number(l.productId) : undefined,
           itemName: l.itemName,
           quantity: Number(l.quantity),
-          price: Number(l.price) || 0,
-          // Round to 2 decimals to avoid binary-float artifacts (e.g. 3 * 0.1 = 0.30000000000000004).
-          total: Math.round(Number(l.quantity) * (Number(l.price) || 0) * 100) / 100,
+          unit: l.unit || undefined,
         })),
       });
       toast.success(ui('تم إنشاء الحركة (مسودة)'));
@@ -242,7 +254,7 @@ export function TransactionsTab() {
               branchId: String(branches?.[0]?.id ?? ''),
               sourceWarehouseId: String(warehouses?.[0]?.id ?? ''),
             });
-            setLines([{ productId: '', itemName: '', quantity: '1', price: '0' }]);
+            setLines([{ productId: '', itemName: '', quantity: '1', unit: '', costPrice: 0 }]);
             setOpen(true);
           }}
         >
@@ -252,6 +264,7 @@ export function TransactionsTab() {
       }
     >
       <DataTable
+        exportSource={{ resource: 'inventory-transactions', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -267,8 +280,11 @@ export function TransactionsTab() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent size="xl" className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{ui('حركة مخزنية جديدة')}</DialogTitle>
+            <DialogTitle>{ui('تسجيل استهلاك أو هالك مخزني')}</DialogTitle>
           </DialogHeader>
+          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/20 dark:text-amber-100">
+            {ui('استخدم «استهلاك مباشر» للخامات التي استُخدمت يدويًا، و«هالك» للفاقد أو التلف. بعد الاعتماد يُخصم الرصيد وتُسجل التكلفة والمصروف تلقائيًا.')}
+          </div>
           <div className="grid gap-3 py-2">
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
@@ -292,9 +308,9 @@ export function TransactionsTab() {
                   value={form.txnType}
                   onChange={(e) => setForm((f) => ({ ...f, txnType: e.target.value }))}
                 >
-                  {(txnTypes ?? ['receipt', 'issue', 'transfer']).map((t) => (
+                  {(txnTypes ?? ['issue', 'damage', 'transfer']).map((t) => (
                     <option key={t} value={t}>
-                      {t}
+                      {ui(transactionTypeLabel(t))}
                     </option>
                   ))}
                 </select>
@@ -314,6 +330,12 @@ export function TransactionsTab() {
                 </select>
               </div>
             </div>
+            {(form.txnType === 'damage' || form.txnType === 'issue') ? (
+              <div className="grid gap-1">
+                <Label>{ui('سبب الحركة')}</Label>
+                <Input value={form.reason} onChange={(e) => setForm((f) => ({ ...f, reason: e.target.value }))} placeholder={ui('مثال: استهلاك يدوي قبل تشغيل ربط المخزون / عبوة تالفة')} />
+              </div>
+            ) : null}
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
                 <Label>{ui('مستودع المصدر')}</Label>
@@ -350,9 +372,9 @@ export function TransactionsTab() {
             <div className="space-y-2">
               <Label>{ui('البنود')}</Label>
               {lines.map((line, idx) => (
-                <div key={idx} className="grid grid-cols-4 gap-2">
+                <div key={idx} className="grid gap-2 sm:grid-cols-[minmax(220px,2fr)_120px_110px]">
                   <select
-                    className="col-span-2 rounded-md border bg-background px-2 py-2 text-sm"
+                    className="rounded-md border bg-background px-2 py-2 text-sm"
                     value={line.productId}
                     onChange={(e) => {
                       const p = products?.find((x) => x.id === Number(e.target.value));
@@ -362,7 +384,8 @@ export function TransactionsTab() {
                           ...next[idx],
                           productId: e.target.value,
                           itemName: p ? `${p.nameAr}${p.size ? ` — ${p.size}` : ''}` : '',
-                          price: String(p?.costPrice ?? 0),
+                          unit: p?.unitOfMeasure ?? '',
+                          costPrice: p?.costPrice ?? 0,
                         };
                         return next;
                       });
@@ -388,19 +411,9 @@ export function TransactionsTab() {
                       });
                     }}
                   />
-                  <Input
-                    type="number"
-                    placeholder={ui('سعر')}
-                    className="nums"
-                    value={line.price}
-                    onChange={(e) => {
-                      setLines((prev) => {
-                        const next = [...prev];
-                        next[idx] = { ...next[idx], price: e.target.value };
-                        return next;
-                      });
-                    }}
-                  />
+                  <div className="nums flex items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
+                    {line.unit || ui('الوحدة')} · {toArabicDigits(line.costPrice.toFixed(6))}
+                  </div>
                 </div>
               ))}
               <Button
@@ -408,7 +421,7 @@ export function TransactionsTab() {
                 variant="outline"
                 size="sm"
                 onClick={() =>
-                  setLines((prev) => [...prev, { productId: '', itemName: '', quantity: '1', price: '0' }])
+                  setLines((prev) => [...prev, { productId: '', itemName: '', quantity: '1', unit: '', costPrice: 0 }])
                 }
               >
                 {ui('إضافة بند')}

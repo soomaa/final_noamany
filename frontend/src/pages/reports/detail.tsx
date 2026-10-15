@@ -1,16 +1,15 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Download } from 'lucide-react';
 import { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { DataTable } from '@/components/common/data-table';
+import { DateText } from '@/components/common/formatters';
 import { FilterBar } from '@/components/common/filter-bar';
 import { PageHeader } from '@/components/common/page-header';
 import { NotImplementedState } from '@/components/common/states';
-import { Button } from '@/components/ui/button';
 import { isNotImplemented, usePaginatedList } from '@/lib/api-hooks';
 import { getReportKeys } from '@/lib/i18n-constants';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 interface ReportRow {
@@ -18,19 +17,47 @@ interface ReportRow {
   [key: string]: unknown;
 }
 
-function csvCell(value: unknown) {
-  const text = value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
-  return `"${text.replace(/"/g, '""')}"`;
+function reportHeader(key: string, ui: (s: string) => string): string {
+  const labels: Record<string, string> = {
+    name: ui('الاسم'),
+    value: ui('القيمة'),
+    department: ui('الإدارة'),
+    jobTitle: ui('المسمى الوظيفي'),
+    salary: ui('الراتب'),
+    daysLeft: ui('الأيام المتبقية'),
+    reason: ui('السبب'),
+    checkOut: ui('الانصراف'),
+    lateMin: ui('دقائق التأخير'),
+    date: ui('التاريخ'),
+    workDays: ui('أيام العمل'),
+    basicSalary: ui('الراتب الأساسي'),
+    penalties: ui('الجزاءات'),
+    late: ui('التأخير'),
+    advances: ui('السلف'),
+    housing: ui('بدل السكن'),
+    transport: ui('بدل النقل'),
+    empCode: ui('كود الموظف'),
+    from: ui('من'),
+    to: ui('إلى'),
+    total: ui('الإجمالي'),
+    used: ui('المستخدم'),
+  };
+  return labels[key] ?? ui(key);
 }
 
-function downloadReportCsv(rows: ReportRow[], columns: string[], key: string) {
-  const csv = [columns.map(csvCell).join(','), ...rows.map((row) => columns.map((column) => csvCell(row[column])).join(','))].join('\n');
-  const url = URL.createObjectURL(new Blob(['\uFEFF', csv], { type: 'text/csv;charset=utf-8' }));
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = `${key}-report.csv`;
-  anchor.click();
-  URL.revokeObjectURL(url);
+function isDateKey(key: string): boolean {
+  return /date|from|to/i.test(key) && !/lateMin|workDays|daysLeft/i.test(key);
+}
+
+function renderCell(key: string, value: unknown) {
+  if (value == null || value === '') return '—';
+  if (isDateKey(key) && (typeof value === 'string' || value instanceof Date)) {
+    return <DateText value={value} />;
+  }
+  if (typeof value === 'number' || (typeof value === 'string' && value !== '' && Number.isFinite(Number(value)) && /min|days|salary|value|total|used|late|penalties|advances|housing|transport|code/i.test(key))) {
+    return <span className="nums">{toArabicDigits(value as string | number)}</span>;
+  }
+  return <span className="nums">{String(value)}</span>;
 }
 
 export function ReportDetailPage() {
@@ -45,22 +72,34 @@ export function ReportDetailPage() {
     !!key,
   );
 
-  const exportColumns = useMemo(() => {
+  const columns: ColumnDef<ReportRow>[] = useMemo(() => {
     const rows = data?.data ?? [];
-    return [...new Set(rows.flatMap((row) => Object.keys(row)))].filter((column) => column !== 'id').slice(0, 12);
-  }, [data?.data]);
+    const first = rows[0];
+    const keys = first
+      ? Object.keys(first).filter((k) => k !== 'id')
+      : ['name', 'value'];
+    if (rows.some((row) => row.checkOut != null && row.checkOut !== '') && !keys.includes('checkOut')) {
+      keys.push('checkOut');
+    }
+    if (rows.some((row) => row.lateMin != null && row.lateMin !== '') && !keys.includes('lateMin')) {
+      keys.push('lateMin');
+    }
 
-  const columns: ColumnDef<ReportRow>[] = useMemo(() => [
-    { id: 'serial', header: ui('م'), cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1) },
-    ...exportColumns.map<ColumnDef<ReportRow>>((column) => ({
-      accessorKey: column,
-      header: column.replace(/_/g, ' '),
-      cell: ({ getValue }) => {
-        const value = getValue();
-        return value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+    const dynamic: ColumnDef<ReportRow>[] = keys.map((col) => ({
+      accessorKey: col,
+      header: reportHeader(col, ui),
+      cell: ({ getValue }) => renderCell(col, getValue()),
+    }));
+
+    return [
+      {
+        accessorKey: 'id',
+        header: ui('م'),
+        cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1),
       },
-    })),
-  ], [exportColumns, params.page, params.pageSize, ui]);
+      ...dynamic,
+    ];
+  }, [data?.data, params.page, params.pageSize, ui]);
 
   if (!meta) {
     return <NotImplementedState title={ui('تقرير غير معروف')} />;
@@ -77,17 +116,11 @@ export function ReportDetailPage() {
 
   return (
     <div>
-      <PageHeader
-        title={meta.title}
-        description={ui('تقرير')}
-        actions={
-          <Button variant="outline" disabled={exportColumns.length === 0} onClick={() => downloadReportCsv(data?.data ?? [], exportColumns, key ?? 'report')}>
-            <Download className="me-2 size-4" />
-            {ui('تصدير CSV')}
-          </Button>
-        }
+      <PageHeader title={meta.title} description={ui('تقرير')} />
+      <FilterBar
+        searchPlaceholder={ui('بحث في التقرير…')}
+        fields={[{ key: 'date', label: ui('التاريخ'), type: 'date' }]}
       />
-      <FilterBar searchPlaceholder={ui('بحث في التقرير…')} />
       <DataTable
         columns={columns}
         data={data?.data ?? []}

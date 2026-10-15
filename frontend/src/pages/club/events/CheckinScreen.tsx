@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { clubEventsApi } from '@/lib/api/club-events';
 import { apiError } from '@/lib/api';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 interface EventOption {
   id: number;
@@ -21,6 +22,8 @@ interface EventOption {
  */
 export function CheckinScreen() {
   const { ui, dir } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('club.events.checkin:create');
   const [eventId, setEventId] = useState('');
   const [code, setCode] = useState('');
   const [result, setResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -34,8 +37,9 @@ export function CheckinScreen() {
   const eventOptions: EventOption[] = events?.data ?? [];
 
   const mutation = useMutation({
-    mutationFn: (scannedCode: string) =>
-      clubEventsApi.checkinScan({ code: scannedCode, eventId: Number(eventId) }),
+    mutationFn: (scannedCode: string) => canCreate
+      ? clubEventsApi.checkinScan({ code: scannedCode, eventId: Number(eventId) })
+      : Promise.reject(new Error(ui('غير مصرح'))),
     onSuccess: (data) => {
       setResult({ ok: true, message: `${ui('تم تسجيل الحضور')} — ${data?.registrationNumber ?? ''}` });
       setCode('');
@@ -56,7 +60,7 @@ export function CheckinScreen() {
   }, [result]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && code.trim() && eventId) {
+    if (canCreate && e.key === 'Enter' && code.trim() && eventId) {
       mutation.mutate(code.trim());
     }
   };
@@ -82,7 +86,7 @@ export function CheckinScreen() {
           value={code}
           onChange={e => setCode(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={!eventId || mutation.isPending}
+          disabled={!canCreate || !eventId || mutation.isPending}
           placeholder={ui('امسح الكود...')}
           autoFocus
           className="h-16 text-2xl text-center tracking-widest"

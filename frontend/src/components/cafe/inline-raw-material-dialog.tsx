@@ -115,7 +115,7 @@ export function InlineRawMaterialDialog({ supplierId, disabled, onCreated, creat
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setOpen(false)}>{ui('إلغاء')}</Button>
-            <Button type="button" disabled={saving} onClick={() => void save()}>{saving ? ui('جاري الحفظ…') : ui('حفظ الخامة')}</Button>
+            <Button permissionAction="create" type="button" disabled={saving} onClick={() => void save()}>{saving ? ui('جاري الحفظ…') : ui('حفظ الخامة')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

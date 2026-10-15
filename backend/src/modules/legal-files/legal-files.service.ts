@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { claimActorPrivateFile } from '../uploads/private-file-reference.util';
+import { cairoDateString, cairoTimeString } from '../../common/utils/cairo-date';
 import {
   AckLegalFileDto,
   CreateLegalFileDto,
@@ -18,7 +20,7 @@ export class LegalFilesService {
     const and: Prisma.hr_lawyeh_filesWhereInput[] = [];
     if (q.search?.trim()) {
       const s = q.search.trim();
-      and.push({ OR: [{ title: { contains: s } }, { details: { contains: s } }] });
+      and.push({ OR: [{ title: { contains: s } }] });
     }
 
     const where: Prisma.hr_lawyeh_filesWhereInput = and.length ? { AND: and } : {};
@@ -41,7 +43,6 @@ export class LegalFilesService {
         return {
           id: row.id,
           title: row.title,
-          details: row.details,
           file: row.f_file,
           userId: row.user_id,
           addedDate: row.added_date,
@@ -60,7 +61,6 @@ export class LegalFilesService {
     return {
       id: row.id,
       title: row.title,
-      details: row.details,
       file: row.f_file,
       userId: row.user_id,
       addedDate: row.added_date,
@@ -72,28 +72,30 @@ export class LegalFilesService {
 
   async create(dto: CreateLegalFileDto, user: JwtUser) {
     const now = new Date();
-    const row = await this.prisma.hr_lawyeh_files.create({
-      data: {
-        title: dto.title.trim(),
-        details: dto.details?.trim() || null,
+    const row = await this.prisma.$transaction(async (tx) => {
+      await claimActorPrivateFile(tx, dto.file, user.sub, ['legal']);
+      return tx.hr_lawyeh_files.create({ data: {
+        title: dto.title,
         f_file: dto.file ?? null,
         user_id: user.sub,
-        added_date: now.toISOString().slice(0, 10),
-        added_time: now.toTimeString().slice(0, 5),
-      },
+        added_date: cairoDateString(now),
+        added_time: cairoTimeString(now),
+      } });
     });
     return { id: row.id };
   }
 
-  async update(id: number, dto: UpdateLegalFileDto) {
+  async update(id: number, dto: UpdateLegalFileDto, user: JwtUser) {
     await this.findOrThrow(id);
-    await this.prisma.hr_lawyeh_files.update({
+    await this.prisma.$transaction(async (tx) => {
+      if (dto.file != null) await claimActorPrivateFile(tx, dto.file, user.sub, ['legal']);
+      await tx.hr_lawyeh_files.update({
       where: { id },
       data: {
-        ...(dto.title != null ? { title: dto.title.trim() } : {}),
-        ...(dto.details != null ? { details: dto.details.trim() || null } : {}),
+        ...(dto.title != null ? { title: dto.title } : {}),
         ...(dto.file != null ? { f_file: dto.file } : {}),
       },
+      });
     });
     return { id };
   }
@@ -113,8 +115,8 @@ export class LegalFilesService {
   async ack(id: number, dto: AckLegalFileDto, user: JwtUser) {
     await this.findOrThrow(id);
     const now = new Date();
-    const seenDate = now.toISOString().slice(0, 10);
-    const seenTime = now.toTimeString().slice(0, 5);
+    const seenDate = cairoDateString(now);
+    const seenTime = cairoTimeString(now);
 
     const existing = await this.prisma.hr_lawyeh_files_seens.findFirst({
       where: { layha_id_fk: id, user_id_fk: user.sub },

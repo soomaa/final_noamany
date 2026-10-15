@@ -15,6 +15,7 @@ import { Response } from 'express';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtUser } from '../../common/types/jwt-user';
 import { isDryRun } from '../../common/preview';
 import {
   CloseShiftSessionDto,
@@ -32,7 +33,7 @@ import { ShiftSessionsService } from './shift-sessions.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('shift-sessions')
-@RequiresPermission('gym-sales.sales:view')
+@RequiresPermission('gym-sales.sales.shifts:view', 'gym-sales.sales.treasury:view')
 export class ShiftSessionsController {
   constructor(
     private readonly service: ShiftSessionsService,
@@ -50,12 +51,13 @@ export class ShiftSessionsController {
   }
 
   @Post('start')
-  @RequiresPermission('gym-sales.sales:create')
+  @RequiresPermission()
   start(@Body() body: StartShiftSessionDto, @CurrentUser('sub') userId: number) {
     return this.service.start(body, userId);
   }
 
   @Get('current')
+  @RequiresPermission()
   getCurrent(@Query() query: CurrentSessionQueryDto) {
     // Branch-scoped: do NOT force the JWT userId. POS shows the open drawer for the
     // branch; start() also blocks on any open session in that branch. Filtering by
@@ -64,20 +66,26 @@ export class ShiftSessionsController {
   }
 
   @Post('switch')
-  @RequiresPermission('gym-sales.sales:update')
+  @RequiresPermission()
   async switchShift(
     @Body() body: SwitchShiftSessionDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.service.switchShift(body, userId);
+    const result = await this.service.switchShift(body, user.sub, user.sessionId);
     res.cookie('one80_access', result.accessToken, this.cookieOpts(2 * 60 * 60 * 1000));
     res.cookie('one80_refresh', result.refreshToken, this.cookieOpts(7 * 24 * 60 * 60 * 1000));
-    return result;
+    const {
+      accessToken: _accessToken,
+      refreshToken: _refreshToken,
+      sessionId: _sessionId,
+      ...safeResult
+    } = result;
+    return safeResult;
   }
 
   @Post('drawer-movements')
-  @RequiresPermission('gym-sales.sales:create')
+  @RequiresPermission('gym-sales.sales.treasury:create')
   createDrawerMovement(@Body() body: CreateDrawerMovementDto, @CurrentUser('sub') userId: number) {
     return this.service.createDrawerMovement(body, userId);
   }
@@ -107,13 +115,29 @@ export class ShiftSessionsController {
     return this.service.list(query);
   }
 
+  @Get(':id/close-report')
+  closeReport(@Param('id', ParseIntPipe) id: number) {
+    return this.service.closeReport(id);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.service.findOne(id);
   }
 
+  @Put(':id/close-own')
+  @RequiresPermission()
+  closeOwn(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: CloseShiftSessionDto,
+    @CurrentUser('sub') userId: number,
+    @Query('dryRun') dryRun?: string,
+  ) {
+    return this.service.closeOwn(id, body, userId, isDryRun(dryRun));
+  }
+
   @Put(':id/close')
-  @RequiresPermission('gym-sales.sales:update')
+  @RequiresPermission('gym-sales.sales.shifts:update')
   close(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: CloseShiftSessionDto,

@@ -33,6 +33,18 @@ export function dateInRange(date: string, start: string, end: string): boolean {
   return date >= start && date <= end;
 }
 
+/**
+ * Depth-derived label the chart-of-accounts screen shows next to each row:
+ * a root is `main`, its direct children are `sub-main`, everything deeper is `sub`.
+ */
+export type AccountLevel = 'main' | 'sub-main' | 'sub';
+
+export function accountLevelForDepth(depth: number): AccountLevel {
+  if (depth <= 0) return 'main';
+  if (depth === 1) return 'sub-main';
+  return 'sub';
+}
+
 export interface AccountNode {
   id: number;
   code: string;
@@ -45,6 +57,10 @@ export interface AccountNode {
   description: string | null;
   branchId: number | null;
   isActive: boolean;
+  /** Depth-derived level, filled in by the service before the tree leaves the API. */
+  accountLevel?: AccountLevel;
+  /** Net balance including every descendant, in this account's own normal-balance sign. */
+  balance?: number;
   children: AccountNode[];
 }
 

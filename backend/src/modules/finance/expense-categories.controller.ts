@@ -19,6 +19,7 @@ import { ExpenseCategoriesService } from './expense-categories.service';
 @Controller('expense-categories')
 @RequiresPermission(
   'financial-reports.expenses:view',
+  'financial-reports.reports:view',
   'club.subscriptions.treasury:view',
 )
 export class ExpenseCategoriesController {

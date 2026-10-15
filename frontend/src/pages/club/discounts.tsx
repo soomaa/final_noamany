@@ -61,6 +61,7 @@ export function ClubDiscountsPage() {
     <div className="space-y-6">
       <PageHeader title={ct('subscriptions.discounts')} description={ct('subscriptions.discountsDesc')} />
       <DataTable
+        exportSource={{ resource: 'club-subscriptions', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}

@@ -17,22 +17,27 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { clientPaginate, isNotImplemented, useArrayResource, useMutationWithToast } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
 import type { Branch } from '@/types/org';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 export function OrgBranchesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('org.branches:create');
+  const canUpdate = can('org.branches:update');
+  const canDelete = can('org.branches:delete');
   const { params, setParams } = useListQuery();
   const { data: branches, isLoading, isError, error, refetch } = useArrayResource<Branch>('branches');
   const [mapRow, setMapRow] = useState<Branch | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
-  const [form, setForm] = useState({ name: '', lat: '', lng: '', distance: '100' });
+  const [form, setForm] = useState({ name: '', lat: '', lng: '' });
 
   const paged = useMemo(
     () =>
@@ -49,25 +54,19 @@ export function OrgBranchesPage() {
 
   const openCreate = () => {
     setEditId(null);
-    setForm({ name: '', lat: '', lng: '', distance: '100' });
+    setForm({ name: '', lat: '', lng: '' });
     setFormOpen(true);
   };
 
   const openEdit = (row: Branch) => {
     setEditId(row.id);
-    setForm({ name: row.name ?? '', lat: row.lat ?? '', lng: row.lng ?? '', distance: String(row.distance ?? 100) });
+    setForm({ name: row.name ?? '', lat: row.lat ?? '', lng: row.lng ?? '' });
     setFormOpen(true);
   };
 
   const saveBranch = async () => {
     try {
-      const payload = {
-        name: form.name,
-        lat: form.lat || undefined,
-        lng: form.lng || undefined,
-        distance: parseInt(form.distance, 10) || 100,
-        parentId: 0,
-      };
+      const payload = { name: form.name, lat: form.lat || undefined, lng: form.lng || undefined, parentId: 0 };
       if (editId) await api.patch(`/branches/${editId}`, payload);
       else await api.post('/branches', payload);
       toast.success(ui('تم حفظ الفرع'));
@@ -102,30 +101,32 @@ export function OrgBranchesPage() {
         row.original.lat != null ? (
           <Button variant="link" size="sm" className="h-auto p-0 nums" onClick={() => setMapRow(row.original)}>
             <MapPin className="size-3.5" />
-            {toArabicDigits(String(row.original.lat))}, {toArabicDigits(String(row.original.lng))}
+            {formatDigits(String(row.original.lat))}, {formatDigits(String(row.original.lng))}
           </Button>
         ) : (
           '—'
         ),
     },
     {
-      accessorKey: 'distance',
-      header: ui('المسافة (متر)'),
-      cell: ({ getValue }) => <span className="nums">{toArabicDigits(Number(getValue()) || 100)}</span>,
-    },
-    {
       id: 'actions',
       header: ui('الإجراءات'),
-      cell: ({ row }) => (
-        <div className="flex gap-1">
-          <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
-            <Pencil className="size-4" />
-          </Button>
-          <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
-            <Trash2 className="size-4 text-destructive" />
-          </Button>
-        </div>
-      ),
+      cell: ({ row }) => {
+        if (!canUpdate && !canDelete) return null;
+        return (
+          <div className="flex gap-1">
+            {canUpdate ? (
+              <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+                <Pencil className="size-4" />
+              </Button>
+            ) : null}
+            {canDelete ? (
+              <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
+                <Trash2 className="size-4 text-destructive" />
+              </Button>
+            ) : null}
+          </div>
+        );
+      },
     },
   ];
 
@@ -144,9 +145,11 @@ export function OrgBranchesPage() {
         title={ui('إدارة الفروع')}
         description={ui('فروع المنشأة مع إحداثيات الموقع الجغرافي للسياج')}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('فرع جديد')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCreate}>
+              <Plus className="size-4" /> {ui('فرع جديد')}
+            </Button>
+          ) : undefined
         }
       />
       <FilterBar searchPlaceholder={ui('بحث في الفروع…')} />
@@ -177,17 +180,6 @@ export function OrgBranchesPage() {
               <div><Label htmlFor="branch-lat">{ui('خط العرض')}</Label><Input id="branch-lat" className="mt-1.5 nums" value={form.lat} onChange={(e) => setForm((f) => ({ ...f, lat: e.target.value }))} /></div>
               <div><Label htmlFor="branch-lng">{ui('خط الطول')}</Label><Input id="branch-lng" className="mt-1.5 nums" value={form.lng} onChange={(e) => setForm((f) => ({ ...f, lng: e.target.value }))} /></div>
             </div>
-            <div>
-              <Label htmlFor="branch-distance">{ui('المسافة (متر)')}</Label>
-              <Input
-                id="branch-distance"
-                type="number"
-                min={1}
-                className="mt-1.5 nums"
-                value={form.distance}
-                onChange={(e) => setForm((f) => ({ ...f, distance: e.target.value }))}
-              />
-            </div>
             {form.lat && form.lng && (
               <iframe
                 title={ui('معاينة الموقع')}
@@ -198,7 +190,7 @@ export function OrgBranchesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
-            <Button onClick={() => void saveBranch()}>{ui('حفظ')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void saveBranch()}>{ui('حفظ')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

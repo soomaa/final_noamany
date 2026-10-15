@@ -1,22 +1,26 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { Branch } from '@/types/org';
+import { useAuth } from '@/store/auth';
 
 async function fetchBranchOptions(): Promise<Branch[]> {
   try {
-    const { data } = await api.get<Branch[]>('/club/branch-options');
-    if (Array.isArray(data)) return data;
+    const { data } = await api.get<Branch[]>('/branch-options');
+    if (Array.isArray(data) && data.length >= 0) return data;
   } catch {
-    /* fall through to org branches */
+    /* ignore */
   }
-  const { data } = await api.get<Branch[]>('/branches');
-  return Array.isArray(data) ? data : [];
+  return [];
 }
 
 export function useBranches() {
+  const userId = useAuth((state) => state.user?.sub);
   return useQuery({
-    queryKey: ['branches', 'options'],
+    // The authenticated user is part of the cache identity; switching from admin to reception
+    // must never reuse the admin's all-branches payload.
+    queryKey: ['branches', 'options', userId ?? 'anonymous'],
     queryFn: fetchBranchOptions,
+    enabled: userId != null,
     retry: false,
   });
 }

@@ -15,6 +15,7 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { JwtUser } from '../../common/types/jwt-user';
 import { CreateEvaluationDto, ListEvaluationsDto } from './dto/evaluation.dto';
 import { EvaluationsService } from './evaluations.service';
+import { ScopedHrData } from '../../common/hr-scope/scoped-hr-data.decorator';
 
 @UseGuards(JwtAuthGuard)
 @Controller('hr/evaluations')
@@ -23,8 +24,9 @@ export class EvaluationsController {
   constructor(private readonly evaluations: EvaluationsService) {}
 
   @Get()
-  list(@Query() query: ListEvaluationsDto) {
-    return this.evaluations.list(query);
+  @ScopedHrData()
+  list(@Query() query: ListEvaluationsDto, @CurrentUser() user: JwtUser) {
+    return this.evaluations.list(query, user);
   }
 
   @Get('criteria')
@@ -33,17 +35,22 @@ export class EvaluationsController {
   }
 
   @Get(':id')
-  getOne(@Param('id', ParseIntPipe) id: number) {
-    return this.evaluations.getOne(id);
+  @ScopedHrData()
+  getOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.evaluations.getOne(id, user);
   }
 
   @Post()
+  @ScopedHrData()
+  @RequiresPermission('affairs.evaluations:create')
   create(@Body() dto: CreateEvaluationDto, @CurrentUser() user: JwtUser) {
-    return this.evaluations.create(dto, user.sub, user.name);
+    return this.evaluations.create(dto, user, user.sub, user.name);
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.evaluations.remove(id);
+  @ScopedHrData()
+  @RequiresPermission('affairs.evaluations:delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.evaluations.remove(id, user);
   }
 }

@@ -1,9 +1,11 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { Link, useParams } from 'react-router-dom';
 import { Monitor, QrCode, Settings, ListChecks, Play, ChevronLeft, Users } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useLocale } from '@/store/locale';
+import { uiStatic } from '@/lib/ui-static';
 
 /** إعداد الفعالية — بالترتيب قبل التشغيل */
 const SETUP = [
@@ -11,16 +13,16 @@ const SETUP = [
     order: 1,
     key: 'settings',
     icon: Settings,
-    label: 'إعدادات العرض',
-    desc: 'اسم الفعالية، نصوص الترحيب، الثيم والألوان',
+    label: uiStatic('إعدادات العرض'),
+    desc: uiStatic('اسم الفعالية، نصوص الترحيب، الثيم والألوان'),
     inShell: true,
   },
   {
     order: 2,
     key: 'program',
     icon: ListChecks,
-    label: 'فقرات البرنامج',
-    desc: 'جدول الفقرات الذي يظهر على شاشة العرض',
+    label: uiStatic('فقرات البرنامج'),
+    desc: uiStatic('جدول الفقرات الذي يظهر على شاشة العرض'),
     inShell: true,
   },
 ] as const;
@@ -31,16 +33,16 @@ const RUN = [
     order: 3,
     key: 'checkin',
     icon: QrCode,
-    label: 'محطة التسجيل + QR',
-    desc: 'اعرضها عند المدخل — الضيوف يمسحون QR من جوالاتهم',
+    label: uiStatic('محطة التسجيل + QR'),
+    desc: uiStatic('اعرضها عند المدخل — الضيوف يمسحون QR من جوالاتهم'),
     fullscreen: true,
   },
   {
     order: 4,
     key: 'display',
     icon: Monitor,
-    label: 'شاشة العرض الحية',
-    desc: 'اعرضها على الشاشة الكبيرة — ترحيب بالحضور والفقرات',
+    label: uiStatic('شاشة العرض الحية'),
+    desc: uiStatic('اعرضها على الشاشة الكبيرة — ترحيب بالحضور والفقرات'),
     fullscreen: true,
   },
 ] as const;
@@ -72,7 +74,7 @@ export function EventLiveHub() {
           {SETUP.map(({ order, key, icon: Icon, label, desc }) => (
             <Card key={key} className="p-4 flex items-center gap-4">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold">
-                {order}
+                {formatDisplayNumber(order)}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -95,7 +97,7 @@ export function EventLiveHub() {
           {RUN.map(({ order, key, icon: Icon, label, desc, fullscreen }) => (
             <Card key={key} className="p-4 flex items-center gap-4 border-primary/30">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold">
-                {order}
+                {formatDisplayNumber(order)}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">

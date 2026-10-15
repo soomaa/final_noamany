@@ -1,7 +1,7 @@
 import type { ColumnDef } from '@tanstack/react-table';
 import { useQuery } from '@tanstack/react-query';
-import { CheckCircle2, Download, Eye, Pencil, Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { CheckCircle2, Download, Eye, FileText, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
 import { DateText } from '@/components/common/formatters';
@@ -16,18 +16,18 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { uploadUrl } from '@/components/employees/use-uploads';
 
 interface LegalFileRow {
   id: number;
   title?: string | null;
-  details?: string | null;
   file?: string | null;
   addedDate?: string | null;
   addedTime?: string | null;
@@ -44,6 +44,10 @@ interface SeenRow {
 
 export function LegalFilesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('affairs.legal_files:create');
+  const canUpdate = can('affairs.legal_files:update');
+  const canDelete = can('affairs.legal_files:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<LegalFileRow>(
     'legal-files',
@@ -53,7 +57,6 @@ export function LegalFilesPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [title, setTitle] = useState('');
-  const [details, setDetails] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -78,10 +81,20 @@ export function LegalFilesPage() {
     enabled: seensFileId != null,
   });
 
+  const stats = useMemo(
+    () => [
+      {
+        title: ui('اللوائح والملفات'),
+        value: toArabicDigits(data?.total ?? 0),
+        icon: <FileText className="size-5" />,
+      },
+    ],
+    [data],
+  );
+
   const openCreate = () => {
     setEditId(null);
     setTitle('');
-    setDetails('');
     setFile(null);
     setFormOpen(true);
   };
@@ -89,7 +102,6 @@ export function LegalFilesPage() {
   const openEdit = (row: LegalFileRow) => {
     setEditId(row.id);
     setTitle(row.title ?? '');
-    setDetails(row.details ?? '');
     setFile(null);
     setFormOpen(true);
   };
@@ -112,7 +124,7 @@ export function LegalFilesPage() {
         const { data: up } = await api.post<{ path: string }>('/uploads/legal', fd);
         filePath = up.path;
       }
-      const payload = { title: title.trim(), details: details.trim(), file: filePath };
+      const payload = { title: title.trim(), file: filePath };
       if (editId) await api.patch(`/legal-files/${editId}`, payload);
       else await api.post('/legal-files', payload);
       toast.success(ui('تم حفظ الملف'));
@@ -132,15 +144,6 @@ export function LegalFilesPage() {
       cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1),
     },
     { accessorKey: 'title', header: ui('العنوان') },
-    {
-      accessorKey: 'details',
-      header: ui('التفاصيل'),
-      cell: ({ getValue }) => (
-        <div className="max-w-xl whitespace-pre-wrap leading-6">
-          {(getValue() as string | null) || '—'}
-        </div>
-      ),
-    },
     {
       accessorKey: 'addedDate',
       header: ui('تاريخ الإضافة'),
@@ -165,9 +168,9 @@ export function LegalFilesPage() {
       header: ui('الإجراءات'),
       cell: ({ row }) => (
         <div className="flex gap-1">
-          {row.original.file && (
+          {uploadUrl(row.original.file) && (
             <Button variant="ghost" size="icon" aria-label={ui('تنزيل')} asChild>
-              <a href={`/uploads/${row.original.file}`} target="_blank" rel="noreferrer" download>
+              <a href={uploadUrl(row.original.file)!} target="_blank" rel="noreferrer" download>
                 <Download className="size-4" />
               </a>
             </Button>
@@ -181,30 +184,34 @@ export function LegalFilesPage() {
           >
             <CheckCircle2 className="size-4 text-brand-600" />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={ui('تعديل')}
-            onClick={() => openEdit(row.original)}
-          >
-            <Pencil className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={ui('حذف')}
-            onClick={async () => {
-              const ok = await confirm({
-                title: ui('حذف الملف'),
-                description: ui('هل تريد حذف هذا الملف وكل سجلات الاطلاع عليه؟'),
-                confirmLabel: ui('حذف'),
-                variant: 'destructive',
-              });
-              if (ok) deleteMutation.mutate(row.original.id);
-            }}
-          >
-            <Trash2 className="size-4 text-destructive" />
-          </Button>
+          {canUpdate ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={ui('تعديل')}
+              onClick={() => openEdit(row.original)}
+            >
+              <Pencil className="size-4" />
+            </Button>
+          ) : null}
+          {canDelete ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={ui('حذف')}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: ui('حذف الملف'),
+                  description: ui('هل تريد حذف هذا الملف وكل سجلات الاطلاع عليه؟'),
+                  confirmLabel: ui('حذف'),
+                  variant: 'destructive',
+                });
+                if (ok) deleteMutation.mutate(row.original.id);
+              }}
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          ) : null}
         </div>
       ),
     },
@@ -215,15 +222,21 @@ export function LegalFilesPage() {
       <ListPageShell
         title={ui('اللوائح والملفات')}
         description={ui('اللوائح التنظيمية والملفات وتأكيد اطلاع الموظفين عليها')}
+        searchPlaceholder={ui('بحث في العناوين…')}
+        stats={stats}
+        statsLoading={isLoading}
         isError={isError}
         error={error}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('ملف جديد')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCreate}>
+              <Plus className="size-4" /> {ui('ملف جديد')}
+            </Button>
+          ) : undefined
         }
       >
         <DataTable
+          exportSource={{ resource: 'legal-files', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -256,16 +269,6 @@ export function LegalFilesPage() {
               />
             </div>
             <div>
-              <Label htmlFor="legal-details">{ui('التفاصيل')}</Label>
-              <Textarea
-                id="legal-details"
-                className="mt-1.5 min-h-32 resize-y"
-                value={details}
-                onChange={(e) => setDetails(e.target.value)}
-                placeholder={ui('اكتب تفاصيل الملف…')}
-              />
-            </div>
-            <div>
               <Label htmlFor="legal-file">{editId ? ui('استبدال الملف (اختياري)') : ui('الملف')}</Label>
               <Input
                 id="legal-file"
@@ -279,7 +282,7 @@ export function LegalFilesPage() {
             <Button variant="outline" onClick={() => setFormOpen(false)} disabled={saving}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()} disabled={saving}>
+            <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>
               {saving ? ui('جارٍ الحفظ…') : ui('حفظ')}
             </Button>
           </DialogFooter>

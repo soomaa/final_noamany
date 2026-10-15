@@ -6,6 +6,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Matches,
   ValidateIf,
 } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
@@ -41,6 +42,7 @@ export class CreateMessageDto {
   /** Stored upload path returned by POST /api/uploads/message. */
   @IsOptional()
   @IsString()
+  @Matches(/^file:[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
   file?: string;
 }
 

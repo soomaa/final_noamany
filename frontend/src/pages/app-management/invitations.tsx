@@ -16,10 +16,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { clientPaginate } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
 import { useLocale } from '@/store/locale';
+import { invitationLeadPresentation } from '@/lib/guest-invitation-model';
+import { Badge } from '@/components/ui/badge';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { AppManagementShell } from './app-shell';
 import { uiStatic } from '@/lib/ui-static';
@@ -31,17 +34,17 @@ interface InvitationRow {
   invitationCode: string;
   recipientName: string;
   recipientEmail: string;
+  recipientPhone: string | null;
   status: InvitationStatus;
   branchName: string | null;
   sentDate: string;
   acceptedDate: string | null;
   rejectedDate: string | null;
-  acceptedByUserId: number | null;
-  rejectedByUserId: number | null;
-  acceptedByName: string | null;
-  rejectedByName: string | null;
   attendanceDate: string | null;
   rejectionReason: string | null;
+  /** Sales lead captured from this invitation; null when it had no phone or branch. */
+  leadId: number | null;
+  leadStatus: string | null;
 }
 
 const STATUS_META: Record<
@@ -57,10 +60,14 @@ const STATUS_META: Record<
 function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
   const meta = STATUS_META[statusKey];
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const permissionResource = `app-management.invitations.${statusKey === 'pending' ? 'sent' : statusKey}`;
+  const canCreate = statusKey === 'pending' && can('app-management.invitations.sent:create');
+  const canUpdate = can(`${permissionResource}:update`);
   const { params, setParams } = useListQuery();
   const { data: branches } = useBranches();
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ recipientName: '', recipientEmail: '', branchId: '' });
+  const [form, setForm] = useState({ recipientName: '', recipientEmail: '', recipientPhone: '', branchId: '' });
   const [saving, setSaving] = useState(false);
   // Tracks the invitation id being accepted/rejected/attended so the row action can't be double-clicked.
   const [actingId, setActingId] = useState<number | null>(null);
@@ -77,11 +84,12 @@ function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
     search: (item, q) =>
       item.recipientName.toLowerCase().includes(q) ||
       item.recipientEmail.toLowerCase().includes(q) ||
+      (item.recipientPhone ?? '').includes(q) ||
       item.invitationCode.toLowerCase().includes(q),
   });
 
   async function updateStatus(id: number, status: InvitationStatus, rejectionReason?: string) {
-    if (actingId != null) return;
+    if (!canUpdate || actingId != null) return;
     setActingId(id);
     try {
       await api.put(`/app/invitations/${id}`, {
@@ -103,21 +111,37 @@ function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
       { accessorKey: 'invitationCode', header: uiStatic('الرمز'), cell: ({ getValue }) => <span className="nums">{getValue() as string}</span> },
       { accessorKey: 'recipientName', header: uiStatic('الاسم') },
       { accessorKey: 'recipientEmail', header: uiStatic('البريد') },
+      {
+        accessorKey: 'recipientPhone',
+        header: uiStatic('الموبايل'),
+        cell: ({ getValue }) => <span className="nums">{(getValue() as string | null) ?? '—'}</span>,
+      },
       { accessorKey: 'branchName', header: uiStatic('الفرع'), cell: ({ getValue }) => getValue() ?? '—' },
+      {
+        id: 'lead',
+        header: uiStatic('متابعة المبيعات'),
+        cell: ({ row }) => {
+          const { leadId, leadStatus } = row.original;
+          const presentation = invitationLeadPresentation(leadId ? leadStatus : null);
+          return (
+            <Badge variant={presentation.tone === 'default' ? 'secondary' : presentation.tone}>
+              {uiStatic(presentation.label)}
+            </Badge>
+          );
+        },
+      },
       { accessorKey: 'status', header: uiStatic('الحالة') },
       {
         accessorKey: 'sentDate',
         header: uiStatic('تاريخ الإرسال'),
-        cell: ({ getValue }) => <span className="nums">{new Date(String(getValue())).toLocaleString('ar-EG')}</span>,
+        cell: ({ getValue }) => <span className="nums">{String(getValue()).slice(0, 10)}</span>,
       },
-      ...(statusKey === 'accepted' ? [{ id: 'acceptedInfo', header: uiStatic('تاريخ وموظف القبول'), cell: ({ row }: any) => <span className="nums">{row.original.acceptedDate ? `${new Date(row.original.acceptedDate).toLocaleString('ar-EG')} — ${row.original.acceptedByName ?? '—'}` : '—'}</span> }] : []),
-      ...(statusKey === 'rejected' ? [{ id: 'rejectedInfo', header: uiStatic('تاريخ وموظف الرفض'), cell: ({ row }: any) => <span className="nums">{row.original.rejectedDate ? `${new Date(row.original.rejectedDate).toLocaleString('ar-EG')} — ${row.original.rejectedByName ?? '—'}` : '—'}</span> }] : []),
       {
         id: 'actions',
         header: uiStatic('إجراءات'),
         cell: ({ row }) => {
           const item = row.original;
-          if (statusKey === 'pending') {
+          if (canUpdate && statusKey === 'pending') {
             return (
               <div className="flex gap-1">
                 <Button
@@ -146,7 +170,7 @@ function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
               </div>
             );
           }
-          if (statusKey === 'accepted') {
+          if (canUpdate && statusKey === 'accepted') {
             return (
               <Button
                 size="sm"
@@ -163,21 +187,23 @@ function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
         },
       },
     ],
-    [params.page, params.pageSize, statusKey, ui, actingId],
+    [actingId, canUpdate, params.page, params.pageSize, statusKey, ui],
   );
 
   async function createInvitation() {
+    if (!canCreate) return;
     setSaving(true);
     try {
       await api.post('/app/invitations', {
         recipientName: form.recipientName,
-        recipientEmail: form.recipientEmail,
+        ...(form.recipientEmail.trim() ? { recipientEmail: form.recipientEmail.trim() } : {}),
+        ...(form.recipientPhone.trim() ? { recipientPhone: form.recipientPhone.trim() } : {}),
         status: 'pending',
         ...(form.branchId ? { branchId: Number(form.branchId) } : {}),
       });
       toast.success(uiStatic('تم إنشاء الدعوة'));
       setOpen(false);
-      setForm({ recipientName: '', recipientEmail: '', branchId: '' });
+      setForm({ recipientName: '', recipientEmail: '', recipientPhone: '', branchId: '' });
       void refetch();
     } catch (e) {
       toast.error(apiError(e));
@@ -191,7 +217,7 @@ function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
       title={meta.title}
       description={meta.description}
       actions={
-        statusKey === 'pending' ? (
+        canCreate ? (
           <Button variant="brand" onClick={() => setOpen(true)}>
             <Plus className="h-4 w-4" />
             {uiStatic('دعوة جديدة')}
@@ -215,7 +241,7 @@ function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
         onRetry={() => void refetch()}
       />
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={canCreate && open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{uiStatic('دعوة جديدة')}</DialogTitle>
@@ -228,6 +254,18 @@ function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
             <div className="grid gap-1">
               <Label>{uiStatic('البريد الإلكتروني')}</Label>
               <Input type="email" value={form.recipientEmail} onChange={(e) => setForm({ ...form, recipientEmail: e.target.value })} />
+            </div>
+            <div className="grid gap-1">
+              <Label>{uiStatic('الموبايل')}</Label>
+              <Input
+                inputMode="tel"
+                value={form.recipientPhone}
+                onChange={(e) => setForm({ ...form, recipientPhone: e.target.value })}
+              />
+              {/* Only a phone plus a branch lets the guest be captured as a sales lead. */}
+              <p className="text-xs text-muted-foreground">
+                {uiStatic('الموبايل والفرع مطلوبان لتسجيل المدعو كعميل محتمل للمتابعة')}
+              </p>
             </div>
             <div className="grid gap-1">
               <Label>{uiStatic('الفرع')}</Label>
@@ -249,7 +287,12 @@ function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
             <Button variant="outline" onClick={() => setOpen(false)}>
               {uiStatic('إلغاء')}
             </Button>
-            <Button variant="brand" disabled={saving || !form.recipientName || !form.recipientEmail} onClick={() => void createInvitation()}>
+            <Button
+              permissionAction="create"
+              variant="brand"
+              disabled={saving || !form.recipientName.trim() || (!form.recipientEmail.trim() && !form.recipientPhone.trim())}
+              onClick={() => void createInvitation()}
+            >
               {uiStatic('حفظ')}
             </Button>
           </DialogFooter>

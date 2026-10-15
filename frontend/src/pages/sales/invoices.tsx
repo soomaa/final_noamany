@@ -1,3 +1,4 @@
+import { formatMoneyNumber } from '@/lib/formatters';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Eye, MessageSquareText, Printer, RotateCcw, Star, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -11,7 +12,6 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { api, apiError } from '@/lib/api';
-import { formatTime } from '@/lib/formatters';
 import { confirmWithPreview } from '@/lib/confirm';
 import { isDryRunResponse } from '@/lib/validators';
 import { usePaginatedList } from '@/lib/api-hooks';
@@ -119,7 +119,8 @@ export function SalesInvoicesPage() {
       setReceipt({
         saleNumber: sale.saleNumber,
         dailyNumber: sale.dailyNumber,
-        saleDate: `${sale.saleDate} ${formatTime(sale.saleTime)}`.trim(),
+        saleDate: sale.saleDate,
+        saleTime: sale.saleTime,
         paymentMethod: sale.paymentMethod,
         subtotal: sale.subtotal,
         discountAmount: sale.discountAmount,
@@ -225,7 +226,7 @@ export function SalesInvoicesPage() {
           <CardContent className="pt-4">
             <p className="text-sm text-muted-foreground">{ui('إجمالي الإيراد')}</p>
             <p className="nums text-2xl font-bold text-primary">
-              {toArabicDigits((summary?.totalRevenue ?? 0).toFixed(2))}
+              {formatMoneyNumber((summary?.totalRevenue ?? 0))}
             </p>
           </CardContent>
         </Card>
@@ -241,6 +242,7 @@ export function SalesInvoicesPage() {
 
       <FilterBar fields={filters} searchPlaceholder={ui('بحث في الفواتير…')} />
       <DataTable
+        exportSource={{ resource: 'quick-sales', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -259,9 +261,9 @@ export function SalesInvoicesPage() {
           <DialogHeader><DialogTitle className="flex items-center justify-between gap-3"><span>{ui('تفاصيل الفاتورة')} <span className="nums text-primary">{selected?.saleNumber}</span></span><StatusBadge status={selected?.status === 'completed' ? 'active' : selected?.status === 'refunded' ? 'unset' : 'suspended'} /></DialogTitle></DialogHeader>
           {selected && <div className="grid gap-5 lg:grid-cols-[1fr_280px]">
             <div className="space-y-3">
-              <div className="rounded-xl border"><div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b bg-muted/40 p-3 text-xs text-muted-foreground"><span>{ui('المنتج')}</span><span>{ui('الكمية')}</span><span>{ui('الإجمالي')}</span></div>{(selected.items ?? []).map((item) => <div key={item.id} className="grid grid-cols-[1fr_auto_auto] gap-3 border-b p-3 text-sm last:border-0"><span>{item.name}{item.variantName ? <small className="mt-0.5 block font-semibold text-primary">{item.variantName}</small> : null}{item.itemNote ? <small className="mt-1 block text-muted-foreground">{ui('ملاحظة')}: {item.itemNote}</small> : null}</span><span className="nums">{toArabicDigits(item.quantity)}</span><span className="nums">{toArabicDigits(item.lineTotal.toFixed(2))}</span></div>)}</div>
+              <div className="rounded-xl border"><div className="grid grid-cols-[1fr_auto_auto] gap-3 border-b bg-muted/40 p-3 text-xs text-muted-foreground"><span>{ui('المنتج')}</span><span>{ui('الكمية')}</span><span>{ui('الإجمالي')}</span></div>{(selected.items ?? []).map((item) => <div key={item.id} className="grid grid-cols-[1fr_auto_auto] gap-3 border-b p-3 text-sm last:border-0"><span>{item.name}{item.variantName ? <small className="mt-0.5 block font-semibold text-primary">{item.variantName}</small> : null}{item.itemNote ? <small className="mt-1 block text-muted-foreground">{ui('ملاحظة')}: {item.itemNote}</small> : null}</span><span className="nums">{toArabicDigits(item.quantity)}</span><span className="nums">{formatMoneyNumber(item.lineTotal)}</span></div>)}</div>
               {selected.receiptComment && <div className="rounded-xl border bg-primary/5 p-3"><p className="mb-1 flex items-center gap-2 text-xs font-semibold text-primary"><MessageSquareText className="size-4" />{ui('تعليق الإيصال')}</p><p className="whitespace-pre-wrap text-sm">{selected.receiptComment}</p></div>}
-              <div className="grid grid-cols-2 gap-2 rounded-xl bg-muted/40 p-4 text-sm"><span>{ui('المجموع')}</span><span className="nums text-end">{toArabicDigits(selected.subtotal.toFixed(2))}</span><span>{ui('الخصم')}</span><span className="nums text-end">-{toArabicDigits(selected.discountAmount.toFixed(2))}</span><span>{ui('الضريبة')}</span><span className="nums text-end">{toArabicDigits(selected.taxAmount.toFixed(2))}</span><span className="font-bold">{ui('الإجمالي')}</span><span className="nums text-end text-lg font-bold text-primary">{toArabicDigits(selected.totalAmount.toFixed(2))} ج.م</span></div>
+              <div className="grid grid-cols-2 gap-2 rounded-xl bg-muted/40 p-4 text-sm"><span>{ui('المجموع')}</span><span className="nums text-end">{formatMoneyNumber(selected.subtotal)}</span><span>{ui('الخصم')}</span><span className="nums text-end">-{formatMoneyNumber(selected.discountAmount)}</span><span>{ui('الضريبة')}</span><span className="nums text-end">{formatMoneyNumber(selected.taxAmount)}</span><span className="font-bold">{ui('الإجمالي')}</span><span className="nums text-end text-lg font-bold text-primary">{formatMoneyNumber(selected.totalAmount)} EGP</span></div>
             </div>
             <div className="space-y-4 rounded-2xl border bg-card p-4">
               <div><p className="text-sm font-semibold">{ui('تقييم العميل')}</p><p className="text-xs text-muted-foreground">{ui('من نجمة واحدة إلى خمس نجوم')}</p></div>

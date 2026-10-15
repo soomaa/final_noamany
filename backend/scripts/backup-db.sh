@@ -1,58 +1,57 @@
 #!/usr/bin/env bash
-# ============================================================================
-# ONE80 Gym — MySQL backup with rotation.
-# Reads DATABASE_URL from ../.env, dumps the DB gzipped to ./backups, and keeps
-# the most recent $KEEP files. Money data — run this on a schedule (see DEPLOY.md).
-#
-#   Manual:  bash scripts/backup-db.sh
-#   Cron  :  0 2 * * *  cd /path/to/backend && bash scripts/backup-db.sh >> backups/backup.log 2>&1
-# ============================================================================
 set -euo pipefail
+umask 077
+
 cd "$(dirname "$0")/.."
+[ -f .env ] || { echo "DATABASE_URL source .env is missing" >&2; exit 1; }
 
-KEEP="${BACKUP_KEEP:-14}"                 # how many dumps to retain
-OUT_DIR="${BACKUP_DIR:-./backups}"
-mkdir -p "$OUT_DIR"
+database_url="$(sed -n -E 's/^DATABASE_URL="?([^" ]+)"?$/\1/p' .env | head -1)"
+[ -n "$database_url" ] || { echo "DATABASE_URL is missing" >&2; exit 1; }
 
-[ -f .env ] || { echo "!! .env not found (need DATABASE_URL)"; exit 1; }
-URL="$(grep -E '^DATABASE_URL' .env | head -1 | sed -E 's/^DATABASE_URL=//; s/^"//; s/"$//')"
-[ -n "$URL" ] || { echo "!! DATABASE_URL empty"; exit 1; }
+IFS=$'\x1f' read -r db_user db_password db_host db_port db_name < <(
+  DATABASE_URL_INPUT="$database_url" node -e '
+    const u = new URL(process.env.DATABASE_URL_INPUT);
+    if (u.protocol !== "mysql:") throw new Error("DATABASE_URL must use mysql://");
+    const decode = (value) => decodeURIComponent(value);
+    const values = [decode(u.username), decode(u.password), u.hostname, u.port || "3306", decode(u.pathname.slice(1))];
+    if (values.some((v) => /[\x1f\r\n]/.test(v))) throw new Error("unsupported control character in DATABASE_URL");
+    process.stdout.write(`${values.join("\x1f")}\n`);
+  '
+)
+[[ "$db_name" =~ ^[A-Za-z0-9_]+$ ]] || { echo "unsafe database name" >&2; exit 1; }
 
-# Parse mysql://user:pass@host:port/db  (pass and port optional)
-proto_removed="${URL#mysql://}"
-creds="${proto_removed%%@*}"
-hostportdb="${proto_removed#*@}"
-USER="${creds%%:*}"
-PASS=""; [[ "$creds" == *:* ]] && PASS="${creds#*:}"
-hostport="${hostportdb%%/*}"
-DB="${hostportdb##*/}"; DB="${DB%%\?*}"
-HOST="${hostport%%:*}"
-PORT="3306"; [[ "$hostport" == *:* ]] && PORT="${hostport#*:}"
+backup_dir="${BACKUP_DIR:-./backups}"
+backup_keep="${BACKUP_KEEP:-14}"
+[[ "$backup_keep" =~ ^[1-9][0-9]*$ ]] || { echo "BACKUP_KEEP must be a positive integer" >&2; exit 1; }
+mkdir -p "$backup_dir"
 
-TS="$(date +%Y%m%d_%H%M%S)"
-FILE="$OUT_DIR/${DB}_${TS}.sql.gz"
-TMP_FILE="$FILE.partial"
-trap 'rm -f "$TMP_FILE"' EXIT
+timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
+backup_file="$backup_dir/${db_name}_${timestamp}.sql.gz"
+checksum_file="$backup_file.sha256"
+MYSQL_PWD="$db_password" mysqldump \
+  -h "$db_host" -P "$db_port" -u "$db_user" \
+  --single-transaction --quick --routines --triggers --events --hex-blob \
+  --no-tablespaces --set-gtid-purged=OFF "$db_name" | gzip > "$backup_file"
+gzip -t "$backup_file"
 
-echo "==> Backing up '$DB' on $HOST:$PORT -> $FILE"
-DUMP_ARGS=(-h "$HOST" -P "$PORT" -u "$USER" --single-transaction --quick --no-tablespaces --triggers "$DB")
-if [ -n "$PASS" ]; then
-  MYSQL_PWD="$PASS" mysqldump "${DUMP_ARGS[@]}" | gzip > "$TMP_FILE"
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum "$backup_file" > "$checksum_file"
 else
-  mysqldump "${DUMP_ARGS[@]}" | gzip > "$TMP_FILE"
+  shasum -a 256 "$backup_file" > "$checksum_file"
 fi
-gzip -t "$TMP_FILE"
-[ -s "$TMP_FILE" ] || { echo "!! Backup output is empty; refusing to continue."; exit 1; }
-mv "$TMP_FILE" "$FILE"
-trap - EXIT
+chmod 600 "$backup_file" "$checksum_file"
 
-SIZE="$(du -h "$FILE" | cut -f1)"
-echo "==> Done ($SIZE)."
+find "$backup_dir" -maxdepth 1 -type f -name "${db_name}_*.sql.gz" -print \
+  | sort -r \
+  | awk -v keep="$backup_keep" 'NR > keep' \
+  | while IFS= read -r candidate; do
+  case "$candidate" in
+    "$backup_dir"/*)
+      unlink -- "$candidate"
+      [ ! -e "$candidate.sha256" ] || unlink -- "$candidate.sha256"
+      ;;
+    *) echo "refusing unsafe rotation target: $candidate" >&2; exit 1 ;;
+  esac
+done
 
-# Rotate: keep newest $KEEP
-COUNT="$(ls -1t "$OUT_DIR"/*.sql.gz 2>/dev/null | wc -l | tr -d ' ')"
-if [ "$COUNT" -gt "$KEEP" ]; then
-  ls -1t "$OUT_DIR"/*.sql.gz | tail -n +$((KEEP + 1)) | xargs -r rm -f
-  echo "==> Rotated: kept newest $KEEP of $COUNT."
-fi
-echo "✅ Backup complete. Restore with:  gunzip < $FILE | mysql -h HOST -u USER -p DBNAME"
+echo "backup=$backup_file checksum=$checksum_file status=verified"

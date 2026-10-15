@@ -15,6 +15,7 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ClubEventSessionsService } from './club-event-sessions.service';
 import { ListClubEventSessionsDto } from './dto/list-club-event-sessions.dto';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-events/:eventId/sessions')
@@ -23,16 +24,21 @@ export class ClubEventSessionsController {
   constructor(private readonly service: ClubEventSessionsService) {}
 
   @Get()
-  list(@Param('eventId', ParseIntPipe) eventId: number, @Query() query: ListClubEventSessionsDto) {
-    return this.service.list(eventId, query);
+  list(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @Query() query: ListClubEventSessionsDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.list(eventId, query, user);
   }
 
   @Get(':id')
   findOne(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.findOne(eventId, id);
+    return this.service.findOne(eventId, id, user);
   }
 
   @Post()
@@ -40,9 +46,9 @@ export class ClubEventSessionsController {
   create(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Body() body: Record<string, unknown>,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.create(eventId, body, userId);
+    return this.service.create(eventId, body, user.sub, user);
   }
 
   @Patch(':id')
@@ -51,9 +57,9 @@ export class ClubEventSessionsController {
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Record<string, unknown>,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.update(eventId, id, body, userId);
+    return this.service.update(eventId, id, body, user.sub, user);
   }
 
   @Delete(':id')
@@ -61,8 +67,9 @@ export class ClubEventSessionsController {
   remove(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('id', ParseIntPipe) id: number,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.remove(eventId, id, userId);
+    return this.service.remove(eventId, id, user.sub, user);
   }
 }
+

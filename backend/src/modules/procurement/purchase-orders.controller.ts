@@ -18,7 +18,7 @@ import { PurchaseOrdersService } from './purchase-orders.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('purchase-orders')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.cafe_purchases:view')
 export class PurchaseOrdersController {
   constructor(private readonly service: PurchaseOrdersService) {}
 
@@ -33,13 +33,13 @@ export class PurchaseOrdersController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.procurement:create')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:create')
   create(@Body() body: UpsertPurchaseOrderDto, @CurrentUser('sub') userId: number) {
     return this.service.create(body, userId);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertPurchaseOrderDto>,
@@ -48,7 +48,7 @@ export class PurchaseOrdersController {
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.procurement:delete')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

@@ -7,34 +7,10 @@ describe('employee salary field mapping', () => {
   });
 });
 
-describe('employee fingerprint branch mapping', () => {
-  it('persists the all-branches management option', () => {
-    expect(formToData({ emp_sign: 'all' })).toEqual({ emp_sign: 'all' });
-    expect(rowToForm({ emp_sign: 'all' }).emp_sign).toBe('all');
-  });
-
-  it('persists a single allowed fingerprint branch', () => {
-    expect(formToData({ emp_sign: '3' })).toEqual({ emp_sign: '3' });
-  });
-});
-
-describe('employee birth date compatibility', () => {
-  it('prefills the visible date from the legacy column when the modern column is empty', () => {
-    expect(rowToForm({ birth_date_m: null, birth_date: '1999-09-20' }).birth_date).toBe('1999-09-20');
-  });
-
-  it('keeps both date columns synchronized without an old hidden value winning', () => {
-    expect(formToData({ birth_date: '2000-01-02', birthdate: '1999-09-20' })).toEqual({
-      birth_date_m: '2000-01-02',
-      birth_date: '2000-01-02',
-    });
-  });
-});
-
-describe('employee YesNo form defaults', () => {
-  it('prefills missing YesNo values as no so an edit never submits an empty enum', () => {
-    expect(rowToForm({ birth_img: null, shahadt_jaish: null })).toEqual(
-      expect.objectContaining({ birth_img: 'no', shahadt_jaish: 'no' }),
-    );
+describe('employee personal-sales field mapping', () => {
+  it('persists the sales toggle as a boolean and reloads it for the edit form', () => {
+    expect(formToData({ is_sales: true })).toEqual({ is_sales: true });
+    expect(rowToForm({ is_sales: true }).is_sales).toBe(true);
+    expect(rowToForm({ is_sales: false }).is_sales).toBe(false);
   });
 });

@@ -1,6 +1,8 @@
 import { Transform, Type } from 'class-transformer';
-import { IsArray, IsEnum, IsIn, IsInt, IsNumber, IsOptional, Min, ValidateNested } from 'class-validator';
+import { IsArray, IsEnum, IsInt, IsNumber, IsOptional, Min, ValidateNested } from 'class-validator';
 import { SalesPaymentMethod } from '@prisma/client';
+import { SellBundleLineDto } from './bundle-selection.dto';
+import { CafeInvoiceClassificationDto } from './cafe-invoice-classification.dto';
 
 export class CafeCartLineDto {
   @Transform(({ value }) => Number(value))
@@ -18,18 +20,10 @@ export class CafeCartLineDto {
   quantity!: number;
 }
 
-export class SellCafeCartDto {
+export class SellCafeCartDto extends CafeInvoiceClassificationDto {
   @Transform(({ value }) => Number(value))
   @IsInt()
   branchId!: number;
-
-  @IsIn(['male', 'female'])
-  gender!: 'male' | 'female';
-
-  @Transform(({ value }) => Number(value))
-  @IsInt()
-  @Min(1)
-  cafeCategoryId!: number;
 
   @IsOptional()
   @Transform(({ value }) => (value != null ? Number(value) : undefined))
@@ -40,8 +34,15 @@ export class SellCafeCartDto {
   @IsEnum(SalesPaymentMethod)
   paymentMethod?: SalesPaymentMethod;
 
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => CafeCartLineDto)
-  items!: CafeCartLineDto[];
+  items?: CafeCartLineDto[];
+
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => SellBundleLineDto)
+  bundles?: SellBundleLineDto[];
 }

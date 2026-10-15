@@ -4,6 +4,7 @@ describe('recordPrivateAttendanceCommission', () => {
   const tx = {
     club_subscriptions: { findUnique: jest.fn() },
     club_trainer_salaries: { findFirst: jest.fn() },
+    club_trainer_commission_settings: { findUnique: jest.fn().mockResolvedValue(null) },
     club_private_attendance_commissions: { createMany: jest.fn() },
   } as any;
 
@@ -80,5 +81,23 @@ describe('recordPrivateAttendanceCommission', () => {
       attendanceDate: '2026-08-03',
     });
     expect(tx.club_private_attendance_commissions.createMany).not.toHaveBeenCalled();
+  });
+
+  it('uses the configured fixed private-session rate instead of the salary fallback', async () => {
+    tx.club_subscriptions.findUnique.mockResolvedValue({
+      id: 10, subscription_value: 1200, discount_value: 0, sessions_count: 12,
+      sessions_used: 2, is_linked_to_sessions: true,
+      private_package: { kind: 'sessions' }, private_trainer: { id: 6, employee_id: 66 },
+    });
+    tx.club_trainer_commission_settings.findUnique.mockResolvedValue({
+      private_commission_mode: 'fixed', private_commission_percent: 25,
+    });
+    tx.club_trainer_salaries.findFirst.mockResolvedValue({ subscription_commission_percentage: 10 });
+
+    await recordPrivateAttendanceCommission(tx, { attendanceId: 94, subscriptionId: 10, attendanceDate: '2026-08-03' });
+
+    expect(tx.club_private_attendance_commissions.createMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: [expect.objectContaining({ revenue_base: 100, commission_percentage: 25, commission_amount: 25 })],
+    }));
   });
 });

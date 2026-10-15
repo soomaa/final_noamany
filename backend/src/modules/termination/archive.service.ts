@@ -3,7 +3,8 @@ import { assertDateOrder } from '../../common/validators/validation.util';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { todayIso } from '../../common/utils/legacy-date.util';
+import { cairoDateString, dateOnlyEpochSeconds } from '../../common/utils/cairo-date';
+import { markEmployeeExited } from '../employees/employee-exit.util';
 import { CreateArchiveDto, ListArchiveDto, UpdateArchiveDto } from './dto/archive.dto';
 
 @Injectable()
@@ -63,21 +64,30 @@ export class ArchiveService {
     if (!emp) throw new NotFoundException('الموظف غير موجود');
     assertDateOrder(dto.fromDate, dto.toDate);
 
-    const dateStr = todayIso();
-    const row = await this.prisma.hr_tayi_qyed.create({
-      data: {
-        emp_id: String(dto.empId),
-        edara_id_fk: dto.edaraId ?? String(emp.edara_id ?? ''),
-        qsm_id_fk: dto.qsmId ?? String(emp.qsm_id ?? ''),
-        direct_manger_id_fk: dto.directManagerId ?? emp.manger ?? '',
-        from_date: String(Math.floor(new Date(dto.fromDate).getTime() / 1000)),
-        from_date_ar: dto.fromDate,
-        to_date: String(Math.floor(new Date(dto.toDate).getTime() / 1000)),
-        to_date_ar: dto.toDate,
-        date: String(Math.floor(new Date(dateStr).getTime() / 1000)),
-        date_s: String(Math.floor(Date.now() / 1000)),
-        publisher: publisherId != null ? String(publisherId) : null,
-      },
+    const dateStr = cairoDateString();
+    const row = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.hr_tayi_qyed.create({
+        data: {
+          emp_id: String(dto.empId),
+          edara_id_fk: dto.edaraId ?? String(emp.edara_id ?? ''),
+          qsm_id_fk: dto.qsmId ?? String(emp.qsm_id ?? ''),
+          direct_manger_id_fk: dto.directManagerId ?? emp.manger ?? '',
+          from_date: String(dateOnlyEpochSeconds(dto.fromDate)),
+          from_date_ar: dto.fromDate,
+          to_date: String(dateOnlyEpochSeconds(dto.toDate)),
+          to_date_ar: dto.toDate,
+          date: String(dateOnlyEpochSeconds(dateStr)),
+          date_s: String(Math.floor(Date.now() / 1000)),
+          publisher: publisherId != null ? String(publisherId) : null,
+        },
+      });
+      await markEmployeeExited(tx, {
+        employeeId: dto.empId,
+        lastWorkingDate: dto.toDate,
+        reason: 'طي قيد',
+        actorUserId: publisherId,
+      });
+      return created;
     });
     return { id: row.id };
   }
@@ -95,15 +105,27 @@ export class ArchiveService {
     if (dto.directManagerId != null) data.direct_manger_id_fk = dto.directManagerId;
     if (dto.fromDate != null) {
       data.from_date_ar = dto.fromDate;
-      data.from_date = String(Math.floor(new Date(dto.fromDate).getTime() / 1000));
+      data.from_date = String(dateOnlyEpochSeconds(dto.fromDate));
     }
     if (dto.toDate != null) {
       data.to_date_ar = dto.toDate;
-      data.to_date = String(Math.floor(new Date(dto.toDate).getTime() / 1000));
+      data.to_date = String(dateOnlyEpochSeconds(dto.toDate));
     }
     if (publisherId != null) data.publisher = String(publisherId);
 
-    await this.prisma.hr_tayi_qyed.update({ where: { id }, data });
+    await this.prisma.$transaction(async (tx) => {
+      await tx.hr_tayi_qyed.update({ where: { id }, data });
+      const empId = dto.empId ?? existing.empId;
+      const lastDay = dto.toDate ?? existing.toDate;
+      if (empId && lastDay) {
+        await markEmployeeExited(tx, {
+          employeeId: empId,
+          lastWorkingDate: lastDay,
+          reason: 'طي قيد',
+          actorUserId: publisherId,
+        });
+      }
+    });
     return { id };
   }
 

@@ -31,6 +31,10 @@ const HR_MANAGER_MODULES = ['hr', 'club', 'gym-sales'];
 
 /** Starter matrices (module-level grants inherit down). super_admin needs none (bypass). */
 const ROLE_MATRICES: Record<string, Cell[]> = {
+  additional_sales: [
+    { resourceKey: 'sales.portal', actionKey: 'view', effect: 'allow' },
+    { resourceKey: 'sales.portal', actionKey: 'update', effect: 'allow' },
+  ],
   trainer: [
     { resourceKey: 'trainer.portal', actionKey: 'view', effect: 'allow' },
   ],
@@ -82,6 +86,7 @@ const ROLES: Array<{
   { key: 'branch_manager', nameAr: 'مدير فرع/إدارة', nameEn: 'Branch Manager', description: 'عرض واعتماد طلبات فرعه', isSystem: false, isSuperAdmin: false },
   { key: 'employee', nameAr: 'موظف', nameEn: 'Employee', description: 'خدمة ذاتية محدودة', isSystem: false, isSuperAdmin: false },
   { key: 'trainer', nameAr: 'صلاحيات المدربين', nameEn: 'Trainer Permissions', description: 'وصول المدرب إلى جدوله وحضوره ومستحقاته فقط', isSystem: true, isSuperAdmin: false },
+  { key: 'additional_sales', nameAr: 'مسؤولية مبيعات إضافية', nameEn: 'Additional Sales Responsibility', description: 'بوابة المبيعات الشخصية بجانب صلاحيات المسمى الوظيفي الأساسي', isSystem: true, isSuperAdmin: false },
 ];
 
 /** legacy users.level -> role key. */
@@ -276,13 +281,13 @@ async function seedClubPermissions(
     },
     {
       roleKey: 'branch_manager',
-      cells: [
-        ...(['club', 'club.members', 'club.dashboard', 'club.subscriptions', 'club.lockers', 'club.fitness'] as const).flatMap((r) =>
-          (['view', 'export', 'print'] as ActionKey[]).map((actionKey) => ({ resourceKey: r, actionKey, effect: 'allow' as const })),
-        ),
-        // A branch manager records monthly trainer scores, but cannot change the rubric or targets.
-        { resourceKey: 'club.fitness.trainer_evaluations', actionKey: 'update' as ActionKey, effect: 'allow' as const },
-      ],
+      cells: (['club', 'club.members', 'club.dashboard', 'club.subscriptions', 'club.lockers', 'club.fitness'] as const).flatMap((r) =>
+        (['view', 'export', 'print'] as ActionKey[]).map((actionKey) => ({
+          resourceKey: r,
+          actionKey,
+          effect: 'allow' as const,
+        })),
+      ),
     },
   ];
 
@@ -442,8 +447,8 @@ async function seedAccountingAndAppPermissions(
           'accounting.reports.cashflow',
           'accounting.settings',
           'app-management',
-          'portal-management',
           'app-management.about',
+          'app-management.payment-methods',
           'app-management.invitations',
           'app-management.invitations.accepted',
           'app-management.invitations.attended',
@@ -487,6 +492,7 @@ async function seedAccountingAndAppPermissions(
           'accounting.reports.gl',
           'accounting.reports.statement',
           'app-management',
+          'app-management.payment-methods',
           'app-management.invitations',
           'app-management.invitations.accepted',
           'app-management.invitations.attended',
@@ -581,12 +587,8 @@ export async function seedRbac() {
   const cafeJob = await prisma.department_jobs.findFirst({ where: { name: 'إدارة الكافيه' }, select: { id: true } });
   if (cafeJob) {
     const cafeRole = await prisma.rbac_roles.findUnique({ where: { key: jobTitleRoleKey(cafeJob.id) }, select: { id: true } });
-    const cafeResources = await prisma.rbac_resources.findMany({
-      where: { OR: [{ key: { startsWith: 'gym-sales' } }, { key: { startsWith: 'club.cafe' } }] },
-      select: { id: true },
-    });
     const cafeActions = await prisma.rbac_resource_actions.findMany({
-      where: { resource_id: { in: cafeResources.map((resource) => resource.id) } },
+      where: { resource: { OR: [{ key: { startsWith: 'gym-sales' } }, { key: { startsWith: 'club.cafe' } }] } },
       select: { resource_id: true, action_id: true },
     });
     if (cafeRole && cafeActions.length) {

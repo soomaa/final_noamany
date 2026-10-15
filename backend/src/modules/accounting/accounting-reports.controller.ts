@@ -17,7 +17,7 @@ export class AccountingReportsController {
   constructor(private readonly service: AccountingReportsService) {}
 
   @Get('dashboard')
-  @RequiresPermission('accounting.dashboard:view', 'accounting.reports:view')
+  @RequiresPermission('accounting.dashboard:view')
   dashboard(@Query() query: ReportDateRangeDto, @CurrentUser() user: JwtUser) {
     return this.service.dashboard(query, user);
   }
@@ -29,31 +29,31 @@ export class AccountingReportsController {
   }
 
   @Get('account-statement')
-  @RequiresPermission('accounting.reports.statement:view', 'accounting.reports:view')
+  @RequiresPermission('accounting.reports.statement:view')
   accountStatement(@Query() query: AccountStatementQueryDto, @CurrentUser() user: JwtUser) {
     return this.service.accountStatement(query, user);
   }
 
   @Get('general-ledger')
-  @RequiresPermission('accounting.reports.gl:view', 'accounting.reports:view')
+  @RequiresPermission('accounting.reports.gl:view')
   generalLedger(@Query() query: GeneralLedgerQueryDto, @CurrentUser() user: JwtUser) {
     return this.service.generalLedger(query, user);
   }
 
   @Get('income-statement')
-  @RequiresPermission('accounting.reports.income:view', 'accounting.reports:view')
+  @RequiresPermission('accounting.reports.income:view')
   incomeStatement(@Query() query: ReportDateRangeDto, @CurrentUser() user: JwtUser) {
     return this.service.incomeStatement(query, user);
   }
 
   @Get('balance-sheet')
-  @RequiresPermission('accounting.reports.balance:view', 'accounting.reports:view')
+  @RequiresPermission('accounting.reports.balance:view')
   balanceSheet(@Query() query: BalanceSheetQueryDto, @CurrentUser() user: JwtUser) {
     return this.service.balanceSheet(query, user);
   }
 
   @Get('cash-flow')
-  @RequiresPermission('accounting.reports.cashflow:view', 'accounting.reports:view')
+  @RequiresPermission('accounting.reports.cashflow:view')
   cashFlow(@Query() query: ReportDateRangeDto, @CurrentUser() user: JwtUser) {
     return this.service.cashFlow(query, user);
   }

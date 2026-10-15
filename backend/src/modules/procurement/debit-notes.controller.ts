@@ -24,7 +24,7 @@ import { DebitNotesService } from './debit-notes.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('debit-notes')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.supplier_payments:view')
 export class DebitNotesController {
   constructor(private readonly service: DebitNotesService) {}
 
@@ -44,13 +44,13 @@ export class DebitNotesController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.procurement:create')
+  @RequiresPermission('gym-sales.procurement.supplier_payments:create')
   create(@Body() body: UpsertDebitNoteDto, @CurrentUser('sub') userId: number) {
     return this.service.create(body, userId);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.supplier_payments:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertDebitNoteDto>,
@@ -59,13 +59,13 @@ export class DebitNotesController {
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.procurement:delete')
+  @RequiresPermission('gym-sales.procurement.supplier_payments:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }
 
   @Patch(':id/status')
-  @RequiresPermission('gym-sales.procurement:approve')
+  @RequiresPermission('gym-sales.procurement.supplier_payments:approve')
   changeStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: ChangeDebitNoteStatusDto,
@@ -75,7 +75,7 @@ export class DebitNotesController {
   }
 
   @Post(':id/send')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.supplier_payments:update')
   send(@Param('id', ParseIntPipe) id: number, @Body() body: SendDebitNoteDto) {
     return this.service.send(id, body);
   }

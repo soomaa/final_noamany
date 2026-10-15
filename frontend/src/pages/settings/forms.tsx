@@ -19,9 +19,10 @@ import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { usePermission } from '@/hooks/use-permission';
 
 interface FormSettingRow {
   id: number;
@@ -44,6 +45,10 @@ const FORM_TYPE_LABELS = Object.fromEntries(FORM_TYPES.map((t) => [t.value, t.la
 
 export function FormsSettingsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('admin.forms:create');
+  const canUpdate = can('admin.forms:update');
+  const canDelete = can('admin.forms:delete');
   const { params, setParams } = useListQuery({ filters: { type: '1' } });
   const activeType = params.filters.type ?? '1';
   const { data, isLoading, isError, error, refetch } = usePaginatedList<FormSettingRow>('settings/forms', params);
@@ -78,6 +83,7 @@ export function FormsSettingsPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.title.trim()) {
       toast.error(ui('الاسم مطلوب'));
       return;
@@ -110,6 +116,7 @@ export function FormsSettingsPage() {
   };
 
   const handleDelete = async (row: FormSettingRow) => {
+    if (!canDelete) return;
     const ok = await confirm({
       title: ui('حذف العنصر'),
       description: `${ui('هل تريد حذف «')}${row.title ?? ui('هذا العنصر')}${ui('»؟')}`,
@@ -150,19 +157,19 @@ export function FormsSettingsPage() {
     base.push({
       id: 'actions',
       header: ui('الإجراءات'),
-      cell: ({ row }) => (
+      cell: ({ row }) => !canUpdate && !canDelete ? null : (
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+          {canUpdate ? <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
             <Pencil className="size-4" />
-          </Button>
-          <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
+          </Button> : null}
+          {canDelete ? <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
             <Trash2 className="size-4 text-destructive" />
-          </Button>
+          </Button> : null}
         </div>
       ),
     });
     return base;
-  }, [params.page, params.pageSize, showMaxDegree]);
+  }, [params.page, params.pageSize, showMaxDegree, canUpdate, canDelete, ui]);
 
   return (
     <>
@@ -173,11 +180,11 @@ export function FormsSettingsPage() {
         isError={isError}
         error={error}
         notImplementedTitle={ui('تعريف النماذج — قيد الإعداد على الخادم')}
-        actions={
+        actions={canCreate ? (
           <Button variant="brand" size="sm" onClick={openCreate}>
             <Plus className="size-4" /> {ui('عنصر جديد')}
           </Button>
-        }
+        ) : undefined}
         stats={[
           {
             title: ui('عناصر التصنيف الحالي'),
@@ -203,6 +210,7 @@ export function FormsSettingsPage() {
         </Tabs>
 
         <DataTable
+          exportSource={{ resource: 'settings/forms', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -265,9 +273,9 @@ export function FormsSettingsPage() {
             <Button variant="outline" onClick={() => setFormOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()} disabled={saving}>
+            {(editId ? canUpdate : canCreate) ? <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>
               {ui('حفظ')}
-            </Button>
+            </Button> : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

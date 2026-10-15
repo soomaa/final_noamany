@@ -1,5 +1,7 @@
 import {
+  Logger,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -13,6 +15,7 @@ import {
   SalesPaymentMethod,
 } from "@prisma/client";
 import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
+import { normalizeMemberSearchQuery, memberCodeSearchTerms, memberCodeSearchRank } from "../club-members/club-member.utils";
 import { PermissionEngineService } from "../rbac/engine/permission-engine.service";
 import { paginated } from "../../common/dto/list-result";
 import { isDryRun, previewResponse, PreviewRow } from "../../common/preview";
@@ -20,12 +23,14 @@ import { PrismaService } from "../../common/prisma/prisma.service";
 import { retryOnUniqueViolation } from "../../common/retry-unique";
 import { JwtUser } from "../../common/types/jwt-user";
 import { convertToBaseUnit, type RecipeUnit } from "../../common/utils/units";
-import { InventoryStockService } from "../inventory/inventory-stock.service";
+import { InventoryStockService, roundStock } from "../inventory/inventory-stock.service";
 import { InventoryLocationService } from "../inventory/inventory-location.service";
 import { ModuleLedgerService } from "../accounting/module-ledger.service";
 import { notDeletedFilter } from "../inventory/inventory.utils";
 import {
   CreateQuickSaleDto,
+  EditCompletedQuickSaleDto,
+  ListCafeCustomersDto,
   ListQuickSalesDto,
   PosPaymentDto,
   UpdateQuickSaleDto,
@@ -33,18 +38,33 @@ import {
 import { ShiftSessionsService } from "./shift-sessions.service";
 import { PosSettingsService } from "./pos-admin/pos-reports-notifications.service";
 import { recordSystemExpense } from "../finance/system-expense.util";
+import { syncCafeSaleFinance } from "../finance/cafe-finance.util";
+import { saleStockBalance } from './sale-stock-balance.util';
+import { invoicePaymentAmounts, savedSalePaymentInvoice, shiftPaymentSummary } from './sale-payment-summary.util';
+import { planCompletedSaleStock } from './completed-sale-stock-plan.util';
+import { refundWasteCosts } from './refund-waste-cost.util';
+import { cafeProductHasAnyCategory } from '../cafe/cafe-product-categories';
+import { assertCafeInvoiceClassification, assertCafeInvoiceProducts } from '../cafe/cafe-invoice-classification';
 import {
-  assertPaymentMethodRules,
-  findRuleForPayment,
+  CafeBundlesService,
+  type BundleComponentSale,
+  type BundleSelectionSnapshot,
+} from '../cafe/cafe-bundles.service';
+import {
   PosPaymentMethodRule,
+  resolveConfiguredPayment,
 } from "./pos-payment-validation.util";
 import {
   computeSaleTotals,
+  allocateFreeDrinks,
   localDateString,
   localTimeString,
   roundMoney,
+  resolvePosDiscountPercentage,
   toDecimal,
   toNumber,
+  normalizeBillingCycle,
+  sameSaleCart,
 } from "./sales.utils";
 
 type SaleRow = Prisma.sales_quick_salesGetPayload<{
@@ -57,7 +77,7 @@ type SaleRow = Prisma.sales_quick_salesGetPayload<{
 }>;
 
 type StockTrackedSaleItem = {
-  productType: "prepared" | "ready" | "inventory";
+  productType: "prepared" | "ready" | "inventory" | "bundle";
   cafeProductId: number | null;
   name: string;
   variantName: string | null;
@@ -71,6 +91,7 @@ type StockTrackedSaleItem = {
 
 @Injectable()
 export class QuickSalesService {
+  private readonly logger = new Logger(QuickSalesService.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly stock: InventoryStockService,
@@ -80,7 +101,86 @@ export class QuickSalesService {
     private readonly posSettings: PosSettingsService,
     private readonly branchScope: BranchScopeService,
     private readonly permissions: PermissionEngineService,
+    private readonly bundles: CafeBundlesService,
   ) {}
+
+  /**
+   * Resolve one café product used as a bundle component into its price and
+   * inventory consumption, reusing this service's recipe/manufactured explosion.
+   * Handed to the bundle service as its component resolver.
+   */
+  private resolveCafeComponentSale = async (
+    _db: Prisma.TransactionClient | PrismaService,
+    cafeProductId: number,
+    variantId: number | null,
+    quantity: number,
+    _warehouseId: number,
+    invoiceCategoryId?: number,
+  ): Promise<BundleComponentSale> => {
+    const product = await this.prisma.cafe_products.findFirst({
+      where: { id: cafeProductId, is_active: true },
+      include: {
+        inventory_product: true,
+        category_assignments: { select: { category_id: true } },
+        recipes: { include: { ingredient: true } },
+        variants: {
+          include: { recipes: { include: { ingredient: true } } },
+          orderBy: { sort_order: 'asc' },
+        },
+      },
+    });
+    if (!product) throw new BadRequestException('أحد منتجات الباندل غير موجود أو غير نشط');
+    if (invoiceCategoryId !== undefined) assertCafeInvoiceProducts(invoiceCategoryId, [product]);
+    const activeVariants = (product.variants ?? []).filter((v) => v.is_active);
+    const variant = variantId
+      ? activeVariants.find((v) => v.id === variantId)
+      : (activeVariants.find((v) => v.is_default) ?? activeVariants[0]);
+    if (variantId && !variant) {
+      throw new BadRequestException(`الحجم أو النوع المحدد للمنتج ${product.name} غير متاح`);
+    }
+    if (product.product_type === 'internal') {
+      throw new BadRequestException(`المنتج ${product.name} مخصص للاستخدام الداخلي ولا يمكن بيعه`);
+    }
+    if (product.product_type === 'ready' && !product.inventory_product) {
+      throw new BadRequestException(`المنتج الجاهز ${product.name} غير مربوط بالمخزون`);
+    }
+    if (
+      product.product_type === 'ready' &&
+      product.inventory_product &&
+      (product.inventory_product.is_deleted || product.inventory_product.status !== 'active')
+    ) {
+      throw new BadRequestException(`المنتج الجاهز ${product.name} غير نشط في المخزون`);
+    }
+    const selectedRecipes = variant?.recipes ?? product.recipes;
+    if (product.product_type === 'prepared' && selectedRecipes.length === 0) {
+      throw new BadRequestException(`المنتج ${product.name} لا يحتوي على وصفة`);
+    }
+    const consumption =
+      product.product_type === 'ready'
+        ? [
+            {
+              productId: product.inventory_product!.id,
+              quantity,
+              unitCost: toNumber(product.inventory_product!.cost_price),
+              ingredientName: product.inventory_product!.name_ar,
+              unit: product.inventory_product!.unit_of_measure,
+            },
+          ]
+        : await this.resolvePreparedConsumption(selectedRecipes, quantity);
+    const unitCost = roundMoney(
+      consumption.reduce((sum, row) => sum + row.quantity * row.unitCost, 0) / quantity,
+    );
+    return {
+      cafeProductId: product.id,
+      productName: product.name,
+      variantId: variant?.id ?? null,
+      variantName: variant?.name ?? null,
+      unitPrice: toNumber(variant?.sell_price ?? product.sell_price),
+      unitCost,
+      inventoryProductId: product.inventory_product_id,
+      consumption,
+    };
+  };
 
   private canApprovePayment(userId: number) {
     return this.permissions.canAny(userId, [
@@ -98,41 +198,45 @@ export class QuickSalesService {
     }
   }
 
-  private async resolveTargetEmployeeId(
-    targetEmployeeId: number | undefined,
-    branchId: number,
-  ): Promise<number | null> {
-    if (targetEmployeeId == null) return null;
-    const employee = await this.prisma.employees.findFirst({
-      where: {
-        id: targetEmployeeId,
-        branch_id_fk: branchId,
-        employee_type: 1,
-        OR: [{ leave_emp: null }, { leave_emp: 0 }],
-      },
-      select: { id: true },
-    });
-    if (!employee) {
-      throw new BadRequestException(
-        "مندوب التارجت المحدد غير موجود أو لا يتبع الفرع المختار",
-      );
-    }
-    return employee.id;
+  private employeeSnapshotName(row: SaleRow) {
+    const name = row.customer_name?.trim();
+    return name && !['عميل نقدي', 'walk-in customer', 'cash customer'].includes(name.toLowerCase()) ? name : null;
   }
 
-  private map(row: SaleRow) {
+  private async mapSales(rows: SaleRow[]) {
+    // Legacy employee invoices stored the walk-in placeholder. Resolve only
+    // their missing names, in one query, after the invoice branch access checks.
+    const ids = [...new Set(rows.filter((row) => row.sale_type === 'employee' && !this.employeeSnapshotName(row))
+      .flatMap((row) => row.employee_id ? [row.employee_id] : []))];
+    const employees = ids.length ? await this.prisma.employees.findMany({
+      where: { id: { in: ids } }, select: { id: true, employee: true },
+    }) : [];
+    const names = new Map(employees.map((employee) => [employee.id, employee.employee]));
+    return rows.map((row) => this.map(row, row.employee_id ? names.get(row.employee_id) : null));
+  }
+
+  private map(row: SaleRow, resolvedEmployeeName?: string | null) {
+    const employeeName = row.sale_type === 'employee'
+      ? this.employeeSnapshotName(row) || resolvedEmployeeName?.trim() || (row.employee_id ? `موظف #${row.employee_id}` : 'موظف غير محدد')
+      : null;
     return {
       id: row.id,
+      editRevision: row.events.filter(event => event.event_type === 'completed_edited').length,
       saleNumber: row.sale_number,
       dailyNumber: row.daily_number,
-      customerName: row.customer_name,
+      customerName: employeeName || row.customer_name,
+      employeeName,
       customerPhone: row.customer_phone,
       gender: row.gender,
       cafeCategoryId: row.cafe_category_id,
       saleType: row.sale_type,
       employeeId: row.employee_id,
-      targetEmployeeId: row.target_employee_id,
+      employeeBenefitDate: row.employee_benefit_date,
+      employeeFreeDrinks: row.employee_free_drinks ?? 0,
       partnerId: row.partner_id,
+      hospitalityHostKind: row.hospitality_host_kind,
+      hospitalityHostId: row.hospitality_host_id,
+      hospitalityHostName: row.hospitality_host_name,
       billingCycle: row.billing_cycle,
       billingStatus: row.billing_status,
       branchId: row.branch_id,
@@ -153,6 +257,7 @@ export class QuickSalesService {
           ? roundMoney(-toNumber(row.cost_total))
           : roundMoney(toNumber(row.total_amount) - toNumber(row.cost_total)),
       paymentMethod: row.payment_method,
+      paymentBreakdown: invoicePaymentAmounts(savedSalePaymentInvoice(row)),
       status: row.status,
       notes: row.notes,
       receiptComment: row.receipt_comment,
@@ -171,6 +276,7 @@ export class QuickSalesService {
       })),
       loyaltyPointsEarned: row.loyalty_points_earned,
       receiptPrinted: row.receipt_printed,
+      inventoryPosted: row.inventory_posted,
       warehouseId: row.warehouse_id,
       createdBy: row.created_by,
       items: row.items.map((i) => ({
@@ -179,6 +285,8 @@ export class QuickSalesService {
         productId: i.product_id,
         cafeProductId: i.cafe_product_id,
         cafeVariantId: i.cafe_variant_id,
+        bundleId: i.bundle_id,
+        bundleSelections: Array.isArray(i.bundle_selection) ? i.bundle_selection as BundleSelectionSnapshot[] : null,
         variantName: i.variant_name,
         inventoryProductId: i.inventory_product_id,
         refId: i.ref_id,
@@ -187,6 +295,7 @@ export class QuickSalesService {
         itemNote: i.item_note,
         unitPrice: toNumber(i.unit_price),
         quantity: toNumber(i.quantity),
+        freeQuantity: i.free_quantity ?? 0,
         lineTotal: toNumber(i.line_total),
         unitCost: toNumber(i.unit_cost),
         lineCost: toNumber(i.line_cost),
@@ -203,6 +312,9 @@ export class QuickSalesService {
         method: p.method,
         amount: toNumber(p.amount),
         reference: p.reference,
+        catalogPaymentMethodId: p.catalog_payment_method_id,
+        methodCode: p.method_code,
+        methodName: p.method_name,
       })),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -249,7 +361,10 @@ export class QuickSalesService {
     if (q.paymentMethod && q.paymentMethod !== "all") {
       and.push({ payment_method: q.paymentMethod as SalesPaymentMethod });
     }
-    if (q.saleType) and.push({ sale_type: q.saleType });
+    if (q.saleType === 'partner' && q.partnerId != null) {
+      // Hospitality assigned to this partner is an outstanding account invoice too.
+      and.push({ sale_type: { in: ['partner', 'hospitality'] } });
+    } else if (q.saleType) and.push({ sale_type: q.saleType });
     if (q.employeeId != null) and.push({ employee_id: q.employeeId });
     if (q.partnerId != null) and.push({ partner_id: q.partnerId });
     if (q.billingCycle) and.push({ billing_cycle: q.billingCycle });
@@ -275,47 +390,398 @@ export class QuickSalesService {
     return and.length ? { AND: and } : {};
   }
 
+  async customers(q: ListCafeCustomersDto, user: JwtUser) {
+    this.assertBranchAccess(user, q.branchId);
+    const kind = q.kind ?? "customer";
+    const page = q.page ?? 1;
+    const pageSize = q.pageSize ?? 20;
+    const search = q.search?.trim();
+    const completedWhere: Prisma.sales_quick_salesWhereInput = {
+      branch_id: q.branchId,
+      status: QuickSaleStatus.completed,
+      sale_type: kind,
+    };
+
+    if (kind === "customer") {
+      const groups = await this.prisma.sales_quick_sales.groupBy({
+        by: ["customer_phone"],
+        where: {
+          ...completedWhere,
+          customer_phone: { not: null },
+          ...(search
+            ? {
+                OR: [
+                  { customer_name: { contains: search } },
+                  { customer_phone: { contains: search } },
+                ],
+              }
+            : {}),
+        },
+        _count: { _all: true },
+        _sum: { total_amount: true },
+        _min: { sale_date: true },
+        _max: { sale_date: true },
+      });
+      const phoneGroups = groups.filter((group) => Boolean(group.customer_phone));
+      const phones = phoneGroups
+        .map((group) => group.customer_phone)
+        .filter((phone): phone is string => Boolean(phone));
+      const latestSales = phones.length
+        ? await this.prisma.sales_quick_sales.findMany({
+            where: { ...completedWhere, customer_phone: { in: phones } },
+            orderBy: [{ sale_date: "desc" }, { sale_time: "desc" }, { id: "desc" }],
+            select: { customer_phone: true, customer_name: true },
+          })
+        : [];
+      const nameByPhone = new Map<string, string>();
+      for (const sale of latestSales) {
+        if (sale.customer_phone && !nameByPhone.has(sale.customer_phone)) {
+          nameByPhone.set(sale.customer_phone, sale.customer_name);
+        }
+      }
+      const rows = phoneGroups.map((group) => {
+        const orders = group._count._all;
+        const totalSpend = roundMoney(toNumber(group._sum.total_amount));
+        return {
+          key: group.customer_phone!,
+          kind,
+          name: nameByPhone.get(group.customer_phone!) ?? "عميل نقدي",
+          phone: group.customer_phone,
+          orders,
+          totalSpend,
+          averageOrder: orders ? roundMoney(totalSpend / orders) : 0,
+          firstOrderDate: group._min.sale_date,
+          lastOrderDate: group._max.sale_date,
+        };
+      });
+      return this.paginateCustomerRows(rows, q.sortBy, page, pageSize);
+    }
+
+    const matchingEmployeeIds = search
+      ? (
+          await this.prisma.employees.findMany({
+            where: {
+              OR: [
+                { employee: { contains: search } },
+                { phone: { contains: search } },
+                ...(!Number.isNaN(Number(search)) ? [{ emp_code: Number(search) }] : []),
+              ],
+            },
+            select: { id: true },
+          })
+        ).map((employee) => employee.id)
+      : undefined;
+    const groups = await this.prisma.sales_quick_sales.groupBy({
+      by: ["employee_id"],
+      where: {
+        ...completedWhere,
+        employee_id: { not: null, ...(matchingEmployeeIds ? { in: matchingEmployeeIds } : {}) },
+      },
+      _count: { _all: true },
+      _sum: { total_amount: true },
+      _min: { sale_date: true },
+      _max: { sale_date: true },
+    });
+    const employeeIds = groups
+      .map((group) => group.employee_id)
+      .filter((id): id is number => id != null);
+    const employees = employeeIds.length
+      ? await this.prisma.employees.findMany({
+          where: { id: { in: employeeIds } },
+          select: { id: true, employee: true, phone: true, emp_code: true },
+        })
+      : [];
+    const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
+    const rows = groups.map((group) => {
+      const employee = employeeById.get(group.employee_id!);
+      const orders = group._count._all;
+      const totalSpend = roundMoney(toNumber(group._sum.total_amount));
+      return {
+        key: String(group.employee_id),
+        kind,
+        name: employee?.employee ?? `موظف #${group.employee_id}`,
+        phone: employee?.phone ?? null,
+        employeeCode: employee?.emp_code ?? null,
+        orders,
+        totalSpend,
+        averageOrder: orders ? roundMoney(totalSpend / orders) : 0,
+        firstOrderDate: group._min.sale_date,
+        lastOrderDate: group._max.sale_date,
+      };
+    });
+    return this.paginateCustomerRows(rows, q.sortBy, page, pageSize);
+  }
+
+  private paginateCustomerRows<T extends { orders: number; totalSpend: number }>(
+    rows: T[],
+    sortBy: "spend" | "orders" | undefined,
+    page: number,
+    pageSize: number,
+  ) {
+    rows.sort((a, b) =>
+      sortBy === "orders"
+        ? b.orders - a.orders || b.totalSpend - a.totalSpend
+        : b.totalSpend - a.totalSpend || b.orders - a.orders,
+    );
+    const start = (page - 1) * pageSize;
+    return paginated(rows.slice(start, start + pageSize), rows.length, page, pageSize);
+  }
+
+  async customerLookup(branchId: number, phone: string, user: JwtUser) {
+    this.assertBranchAccess(user, branchId);
+    const normalizedPhone = String(phone ?? "").trim().replace(/[\s\-()]/g, "");
+    if (!/^(?:01\d{9}|\+?[1-9]\d{6,14})$/.test(normalizedPhone)) {
+      return { found: false, name: null, phone: normalizedPhone };
+    }
+    const sale = await this.prisma.sales_quick_sales.findFirst({
+      where: {
+        branch_id: branchId,
+        sale_type: "customer",
+        customer_phone: normalizedPhone,
+        status: { not: QuickSaleStatus.cancelled },
+      },
+      orderBy: [{ sale_date: "desc" }, { sale_time: "desc" }, { id: "desc" }],
+      select: { customer_name: true, customer_phone: true },
+    });
+    return {
+      found: Boolean(sale),
+      name: sale?.customer_name ?? null,
+      phone: sale?.customer_phone ?? normalizedPhone,
+    };
+  }
+
+  async customerMemberLookup(branchId: number, code: string, user: JwtUser) {
+    this.assertBranchAccess(user, branchId);
+    const normalizedCode = String(code ?? "").trim();
+    if (!normalizedCode) return { found: false, member: null };
+
+    const member = await this.prisma.club_members.findFirst({
+      where: {
+        branch_id: branchId,
+        is_deleted: false,
+        OR: [
+          { member_code: normalizedCode },
+          { card_number: normalizedCode },
+        ],
+      },
+      select: {
+        id: true,
+        member_code: true,
+        name: true,
+        phone: true,
+        card_number: true,
+        is_active: true,
+      },
+    });
+
+    if (!member) return { found: false, member: null };
+    return {
+      found: true,
+      member: {
+        id: member.id,
+        memberCode: member.member_code,
+        name: member.name,
+        phone: member.phone,
+        cardNumber: member.card_number,
+        isActive: member.is_active,
+      },
+    };
+  }
+
+  async customerMemberSearch(branchId: number, query: string, user: JwtUser) {
+    this.assertBranchAccess(user, branchId);
+    const normalizedQuery = normalizeMemberSearchQuery(String(query ?? ""));
+    if (!normalizedQuery || (!/^\d+$/.test(normalizedQuery) && normalizedQuery.length < 2)) return { results: [] };
+    const scope = { branch_id: branchId, is_deleted: false };
+    const select = { id: true, member_code: true, name: true, phone: true,
+      card_number: true, is_active: true } as const;
+    const codeQuery = /^[a-z\d-]+$/i.test(normalizedQuery);
+    const codeTerms = memberCodeSearchTerms(normalizedQuery, [branchId]);
+    const prefixes = codeQuery ? await this.prisma.club_members.findMany({
+      where: { ...scope, OR: [
+        ...codeTerms.exact.map(member_code => ({ member_code })),
+        ...codeTerms.prefixes.map(prefix => ({ member_code: { startsWith: prefix } })),
+      ] },
+      orderBy: { member_code: 'asc' }, select, take: 6,
+    }) : [];
+    const fullCodeFound = /^[a-z]{1,3}\d{6}$/i.test(normalizedQuery)
+      && prefixes.some(row => memberCodeSearchRank(row.member_code, normalizedQuery) === 0);
+    const [codes, otherMatches] = prefixes.length < 3 && !fullCodeFound ? await Promise.all([
+      codeQuery ? this.prisma.club_members.findMany({
+      where: { ...scope, member_code: { contains: normalizedQuery } },
+      orderBy: { member_code: 'asc' }, select, take: 6,
+    }) : Promise.resolve([]),
+      this.prisma.club_members.findMany({
+      where: {
+        branch_id: branchId,
+        is_deleted: false,
+        OR: [
+          { member_code: { contains: normalizedQuery } },
+          { card_number: { contains: normalizedQuery } },
+          { name: { contains: normalizedQuery } },
+          { phone: { contains: normalizedQuery } },
+        ],
+      },
+      select,
+      take: 12,
+    }),
+    ]) : [[], []];
+    const members = [...new Map([...prefixes, ...codes, ...otherMatches].map((row) => [row.id, row])).values()];
+
+    const needle = normalizedQuery.toLocaleLowerCase();
+    const score = (member: (typeof members)[number]) => {
+      const codeRank = memberCodeSearchRank(member.member_code, normalizedQuery);
+      const cardNumber = member.card_number?.toLocaleLowerCase() ?? "";
+      const phone = member.phone?.toLocaleLowerCase() ?? "";
+      const name = member.name.toLocaleLowerCase();
+      if (codeRank === 0) return 1000;
+      if (codeRank === 1) return 800;
+      if (codeRank === 2) return 600;
+      if (cardNumber === needle) return 95;
+      if (cardNumber.startsWith(needle)) return 75;
+      if (cardNumber.includes(needle)) return 55;
+      if (phone.startsWith(needle)) return 45;
+      if (phone.includes(needle)) return 40;
+      if (name.startsWith(needle)) return 35;
+      return 30;
+    };
+
+    const results = members
+      .sort((a, b) => score(b) - score(a) || a.member_code.length - b.member_code.length || a.id - b.id)
+      .slice(0, 3)
+      .map((member) => ({
+        id: member.id,
+        memberCode: member.member_code,
+        name: member.name,
+        phone: member.phone,
+        cardNumber: member.card_number,
+        isActive: member.is_active,
+      }));
+    return { results };
+  }
+
+  async customerDetail(branchId: number, kindValue: string, key: string, user: JwtUser) {
+    this.assertBranchAccess(user, branchId);
+    if (kindValue !== "customer" && kindValue !== "employee") {
+      throw new BadRequestException("نوع سجل العميل غير صحيح");
+    }
+    const kind = kindValue as "customer" | "employee";
+    const employeeId = kind === "employee" ? Number(key) : null;
+    if (kind === "employee" && (!Number.isInteger(employeeId) || employeeId! <= 0)) {
+      throw new BadRequestException("رقم الموظف غير صحيح");
+    }
+    const sales = await this.prisma.sales_quick_sales.findMany({
+      where: {
+        branch_id: branchId,
+        status: QuickSaleStatus.completed,
+        sale_type: kind,
+        ...(kind === "customer" ? { customer_phone: key } : { employee_id: employeeId }),
+      },
+      include: { items: true },
+      orderBy: [{ sale_date: "desc" }, { sale_time: "desc" }, { id: "desc" }],
+    });
+    if (!sales.length) throw new NotFoundException("لا توجد مشتريات لهذا السجل في الفرع");
+    const employee = employeeId
+      ? await this.prisma.employees.findUnique({
+          where: { id: employeeId },
+          select: { employee: true, phone: true, emp_code: true },
+        })
+      : null;
+    const totalSpend = roundMoney(sales.reduce((sum, sale) => sum + toNumber(sale.total_amount), 0));
+    const productTotals = new Map<string, { name: string; quantity: number; spend: number }>();
+    for (const sale of sales) {
+      for (const item of sale.items) {
+        const productKey = `${item.cafe_product_id ?? item.product_id}:${item.cafe_variant_id ?? "base"}`;
+        const current = productTotals.get(productKey) ?? {
+          name: item.variant_name ? `${item.name} — ${item.variant_name}` : item.name,
+          quantity: 0,
+          spend: 0,
+        };
+        current.quantity += toNumber(item.quantity);
+        current.spend += toNumber(item.line_total);
+        productTotals.set(productKey, current);
+      }
+    }
+    const favoriteProducts = [...productTotals.values()]
+      .map((item) => ({ ...item, spend: roundMoney(item.spend) }))
+      .sort((a, b) => b.quantity - a.quantity || b.spend - a.spend)
+      .slice(0, 5);
+    return {
+      key,
+      kind,
+      name: employee?.employee ?? sales[0].customer_name,
+      phone: employee?.phone ?? sales[0].customer_phone,
+      employeeCode: employee?.emp_code ?? null,
+      orders: sales.length,
+      totalSpend,
+      averageOrder: roundMoney(totalSpend / sales.length),
+      firstOrderDate: sales[sales.length - 1].sale_date,
+      lastOrderDate: sales[0].sale_date,
+      favoriteProducts,
+      ordersHistory: sales.map((sale) => ({
+        id: sale.id,
+        saleNumber: sale.sale_number,
+        date: sale.sale_date,
+        time: sale.sale_time,
+        total: toNumber(sale.total_amount),
+        discount: toNumber(sale.discount_amount),
+        itemsCount: sale.items.reduce((sum, item) => sum + toNumber(item.quantity), 0),
+      })),
+    };
+  }
+
   private resolvePayments(
     paymentMethod: SalesPaymentMethod,
     totalAmount: number,
     payments?: PosPaymentDto[],
     rules?: PosPaymentMethodRule[],
-    opts?: { paymentApproved?: boolean },
-  ): { method: SalesPaymentMethod; amount: number; reference?: string }[] {
+    opts?: {
+      paymentApproved?: boolean;
+      catalogPaymentMethodId?: number;
+      paymentReference?: string;
+    },
+  ) {
     if (paymentMethod === SalesPaymentMethod.mixed) {
-      if (!payments?.length) {
-        throw new BadRequestException("يجب تحديد تفاصيل الدفع المختلط");
+      if (!payments || payments.length < 2) {
+        throw new BadRequestException("الدفع المختلط يحتاج وسيلتي دفع على الأقل");
       }
-      const sum = roundMoney(payments.reduce((s, p) => s + p.amount, 0));
-      if (sum !== totalAmount) {
+      const totalCents = Math.round(totalAmount * 100);
+      const paidCents = payments.reduce(
+        (sum, payment) => sum + Math.round(payment.amount * 100),
+        0,
+      );
+      if (paidCents !== totalCents) {
         throw new BadRequestException("مجموع الدفعات لا يساوي إجمالي الفاتورة");
       }
-      const rows = payments.map((p) => ({
-        method: p.method as SalesPaymentMethod,
-        amount: p.amount,
-        reference: p.reference,
-      }));
-      if (rules?.length) {
-        for (const row of rows) {
-          assertPaymentMethodRules(
-            row.amount,
-            row.method,
-            findRuleForPayment(rules, row.method),
-            opts,
-          );
-        }
+      const selectedIds = payments
+        .map((payment) => payment.catalogPaymentMethodId)
+        .filter((id): id is number => id != null);
+      if (new Set(selectedIds).size !== selectedIds.length) {
+        throw new BadRequestException("لا يمكن تكرار نفس وسيلة الدفع داخل التقسيم");
       }
-      return rows;
-    }
-    if (rules?.length) {
-      assertPaymentMethodRules(
-        totalAmount,
-        paymentMethod,
-        findRuleForPayment(rules, paymentMethod),
-        opts,
+      return payments.map((payment) =>
+        resolveConfiguredPayment(
+          rules ?? [],
+          {
+            method: payment.method as SalesPaymentMethod,
+            amount: payment.amount,
+            reference: payment.reference,
+            catalogPaymentMethodId: payment.catalogPaymentMethodId,
+          },
+          { isMixed: true, paymentApproved: opts?.paymentApproved },
+        ),
       );
     }
-    return [{ method: paymentMethod, amount: totalAmount }];
+    return [resolveConfiguredPayment(
+      rules ?? [],
+      {
+        method: paymentMethod,
+        amount: totalAmount,
+        catalogPaymentMethodId: opts?.catalogPaymentMethodId,
+        reference: opts?.paymentReference,
+      },
+      { paymentApproved: opts?.paymentApproved },
+    )];
   }
 
   private async loadPaymentRules(): Promise<PosPaymentMethodRule[]> {
@@ -323,6 +789,7 @@ export class QuickSalesService {
       orderBy: { sort_order: "asc" },
     });
     return rows.map((r) => ({
+      id: r.id,
       code: r.code,
       baseMethod: r.base_method,
       name: r.name,
@@ -331,6 +798,8 @@ export class QuickSalesService {
       requiresApproval: r.requires_approval,
       approvalThreshold:
         r.approval_threshold != null ? toNumber(r.approval_threshold) : null,
+      supportsMixedPayment: r.supports_mixed_payment,
+      requiresReference: r.requires_reference,
       isEnabled: r.is_enabled,
     }));
   }
@@ -399,7 +868,7 @@ export class QuickSalesService {
       this.prisma.sales_quick_sales.count({ where }),
     ]);
     return paginated(
-      rows.map((r) => this.map(r)),
+      await this.mapSales(rows),
       total,
       q.page,
       q.pageSize,
@@ -412,36 +881,70 @@ export class QuickSalesService {
    * wipes at midnight — older sessions simply fall out of the window.
    */
   async shiftBoard(
-    q: { branchId?: string; limit?: number },
+    q: { branchId?: string; limit?: number; dateFrom?: string; dateTo?: string },
     user?: JwtUser,
   ) {
     const limit = Math.min(Math.max(Number(q.limit ?? 2) || 2, 1), 5);
+    const dateMode = Boolean(q.dateFrom || q.dateTo);
+    if (dateMode && (!q.dateFrom || !q.dateTo)) {
+      throw new BadRequestException('حدد بداية ونهاية فترة الورديات');
+    }
+    if (q.dateFrom && q.dateTo) {
+      if (q.dateFrom > q.dateTo) {
+        throw new BadRequestException('بداية الفترة يجب أن تسبق نهايتها');
+      }
+      const start = Date.parse(`${q.dateFrom}T00:00:00Z`);
+      const end = Date.parse(`${q.dateTo}T00:00:00Z`);
+      if (!Number.isFinite(start) || !Number.isFinite(end)) {
+        throw new BadRequestException('تاريخ فترة الورديات غير صحيح');
+      }
+      if (Math.floor((end - start) / 86_400_000) + 1 > 31) {
+        throw new BadRequestException('أقصى فترة لفاتورة الورديات المجمعة هي 31 يومًا');
+      }
+    }
     const scope = this.branchScope.resolveListFilter(user, q.branchId ?? null);
     const branchFilter: Prisma.sales_shift_sessionsWhereInput = {
       ...(q.branchId && q.branchId !== 'all'
         ? { branch_id: Number(q.branchId) }
         : {}),
       ...(scope ? { branch_id: { in: scope } } : {}),
+      ...(q.dateFrom && q.dateTo
+        ? { session_date: { gte: q.dateFrom, lte: q.dateTo } }
+        : {}),
     };
 
     const sessions = await this.prisma.sales_shift_sessions.findMany({
       where: branchFilter,
       include: { shift: true },
-      orderBy: [{ start_time: 'desc' }, { id: 'desc' }],
-      take: limit,
+      orderBy: [{ session_date: 'desc' }, { start_time: 'desc' }, { id: 'desc' }],
+      take: dateMode ? 100 : limit,
     });
 
     if (!sessions.length) {
       return {
         sessions: [],
-        totals: { orders: 0, completed: 0, value: 0, held: 0, drafts: 0 },
+        totals: {
+          orders: 0,
+          completed: 0,
+          value: 0,
+          held: 0,
+          drafts: 0,
+          settlements: 0,
+          settlementValue: 0,
+        },
       };
     }
 
     const sessionIds = sessions.map((row) => row.id);
     const sales = await this.prisma.sales_quick_sales.findMany({
       where: {
-        shift_session_id: { in: sessionIds },
+        OR: [
+          { shift_session_id: { in: sessionIds } },
+          {
+            shift_session_id: null,
+            status: QuickSaleStatus.draft,
+          },
+        ],
         ...(scope ? { branch_id: { in: scope } } : {}),
         ...(q.branchId && q.branchId !== 'all'
           ? { branch_id: Number(q.branchId) }
@@ -455,11 +958,81 @@ export class QuickSalesService {
       },
       orderBy: [{ id: 'desc' }],
     });
+    const settlements = await this.prisma.sales_billing_statements.findMany({
+      where: {
+        shift_session_id: { in: sessionIds },
+        status: 'settled',
+      },
+      select: {
+        id: true,
+        statement_number: true,
+        shift_session_id: true,
+        account_type: true,
+        employee_id: true,
+        partner_id: true,
+        total_amount: true,
+        settlement_method: true,
+        payment_method: true,
+        settled_at: true,
+      },
+      orderBy: [{ settled_at: 'desc' }, { id: 'desc' }],
+    });
+    const employeeIds = settlements.flatMap((row) =>
+      row.employee_id ? [row.employee_id] : [],
+    );
+    const partnerIds = settlements.flatMap((row) =>
+      row.partner_id ? [row.partner_id] : [],
+    );
+    const employees: Array<{ id: number; employee: string | null }> =
+      employeeIds.length
+        ? await this.prisma.employees.findMany({
+            where: { id: { in: employeeIds } },
+            select: { id: true, employee: true },
+          })
+        : [];
+    const partners: Array<{ id: number; name: string }> = partnerIds.length
+      ? await this.prisma.cafe_partners.findMany({
+          where: { id: { in: partnerIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const employeeNames = new Map<number, string | null>(
+      employees.map((employee) => [employee.id, employee.employee]),
+    );
+    const partnerNames = new Map<number, string>(
+      partners.map((partner) => [partner.id, partner.name]),
+    );
+    const mappedSettlements = settlements.map((row) => ({
+      id: row.id,
+      statementNumber: row.statement_number,
+      shiftSessionId: row.shift_session_id,
+      accountType: row.account_type,
+      accountName: row.employee_id
+        ? employeeNames.get(row.employee_id) ?? null
+        : row.partner_id
+          ? partnerNames.get(row.partner_id) ?? null
+          : null,
+      totalAmount: toNumber(row.total_amount),
+      settlementMethod: row.settlement_method,
+      paymentMethod: row.payment_method,
+      settledAt: row.settled_at,
+    }));
+    const settlementsBySession = new Map<number, typeof mappedSettlements>();
+    for (const settlement of mappedSettlements) {
+      if (settlement.shiftSessionId == null) continue;
+      const bucket = settlementsBySession.get(settlement.shiftSessionId) ?? [];
+      bucket.push(settlement);
+      settlementsBySession.set(settlement.shiftSessionId, bucket);
+    }
 
-    const mappedSales = sales.map((row) => this.map(row));
+    const mappedSales = await this.mapSales(sales);
     const bySession = new Map<number, Array<ReturnType<QuickSalesService['map']>>>();
     for (const sale of mappedSales) {
-      const key = sale.shiftSessionId as number | null | undefined;
+      const key = (sale.shiftSessionId ??
+        (sale.status === 'draft' ? sessions[0].id : null)) as
+        | number
+        | null
+        | undefined;
       if (key == null) continue;
       const bucket = bySession.get(key) ?? [];
       bucket.push(sale);
@@ -468,6 +1041,7 @@ export class QuickSalesService {
 
     const boardSessions = sessions.map((session) => {
       const invoices = bySession.get(session.id) ?? [];
+      const sessionSettlements = settlementsBySession.get(session.id) ?? [];
       return {
         id: session.id,
         shiftId: session.shift_id,
@@ -478,7 +1052,9 @@ export class QuickSalesService {
         startTime: session.start_time,
         endTime: session.end_time,
         isOpen: session.status === 'open',
+        paymentSummary: shiftPaymentSummary(invoices),
         invoices,
+        settlements: sessionSettlements,
         drafts: invoices.filter((row) => row.status === 'draft'),
         completedCount: invoices.filter((row) => row.status === 'completed').length,
         completedValue: roundMoney(
@@ -486,12 +1062,19 @@ export class QuickSalesService {
             .filter((row) => row.status === 'completed')
             .reduce((sum, row) => sum + row.totalAmount, 0),
         ),
+        settlementCount: sessionSettlements.length,
+        settlementValue: roundMoney(
+          sessionSettlements.reduce((sum, row) => sum + row.totalAmount, 0),
+        ),
       };
     });
 
     const allInvoices = boardSessions.flatMap((session) => session.invoices);
     const drafts = allInvoices.filter((row) => row.status === 'draft');
     const completed = allInvoices.filter((row) => row.status === 'completed');
+    const allSettlements = boardSessions.flatMap(
+      (session) => session.settlements,
+    );
 
     return {
       sessions: boardSessions,
@@ -501,6 +1084,10 @@ export class QuickSalesService {
         value: roundMoney(completed.reduce((sum, row) => sum + row.totalAmount, 0)),
         held: roundMoney(drafts.reduce((sum, row) => sum + row.totalAmount, 0)),
         drafts: drafts.length,
+        settlements: allSettlements.length,
+        settlementValue: roundMoney(
+          allSettlements.reduce((sum, row) => sum + row.totalAmount, 0),
+        ),
       },
     };
   }
@@ -593,7 +1180,7 @@ export class QuickSalesService {
     });
     if (!row) throw new NotFoundException("الفاتورة غير موجودة");
     this.assertBranchAccess(user, row.branch_id);
-    return this.map(row);
+    return (await this.mapSales([row]))[0];
   }
 
   private async generateSaleIdentity(
@@ -656,6 +1243,11 @@ export class QuickSalesService {
     }> = [];
 
     for (const bom of cafe.recipes) {
+      if (bom.ingredient.is_deleted || bom.ingredient.status !== 'active') {
+        throw new BadRequestException(
+          `الوصفة الفرعية لـ ${ingredientName} تستخدم خامة محذوفة أو غير نشطة: ${bom.ingredient.name_ar}`,
+        );
+      }
       const scaledQty = toNumber(bom.quantity) * neededInBase;
       const converted = convertToBaseUnit(
         scaledQty,
@@ -737,6 +1329,8 @@ export class QuickSalesService {
         unit_of_measure: string;
         cost_price: Prisma.Decimal;
         inventory_kind: string;
+        is_deleted: boolean;
+        status: string;
       };
     }>,
     saleQuantity: number,
@@ -750,6 +1344,11 @@ export class QuickSalesService {
     }> = [];
 
     for (const recipe of recipes) {
+      if (recipe.ingredient.is_deleted || recipe.ingredient.status !== 'active') {
+        throw new BadRequestException(
+          `وصفة البيع تستخدم خامة محذوفة أو غير نشطة: ${recipe.ingredient.name_ar}`,
+        );
+      }
       const baseQuantity = convertToBaseUnit(
         toNumber(recipe.quantity) * saleQuantity,
         recipe.unit as RecipeUnit,
@@ -914,10 +1513,62 @@ export class QuickSalesService {
     });
   }
 
+  private async usedEmployeeDrinks(employeeId: number, date: string, excludeId?: number, db: Prisma.TransactionClient = this.prisma) {
+    const result = await db.sales_quick_sales.aggregate({
+      where: {
+        employee_id: employeeId,
+        employee_benefit_date: date,
+        status: { in: [QuickSaleStatus.completed, QuickSaleStatus.draft, QuickSaleStatus.refunded] },
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+      _sum: { employee_free_drinks: true },
+    });
+    return result._sum.employee_free_drinks ?? 0;
+  }
+
+  async employeeBenefits(employeeId: number, branchId: number, user?: JwtUser, excludeId?: number, benefitDate?: string) {
+    this.assertBranchAccess(user, branchId);
+    const settings = await this.posSettings.getCategory('general', branchId);
+    const values = Object.fromEntries(settings.map((s) => [s.key, s.value]));
+    const date = benefitDate ?? localDateString();
+    const enabled = values.employee_free_drinks_enabled === true;
+    const limit = Math.max(0, Math.min(100, Math.floor(Number(values.employee_free_drinks_daily) || 0)));
+    const categoryIds = Array.isArray(values.employee_free_drink_categories)
+      ? values.employee_free_drink_categories.map(Number).filter((id) => Number.isInteger(id) && id > 0) : [];
+    const used = enabled ? await this.usedEmployeeDrinks(employeeId, date, excludeId) : 0;
+    const products = enabled && categoryIds.length ? await this.prisma.cafe_products.findMany({
+      where: {
+        OR: [
+          { category_assignments: { some: { category_id: { in: categoryIds } } } },
+          { category_id: { in: categoryIds } },
+        ],
+        is_active: true,
+        product_type: { not: 'internal' },
+      },
+      select: { id: true },
+    }) : [];
+    return { date, enabled, limit, used, remaining: enabled ? Math.max(0, limit - used) : 0, categoryIds,
+      eligibleProductIds: products.map((product) => product.id),
+      discountEnabled: values.employee_discount_enabled !== false };
+  }
+
+  private async verifyEmployeeAllowance(tx: Prisma.TransactionClient, employeeId: number | undefined, benefits: Awaited<ReturnType<QuickSalesService['employeeBenefits']>> | null, count: number, excludeId?: number, originalBenefitDate?: string) {
+    if (!employeeId || !benefits?.enabled) return;
+    // Serialize every device on the employee, across all branches and shifts.
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM employees WHERE id = ${employeeId} FOR UPDATE`);
+    const used = await this.usedEmployeeDrinks(employeeId, benefits.date, excludeId, tx);
+    if ((originalBenefitDate ?? localDateString()) !== benefits.date || count > Math.max(0, benefits.limit - used)) {
+      throw new BadRequestException('تغير رصيد المشروبات المجانية؛ راجع الإجمالي ثم أكد الطلب مرة أخرى');
+    }
+  }
+
   private async prepareSale(
     dto: CreateQuickSaleDto,
     user?: JwtUser,
     paymentApproved = false,
+    excludeId?: number,
+    original?: SaleRow,
+    validateClassification = true,
   ) {
     if (!dto.items?.length)
       throw new BadRequestException("يجب إضافة بند واحد على الأقل");
@@ -928,16 +1579,20 @@ export class QuickSalesService {
     });
     if (!branch) throw new BadRequestException("الفرع المحدد غير موجود");
 
-    if (dto.items.some((item) => !item.productId && !item.cafeProductId)) {
+    if (dto.items.some((item) => !item.productId && !item.cafeProductId && !item.bundleId)) {
       throw new BadRequestException(
-        "كل بند يجب أن يكون منتجًا مخزنيًا أو منتج كافيه",
+        "كل بند يجب أن يكون منتجًا مخزنيًا أو منتج كافيه أو باندل",
       );
     }
     const saleType = dto.saleType ?? "customer";
+    if (saleType === "hospitality" && dto.onHold) {
+      throw new BadRequestException("لا يمكن حفظ ضيافة المكان كمسودة؛ أكملها مباشرة");
+    }
     if (saleType === "employee" && !dto.employeeId)
       throw new BadRequestException("اختر الموظف");
     if (saleType === "partner" && !dto.partnerId)
       throw new BadRequestException("اختر الشريك");
+    let customerName = dto.customerName?.trim() || 'عميل نقدي';
     if (saleType === "employee") {
       const employee = await this.prisma.employees.findFirst({
         where: {
@@ -945,10 +1600,11 @@ export class QuickSalesService {
           employee_type: 1,
           OR: [{ leave_emp: null }, { leave_emp: 0 }],
         },
-        select: { id: true },
+        select: { id: true, employee: true },
       });
       if (!employee)
         throw new BadRequestException("الموظف المحدد غير موجود أو غير نشط");
+      customerName = employee.employee?.trim() || `موظف #${employee.id}`;
     }
     if (saleType === "partner") {
       const partner = await this.prisma.cafe_partners.findFirst({
@@ -958,10 +1614,41 @@ export class QuickSalesService {
       if (!partner)
         throw new BadRequestException("الشريك المحدد غير موجود أو غير نشط");
     }
+    // House hospitality: not billed to any person. Resolve the optional "directed by"
+    // tag (a linked employee/partner or free text) for reporting only.
+    let hospitalityHostKind: "employee" | "partner" | null = null;
+    let hospitalityHostId: number | null = null;
+    let hospitalityHostName: string | null = null;
+    if (saleType === "hospitality") {
+      hospitalityHostName = dto.hospitalityHostName?.trim() || null;
+      if (dto.hospitalityHostId && dto.hospitalityHostKind) {
+        hospitalityHostKind = dto.hospitalityHostKind;
+        hospitalityHostId = dto.hospitalityHostId;
+        if (!hospitalityHostName) {
+          if (dto.hospitalityHostKind === "employee") {
+            const emp = await this.prisma.employees.findFirst({
+              where: { id: dto.hospitalityHostId },
+              select: { employee: true },
+            });
+            hospitalityHostName = emp?.employee?.trim() || `موظف #${dto.hospitalityHostId}`;
+          } else {
+            const partner = await this.prisma.cafe_partners.findFirst({
+              where: { id: dto.hospitalityHostId },
+              select: { name: true },
+            });
+            hospitalityHostName = partner?.name?.trim() || `شريك #${dto.hospitalityHostId}`;
+          }
+        }
+      }
+      customerName = hospitalityHostName
+        ? `ضيافة المكان — بتوجيه ${hospitalityHostName}`
+        : "ضيافة المكان";
+    }
+    // "daily" collection was retired: deferred employee/partner invoices are always monthly.
     const billingCycle =
-      saleType === "customer"
+      saleType === "customer" || saleType === "hospitality"
         ? "immediate"
-        : (dto.billingCycle ?? (saleType === "partner" ? "monthly" : "daily"));
+        : (normalizeBillingCycle(dto.billingCycle) ?? "monthly");
 
     // Price, recipe and cost are resolved from server-side masters. Browser values are never trusted.
     const productIds = [
@@ -987,6 +1674,7 @@ export class QuickSalesService {
       where: { id: { in: cafeProductIds }, is_active: true },
       include: {
         inventory_product: true,
+        category_assignments: { select: { category_id: true } },
         recipes: { include: { ingredient: true } },
         variants: {
           include: { recipes: { include: { ingredient: true } } },
@@ -1000,35 +1688,50 @@ export class QuickSalesService {
     const cafeMap = new Map(
       cafeProducts.map((product) => [product.id, product]),
     );
-    const category = await this.prisma.inv_categories.findFirst({
-      where: {
-        id: dto.cafeCategoryId,
-        is_active: true,
-        is_deleted: false,
-      },
-      select: { id: true },
-    });
-    if (!category) {
-      throw new BadRequestException("فئة فاتورة الكافيه المختارة غير متاحة");
-    }
-    const mismatchedProduct = [
-      ...products.map((product) => ({
-        name: product.name_ar,
-        categoryId: product.category_id,
-      })),
-      ...cafeProducts.map((product) => ({
-        name: product.name,
-        categoryId: product.category_id,
-      })),
-    ].find((product) => product.categoryId !== dto.cafeCategoryId);
-    if (mismatchedProduct) {
-      throw new BadRequestException(
-        `المنتج ${mismatchedProduct.name} لا ينتمي إلى فئة الفاتورة المختارة`,
-      );
+
+    if (validateClassification) {
+      await assertCafeInvoiceClassification(this.prisma, dto);
+      assertCafeInvoiceProducts(dto.cafeCategoryId, [...products, ...cafeProducts]);
     }
 
     const resolvedItems = await Promise.all(
       dto.items.map(async (item) => {
+      if (item.bundleId) {
+        const resolved = await this.bundles.resolveBundleSale(
+          this.prisma,
+          {
+            bundleId: item.bundleId,
+            quantity: item.quantity,
+            selections: item.bundleSelections ?? [],
+          },
+          0,
+          (db, productId, variantId, quantity, warehouseId) => this.resolveCafeComponentSale(
+            db, productId, variantId, quantity, warehouseId,
+            validateClassification ? dto.cafeCategoryId : undefined,
+          ),
+        );
+        return {
+          itemType: "bundle" as const,
+          productType: "bundle" as const,
+          productId: 0,
+          cafeProductId: null,
+          cafeVariantId: null,
+          variantName: null,
+          inventoryProductId: null,
+          bundleId: resolved.bundleId,
+          bundleSelection: resolved.selection,
+          name: resolved.name,
+          productCode: resolved.bundleCode,
+          itemNote:
+            item.itemNote?.trim() ||
+            (resolved.label ? resolved.label.slice(0, 300) : null),
+          unitPrice: resolved.unitPrice,
+          unitCost: resolved.unitCost,
+          quantity: item.quantity,
+          consumption: resolved.consumption,
+        };
+      }
+
       if (item.cafeProductId) {
         const product = cafeMap.get(item.cafeProductId)!;
         const activeVariants = (product.variants ?? []).filter(
@@ -1100,6 +1803,8 @@ export class QuickSalesService {
           cafeVariantId: variant?.id ?? null,
           variantName: variant?.name ?? null,
           inventoryProductId: product.inventory_product_id,
+          bundleId: null as number | null,
+          bundleSelection: null as BundleSelectionSnapshot[] | null,
           name: product.name,
           productCode: product.product_code,
           itemNote: item.itemNote?.trim() || null,
@@ -1119,6 +1824,8 @@ export class QuickSalesService {
         cafeVariantId: null,
         variantName: null,
         inventoryProductId: product.id,
+        bundleId: null as number | null,
+        bundleSelection: null as BundleSelectionSnapshot[] | null,
         name: product.name_ar,
         productCode: product.product_code,
         itemNote: item.itemNote?.trim() || null,
@@ -1138,6 +1845,24 @@ export class QuickSalesService {
       }),
     );
 
+    // Existing invoice lines keep their saved sale price, even if the menu changed.
+    if (original) for (const item of resolvedItems) {
+      // Bundles always re-price from their current definition (matching a saved line by
+      // product_id=0 would be ambiguous), so only lock saved prices for real products.
+      if (item.itemType === 'bundle') continue;
+      const saved = original.items.find(row => row.cafe_product_id === item.cafeProductId && row.cafe_variant_id === item.cafeVariantId && (item.cafeProductId !== null || row.product_id === item.productId));
+      if (saved) item.unitPrice = toNumber(saved.unit_price);
+    }
+    const benefits = saleType === 'employee'
+      ? await this.employeeBenefits(dto.employeeId!, dto.branchId, user, excludeId, original ? original.employee_benefit_date || original.sale_date : undefined) : null;
+    const freeQuantities = allocateFreeDrinks(resolvedItems.map((item) => ({
+      quantity: item.quantity,
+      eligible: !!item.cafeProductId && !!benefits && cafeProductHasAnyCategory(cafeMap.get(item.cafeProductId)!, benefits.categoryIds),
+    })), benefits?.remaining ?? 0);
+    const employeeFreeDrinks = freeQuantities.reduce((sum, count) => sum + count, 0);
+    if (saleType === 'employee' && dto.expectedEmployeeFreeDrinks !== undefined && dto.expectedEmployeeFreeDrinks !== employeeFreeDrinks) {
+      throw new BadRequestException('تغير رصيد المشروبات المجانية؛ راجع الإجمالي ثم أكد الطلب مرة أخرى');
+    }
     const employeeDiscount =
       saleType === "employee"
         ? ((await this.posSettings.getNumericSetting(
@@ -1160,26 +1885,28 @@ export class QuickSalesService {
         "default_discount_percentage",
         dto.branchId,
       )) ?? 0;
-    const discountPct = Math.min(
-      100,
-      Math.max(
-        0,
-        saleType === "employee"
-          ? employeeDiscount
-          : saleType === "partner"
-            ? partnerDiscount
-            : (dto.discountPercentage ?? defaultDiscount),
-      ),
+    const configuredDiscount =
+      saleType === "employee"
+        ? employeeDiscount
+        : saleType === "partner"
+          ? partnerDiscount
+          : saleType === "hospitality"
+            ? 0 // Hospitality has no automatic discount, but an explicit invoice discount is valid.
+            : defaultDiscount;
+    const discountPct = resolvePosDiscountPercentage(
+      original ? dto.discountPercentage : benefits?.discountEnabled === false ? 0 : dto.discountPercentage,
+      configuredDiscount,
     );
     const taxEnabled = await this.posSettings.isTaxEnabled(dto.branchId);
     const settingsTaxPct = taxEnabled
       ? await this.posSettings.getTaxRate(dto.branchId)
       : 0;
-    const taxPct = Math.min(100, Math.max(0, settingsTaxPct));
+    const taxPct = original ? toNumber(original.tax_percentage) : Math.min(100, Math.max(0, settingsTaxPct));
     const paymentRules = await this.loadPaymentRules();
-    const pricedItems = resolvedItems.map((item) => ({
+    const pricedItems = resolvedItems.map((item, index) => ({
       unitPrice: item.unitPrice,
       quantity: item.quantity,
+      freeQuantity: freeQuantities[index],
     }));
     const cogsAmount = roundMoney(
       resolvedItems.reduce(
@@ -1195,7 +1922,7 @@ export class QuickSalesService {
     const isDeferredBilling =
       saleType !== "customer" && billingCycle !== "immediate";
     const collectedAmount =
-      dto.onHold || saleType === "partner" || isDeferredBilling
+      dto.onHold || saleType === "partner" || saleType === "hospitality" || isDeferredBilling
         ? 0
         : totalAmount;
     const paymentRows =
@@ -1206,13 +1933,23 @@ export class QuickSalesService {
             collectedAmount,
             dto.payments,
             paymentRules,
-            { paymentApproved },
+            {
+              paymentApproved,
+              catalogPaymentMethodId: dto.catalogPaymentMethodId,
+              paymentReference: dto.paymentReference,
+            },
           );
     const loyaltyPoints = Math.floor(totalAmount / 10);
 
     return {
       saleType,
+      customerName,
+      benefits,
+      employeeFreeDrinks,
       billingCycle,
+      hospitalityHostKind,
+      hospitalityHostId,
+      hospitalityHostName,
       resolvedItems,
       discountPct,
       taxPct,
@@ -1230,15 +1967,114 @@ export class QuickSalesService {
     };
   }
 
-  async create(dto: CreateQuickSaleDto, userId: number, user?: JwtUser) {
-    const paymentApproved = await this.canApprovePayment(userId);
-    const targetEmployeeId = await this.resolveTargetEmployeeId(
-      dto.targetEmployeeId,
-      dto.branchId,
+  /**
+   * House-hospitality oversight report: completed hospitality sales grouped by the
+   * "directed by" host, with the real cost (COGS) booked to the venue and the retail
+   * value shown for reference — never charged to any person.
+   */
+  async hospitalityReport(
+    q: { dateFrom?: string; dateTo?: string; branchId?: number },
+    user?: JwtUser,
+  ) {
+    const where = this.buildWhere(
+      {
+        branchId: q.branchId != null ? String(q.branchId) : undefined,
+        saleType: "hospitality",
+        status: "completed",
+        dateFrom: q.dateFrom,
+        dateTo: q.dateTo,
+      },
+      user,
     );
+    const rows = await this.prisma.sales_quick_sales.findMany({
+      where,
+      select: {
+        id: true,
+        sale_number: true,
+        sale_date: true,
+        sale_time: true,
+        customer_name: true,
+        hospitality_host_name: true,
+        hospitality_host_kind: true,
+        total_amount: true,
+        cost_total: true,
+        branch_id: true,
+      },
+      orderBy: [{ sale_date: "desc" }, { id: "desc" }],
+    });
+    const totalRetail = roundMoney(rows.reduce((s, r) => s + toNumber(r.total_amount), 0));
+    const totalCost = roundMoney(rows.reduce((s, r) => s + toNumber(r.cost_total), 0));
+    const byHostMap = new Map<string, { host: string; count: number; retail: number; cost: number }>();
+    for (const r of rows) {
+      const host = r.hospitality_host_name?.trim() || "غير محدّد";
+      const cur = byHostMap.get(host) ?? { host, count: 0, retail: 0, cost: 0 };
+      cur.count += 1;
+      cur.retail += toNumber(r.total_amount);
+      cur.cost += toNumber(r.cost_total);
+      byHostMap.set(host, cur);
+    }
+    const byHost = [...byHostMap.values()]
+      .map((h) => ({ ...h, retail: roundMoney(h.retail), cost: roundMoney(h.cost) }))
+      .sort((a, b) => b.cost - a.cost);
+    return {
+      totalCount: rows.length,
+      totalRetail,
+      totalCost,
+      byHost,
+      rows: rows.map((r) => ({
+        id: r.id,
+        saleNumber: r.sale_number,
+        saleDate: r.sale_date,
+        saleTime: r.sale_time,
+        hostName: r.hospitality_host_name,
+        hostKind: r.hospitality_host_kind,
+        retail: toNumber(r.total_amount),
+        cost: toNumber(r.cost_total),
+      })),
+    };
+  }
+
+  /**
+   * Idempotent replay: the POS sends one `clientRequestId` per logical sale attempt. If the
+   * first request committed but its response was lost (timeout, dropped connection), the
+   * retry returns the already-saved invoice instead of ringing the cart up twice.
+   */
+  private async findByClientRequestId(clientRequestId: string | undefined, user?: JwtUser) {
+    const key = clientRequestId?.trim();
+    if (!key) return null;
+    const row = await this.prisma.sales_quick_sales.findUnique({
+      where: { client_request_id: key },
+      include: { items: { include: { feedback: true } }, payments: true, feedback: true, events: true },
+    });
+    if (!row) return null;
+    this.assertBranchAccess(user, row.branch_id);
+    return row;
+  }
+
+  async create(dto: CreateQuickSaleDto, userId: number, user?: JwtUser) {
+    const replayed = await this.findByClientRequestId(dto.clientRequestId, user);
+    if (replayed) {
+      if (sameSaleCart(dto.items, replayed.items)) {
+        if (dto.gender !== replayed.gender || dto.cafeCategoryId !== replayed.cafe_category_id) {
+          throw new ConflictException('تم حفظ الفاتورة بتصنيف مختلف؛ افتح الفاتورة المحفوظة لمراجعتها');
+        }
+        return (await this.mapSales([replayed]))[0];
+      }
+      // Reused attempt id with a DIFFERENT cart: this is a new order. Record it (without the key)
+      // instead of returning the earlier invoice, which would silently lose the new order.
+      this.logger.warn(`clientRequestId ${dto.clientRequestId} reused for a different cart; recording as a new sale`);
+      dto = { ...dto, clientRequestId: undefined };
+    }
+    const paymentApproved = await this.canApprovePayment(userId);
     const {
       saleType,
+      customerName,
+      benefits,
+      employeeFreeDrinks,
       billingCycle,
+      hospitalityHostKind,
+      hospitalityHostId,
+      hospitalityHostName,
       resolvedItems,
       discountPct,
       taxPct,
@@ -1254,34 +2090,49 @@ export class QuickSalesService {
       paymentRows,
       loyaltyPoints,
     } = await this.prepareSale(dto, user, paymentApproved);
+    const isHospitality = saleType === "hospitality";
+    if (isHospitality && !(await this.permissions.canAny(userId, ["gym-sales.sales.hospitality:create"]))) {
+      throw new ForbiddenException("لا تملك صلاحية تسجيل ضيافة المكان");
+    }
+    const inventoryTrackingEnabled = await this.posSettings.isInventoryTrackingEnabled(dto.branchId);
 
     if (!dto.onHold) await this.moduleLedger.ensureChart();
 
+    const clientRequestId = dto.clientRequestId?.trim() || null;
     const sale = await retryOnUniqueViolation(() =>
       this.prisma.$transaction(async (tx) => {
-        const session = dto.onHold
-          ? null
-          : await this.sessions.findBranchSessionForSale(
-              tx,
-              dto.branchId,
-              userId,
-            );
-        if (!dto.onHold && !session) {
-          throw new BadRequestException(
-            "افتح وردية باسم المستخدم الحالي قبل تأكيد الطلب",
-          );
+        let requestKey = clientRequestId;
+        if (clientRequestId) {
+          // A concurrent duplicate that already committed: hand back its row (the P2002 retry
+          // path lands here on the second attempt).
+          const dup = await tx.sales_quick_sales.findUnique({
+            where: { client_request_id: clientRequestId },
+            include: { items: { include: { feedback: true } }, payments: true, feedback: true, events: true },
+          });
+          if (dup && sameSaleCart(dto.items, dup.items)) return dup;
+          if (dup) requestKey = null;
         }
-        const warehouseId = await this.resolveWarehouse(
+        await this.verifyEmployeeAllowance(tx, dto.employeeId, benefits, employeeFreeDrinks);
+        const session = await this.sessions.findBranchSessionForSale(
           tx,
           dto.branchId,
-          dto.warehouseId,
         );
-        await this.assertStockAvailability(
-          tx,
-          warehouseId,
-          resolvedItems,
-          dto.allowIngredientShortage === true,
-        );
+        if (!session) {
+          throw new BadRequestException(
+            "لا توجد وردية مفتوحة لهذا الفرع؛ افتح وردية قبل حفظ أو تأكيد الطلب",
+          );
+        }
+        const warehouseId = inventoryTrackingEnabled
+          ? await this.resolveWarehouse(tx, dto.branchId, dto.warehouseId)
+          : null;
+        if (inventoryTrackingEnabled) {
+          await this.assertStockAvailability(
+            tx,
+            warehouseId!,
+            resolvedItems,
+            dto.allowIngredientShortage === true,
+          );
+        }
         const now = new Date();
         const saleDate = localDateString(now);
         const { saleNumber, dailyNumber } = await this.generateSaleIdentity(
@@ -1294,25 +2145,30 @@ export class QuickSalesService {
           data: {
             sale_number: saleNumber,
             daily_number: dailyNumber,
-            customer_name: dto.customerName?.trim() || "عميل نقدي",
+            customer_name: customerName,
             customer_phone: dto.customerPhone?.trim() || null,
             gender: dto.gender,
             cafe_category_id: dto.cafeCategoryId,
             sale_type: saleType,
             employee_id: dto.employeeId ?? null,
-            target_employee_id: targetEmployeeId,
+            employee_benefit_date: benefits?.date ?? null,
+            employee_free_drinks: employeeFreeDrinks,
             partner_id: dto.partnerId ?? null,
-            billing_cycle: saleType === "customer" ? null : billingCycle,
+            hospitality_host_kind: hospitalityHostKind,
+            hospitality_host_id: hospitalityHostId,
+            hospitality_host_name: hospitalityHostName,
+            billing_cycle: saleType === "customer" || isHospitality ? null : billingCycle,
             billing_status:
-              saleType === "customer" || dto.onHold
+              saleType === "customer" || isHospitality || dto.onHold
                 ? "not_applicable"
-                : collectedAmount > 0
+                : totalAmount === 0 || collectedAmount > 0
                   ? "settled"
                   : "unbilled",
             branch_id: dto.branchId,
             cashier_id: userId,
             shift_session_id: session?.id ?? null,
             sale_date: saleDate,
+            business_date: session?.session_date ?? saleDate,
             sale_time: localTimeString(now),
             subtotal: toDecimal(subtotal),
             discount_amount: toDecimal(discountAmount),
@@ -1329,7 +2185,9 @@ export class QuickSalesService {
             notes: dto.notes ?? null,
             receipt_comment: dto.receiptComment?.trim() || null,
             loyalty_points_earned: loyaltyPoints,
+            inventory_posted: inventoryTrackingEnabled,
             warehouse_id: warehouseId,
+            client_request_id: requestKey,
             created_by: userId,
             items: {
               create: resolvedItems.map((item, idx) => ({
@@ -1339,12 +2197,17 @@ export class QuickSalesService {
                 cafe_variant_id: item.cafeVariantId,
                 variant_name: item.variantName,
                 inventory_product_id: item.inventoryProductId,
-                ref_id: item.cafeProductId ?? item.productId,
+                bundle_id: item.bundleId,
+                bundle_selection: item.bundleSelection
+                  ? (item.bundleSelection as unknown as Prisma.InputJsonValue)
+                  : Prisma.DbNull,
+                ref_id: item.bundleId ?? item.cafeProductId ?? item.productId,
                 name: item.name,
                 product_code: item.productCode,
                 item_note: item.itemNote,
                 unit_price: toDecimal(pricedItems[idx].unitPrice),
                 quantity: toDecimal(item.quantity),
+                free_quantity: pricedItems[idx].freeQuantity,
                 line_total: toDecimal(lineItems[idx].lineTotal),
                 unit_cost: toDecimal(item.unitCost),
                 line_cost: toDecimal(item.unitCost * item.quantity),
@@ -1356,6 +2219,10 @@ export class QuickSalesService {
                     method: p.method,
                     amount: toDecimal(p.amount),
                     reference: p.reference ?? null,
+                    catalog_payment_method_id:
+                      p.catalogPaymentMethodId ?? null,
+                    method_code: p.methodCode ?? null,
+                    method_name: p.methodName ?? null,
                   })),
                 }
               : undefined,
@@ -1363,9 +2230,9 @@ export class QuickSalesService {
               create: [
                 {
                   event_type: dto.onHold ? "created_on_hold" : "completed",
-                  notes: dto.onHold
-                    ? "تم إنشاء الفاتورة وحجز مكوناتها من المخزون"
-                    : null,
+                  notes: inventoryTrackingEnabled
+                    ? (dto.onHold ? "تم إنشاء الفاتورة وحجز مكوناتها من المخزون" : null)
+                    : "تم تسجيل الطلب في وضع كاشير فقط دون حركة مخزون",
                   created_by: userId,
                 },
                 ...(dto.allowIngredientShortage
@@ -1389,19 +2256,20 @@ export class QuickSalesService {
           },
         });
 
-        for (const item of resolvedItems) {
-          for (const consumed of item.consumption)
-            await this.stock.applyMovement(
+        if (inventoryTrackingEnabled) {
+          for (const item of resolvedItems) {
+            for (const consumed of item.consumption)
+              await this.stock.applyMovement(
               {
                 productId: consumed.productId,
-                warehouseId,
+                warehouseId: warehouseId!,
                 direction: MovementDirection.out,
                 quantity: consumed.quantity,
                 unitCost: consumed.unitCost,
                 txnType: InventoryTxnType.issue,
                 docType: dto.onHold
                   ? "cafe_draft"
-                  : item.itemType === "cafe"
+                  : item.itemType === "cafe" || item.itemType === "bundle"
                     ? "cafe_sale"
                     : "sale",
                 docRef: saleNumber,
@@ -1413,6 +2281,7 @@ export class QuickSalesService {
               },
               tx,
             );
+          }
         }
 
         if (session)
@@ -1430,7 +2299,38 @@ export class QuickSalesService {
             false,
           );
 
-        if (!dto.onHold)
+        if (!dto.onHold && isHospitality) {
+          // No revenue, no receivable — only the cost of goods consumed is booked as a
+          // hospitality operating expense against the venue.
+          const hospitalityCogs = inventoryTrackingEnabled ? cogsAmount : 0;
+          await this.moduleLedger.postHospitalitySale(
+            {
+              saleNumber,
+              branchId: dto.branchId,
+              saleDate: localDateString(now),
+              cogsAmount: hospitalityCogs,
+              hostName: hospitalityHostName,
+              createdBy: userId,
+            },
+            tx,
+          );
+          if (hospitalityCogs > 0) {
+            await recordSystemExpense(tx, {
+              invoiceNumber: `HOSP-${created.id}`,
+              businessUnit: 'cafe',
+              date: localDateString(now),
+              category: "ضيافة المكان",
+              subCategory: hospitalityHostName ?? undefined,
+              amount: hospitalityCogs,
+              description: hospitalityHostName
+                ? `ضيافة المكان ${saleNumber} — بتوجيه ${hospitalityHostName}`
+                : `ضيافة المكان ${saleNumber}`,
+              branchId: dto.branchId,
+              createdBy: userId,
+              paymentMethod: "تسوية مخزون",
+            });
+          }
+        } else if (!dto.onHold) {
           await this.moduleLedger.postQuickSale(
             {
               saleNumber,
@@ -1443,18 +2343,22 @@ export class QuickSalesService {
               collectedAmount,
               paymentMethod,
               payments: paymentRows,
-              cogsAmount,
-              saleType,
+              cogsAmount: inventoryTrackingEnabled ? cogsAmount : 0,
+              saleType: saleType as "customer" | "employee" | "partner",
               createdBy: userId,
             },
             tx,
           );
 
+          await syncCafeSaleFinance(tx, created);
+        }
         return created;
-      }),
+      // Busy shared server: the default 5s interactive-transaction timeout aborted sales
+      // under load (P2028) and the cashier saw only 'خطأ في قاعدة البيانات'.
+      }, { maxWait: 10000, timeout: 30000 }),
     );
 
-    return this.map(sale);
+    return (await this.mapSales([sale]))[0];
   }
 
   private async releaseDraftReservation(
@@ -1467,8 +2371,6 @@ export class QuickSalesService {
     userId: number,
     docType: "cafe_draft_adjustment" | "cafe_draft_cancel",
   ) {
-    if (!sale.warehouse_id)
-      throw new BadRequestException("لا يوجد مستودع مرتبط بالمسودة");
     const movements = await tx.inv_movements.findMany({
       where: {
         doc_ref: sale.sale_number,
@@ -1477,6 +2379,7 @@ export class QuickSalesService {
         },
       },
     });
+    if (!movements.length) return;
     const reserved = new Map<
       number,
       { quantity: number; unitCost: Prisma.Decimal }
@@ -1498,7 +2401,9 @@ export class QuickSalesService {
       await this.stock.applyMovement(
         {
           productId,
-          warehouseId: sale.warehouse_id,
+          warehouseId: movements.find((movement) => movement.product_id === productId)?.warehouse_id
+            ?? sale.warehouse_id
+            ?? 0,
           direction: MovementDirection.in,
           quantity: row.quantity,
           unitCost: row.unitCost,
@@ -1511,6 +2416,143 @@ export class QuickSalesService {
         tx,
       );
     }
+  }
+
+  async editCompleted(id: number, dto: EditCompletedQuickSaleDto, userId: number, user?: JwtUser) {
+    if (!await this.permissions.canAny(userId, ['gym-sales.sales.drafts:update'])) throw new ForbiddenException('لا تملك صلاحية تعديل فواتير الورديات');
+    // Separate, sensitive grant: edit invoices whose shift was already closed (any age).
+    const canEditClosedShift = await this.permissions.canAny(userId, ['gym-sales.sales.drafts:override']);
+    if (!Number.isInteger(dto.expectedRevision) || dto.expectedRevision < 0) throw new BadRequestException('أعد فتح الفاتورة لتحميل نسخة التعديل');
+    if (dto.onHold) throw new BadRequestException('لا يمكن تحويل فاتورة مكتملة إلى مسودة');
+    const include = { items: { include: { feedback: true } }, payments: true, feedback: true, events: true } as const;
+    const original = await this.prisma.sales_quick_sales.findUnique({ where: { id }, include });
+    if (!original) throw new NotFoundException('الفاتورة غير موجودة');
+    if (original.sale_type === 'hospitality' || dto.saleType === 'hospitality') {
+      throw new BadRequestException('فاتورة ضيافة المكان لا يمكن تعديلها من هنا حاليًا؛ ألغِها بتسوية محاسبية وأنشئ فاتورة جديدة');
+    }
+    this.assertBranchAccess(user, original.branch_id);
+    if (original.status !== QuickSaleStatus.completed) throw new BadRequestException('التعديل متاح للفواتير المكتملة فقط');
+    if (dto.branchId !== original.branch_id || (dto.saleType ?? 'customer') !== original.sale_type ||
+      (dto.employeeId ?? null) !== original.employee_id || (dto.partnerId ?? null) !== original.partner_id ||
+      (original.sale_type !== 'customer' && normalizeBillingCycle(dto.billingCycle) !== normalizeBillingCycle(original.billing_cycle))) {
+      throw new BadRequestException('لا يمكن تغيير الفرع أو صاحب الحساب أو دورة التحصيل أثناء تعديل الفاتورة');
+    }
+    if (!original.shift_session_id) throw new BadRequestException('الفاتورة غير مرتبطة بوردية؛ لا يمكن تعديلها');
+    const prepared = await this.prepareSale({ ...dto, onHold: false }, user, true, id, original);
+    const reconstructedOriginal = original.inventory_posted ? await this.prepareSale({
+      ...dto, onHold: true, expectedEmployeeFreeDrinks: undefined,
+      items: original.items.map(item => ({ cafeProductId: item.cafe_product_id ?? undefined,
+        cafeVariantId: item.cafe_variant_id ?? undefined, productId: item.cafe_product_id ? undefined : item.product_id,
+        bundleId: item.bundle_id ?? undefined,
+        bundleSelections: (Array.isArray(item.bundle_selection) ? item.bundle_selection as BundleSelectionSnapshot[] : []).map(selection => ({
+          groupId: selection.groupId, cafeProductId: selection.cafeProductId, cafeVariantId: selection.cafeVariantId ?? undefined,
+        })),
+        name: item.name, quantity: toNumber(item.quantity) })),
+    }, user, true, id, original, false) : null;
+    await this.moduleLedger.ensureChart();
+    const saved = await this.prisma.$transaction(async tx => {
+      await this.verifyEmployeeAllowance(tx, dto.employeeId, prepared.benefits, prepared.employeeFreeDrinks, id, original.employee_benefit_date || original.sale_date);
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM sales_quick_sales WHERE id = ${id} FOR UPDATE`);
+      if (await tx.payroll_cafe_allocations.findUnique({ where: { sale_id: id } })) throw new BadRequestException('الفاتورة مرتبطة بخصم المرتبات؛ أجّل الخصم من المرتبات قبل تعديلها أو إلغائها');
+      const current = await tx.sales_quick_sales.findUnique({ where: { id }, include });
+      if (!current || current.status !== QuickSaleStatus.completed) throw new ConflictException('تغيرت حالة الفاتورة؛ أعد فتحها قبل التعديل');
+      const revision = current.events.filter(event => event.event_type === 'completed_edited').length;
+      if (revision !== dto.expectedRevision || current.updated_at.getTime() !== original.updated_at.getTime()) throw new ConflictException('تم تعديل الفاتورة من جهاز آخر؛ أعد فتحها لمراجعة آخر نسخة');
+      const statement = await tx.sales_billing_statement_items.findUnique({ where: { quick_sale_id: id } });
+      if (statement || current.billing_status === 'in_statement' || (current.sale_type !== 'customer' && current.billing_cycle !== 'immediate' && current.billing_status === 'settled' && toNumber(current.total_amount) > 0)) {
+        throw new BadRequestException('الفاتورة أضيفت إلى كشف حساب أو تمت تسويتها؛ لا يمكن تعديلها');
+      }
+      const session = await tx.sales_shift_sessions.findUnique({ where: { id: current.shift_session_id! } });
+      if (!session) throw new BadRequestException('وردية الفاتورة غير موجودة؛ لا يمكن تعديلها');
+      const shiftClosed = session.status !== 'open';
+      if (shiftClosed && !canEditClosedShift) {
+        throw new ForbiddenException('تم إغلاق وردية الفاتورة؛ تعديلها يحتاج صلاحية «تعديل بعد إغلاق الوردية»');
+      }
+      const before = {
+        subtotal: toNumber(current.subtotal), totalAmount: toNumber(current.total_amount), collectedAmount: toNumber(current.collected_amount),
+        discountAmount: toNumber(current.discount_amount), taxAmount: toNumber(current.tax_amount),
+        paymentMethod: current.payment_method, payments: current.payments.map(p => ({ method: p.method, amount: toNumber(p.amount) })),
+        cogsAmount: current.inventory_posted ? toNumber(current.cost_total) : 0,
+      };
+      let unchangedStock = false;
+      if (current.inventory_posted) {
+        if (!current.warehouse_id) throw new BadRequestException('لا يوجد مستودع مرتبط بالفاتورة');
+        const history = await tx.inv_movements.findMany({ where: { doc_ref: current.sale_number, doc_type: { in: ['sale', 'cafe_sale', 'cafe_sale_edit'] } }, orderBy: { id: 'asc' } });
+        if (!history.length) throw new BadRequestException('لا توجد حركات مخزنية أصلية مرتبطة بالفاتورة');
+        const balance = saleStockBalance(history);
+        const plan = planCompletedSaleStock({ originalItems: current.items, resolvedItems: prepared.resolvedItems,
+          reconstructedOriginalItems: reconstructedOriginal!.resolvedItems, history: balance, warehouseId: current.warehouse_id });
+        unchangedStock = plan.unchanged;
+        prepared.resolvedItems.forEach((item, index) => { item.unitCost = plan.perLineUnitCosts[index]; });
+        prepared.cogsAmount = roundMoney(prepared.resolvedItems.reduce((sum, item) => sum + item.unitCost * item.quantity, 0));
+        if (!plan.unchanged) {
+          // Restore the exact outstanding history then apply the final consumption
+          // atomically; retained quantities keep their historical cost.
+          for (const movement of balance) await this.stock.applyMovement({
+            productId: movement.product_id, warehouseId: movement.warehouse_id, direction: MovementDirection.in,
+            quantity: movement.quantity, unitCost: movement.unit_cost, txnType: InventoryTxnType.sales_return,
+            docType: 'cafe_sale_edit', docRef: current.sale_number, branchId: current.branch_id, createdBy: userId,
+          }, tx);
+          await this.assertStockAvailability(tx, current.warehouse_id, prepared.resolvedItems, dto.allowIngredientShortage === true);
+          for (const consumed of plan.desiredConsumption) await this.stock.applyMovement({
+            productId: consumed.productId, warehouseId: consumed.warehouseId, direction: MovementDirection.out,
+            quantity: consumed.quantity, unitCost: consumed.unitCost, txnType: InventoryTxnType.issue,
+            docType: 'cafe_sale_edit', docRef: current.sale_number, branchId: current.branch_id, createdBy: userId,
+            allowNegative: dto.allowIngredientShortage === true && prepared.resolvedItems.filter(item => item.consumption.some(row => row.productId === consumed.productId)).every(item => item.productType === 'prepared'),
+          }, tx);
+        }
+      }
+      const after = { ...prepared, payments: prepared.paymentRows, cogsAmount: current.inventory_posted ? prepared.cogsAmount : 0 };
+      await this.sessions.applySaleEditToSession(tx, current.shift_session_id!, { before, after }, { allowClosedSession: shiftClosed });
+      // Legacy data may lack its source entry: post the original snapshot idempotently.
+      await this.moduleLedger.postQuickSale({ ...before, saleNumber: current.sale_number, branchId: current.branch_id, saleDate: current.sale_date, createdBy: current.created_by ?? userId }, tx);
+      await this.moduleLedger.postQuickSaleEdit({ saleNumber: current.sale_number, revision: revision + 1, branchId: current.branch_id, saleDate: current.sale_date, createdBy: userId, before, after }, tx);
+      const retained = new Set<number>();
+      for (const [index, item] of prepared.resolvedItems.entries()) {
+        const prior = current.items.find(row => !retained.has(row.id) && row.cafe_product_id === item.cafeProductId && row.cafe_variant_id === item.cafeVariantId && (item.cafeProductId !== null || row.product_id === item.productId));
+        const data = {
+          item_type: item.itemType, product_id: item.productId, cafe_product_id: item.cafeProductId, cafe_variant_id: item.cafeVariantId,
+          variant_name: item.variantName, inventory_product_id: item.inventoryProductId, ref_id: item.bundleId ?? item.cafeProductId ?? item.productId,
+          bundle_id: item.bundleId,
+          bundle_selection: item.bundleSelection ? (item.bundleSelection as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
+          name: item.name, product_code: item.productCode, item_note: item.itemNote,
+          unit_price: toDecimal(prepared.pricedItems[index].unitPrice), quantity: toDecimal(item.quantity), free_quantity: prepared.pricedItems[index].freeQuantity,
+          line_total: toDecimal(prepared.lineItems[index].lineTotal), unit_cost: toDecimal(item.unitCost), line_cost: toDecimal(item.unitCost * item.quantity),
+        };
+        if (prior) {
+          if (unchangedStock) {
+            data.product_id = prior.product_id;
+            data.inventory_product_id = prior.inventory_product_id;
+            data.item_type = prior.item_type;
+          }
+          retained.add(prior.id); await tx.sales_quick_sale_items.update({ where: { id: prior.id }, data });
+        }
+        else await tx.sales_quick_sale_items.create({ data: { ...data, quick_sale_id: id } });
+      }
+      // Delete only original lines removed by the editor; retained ratings keep their IDs.
+      await tx.sales_quick_sale_items.deleteMany({ where: { id: { in: current.items.filter(item => !retained.has(item.id)).map(item => item.id) } } });
+      await tx.sales_pos_payments.deleteMany({ where: { quick_sale_id: id } });
+      const updated = await tx.sales_quick_sales.update({ where: { id }, data: {
+        customer_name: prepared.customerName, customer_phone: dto.customerPhone?.trim() || null,
+        gender: dto.gender, cafe_category_id: dto.cafeCategoryId,
+        employee_benefit_date: prepared.benefits?.date ?? current.employee_benefit_date,
+        employee_free_drinks: prepared.employeeFreeDrinks,
+        billing_status: current.sale_type === 'customer' ? 'not_applicable' : prepared.collectedAmount > 0 || prepared.totalAmount === 0 ? 'settled' : 'unbilled',
+        subtotal: toDecimal(prepared.subtotal), discount_amount: toDecimal(prepared.discountAmount), discount_percentage: toDecimal(prepared.discountPct),
+        tax_amount: toDecimal(prepared.taxAmount), tax_percentage: toDecimal(prepared.taxPct), total_amount: toDecimal(prepared.totalAmount),
+        collected_amount: toDecimal(prepared.collectedAmount), cost_total: toDecimal(prepared.cogsAmount), payment_method: prepared.paymentMethod,
+        receipt_comment: dto.receiptComment?.trim() || null, loyalty_points_earned: prepared.loyaltyPoints, receipt_printed: false,
+        payments: { create: prepared.paymentRows.map(payment => ({ method: payment.method, amount: toDecimal(payment.amount), reference: payment.reference ?? null,
+          catalog_payment_method_id: payment.catalogPaymentMethodId ?? null, method_code: payment.methodCode ?? null, method_name: payment.methodName ?? null })) },
+        events: { create: { event_type: 'completed_edited', created_by: userId, notes: JSON.stringify({ revision: revision + 1,
+          before: { ...before, items: current.items.map(item => ({ id: item.id, name: item.name, quantity: toNumber(item.quantity), unitPrice: toNumber(item.unit_price), feedback: item.feedback })) },
+          after: { totalAmount: prepared.totalAmount, collectedAmount: prepared.collectedAmount }, allowIngredientShortage: dto.allowIngredientShortage === true,
+          ...(shiftClosed ? { closedShiftOverride: true, shiftSessionId: current.shift_session_id, shiftStatus: session.status } : {}) }) } },
+      }, include });
+      await syncCafeSaleFinance(tx, updated);
+      return updated;
+    }, { maxWait: 10000, timeout: 30000, isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+    return (await this.mapSales([saved]))[0];
   }
 
   async reviseDraft(
@@ -1535,45 +2577,54 @@ export class QuickSalesService {
       throw new BadRequestException("هذه الفاتورة لم تعد مسودة");
     if (dto.branchId !== existing.branch_id)
       throw new BadRequestException("لا يمكن نقل المسودة إلى فرع آخر");
-    const targetEmployeeId = await this.resolveTargetEmployeeId(
-      dto.targetEmployeeId,
-      existing.branch_id,
-    );
+    // Hospitality has its own permission and ledger path (create()); a draft cannot be
+    // converted into one, otherwise both would be bypassed.
+    if (dto.saleType === "hospitality" || existing.sale_type === "hospitality") {
+      throw new BadRequestException("لا يمكن تحويل مسودة إلى ضيافة المكان؛ سجّل الضيافة كفاتورة جديدة من نقطة البيع");
+    }
 
     const prepared = await this.prepareSale(
       { ...dto, onHold: !finalize },
       user,
       await this.canApprovePayment(userId),
+      id,
     );
+    const inventoryTrackingEnabled = await this.posSettings.isInventoryTrackingEnabled(dto.branchId);
     if (finalize) await this.moduleLedger.ensureChart();
     const now = new Date();
     const updated = await this.prisma.$transaction(
       async (tx) => {
+        await this.verifyEmployeeAllowance(tx, dto.employeeId, prepared.benefits, prepared.employeeFreeDrinks, id);
+        await tx.$queryRaw(Prisma.sql`SELECT id FROM sales_quick_sales WHERE id = ${id} FOR UPDATE`);
+      if (await tx.payroll_cafe_allocations.findUnique({ where: { sale_id: id } })) throw new BadRequestException('الفاتورة مرتبطة بخصم المرتبات؛ أجّل الخصم من المرتبات قبل تعديلها أو إلغائها');
+        const lockedDraft = await tx.sales_quick_sales.findUnique({ where: { id } });
+        if (lockedDraft?.status !== QuickSaleStatus.draft) throw new BadRequestException('هذه الفاتورة لم تعد مسودة');
         await this.releaseDraftReservation(
           tx,
           existing,
           userId,
           "cafe_draft_adjustment",
         );
-        const warehouseId =
-          existing.warehouse_id ??
-          (await this.resolveWarehouse(tx, dto.branchId, dto.warehouseId));
-        await this.assertStockAvailability(
-          tx,
-          warehouseId,
-          prepared.resolvedItems,
-          dto.allowIngredientShortage === true,
-        );
+        const warehouseId = inventoryTrackingEnabled
+          ? existing.warehouse_id ?? await this.resolveWarehouse(tx, dto.branchId, dto.warehouseId)
+          : null;
+        if (inventoryTrackingEnabled) {
+          await this.assertStockAvailability(
+            tx,
+            warehouseId!,
+            prepared.resolvedItems,
+            dto.allowIngredientShortage === true,
+          );
+        }
         const session = finalize
           ? await this.sessions.findBranchSessionForSale(
               tx,
               dto.branchId,
-              userId,
             )
           : null;
         if (finalize && !session) {
           throw new BadRequestException(
-            "افتح وردية باسم المستخدم الحالي قبل تأكيد الفاتورة",
+            "لا توجد وردية مفتوحة لهذا الفرع؛ افتح وردية قبل تأكيد الفاتورة",
           );
         }
         const finalSaleDate = localDateString(now);
@@ -1592,18 +2643,19 @@ export class QuickSalesService {
           where: { quick_sale_id: id },
         });
 
-        for (const item of prepared.resolvedItems) {
-          for (const consumed of item.consumption) {
-            await this.stock.applyMovement(
+        if (inventoryTrackingEnabled) {
+          for (const item of prepared.resolvedItems) {
+            for (const consumed of item.consumption) {
+              await this.stock.applyMovement(
               {
                 productId: consumed.productId,
-                warehouseId,
+                warehouseId: warehouseId!,
                 direction: MovementDirection.out,
                 quantity: consumed.quantity,
                 unitCost: consumed.unitCost,
                 txnType: InventoryTxnType.issue,
                 docType: finalize
-                  ? item.itemType === "cafe"
+                  ? item.itemType === "cafe" || item.itemType === "bundle"
                     ? "cafe_sale"
                     : "sale"
                   : "cafe_draft",
@@ -1617,6 +2669,7 @@ export class QuickSalesService {
               tx,
             );
           }
+        }
         }
 
         if (finalize && session) {
@@ -1648,15 +2701,15 @@ export class QuickSalesService {
               collectedAmount: prepared.collectedAmount,
               paymentMethod: prepared.paymentMethod,
               payments: prepared.paymentRows,
-              cogsAmount: prepared.cogsAmount,
-              saleType: prepared.saleType,
+              cogsAmount: inventoryTrackingEnabled ? prepared.cogsAmount : 0,
+              saleType: prepared.saleType as "customer" | "employee" | "partner",
               createdBy: userId,
             },
             tx,
           );
         }
 
-        return tx.sales_quick_sales.update({
+        const saved = await tx.sales_quick_sales.update({
           where: { id },
           data: {
             ...(finalize
@@ -1665,25 +2718,30 @@ export class QuickSalesService {
                   daily_number: finalIdentity.dailyNumber,
                 }
               : {}),
-            customer_name: dto.customerName?.trim() || "عميل نقدي",
+            customer_name: prepared.customerName,
             customer_phone: dto.customerPhone?.trim() || null,
             gender: dto.gender,
             cafe_category_id: dto.cafeCategoryId,
             sale_type: prepared.saleType,
             employee_id: dto.employeeId ?? null,
-            target_employee_id: targetEmployeeId,
+            employee_benefit_date: prepared.benefits?.date ?? null,
+            employee_free_drinks: prepared.employeeFreeDrinks,
             partner_id: dto.partnerId ?? null,
             billing_cycle:
               prepared.saleType === "customer" ? null : prepared.billingCycle,
             billing_status:
               prepared.saleType === "customer" || !finalize
                 ? "not_applicable"
-                : prepared.collectedAmount > 0
+                : prepared.totalAmount === 0 || prepared.collectedAmount > 0
                   ? "settled"
                   : "unbilled",
-            shift_session_id: session?.id ?? null,
+            shift_session_id: session?.id ?? existing.shift_session_id,
             ...(finalize
-              ? { sale_date: finalSaleDate, sale_time: localTimeString(now) }
+              ? {
+                  sale_date: finalSaleDate,
+                  business_date: session?.session_date ?? finalSaleDate,
+                  sale_time: localTimeString(now),
+                }
               : {}),
             subtotal: toDecimal(prepared.subtotal),
             discount_amount: toDecimal(prepared.discountAmount),
@@ -1700,6 +2758,7 @@ export class QuickSalesService {
             notes: dto.notes?.trim() || null,
             receipt_comment: dto.receiptComment?.trim() || null,
             loyalty_points_earned: prepared.loyaltyPoints,
+            inventory_posted: inventoryTrackingEnabled,
             warehouse_id: warehouseId,
             items: {
               create: prepared.resolvedItems.map((item, index) => ({
@@ -1709,12 +2768,17 @@ export class QuickSalesService {
                 cafe_variant_id: item.cafeVariantId,
                 variant_name: item.variantName,
                 inventory_product_id: item.inventoryProductId,
-                ref_id: item.cafeProductId ?? item.productId,
+                bundle_id: item.bundleId,
+                bundle_selection: item.bundleSelection
+                  ? (item.bundleSelection as unknown as Prisma.InputJsonValue)
+                  : Prisma.DbNull,
+                ref_id: item.bundleId ?? item.cafeProductId ?? item.productId,
                 name: item.name,
                 product_code: item.productCode,
                 item_note: item.itemNote,
                 unit_price: toDecimal(prepared.pricedItems[index].unitPrice),
                 quantity: toDecimal(item.quantity),
+                free_quantity: prepared.pricedItems[index].freeQuantity,
                 line_total: toDecimal(prepared.lineItems[index].lineTotal),
                 unit_cost: toDecimal(item.unitCost),
                 line_cost: toDecimal(item.unitCost * item.quantity),
@@ -1726,6 +2790,10 @@ export class QuickSalesService {
                     method: payment.method,
                     amount: toDecimal(payment.amount),
                     reference: payment.reference ?? null,
+                    catalog_payment_method_id:
+                      payment.catalogPaymentMethodId ?? null,
+                    method_code: payment.methodCode ?? null,
+                    method_name: payment.methodName ?? null,
                   })),
                 }
               : undefined,
@@ -1733,6 +2801,9 @@ export class QuickSalesService {
               create: [
                 {
                   event_type: finalize ? "finalized" : "edited",
+                  notes: inventoryTrackingEnabled
+                    ? null
+                    : "تم حفظ الطلب في وضع كاشير فقط دون حركة مخزون",
                   created_by: userId,
                 },
                 ...(dto.allowIngredientShortage
@@ -1755,11 +2826,13 @@ export class QuickSalesService {
             events: true,
           },
         });
+        if (finalize) await syncCafeSaleFinance(tx, saved);
+        return saved;
       },
       { maxWait: 10000, timeout: 20000 },
     );
 
-    return this.map(updated);
+    return (await this.mapSales([updated]))[0];
   }
 
   async cancelDraft(
@@ -1776,6 +2849,10 @@ export class QuickSalesService {
     if (existing.status !== QuickSaleStatus.draft)
       throw new BadRequestException("هذه الفاتورة لم تعد مسودة");
     const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM sales_quick_sales WHERE id = ${id} FOR UPDATE`);
+      if (await tx.payroll_cafe_allocations.findUnique({ where: { sale_id: id } })) throw new BadRequestException('الفاتورة مرتبطة بخصم المرتبات؛ أجّل الخصم من المرتبات قبل تعديلها أو إلغائها');
+      const locked = await tx.sales_quick_sales.findUnique({ where: { id } });
+      if (locked?.status !== QuickSaleStatus.draft) throw new BadRequestException('هذه الفاتورة لم تعد مسودة');
       await this.releaseDraftReservation(
         tx,
         existing,
@@ -1805,7 +2882,7 @@ export class QuickSalesService {
         },
       });
     });
-    return this.map(updated);
+    return (await this.mapSales([updated]))[0];
   }
 
   async saveFeedback(
@@ -1860,6 +2937,7 @@ export class QuickSalesService {
     if (existing.status !== QuickSaleStatus.completed) {
       throw new BadRequestException("تقييم الأصناف متاح للفواتير المكتملة فقط");
     }
+
     const validItemIds = new Set(existing.items.map((item) => item.id));
     if (!items.length || items.some((item) => !validItemIds.has(item.itemId))) {
       throw new BadRequestException("أحد بنود التقييم لا ينتمي إلى الفاتورة");
@@ -1910,6 +2988,11 @@ export class QuickSalesService {
       },
     });
     if (!existing) throw new NotFoundException("الفاتورة غير موجودة");
+    if (existing.sale_type === "hospitality") {
+      throw new BadRequestException(
+        "فاتورة ضيافة المكان لا يمكن إلغاؤها أو استردادها من هنا حاليًا؛ عالجها بتسوية محاسبية",
+      );
+    }
     this.assertBranchAccess(user, existing.branch_id);
     if (existing.status !== QuickSaleStatus.completed) {
       throw new BadRequestException(
@@ -1928,8 +3011,9 @@ export class QuickSalesService {
         },
         {
           rows: this.buildVoidPreviewRows(existing, dto.status),
-          warning:
-            dto.status === "refunded"
+          warning: !existing.inventory_posted
+            ? "ستُعكس الفاتورة والتحصيل فقط؛ لم تُنشأ لها حركة مخزون عند البيع."
+            : dto.status === "refunded"
               ? "سيُعاد الجاهز فقط للمخزون، وتُصنّف خامات المنتجات المُحضّرة هالكًا، مع عكس التحصيل."
               : "استخدم الإلغاء فقط إذا لم يتم تحضير أو تسليم الطلب؛ سيُعكس المخزون والتحصيل بالكامل.",
         },
@@ -1937,19 +3021,23 @@ export class QuickSalesService {
     }
 
     const warehouseId = existing.warehouse_id;
-    if (!warehouseId)
+    if (existing.inventory_posted && !warehouseId)
       throw new BadRequestException("لا يوجد مستودع مرتبط بالفاتورة");
-    const cogsAmount = roundMoney(toNumber(existing.cost_total));
     const isRefund = dto.status === "refunded";
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM sales_quick_sales WHERE id = ${id} FOR UPDATE`);
+      if (await tx.payroll_cafe_allocations.findUnique({ where: { sale_id: id } })) throw new BadRequestException('الفاتورة مرتبطة بخصم المرتبات؛ أجّل الخصم من المرتبات قبل تعديلها أو إلغائها');
+      const current = await tx.sales_quick_sales.findUnique({ where: { id }, include: { items: { include: { feedback: true } }, payments: true, feedback: true, events: true } });
+      if (current?.status !== QuickSaleStatus.completed) throw new BadRequestException('تم إلغاء أو استرداد هذه الفاتورة بالفعل');
+      const existing = current;
+      const cogsAmount = roundMoney(toNumber(existing.cost_total));
       // Reverse the exact movements persisted at sale time. Recipe edits after a sale must
       // never change what is returned to stock for that historical receipt.
-      const originalMovements = await tx.inv_movements.findMany({
+      const movementHistory = await tx.inv_movements.findMany({
         where: {
           doc_ref: existing.sale_number,
-          doc_type: { in: ["sale", "cafe_sale"] },
-          direction: MovementDirection.out,
+          doc_type: { in: ["sale", "cafe_sale", "cafe_sale_edit"] },
         },
         include: {
           product: {
@@ -1962,7 +3050,8 @@ export class QuickSalesService {
         },
         orderBy: { id: "asc" },
       });
-      if (!originalMovements.length) {
+      const originalMovements = saleStockBalance(movementHistory);
+      if (existing.inventory_posted && !movementHistory.length) {
         throw new BadRequestException(
           "لا توجد حركات مخزنية أصلية مرتبطة بالفاتورة",
         );
@@ -1989,19 +3078,18 @@ export class QuickSalesService {
         quantity: number;
         unit: string | null;
         unitCost: number;
-        total: number;
       }> = [];
       let returnedMovementCost = 0;
 
       for (const movement of originalMovements) {
-        const movementQuantity = Math.abs(toNumber(movement.quantity));
+        const movementQuantity = roundStock(Math.abs(toNumber(movement.quantity)));
         const unitCost = toNumber(movement.unit_cost);
-        const returnQuantity = isRefund
+        const returnQuantity = roundStock(isRefund
           ? Math.min(
               movementQuantity,
               readyReturnRemaining.get(movement.product_id) ?? 0,
             )
-          : movementQuantity;
+          : movementQuantity);
         if (isRefund && returnQuantity > 0) {
           readyReturnRemaining.set(
             movement.product_id,
@@ -2012,12 +3100,12 @@ export class QuickSalesService {
             ),
           );
         }
-        if (returnQuantity > 0.000001) {
+        if (returnQuantity > 0) {
           returnedMovementCost += returnQuantity * unitCost;
           await this.stock.applyMovement(
             {
               productId: movement.product_id,
-              warehouseId: movement.warehouse_id || warehouseId,
+              warehouseId: movement.warehouse_id || warehouseId!,
               direction: MovementDirection.in,
               quantity: returnQuantity,
               unitCost: movement.unit_cost,
@@ -2030,9 +3118,8 @@ export class QuickSalesService {
             tx,
           );
         }
-        const wasteQuantity =
-          Math.round((movementQuantity - returnQuantity) * 1000) / 1000;
-        if (isRefund && wasteQuantity > 0.000001) {
+        const wasteQuantity = roundStock(movementQuantity - returnQuantity);
+        if (isRefund && wasteQuantity > 0) {
           wasteRows.push({
             productId: movement.product_id,
             itemCode: movement.product.product_code,
@@ -2040,30 +3127,34 @@ export class QuickSalesService {
             quantity: wasteQuantity,
             unit: movement.uom ?? movement.product.unit_of_measure,
             unitCost,
-            total: roundMoney(wasteQuantity * unitCost),
           });
         }
       }
 
-      if (isRefund) {
+      // Cashier-only invoices never posted stock, so there is no movement to match against;
+      // only the money and the shift are reversed for them.
+      if (isRefund && existing.inventory_posted) {
         const unresolvedReadyQuantity = [
           ...readyReturnRemaining.values(),
         ].reduce((sum, value) => sum + value, 0);
-        if (unresolvedReadyQuantity > 0.000001) {
+        if (roundStock(unresolvedReadyQuantity) > 0) {
           throw new BadRequestException(
             "تعذر مطابقة كمية المنتجات الجاهزة مع حركة البيع الأصلية",
           );
         }
       }
 
-      const returnedCogsAmount = isRefund
-        ? Math.min(cogsAmount, roundMoney(returnedMovementCost))
-        : cogsAmount;
-      const wasteCogsAmount = isRefund
+      const returnedCogsAmount = existing.inventory_posted
+        ? isRefund
+          ? Math.min(cogsAmount, roundMoney(returnedMovementCost))
+          : cogsAmount
+        : 0;
+      const wasteCogsAmount = existing.inventory_posted && isRefund
         ? roundMoney(Math.max(0, cogsAmount - returnedCogsAmount))
         : 0;
 
-      if (wasteRows.length && wasteCogsAmount > 0) {
+      if (wasteRows.length) {
+        const allocatedCosts = refundWasteCosts(wasteRows, wasteCogsAmount);
         const wasteReference = `WASTE-${existing.sale_number}`;
         await tx.inv_transactions.create({
           data: {
@@ -2080,14 +3171,14 @@ export class QuickSalesService {
             approved_by: userId,
             approved_at: new Date(),
             items: {
-              create: wasteRows.map((row) => ({
+              create: wasteRows.map((row, index) => ({
                 product_id: row.productId,
                 item_code: row.itemCode,
                 item_name: row.itemName,
                 quantity: row.quantity,
                 unit: row.unit,
                 price: row.unitCost,
-                total: row.total,
+                total: allocatedCosts[index],
                 notes: `هالك استرداد ${existing.sale_number}`,
               })),
             },
@@ -2095,6 +3186,7 @@ export class QuickSalesService {
         });
         await recordSystemExpense(tx, {
           invoiceNumber: wasteReference,
+          businessUnit: 'cafe',
           date: localDateString(),
           category: "مخزون",
           subCategory: "هالك كافيه",
@@ -2109,11 +3201,10 @@ export class QuickSalesService {
       const reversalSession = await this.sessions.findBranchSessionForSale(
         tx,
         existing.branch_id,
-        userId,
       );
       if (!reversalSession) {
         throw new BadRequestException(
-          "افتح وردية باسم المستخدم الحالي قبل استرداد أو إلغاء الفاتورة",
+          "لا توجد وردية مفتوحة لهذا الفرع؛ افتح وردية قبل استرداد أو إلغاء الفاتورة",
         );
       }
       await this.sessions.applySaleReversalToSession(tx, reversalSession.id, {
@@ -2156,6 +3247,7 @@ export class QuickSalesService {
         tx,
       );
 
+      await syncCafeSaleFinance(tx, existing, { date: localDateString(), createdBy: userId });
       return tx.sales_quick_sales.update({
         where: { id },
         data: {
@@ -2176,9 +3268,9 @@ export class QuickSalesService {
           events: true,
         },
       });
-    });
+    }, { maxWait: 10000, timeout: 30000 });
 
-    return this.map(updated);
+    return (await this.mapSales([updated]))[0];
   }
 
   async markPrinted(id: number, user?: JwtUser) {
@@ -2198,6 +3290,6 @@ export class QuickSalesService {
         events: true,
       },
     });
-    return this.map(row);
+    return (await this.mapSales([row]))[0];
   }
 }

@@ -1,10 +1,7 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Min, ValidateIf } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, ValidateIf } from 'class-validator';
 
 export class CheckInDto {
-  @IsOptional()
-  @IsIn(['normal', 'class'])
-  attendanceType?: 'normal' | 'class';
   @ValidateIf((o) => !o.memberCode)
   @Transform(({ value }) => (value != null ? Number(value) : undefined))
   @IsInt()
@@ -41,21 +38,43 @@ export class CheckInDto {
   @Transform(({ value }) => value === true || value === 'true')
   @IsBoolean()
   consumeSession?: boolean;
+
+  /** Stand-in captain for the scheduled class this check-in lands on. */
+  @IsOptional()
+  @Transform(({ value }) => (value != null && value !== '' ? Number(value) : undefined))
+  @IsInt()
+  classTrainerId?: number;
 }
 
-export class ServiceCheckInDto {
+export class NextScheduledClassDto {
+  @ValidateIf((o) => !o.memberCode)
+  @Transform(({ value }) => (value != null ? Number(value) : undefined))
+  @IsInt()
+  memberId?: number;
+
+  @ValidateIf((o) => !o.memberId)
+  @IsString()
+  memberCode?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => (value != null && value !== '' ? Number(value) : undefined))
+  @IsInt()
+  branchId?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => (value != null && value !== '' ? Number(value) : undefined))
+  @IsInt()
+  subscriptionId?: number;
+}
+
+export class SetClassTrainerDto {
   @Transform(({ value }) => Number(value))
   @IsInt()
-  @Min(1)
-  memberId: number;
+  classId!: number;
 
   @Transform(({ value }) => Number(value))
   @IsInt()
-  @Min(1)
-  subscriptionId: number;
-
-  @IsIn(['class', 'spa', 'inbody'])
-  attendanceType: 'class' | 'spa' | 'inbody';
+  trainerId!: number;
 }
 
 export class CheckOutDto {
@@ -72,4 +91,10 @@ export class CheckOutDto {
   @Transform(({ value }) => (value != null ? Number(value) : undefined))
   @IsInt()
   attendanceId?: number;
+}
+
+export class ResolvePendingSubscriptionDto {
+  @Transform(({ value }) => Number(value))
+  @IsInt()
+  subscriptionId!: number;
 }

@@ -2,10 +2,10 @@ import { Global, Module } from '@nestjs/common';
 import { MeController } from './me.controller';
 import { MenuService } from './menu.service';
 import { WorkspaceService } from './workspace.service';
+import { DashboardShortcutsService } from './dashboard-shortcuts.service';
 import { WorkspaceWidgetsService } from './workspace-widgets.service';
 import { PermissionCacheService } from './engine/permission-cache.service';
 import { PermissionEngineService } from './engine/permission-engine.service';
-import { OperationalScopeService } from './engine/operational-scope.service';
 
 /**
  * Global so the app-level PermissionsGuard (registered in AppModule) and any feature
@@ -14,7 +14,7 @@ import { OperationalScopeService } from './engine/operational-scope.service';
 @Global()
 @Module({
   controllers: [MeController],
-  providers: [MenuService, WorkspaceService, WorkspaceWidgetsService, PermissionCacheService, PermissionEngineService, OperationalScopeService],
-  exports: [MenuService, WorkspaceService, WorkspaceWidgetsService, PermissionCacheService, PermissionEngineService, OperationalScopeService],
+  providers: [MenuService, WorkspaceService, WorkspaceWidgetsService, PermissionCacheService, PermissionEngineService, DashboardShortcutsService],
+  exports: [MenuService, WorkspaceService, WorkspaceWidgetsService, PermissionCacheService, PermissionEngineService],
 })
 export class RbacModule {}

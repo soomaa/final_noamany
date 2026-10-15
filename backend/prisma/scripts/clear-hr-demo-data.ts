@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 /**
- * Noamany production HR cleanup.
+ * ONE80 production HR cleanup.
  *
  * Default mode is PREVIEW ONLY. The cleanup:
  *   - removes the fake employee roster and employee-owned HR transactions;

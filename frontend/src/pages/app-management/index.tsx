@@ -1,4 +1,7 @@
 export { AboutAppPage } from './about';
+export { AppPaymentMethodsPage } from './payment-methods';
+export { AppBranchesPage } from './branches';
+export { AppMemberNotificationsPage } from './member-notifications';
 export {
   SentInvitationsPage,
   AcceptedInvitationsPage,

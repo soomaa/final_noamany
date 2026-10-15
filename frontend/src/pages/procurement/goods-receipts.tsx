@@ -227,6 +227,7 @@ export function ProcurementGoodsReceiptsPage() {
     >
       <FilterBar fields={filters} searchPlaceholder={ui('بحث في إذونات الاستلام…')} />
       <DataTable
+        exportSource={{ resource: 'goods-receipts', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}

@@ -3,14 +3,21 @@ import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { todayIso } from '../../common/utils/legacy-date.util';
+import { dateOnlyEpochSeconds } from '../../common/utils/cairo-date';
 import { CreateEvaluationDto, ListEvaluationsDto } from './dto/evaluation.dto';
+import { HrDataScopeService } from '../../common/hr-scope/hr-data-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @Injectable()
 export class EvaluationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly scope: HrDataScopeService) {}
 
-  async list(q: ListEvaluationsDto) {
+  async list(q: ListEvaluationsDto, user: JwtUser) {
     const and: Prisma.hr_ta3en_moaqt_evaluationWhereInput[] = [];
+    const identities = await this.scope.employeeIdentities(user, 'affairs.evaluations');
+    if (identities) {
+      and.push(identities.ids.length ? { emp_id_fk: { in: identities.ids.map(String) } } : { id: -1 });
+    }
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -45,30 +52,26 @@ export class EvaluationsService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async getOne(id: number) {
+  async getOne(id: number, user: JwtUser) {
     const row = await this.prisma.hr_ta3en_moaqt_evaluation.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('التقييم غير موجود');
 
     const empId = row.emp_id_fk ? parseInt(row.emp_id_fk, 10) : null;
+    if (empId == null || !Number.isSafeInteger(empId)) throw new NotFoundException('التقييم غير موجود');
+    await this.scope.assertEmployeeInScope(user, empId, 'affairs.evaluations');
     const emp = empId ? await this.prisma.employees.findUnique({ where: { id: empId } }) : null;
 
     const details = await this.prisma.hr_ta3en_moaqt_evaluation_details.findMany({
-      where: { evaluation_order_id: String(id) },
+      where: { evaluate_id_fk: id },
     });
 
     const points = empId
       ? await this.prisma.hr_ta3en_moaqt_evaluation_points.findMany({
-          where: { emp_id_fk: empId },
+          where: { evaluate_id_fk: empId },
         })
       : [];
 
     const criteriaSettings = await this.getCriteriaTree();
-    const criteriaTitles = new Map(
-      criteriaSettings.flatMap((parent) => [
-        [parent.id, parent.title] as const,
-        ...parent.children.map((child) => [child.id, child.title] as const),
-      ]),
-    );
 
     return {
       id: row.id,
@@ -82,10 +85,8 @@ export class EvaluationsService {
       date: row.date_ar,
       details: details.map((d) => ({
         id: d.id,
-        settingId: d.evaluate_id_fk ? parseInt(d.evaluate_id_fk, 10) : null,
-        title:
-          d.title ??
-          (d.evaluate_id_fk ? criteriaTitles.get(parseInt(d.evaluate_id_fk, 10)) : undefined),
+        settingId: d.evaluate_id_fk,
+        title: d.title,
         maxDegree: d.max_degree,
         empDegree: d.emp_degree,
       })),
@@ -113,7 +114,8 @@ export class EvaluationsService {
     }));
   }
 
-  async create(dto: CreateEvaluationDto, publisherId?: number, publisherName?: string | null) {
+  async create(dto: CreateEvaluationDto, user: JwtUser, publisherId?: number, publisherName?: string | null) {
+    await this.scope.assertEmployeeInScope(user, dto.empId, 'affairs.evaluations');
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
 
@@ -136,22 +138,23 @@ export class EvaluationsService {
         total_degree: totalDegree,
         result_tagraba: dto.resultTagraba,
         taqdeer: dto.taqdeer,
-        date: Math.floor(new Date(dateStr).getTime() / 1000),
+        date: dateOnlyEpochSeconds(dateStr),
         date_ar: dateStr,
         publisher: publisherId,
         publisher_name: publisherName,
       },
     });
 
-    // Preserve the legacy three-key layout: evaluation order, employee and criterion.
+    // Persist the criteria grid (one detail row per bnod/criterion).
+    // NOTE: the Prisma model only exposes evaluate_id_fk (used here as the
+    // master-evaluation FK, matching getOne) + title/max_degree/emp_degree.
+    // The legacy table additionally has evaluation_order_id + per-row emp_id_fk
     // and uses evaluate_id_fk for the criterion-setting id — see RETURN.
     for (const c of dto.criteria) {
       const setting = await this.prisma.hr_evaluation_setting.findUnique({ where: { id: c.settingId } });
       await this.prisma.hr_ta3en_moaqt_evaluation_details.create({
         data: {
-          evaluation_order_id: String(row.id),
-          emp_id_fk: String(dto.empId),
-          evaluate_id_fk: String(c.settingId),
+          evaluate_id_fk: row.id,
           title: c.title ?? setting?.title,
           max_degree: c.maxDegree,
           emp_degree: c.empDegree,
@@ -160,35 +163,36 @@ export class EvaluationsService {
     }
 
     await this.prisma.hr_ta3en_moaqt_evaluation_points.deleteMany({
-      where: { emp_id_fk: dto.empId },
+      where: { evaluate_id_fk: dto.empId },
     });
 
     for (const title of dto.positive ?? []) {
       if (!title.trim()) continue;
       await this.prisma.hr_ta3en_moaqt_evaluation_points.create({
-        data: { emp_id_fk: dto.empId, evaluate_id_fk: dto.empId, title, type: 1, type_n: 'قوه' },
+        data: { evaluate_id_fk: dto.empId, title, type: 1, type_n: 'قوه' },
       });
     }
     for (const title of dto.negative ?? []) {
       if (!title.trim()) continue;
       await this.prisma.hr_ta3en_moaqt_evaluation_points.create({
-        data: { emp_id_fk: dto.empId, evaluate_id_fk: dto.empId, title, type: 2, type_n: 'ضعف' },
+        data: { evaluate_id_fk: dto.empId, title, type: 2, type_n: 'ضعف' },
       });
     }
 
     return { id: row.id };
   }
 
-  async remove(id: number) {
+  async remove(id: number, user: JwtUser) {
     const row = await this.prisma.hr_ta3en_moaqt_evaluation.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('التقييم غير موجود');
+    const employeeId = row.emp_id_fk ? Number.parseInt(row.emp_id_fk, 10) : NaN;
+    if (!Number.isSafeInteger(employeeId)) throw new NotFoundException('التقييم غير موجود');
+    await this.scope.assertEmployeeInScope(user, employeeId, 'affairs.evaluations');
 
-    await this.prisma.hr_ta3en_moaqt_evaluation_details.deleteMany({
-      where: { evaluation_order_id: String(id) },
-    });
+    await this.prisma.hr_ta3en_moaqt_evaluation_details.deleteMany({ where: { evaluate_id_fk: id } });
     if (row.emp_id_fk) {
       await this.prisma.hr_ta3en_moaqt_evaluation_points.deleteMany({
-        where: { emp_id_fk: parseInt(row.emp_id_fk, 10) },
+        where: { evaluate_id_fk: parseInt(row.emp_id_fk, 10) },
       });
     }
     await this.prisma.hr_ta3en_moaqt_evaluation.delete({ where: { id } });

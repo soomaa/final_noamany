@@ -1,11 +1,14 @@
-import { CreditCard, FileText, IdCard, LayoutGrid, Printer, ScanBarcode, Search, Sparkles, Table2, UsersRound } from 'lucide-react';
+import { formatDisplayNumber } from '@/lib/number-display';
+import { useLocale } from '@/store/locale';
+import { MemberQrCard } from '@/components/club/member-qr-card';
+import { Copy, CreditCard, IdCard, LayoutGrid, Printer, QrCode, ScanBarcode, Search, Table2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
 import { EmptyState, ErrorState } from '@/components/common/states';
 import { PageHeader } from '@/components/common/page-header';
-import { BarcodeLabel, BarcodePreview, printBarcodeLabels, type BarcodeLabelData } from '@/components/club/barcode-label';
+import { BarcodeLabel, BarcodePreview, barcodeLabelPng, printBarcodeLabels, isGateQrCredential, type BarcodeLabelData } from '@/components/club/barcode-label';
 import { ClubStatCard } from '@/components/club/stat-card';
 import { Button } from '@/components/ui/button';
 import {
@@ -22,30 +25,64 @@ import { useBranches } from '@/hooks/use-branches';
 import { useClubT } from '@/hooks/use-club-t';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
-import { api, apiError } from '@/lib/api';
-import { cn, toArabicDigits } from '@/lib/utils';
+import { cn, toArabicDigits, formatDigits } from '@/lib/utils';
 import type { ClubMemberListItem } from '@/types/club';
 import { MemberAvatar, memberInitials } from '@/components/club/member-avatar';
 import type { ColumnDef } from '@tanstack/react-table';
-import { ClassBarcodeCheckInPanel, MemberBarcodeCheckInPanel, SpaBarcodeCheckInPanel } from './fitness/barcode-check-in';
-import { FitnessSpaAttendanceReportPanel } from './fitness/spa-attendance';
-import { FitnessClassAttendanceReportPanel } from './fitness/class-attendance';
+import { usePermission } from '@/hooks/use-permission';
+import { writePngImageToClipboard } from '@/lib/clipboard-image';
 
-type ViewTab = 'barcodes' | 'membership' | 'table' | 'member-check-in' | 'print-range' | 'spa' | 'classes' | 'spa-attendance' | 'class-attendance';
+type ViewTab = 'qr' | 'barcodes' | 'membership' | 'table';
+
+/**
+ * Copies the rendered member label to the clipboard as an image, falling back to a
+ * PNG download when the browser refuses image clipboard writes.
+ */
+async function copyBarcodeImage(
+  label: BarcodeLabelData,
+  messages: { copied: string; downloaded: string; failed: string },
+): Promise<void> {
+  const png = barcodeLabelPng(label);
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      throw new Error('Image clipboard is not supported');
+    }
+    await writePngImageToClipboard(png, navigator.clipboard, ClipboardItem);
+    toast.success(messages.copied);
+  } catch {
+    try {
+      const blob = await png;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `member-${label.format === 'barcode' ? 'barcode' : 'qr'}-${label.code}.png`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.info(messages.downloaded);
+    } catch {
+      toast.error(messages.failed);
+    }
+  }
+}
 
 function MemberBarcodeCard({
   member,
   branch,
+  onCopy,
   onPrint,
+  copyLabel,
   printLabel,
 }: {
   member: ClubMemberListItem;
   branch: string | null;
-  onPrint: () => void;
+  onCopy?: () => void;
+  onPrint?: () => void;
+  copyLabel: string;
   printLabel: string;
 }) {
   const ct = useClubT();
-  const accent = member.gender === 'female' ? '#EC4899' : '#D3121A';
+  const barcodeAvailable = Boolean(member.memberCode);
+  const accent = member.gender === 'female' ? '#EC4899' : '#C99700';
 
   return (
     <article
@@ -85,26 +122,32 @@ function MemberBarcodeCard({
           )}
         </div>
 
-        <div className="rounded-xl border bg-white px-4 py-4 shadow-inner dark:bg-zinc-950/80">
-          <BarcodePreview code={member.memberCode} height={64} />
+        <div className="rounded-xl border bg-background px-4 py-4 shadow-inner">
+          <BarcodePreview format="barcode" code={member.memberCode} scannerCode={member.scannerCode} size={164} unavailableLabel={ct('members.gateQrUnavailable')} />
         </div>
 
         {member.cardNumber && (
           <p className="text-center text-xs text-muted-foreground">
-            <span className="nums">{toArabicDigits(member.cardNumber)}</span>
+            <span className="nums">{formatDigits(member.cardNumber)}</span>
           </p>
         )}
 
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="w-full opacity-90 transition-opacity group-hover:opacity-100"
-          onClick={onPrint}
-        >
-          <Printer className="size-4" />
-          {printLabel}
-        </Button>
+        {onCopy || onPrint ? (
+          <div className="flex gap-2 opacity-90 transition-opacity group-hover:opacity-100">
+            {onCopy ? (
+              <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onCopy} disabled={!barcodeAvailable}>
+                <Copy className="size-4" />
+                {copyLabel}
+              </Button>
+            ) : null}
+            {onPrint ? (
+              <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onPrint} disabled={!barcodeAvailable}>
+                <Printer className="size-4" />
+                {printLabel}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -115,13 +158,13 @@ function MembershipCard({ member }: { member: ClubMemberListItem }) {
     <div className="overflow-hidden rounded-2xl border bg-gradient-to-br from-primary/10 via-card to-card p-4 shadow-sm print:break-inside-avoid">
       <div className="flex items-center gap-2 text-primary">
         <CreditCard className="size-5" />
-        <span className="text-xs font-bold uppercase tracking-wider">Noamany Fitness Center</span>
+        <span className="text-xs font-bold uppercase tracking-wider">ONE80 Gym</span>
       </div>
       <MemberAvatar name={member.name} profilePicture={member.profilePicture} size="lg" className="mx-auto mt-3 ring-2 ring-primary/20" />
       <p className="mt-3 text-center text-lg font-bold">{member.name}</p>
       <p className="text-center font-mono text-sm nums text-muted-foreground">{member.memberCode}</p>
       <p className="mt-1 text-center text-xs text-muted-foreground">{member.membershipType?.name ?? '—'}</p>
-      <p className="mt-2 text-center text-xs nums">{member.phone ? toArabicDigits(member.phone) : ''}</p>
+      <p className="mt-2 text-center text-xs nums">{member.phone ? formatDigits(member.phone) : ''}</p>
     </div>
   );
 }
@@ -157,73 +200,67 @@ function MembershipCardSkeleton() {
 }
 
 export function ClubBarcodeManagementPage() {
+  const { dir } = useLocale();
   const ct = useClubT();
+  const { can } = usePermission();
+  const canPrint = can('club.members.barcode_management:print');
   const { params, setParams } = useListQuery();
-  const [searchParams] = useSearchParams();
-  const { pathname } = useLocation();
-  const navigate = useNavigate();
-  const tabParam =
-    pathname.endsWith('/print-range') ? 'print-range'
-      : pathname.endsWith('/member-check-in') ? 'member-check-in'
-      : pathname.endsWith('/spa-check-in') ? 'spa'
-      : pathname.endsWith('/classes-check-in') ? 'classes'
-      : pathname.endsWith('/spa-attendance') ? 'spa-attendance'
-      : pathname.endsWith('/classes-attendance') ? 'class-attendance'
-      : searchParams.get('tab');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
   const view: ViewTab =
-    tabParam === 'membership' || tabParam === 'table' || tabParam === 'member-check-in' || tabParam === 'print-range' || tabParam === 'spa' || tabParam === 'classes' || tabParam === 'spa-attendance' || tabParam === 'class-attendance' || tabParam === 'barcodes' ? tabParam : 'barcodes';
+    tabParam === 'membership' || tabParam === 'table' || tabParam === 'barcodes' ? tabParam : 'qr';
 
   const setView = (next: ViewTab) => {
-    const p = new URLSearchParams(searchParams);
-    p.set('tab', next);
-    p.set('page', '1');
-    navigate({ pathname: '/club/members/barcode-management', search: `?${p.toString()}` }, { replace: true });
+    setSearchParams(
+      (prev) => {
+        const p = new URLSearchParams(prev);
+        p.set('tab', next);
+        p.set('page', '1');
+        return p;
+      },
+      { replace: true },
+    );
   };
 
-  const { data, isLoading, isError, refetch } = usePaginatedList<ClubMemberListItem>('club-members/print-cards', params, ['barcodes', 'membership', 'table', 'print-range'].includes(view));
+  const listParams = useMemo(
+    () =>
+      view === 'membership'
+        ? { ...params, filters: { ...params.filters, status: 'active' } }
+        : view === 'barcodes' ? params
+        : { ...params, filters: { ...params.filters, includeGateCredentials: 'true' } },
+    [params, view],
+  );
+
+  const { data, isLoading, isError, refetch } = usePaginatedList<ClubMemberListItem>('club-members', listParams);
   const { data: branches } = useBranches();
   const [printMember, setPrintMember] = useState<ClubMemberListItem | null>(null);
-  const [codeFrom, setCodeFrom] = useState('');
-  const [codeTo, setCodeTo] = useState('');
-  const [isPrintingRange, setIsPrintingRange] = useState(false);
 
   const members = data?.data ?? [];
   const total = data?.total ?? 0;
+  const isBarcodeView = view === 'barcodes';
+  const printableMembers = members.filter((member) => isBarcodeView ? Boolean(member.memberCode) : isGateQrCredential(member.scannerCode));
 
   const branchName = (id: number) => branches?.find((b) => b.id === id)?.name ?? null;
 
   const toLabel = (m: ClubMemberListItem): BarcodeLabelData => ({
+    format: isBarcodeView ? 'barcode' : 'qr',
     code: m.memberCode,
+    scannerCode: m.scannerCode,
     name: m.name,
     branch: branchName(m.branchId),
   });
 
-  const printBarcodes = () => {
-    if (!members.length) return;
-    printBarcodeLabels(members.map(toLabel));
+  const copyMessages = {
+    copied: ct(isBarcodeView ? 'members.barcodeCopied' : 'members.qrCopied'),
+    downloaded: ct(isBarcodeView ? 'members.barcodeDownloaded' : 'members.qrDownloaded'),
+    failed: ct(isBarcodeView ? 'members.barcodeCopyFailed' : 'members.qrCopyFailed'),
   };
 
-  const printBarcodeRange = async () => {
-    if (!codeFrom.trim() || !codeTo.trim()) {
-      toast.error('أدخل كود البداية وكود النهاية للطباعة');
-      return;
-    }
-    setIsPrintingRange(true);
-    try {
-      const { data: result } = await api.get<{ data: ClubMemberListItem[]; capped: boolean }>('/club-members/barcode-range', {
-        params: { codeFrom: codeFrom.trim(), codeTo: codeTo.trim() },
-      });
-      if (!result.data.length) {
-        toast.error('لا يوجد أعضاء ضمن نطاق الأكواد المحدد');
-        return;
-      }
-      printBarcodeLabels(result.data.map(toLabel));
-      if (result.capped) toast.message('تمت طباعة أول 500 كود فقط؛ قسّم النطاق للطباعة التالية.');
-    } catch (error) {
-      toast.error(apiError(error, 'تعذرت طباعة نطاق الباركود'));
-    } finally {
-      setIsPrintingRange(false);
-    }
+  const printBarcodes = () => {
+    if (!members.length) return;
+    const skipped = members.length - printableMembers.length;
+    if (skipped) toast.warning(ct('members.qrPrintSkipped', { count: skipped }));
+    printBarcodeLabels(printableMembers.map(toLabel));
   };
 
   const printAction = () => {
@@ -237,8 +274,8 @@ export function ClubBarcodeManagementPage() {
         id: 'barcode',
         header: ct('members.barcodeCol'),
         cell: ({ row }) => (
-          <div className="rounded-lg border bg-white px-3 py-2 dark:bg-zinc-950/60">
-            <BarcodePreview code={row.original.memberCode} height={44} />
+          <div className="rounded-lg border bg-background px-3 py-2">
+            <BarcodePreview code={row.original.memberCode} scannerCode={row.original.scannerCode} size={116} unavailableLabel={ct('members.gateQrUnavailable')} />
           </div>
         ),
       },
@@ -256,14 +293,14 @@ export function ClubBarcodeManagementPage() {
       {
         id: 'print',
         header: ct('common.actions'),
-        cell: ({ row }) => (
-          <Button size="sm" variant="outline" onClick={() => setPrintMember(row.original)}>
-            <Printer className="size-4" /> {ct('common.print')}
+        cell: ({ row }) => canPrint ? (
+          <Button size="sm" variant="outline" disabled={!isGateQrCredential(row.original.scannerCode)} onClick={() => setPrintMember(row.original)}>
+            <Printer className="size-4" /> {ct('packages.openView')}
           </Button>
-        ),
+        ) : null,
       },
     ],
-    [ct],
+    [canPrint, ct],
   );
 
   const printLabel =
@@ -273,76 +310,104 @@ export function ClubBarcodeManagementPage() {
     <div className="space-y-6 print:space-y-4">
       <PageHeader
         title={ct('members.barcodeMgmtTitle')}
-        description={view === 'membership' ? ct('members.cardsDesc') : ct('members.barcodeMgmtDesc')}
+        description={view === 'membership' ? ct('members.cardsDesc') : ct(isBarcodeView ? 'members.barcodeMgmtDesc' : 'members.qrCardsDesc')}
         className="print:hidden"
       />
 
-      {['barcodes', 'membership', 'table'].includes(view) && <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 print:hidden">
-        <ClubStatCard label={ct('members.name')} value={total} icon={ScanBarcode} tone="members" />
+      {view === 'qr' ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground print:hidden">
+          <p>{ct('members.totalCardsMembers')} <span className="ms-2 font-semibold tabular-nums text-foreground">{formatDisplayNumber(total)}</span></p>
+          <p>{ct('members.barcodePageStat')} <span className="ms-2 tabular-nums" dir="ltr">{formatDisplayNumber(params.page)} / {formatDisplayNumber(Math.max(1, Math.ceil(total / params.pageSize)))}</span></p>
+        </div>
+      ) : (
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 print:hidden">
+        <ClubStatCard label={ct('members.totalCardsMembers')} value={total} icon={QrCode} tone="members" />
         <ClubStatCard label={ct('members.barcodeTabCards')} value={members.length} icon={LayoutGrid} tone="primary" />
-        <ClubStatCard label={ct('members.barcodePageStat')} value={`${params.page} / ${Math.max(1, Math.ceil(total / params.pageSize))}`} icon={Table2} tone="neutral" />
-      </div>}
+        <ClubStatCard
+          label={ct('members.barcodePageStat')}
+          value={`${params.page} / ${Math.max(1, Math.ceil(total / params.pageSize))}`}
+          icon={Table2}
+          tone="neutral"
+        />
+      </div>
+      )}
 
-      <Tabs value={view} onValueChange={(v) => setView(v as ViewTab)}>
-        <div className="flex flex-col gap-4 print:hidden">
-          <TabsList className="h-11 w-full flex-wrap">
-            <TabsTrigger value="member-check-in" className="gap-2 px-4">
-              <UsersRound className="size-4" />
-              حضور الأعضاء
+      <Tabs dir={dir} value={view} onValueChange={(v) => setView(v as ViewTab)}>
+        <div className="flex flex-col gap-4 2xl:flex-row 2xl:items-center 2xl:justify-between print:hidden">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 sm:flex sm:w-auto sm:flex-wrap">
+            <TabsTrigger value="qr" className="min-h-11 gap-2 px-4">
+              <QrCode className="size-4" />
+              {ct('members.qrTab')}
             </TabsTrigger>
-            <TabsTrigger value="spa" className="gap-2 px-4">
-              <Sparkles className="size-4" />
-              حضور السبا
-            </TabsTrigger>
-            <TabsTrigger value="classes" className="gap-2 px-4">
-              <ScanBarcode className="size-4" />
-              حضور الحصص
-            </TabsTrigger>
-            <TabsTrigger value="barcodes" className="gap-2 px-4">
+            <TabsTrigger value="barcodes" className="min-h-11 gap-2 px-4">
               <ScanBarcode className="size-4" />
               {ct('members.barcodeTabCards')}
             </TabsTrigger>
-            <TabsTrigger value="membership" className="gap-2 px-4">
+            <TabsTrigger value="membership" className="min-h-11 gap-2 px-4">
               <IdCard className="size-4" />
               {ct('members.cardsTitle')}
             </TabsTrigger>
-            <TabsTrigger value="table" className="gap-2 px-4">
+            <TabsTrigger value="table" className="min-h-11 gap-2 px-4">
               <Table2 className="size-4" />
               {ct('members.barcodeTabTable')}
             </TabsTrigger>
           </TabsList>
 
-          {['barcodes', 'membership', 'table'].includes(view) && <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <div className="relative flex-1 sm:min-w-[260px]">
               <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
               <Input
                 value={params.search}
                 onChange={(e) => setParams({ search: e.target.value, page: 1 })}
+                aria-label={ct('members.barcodePlaceholder')}
                 placeholder={ct('members.barcodePlaceholder')}
                 className="ps-9"
               />
             </div>
-            <Button type="button" variant="brand" disabled={!members.length} onClick={printAction}>
+            {canPrint ? <Button type="button" variant="brand" disabled={isLoading || isError || !(view === 'membership' ? members.length : printableMembers.length)} onClick={printAction}>
               <Printer className="size-4" />
               {printLabel}
-            </Button>
-          </div>}
+            </Button> : null}
+          </div>
         </div>
 
-        <TabsContent value="print-range" className="mx-auto max-w-3xl space-y-4">
-          <section className="grid gap-3 rounded-xl border bg-card p-5 md:grid-cols-[1fr_1fr_auto] md:items-end">
-            <div><label className="mb-1.5 block text-sm font-medium">من كود</label><Input autoFocus value={codeFrom} onChange={(e) => setCodeFrom(e.target.value)} placeholder="مثال: A000001" className="font-mono nums" /></div>
-            <div><label className="mb-1.5 block text-sm font-medium">إلى كود</label><Input value={codeTo} onChange={(e) => setCodeTo(e.target.value)} placeholder="مثال: A000008" className="font-mono nums" /></div>
-            <Button type="button" variant="brand" onClick={() => void printBarcodeRange()} disabled={isPrintingRange}><Printer className="size-4" /> {isPrintingRange ? 'جارٍ التجهيز…' : 'طباعة النطاق'}</Button>
-          </section>
-          <p className="text-center text-sm text-muted-foreground">تُطبع الأكواد الواقعة بين كود البداية وكود النهاية فقط.</p>
-        </TabsContent>
+        <TabsContent value="qr" className="space-y-4">
+          {isError ? (
+            <ErrorState onRetry={() => void refetch()} />
+          ) : isLoading ? (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="space-y-5 rounded-2xl border bg-card p-6"><Skeleton className="mx-auto h-6 w-2/3" /><Skeleton className="mx-auto size-52" /><Skeleton className="h-11 w-full" /></div>
+              ))}
+            </div>
+          ) : members.length === 0 ? (
+            <EmptyState title={ct('members.emptyMembers')} compact />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              {members.map((member) => (
+                <MemberQrCard
+                  key={member.id}
+                  member={member}
+                  branch={branchName(member.branchId)}
+                  onCopy={() => void copyBarcodeImage({ ...toLabel(member), format: 'qr' }, {
+                    copied: ct('members.qrCopied'), downloaded: ct('members.qrDownloaded'), failed: ct('members.qrCopyFailed'),
+                  })}
+                  onPrint={canPrint ? () => setPrintMember(member) : undefined}
+                />
+              ))}
+            </div>
+          )}
 
-        <TabsContent value="member-check-in"><MemberBarcodeCheckInPanel /></TabsContent>
-        <TabsContent value="spa"><SpaBarcodeCheckInPanel /></TabsContent>
-        <TabsContent value="classes"><ClassBarcodeCheckInPanel /></TabsContent>
-        <TabsContent value="spa-attendance"><FitnessSpaAttendanceReportPanel /></TabsContent>
-        <TabsContent value="class-attendance"><FitnessClassAttendanceReportPanel /></TabsContent>
+          {!isLoading && !isError && total > 0 && (
+            <Pagination
+              page={params.page}
+              pageSize={params.pageSize}
+              total={total}
+              onPageChange={(page) => setParams({ page })}
+              onPageSizeChange={(pageSize) => setParams({ pageSize, page: 1 })}
+            />
+          )}
+        </TabsContent>
 
         <TabsContent value="barcodes" className="space-y-4">
           {isError ? (
@@ -362,8 +427,10 @@ export function ClubBarcodeManagementPage() {
                   key={member.id}
                   member={member}
                   branch={branchName(member.branchId)}
-                  printLabel={ct('common.print')}
-                  onPrint={() => setPrintMember(member)}
+                  copyLabel={ct('packages.copyBarcode')}
+                  printLabel={ct('packages.viewPrintBarcode')}
+                  onCopy={() => void copyBarcodeImage(toLabel(member), copyMessages)}
+                  onPrint={canPrint ? () => setPrintMember(member) : undefined}
                 />
               ))}
             </div>
@@ -414,6 +481,7 @@ export function ClubBarcodeManagementPage() {
 
         <TabsContent value="table" className={cn(view === 'table' && 'mt-0')}>
           <DataTable
+            exportSource={{ resource: 'club-members', params: listParams }}
             columns={columns}
             data={members}
             total={total}
@@ -430,21 +498,34 @@ export function ClubBarcodeManagementPage() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={!!printMember} onOpenChange={(o) => !o && setPrintMember(null)}>
+      <Dialog open={canPrint && !!printMember} onOpenChange={(o) => !o && setPrintMember(null)}>
         <DialogContent size="md" className="print:max-w-none" aria-describedby={undefined}>
           <DialogHeader className="print:hidden">
-            <DialogTitle>{ct('members.printBarcode')}</DialogTitle>
+            <DialogTitle>{ct(isBarcodeView ? 'members.barcodePreviewTitle' : 'packages.openView')}</DialogTitle>
           </DialogHeader>
           {printMember && (
             <div className="flex flex-col items-center gap-4">
               <BarcodeLabel
+                format={isBarcodeView ? 'barcode' : 'qr'}
                 code={printMember.memberCode}
+                scannerCode={printMember.scannerCode}
+                unavailableLabel={ct('members.gateQrUnavailable')}
                 name={printMember.name}
                 branch={branchName(printMember.branchId)}
               />
-              <Button variant="brand" onClick={() => printBarcodeLabels([toLabel(printMember)])}>
-                <Printer className="size-4" /> {ct('common.print')}
-              </Button>
+              <div className="flex w-full flex-col gap-2 sm:flex-row">
+                <Button className="flex-1" variant="brand" disabled={!isBarcodeView && !isGateQrCredential(printMember.scannerCode)} onClick={() => printBarcodeLabels([toLabel(printMember)])}>
+                  <Printer className="size-4" /> {ct('common.print')}
+                </Button>
+                <Button
+                  className="flex-1"
+                  variant="outline"
+                  disabled={!isBarcodeView && !isGateQrCredential(printMember.scannerCode)}
+                  onClick={() => void copyBarcodeImage(toLabel(printMember), copyMessages)}
+                >
+                  <Copy className="size-4" /> {ct(isBarcodeView ? 'members.copyBarcodeImage' : 'members.copyQrImage')}
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>

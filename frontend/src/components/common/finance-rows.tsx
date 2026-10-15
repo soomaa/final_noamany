@@ -36,6 +36,8 @@ interface FinanceRowsEditorProps {
   deductionTypes?: { id: number; title: string }[];
   basicSalary?: string;
   onBasicSalaryChange?: (v: string) => void;
+  editable?: boolean;
+  canDelete?: boolean;
 }
 
 function newRow(type: '1' | '2'): FinanceRow {
@@ -59,6 +61,8 @@ export function FinanceRowsEditor({
   deductionTypes = [],
   basicSalary,
   onBasicSalaryChange,
+  editable = true,
+  canDelete = true,
 }: FinanceRowsEditorProps) {
   const { ui } = useLocale();
   const methods = useMemo(
@@ -76,9 +80,9 @@ export function FinanceRowsEditor({
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="font-medium">{title}</h4>
-        <Button type="button" variant="outline" size="sm" onClick={() => onChange([...rows, newRow(type)])}>
+        {editable ? <Button permissionAction="update" type="button" variant="outline" size="sm" onClick={() => onChange([...rows, newRow(type)])}>
           <Plus className="size-4" /> {ui('إضافة')}
-        </Button>
+        </Button> : null}
       </div>
       {rows.filter((r) => r.badl_type === type).length === 0 ? (
         <p className="text-sm text-muted-foreground">{ui('لا توجد بنود — انقر إضافة.')}</p>
@@ -137,9 +141,9 @@ export function FinanceRowsEditor({
                       <Switch checked={row.insurance_affect} onCheckedChange={(v) => update(row.id, { insurance_affect: v })} />
                     </TableCell>
                     <TableCell>
-                      <Button type="button" variant="ghost" size="icon" onClick={() => remove(row)} aria-label={ui('حذف')}>
+                      {canDelete ? <Button permissionAction="delete" type="button" variant="ghost" size="icon" onClick={() => remove(row)} aria-label={ui('حذف')}>
                         <Trash2 className="size-4 text-destructive" />
-                      </Button>
+                      </Button> : null}
                     </TableCell>
                   </TableRow>
                 ))}

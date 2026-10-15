@@ -7,8 +7,8 @@ import { formatNum } from '@/lib/formatters';
 import { cn, withAlpha } from '@/lib/utils';
 
 const COLORS = [
-  '#ED1C24',
-  '#ED1C24',
+  '#EAB308',
+  '#EAB308',
   '#F7CE1B',
   '#2D8F6F',
   '#D97706',
@@ -71,7 +71,7 @@ export function StatCard({
         <div className="min-w-0 flex-1">
           <p className="text-sm font-medium text-muted-foreground dark:text-white/85">{title}</p>
           <p className="mt-1.5 text-3xl font-bold nums tabular-nums tracking-tight dark:!text-white" style={{ color }}>
-            {typeof value === 'number' ? formatNum(value) : value}
+            {typeof value === 'number' || /^[+-]?\d+(?:\.\d+)?$/.test(value) ? formatNum(value) : value}
           </p>
           {subtitle && <p className="mt-1.5 text-xs text-muted-foreground dark:text-white/80">{subtitle}</p>}
         </div>

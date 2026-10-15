@@ -1,44 +1,42 @@
 import { Loader2, Search, X } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { useClubT } from '@/hooks/use-club-t';
 import { api } from '@/lib/api';
-import { MEMBER_SEARCH_MIN_CHARS, searchClubMembers } from '@/lib/club-member-search';
-import { cn, toArabicDigits } from '@/lib/utils';
-import type { ClubMemberListItem, ClubMemberLookupItem } from '@/types/club';
+import { isMemberSearchReady, searchClubMembers } from '@/lib/club-member-search';
+import { cn, toArabicDigits, formatDigits } from '@/lib/utils';
+import type { ClubMemberListItem } from '@/types/club';
+import type { ClubSearchHit } from '@/types/gym-ops';
 
 interface MemberSearchComboboxProps {
+  id?: string;
   selectedMember: ClubMemberListItem | null;
+  isolated?: boolean;
   onSelect: (member: ClubMemberListItem) => void;
   onClear: () => void;
-  branchId?: number;
-  exactBranch?: boolean;
-  forMembershipOperation?: boolean;
-  forRefundTransfer?: boolean;
-  forMeasurementOperation?: boolean;
   disabled?: boolean;
   className?: string;
+  /** Only members of this branch are offered (the form's branch). */
+  branchId?: number;
 }
 
 export function MemberSearchCombobox({
+  id,
   selectedMember,
+  isolated = false,
   onSelect,
   onClear,
-  branchId,
-  exactBranch = false,
-  forMembershipOperation = false,
-  forRefundTransfer = false,
-  forMeasurementOperation = false,
   disabled,
   className,
+  branchId,
 }: MemberSearchComboboxProps) {
   const ct = useClubT();
   const rootRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
   const [query, setQuery] = useState('');
-  const [hits, setHits] = useState<ClubMemberLookupItem[]>([]);
+  const [hits, setHits] = useState<ClubSearchHit[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [searchFailed, setSearchFailed] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
@@ -50,22 +48,26 @@ export function MemberSearchCombobox({
   }, [selectedMember]);
 
   useEffect(() => {
-    if (disabled || selectedMember) return;
+    if (disabled || selectedMember) { setLoading(false); return; }
     const trimmed = query.trim();
-    setLoading(false);
-    setSearchFailed(false);
-    if (trimmed.length < MEMBER_SEARCH_MIN_CHARS) {
+    if (!isMemberSearchReady(trimmed)) {
       setHits([]);
       setOpen(false);
+      setLoading(false);
       return;
     }
 
+    // A branch change must not leave another branch's hits (or a late response) on screen.
     let cancelled = false;
+    const controller = new AbortController();
+    setLoading(true);
+    setHits([]);
+    setOpen(false);
     const timer = window.setTimeout(() => {
       void (async () => {
         setLoading(true);
         try {
-          const result = await searchClubMembers(trimmed, branchId, exactBranch, forMembershipOperation, forRefundTransfer, forMeasurementOperation);
+          const result = isolated ? { hits: (await api.get<{ data: ClubSearchHit[] }>('/club-membership-registration/members', { params: { search: trimmed, branchId }, signal: controller.signal })).data.data } : await searchClubMembers(trimmed, { branchId, signal: controller.signal });
           if (cancelled) return;
           setHits(result.hits);
           setOpen(result.hits.length > 0);
@@ -74,7 +76,6 @@ export function MemberSearchCombobox({
           if (cancelled) return;
           setHits([]);
           setOpen(false);
-          setSearchFailed(true);
         } finally {
           if (!cancelled) setLoading(false);
         }
@@ -83,9 +84,10 @@ export function MemberSearchCombobox({
 
     return () => {
       cancelled = true;
+      controller.abort();
       window.clearTimeout(timer);
     };
-  }, [query, disabled, selectedMember, branchId, exactBranch, forMembershipOperation, forRefundTransfer, forMeasurementOperation]);
+  }, [query, disabled, selectedMember, branchId, isolated]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -95,21 +97,14 @@ export function MemberSearchCombobox({
     return () => document.removeEventListener('mousedown', onDocClick);
   }, []);
 
-  const pickHit = async (hit: ClubMemberLookupItem) => {
+  const pickHit = async (hit: ClubSearchHit) => {
     setLoading(true);
     try {
-      const { data } = await api.get<ClubMemberListItem>(forMeasurementOperation
-        ? `/club-members/measurement-operation-member/${hit.id}` : forRefundTransfer
-        ? `/club-members/refund-transfer-member/${hit.id}` : forMembershipOperation
-        ? `/club-members/membership-operation-member/${hit.id}`
-        : `/club-members/${hit.id}`);
+      const { data } = await api.get<ClubMemberListItem>(isolated ? `/club-membership-registration/members/${hit.id}` : `/club-members/${hit.id}`);
       onSelect(data);
       setQuery(`${data.name} · ${data.memberCode}`);
       setOpen(false);
       setHits([]);
-    } catch {
-      setSearchFailed(true);
-      setOpen(false);
     } finally {
       setLoading(false);
     }
@@ -120,7 +115,6 @@ export function MemberSearchCombobox({
     setQuery('');
     setHits([]);
     setOpen(false);
-    setSearchFailed(false);
   };
 
   const onInputChange = (value: string) => {
@@ -151,8 +145,16 @@ export function MemberSearchCombobox({
       <div className="relative">
         <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
+          id={id}
           className="ps-9 pe-9"
           value={query}
+          role="combobox"
+          aria-label={ct('subscriptions.memberSearchPlaceholder')}
+          aria-autocomplete="list"
+          aria-expanded={open}
+          aria-controls={open ? listId : undefined}
+          aria-activedescendant={open && hits[activeIndex] ? `${listId}-${hits[activeIndex].id}` : undefined}
+          aria-busy={loading}
           disabled={disabled}
           placeholder={ct('subscriptions.memberSearchPlaceholder')}
           onChange={(e) => onInputChange(e.target.value)}
@@ -181,6 +183,7 @@ export function MemberSearchCombobox({
 
       {open && !selectedMember && (
         <ul
+          id={listId}
           className="absolute z-50 mt-1 max-h-56 w-full overflow-auto rounded-lg border bg-popover p-1 shadow-md"
           role="listbox"
         >
@@ -189,6 +192,7 @@ export function MemberSearchCombobox({
               <button
                 type="button"
                 role="option"
+                id={`${listId}-${hit.id}`}
                 aria-selected={index === activeIndex}
                 className={cn(
                   'flex w-full flex-col items-start gap-0.5 rounded-md px-3 py-2 text-start text-sm transition-colors hover:bg-muted',
@@ -198,30 +202,24 @@ export function MemberSearchCombobox({
                 onClick={() => void pickHit(hit)}
               >
                 <span className="font-medium">{hit.name}</span>
-                <span className="nums text-xs text-muted-foreground font-mono">
-                  {hit.memberCode}{hit.phone ? ` · ${toArabicDigits(hit.phone)}` : ''}
-                </span>
+                <span className="nums text-xs text-muted-foreground font-mono">{hit.memberCode}</span>
               </button>
             </li>
           ))}
         </ul>
       )}
 
-      {!selectedMember && query.trim().length > 0 && query.trim().length < MEMBER_SEARCH_MIN_CHARS && (
+      {!selectedMember && query.trim().length > 0 && !isMemberSearchReady(query) && (
         <p className="mt-1 text-xs text-muted-foreground">{ct('subscriptions.memberSearchMinChars')}</p>
       )}
 
-      {!loading && !selectedMember && searchFailed && (
-        <p className="mt-1 text-xs text-destructive">تعذر البحث عن العضو، حاول مرة أخرى</p>
-      )}
-
-      {!loading && !selectedMember && !searchFailed && query.trim().length >= MEMBER_SEARCH_MIN_CHARS && hits.length === 0 && (
+      {!loading && !selectedMember && isMemberSearchReady(query) && hits.length === 0 && (
         <p className="mt-1 text-xs text-muted-foreground">{ct('members.noMemberFound')}</p>
       )}
 
       {selectedMember?.phone && (
         <p className="mt-1 text-xs text-muted-foreground nums">
-          {toArabicDigits(selectedMember.phone)}
+          {formatDigits(selectedMember.phone)}
         </p>
       )}
     </div>

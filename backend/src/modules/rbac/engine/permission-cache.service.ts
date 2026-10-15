@@ -35,8 +35,13 @@ export class PermissionCacheService {
     return e.result;
   }
 
-  set(userId: number, result: EffectiveResult): void {
-    this.store.set(userId, { result, exp: this.now() + this.ttlMs });
+  set(userId: number, result: EffectiveResult, permissionExpiresAt?: Date | null): void {
+    const ttlExpiry = this.now() + this.ttlMs;
+    const permissionExpiry = permissionExpiresAt?.getTime();
+    this.store.set(userId, {
+      result,
+      exp: permissionExpiry != null ? Math.min(ttlExpiry, permissionExpiry) : ttlExpiry,
+    });
   }
 
   invalidateUser(userId: number): void {

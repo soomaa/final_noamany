@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -12,6 +13,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useBranches } from '@/hooks/use-branches';
+import { usePermission } from '@/hooks/use-permission';
 import { apiError } from '@/lib/api';
 import { clubEventsApi } from '@/lib/api/club-events';
 import { uiStatic } from '@/lib/ui-static';
@@ -69,6 +71,8 @@ export function EventCreateWizard() {
   const { ui, dir } = useLocale();
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { can } = usePermission();
+  const canCreate = can('club.events.list:create');
   const { data: branches } = useBranches();
   const { data: categories } = useQuery({
     queryKey: ['club-event-categories', 'active'],
@@ -117,6 +121,7 @@ export function EventCreateWizard() {
 
   const createMutation = useMutation({
     mutationFn: async () => {
+      if (!canCreate) throw new Error(ui('ليس لديك صلاحية إضافة فعالية'));
       const event = await clubEventsApi.createEvent({
         title,
         description: description || undefined,
@@ -180,7 +185,7 @@ export function EventCreateWizard() {
                     : 'bg-muted text-muted-foreground')
               }
             >
-              {i + 1}
+              {formatDisplayNumber(i + 1)}
             </div>
             <span className={'text-xs ' + (i === step ? 'font-medium text-foreground' : 'text-muted-foreground')}>
               {label}
@@ -335,7 +340,7 @@ export function EventCreateWizard() {
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium">{ui('فئات التذاكر')}</h3>
-              <Button type="button" variant="outline" size="sm" onClick={addTier}>
+              <Button permissionAction={null} type="button" variant="outline" size="sm" onClick={addTier}>
                 <Plus className="h-4 w-4 ms-1" /> {ui('إضافة فئة')}
               </Button>
             </div>
@@ -351,7 +356,7 @@ export function EventCreateWizard() {
                       <Trash2 className="h-4 w-4" />
                     </button>
                   )}
-                  <div className="text-xs font-medium text-muted-foreground">{ui('فئة')} {i + 1}</div>
+                  <div className="text-xs font-medium text-muted-foreground">{ui('فئة')} {formatDisplayNumber(i + 1)}</div>
                   <div className="grid grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label>{ui('اسم الفئة')}</Label>
@@ -405,7 +410,7 @@ export function EventCreateWizard() {
               <div><span className="text-muted-foreground">{ui('الحد الأقصى:')} </span>{maxCapacity}</div>
               <div><span className="text-muted-foreground">{ui('مجانية:')} </span>{isFree ? ui('نعم') : ui('لا')}</div>
               <div><span className="text-muted-foreground">{ui('السماح بالضيوف:')} </span>{allowGuests ? ui('نعم') : ui('لا')}</div>
-              <div><span className="text-muted-foreground">{ui('عدد فئات التذاكر:')} </span>{tiers.length}</div>
+              <div><span className="text-muted-foreground">{ui('عدد فئات التذاكر:')} </span>{formatDisplayNumber(tiers.length)}</div>
             </div>
             <p className="text-xs text-muted-foreground pt-2">
               {ui('سيتم إنشاء الفعالية بحالة "مسودة" — يمكنك تعديلها وتقديمها للاعتماد لاحقاً.')}
@@ -428,7 +433,7 @@ export function EventCreateWizard() {
             {ui('التالي')}
           </Button>
         ) : (
-          <Button type="button" disabled={createMutation.isPending} onClick={() => createMutation.mutate()}>
+          <Button permissionAction="create" type="button" disabled={!canCreate || createMutation.isPending} onClick={() => createMutation.mutate()}>
             {createMutation.isPending ? ui('جاري الحفظ...') : ui('حفظ كمسودة')}
           </Button>
         )}

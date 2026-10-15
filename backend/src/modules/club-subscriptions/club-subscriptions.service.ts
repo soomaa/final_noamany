@@ -1,31 +1,27 @@
+import { projectedFreezeEnd } from './freeze-end-projection';
+import { assertSubscriptionNotTransferred, transferSourceRelations, assertSubscriptionCanBeDeleted, transferDeletionRelations } from './transferred-subscription-guard';
+import { assertCanFreeze, freezeAllowance, renewalQueue, normalizedFreezeDays, lockFreezeSource, thawPeriod } from './freeze-integrity';
+import { captureBenefits, purchasedBenefits } from './purchased-benefits';
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { ClubGender, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { paginated } from '../../common/dto/list-result';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
-import { loadLegacySubscriptionStaff } from './legacy-subscription-staff.util';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
-import { Inject } from '@nestjs/common';
-import {
-  ClubBranchGroupReader,
-  ClubBranchGroupService,
-} from '../../common/branch-groups/club-branch-group.service';
 import { JwtUser } from '../../common/types/jwt-user';
-import { isSystemAdmin } from '../../common/utils/system-admin.util';
-import { assertClubOperationBranch, clubOperationBranchIds } from '../../common/branch-groups/club-operation-scope';
 import { assertDateOrder } from '../../common/validators';
 import { assertMemberExists, localDateString } from '../club-members/club-member.utils';
-import { shareClubMemberIdentity } from '../club-members/club-branch-groups';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
 import { AutomationEngineService } from '../gym-ops/automation-engine.service';
 import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
 import { ClubDiscountCodesService } from './club-discount-codes.service';
-import { ClubPointsService } from '../club-points/club-points.service';
 import { ClubSubscriptionAccountingService } from './club-subscription-accounting.service';
 import { ClubReceiptsService } from './club-receipts.service';
 import {
@@ -43,12 +39,22 @@ import {
   resolveSessionMatrixPrice,
   resolveSubscriptionEndDate,
   deriveSessionAwareStatus,
+  selectCurrentSubscriptionsForMemberDisplay,
+  resolveTypePriceForBranch,
+  scaleSessionMatrixForPackagePrice,
   toClubPaymentMethod,
   toNum,
 } from './club-subscription.utils';
+import { loadBranchPricesForType } from './club-subscription-branch-prices.loader';
 import { ListClubSubscriptionsDto } from './dto/list-club-subscriptions.dto';
 import { UpsertClubSubscriptionDto } from './dto/upsert-club-subscription.dto';
+import { validateSubscriptionCustomerSelection } from './subscription-customer-selection';
 import { isSubscriptionTypeAvailableAtBranch } from './subscription-type-branch-scope';
+import { canViewAllCashiers } from './daily-cashier-access';
+import {
+  ClubSubscriptionLifecycleService,
+  RenewalPromotionResult,
+} from './club-subscription-lifecycle.service';
 
 @Injectable()
 export class ClubSubscriptionsService {
@@ -61,25 +67,15 @@ export class ClubSubscriptionsService {
     private readonly branchScope: BranchScopeService,
     private readonly permissions: PermissionEngineService,
     private readonly discountCodes: ClubDiscountCodesService,
-    private readonly points: ClubPointsService,
-    @Inject(ClubBranchGroupService)
-    private readonly branchGroups: Pick<
-      ClubBranchGroupReader,
-      'sharesGroup' | 'siblingBranchIds'
-    > = {
-      sharesGroup: async () => false,
-      siblingBranchIds: async (id) => [id],
-    },
+    @Optional() private readonly lifecycle?: ClubSubscriptionLifecycleService,
   ) {}
 
   private mapSub(
     row: Record<string, unknown>,
     extras?: {
       salesName?: string | null;
-      assignedStaffName?: string | null;
       createdByName?: string | null;
       freezeCreatedByName?: string | null;
-      branchName?: string | null;
     },
   ) {
     const start = row.subscription_start_date as string;
@@ -101,43 +97,44 @@ export class ClubSubscriptionsService {
       freeze_start_date: string;
       freeze_end_date: string | null;
       planned_days: number;
+      original_end_date: string | null;
       actual_days: number | null;
       reason: string | null;
       created_by: number | null;
       created_at: Date;
     }> | undefined)?.[0];
+    const member = row.member as { member_code?: string | null; phone?: string | null } | null | undefined;
     return {
       id: row.id,
       subscriptionNumber: row.subscription_number,
       registrationDate: row.registration_date,
       branchId: row.branch_id,
-      branchName: extras?.branchName ?? null,
       memberId: row.member_id,
-      memberCode: (row.member as { member_code?: string } | undefined)?.member_code ?? null,
-      memberPhone: (row.member as { phone?: string | null } | undefined)?.phone ?? null,
       customerName: row.customer_name,
       subscriptionTypeId: row.subscription_type_id,
       specialClassTypeId: row.special_class_type_id,
       privatePackageId: row.private_package_id,
       privateTrainerId: row.private_trainer_id,
       privateDiscountType: row.private_discount_type,
+      renewedFromSubscriptionId: row.renewed_from_subscription_id ?? null,
+      renewalSuccessorId:
+        (row.renewal_successor as { id: number } | null | undefined)?.id ?? null,
       subscriptionType: row.subscription_type,
       subscriptionStartDate: start,
       subscriptionEndDate: end,
+      projectedSubscriptionEndDate: projectedFreezeEnd(end, activeFreeze),
       subscriptionValue: toNum(row.subscription_value),
       discountEnabled: row.discount_enabled,
       discountCodeId: row.discount_code_id ?? null,
       discountPercentage: row.discount_percentage != null ? toNum(row.discount_percentage) : null,
       discountValue: toNum(row.discount_value),
-      pointsRedeemed: row.points_redeemed ?? 0,
       paidAmount: toNum(row.paid_amount),
       waivedAmount: toNum(row.waived_amount),
       transferredCreditAmount: toNum(row.transferred_credit_amount),
       settledAmount: roundMoney(toNum(row.paid_amount) + toNum(row.transferred_credit_amount)),
       remainingAmount: toNum(row.remaining_amount),
-      gender: row.gender ?? (row.member as { gender?: ClubGender | null } | undefined)?.gender ?? null,
+      gender: row.gender,
       employeeId: row.employee_id,
-      assignedStaffName: extras?.assignedStaffName ?? null,
       salesId: row.sales_id,
       salesName: extras?.salesName ?? null,
       paymentMethod: row.payment_method,
@@ -145,6 +142,7 @@ export class ClubSubscriptionsService {
       customerSourceId: row.customer_source_id,
       guardianName: row.guardian_name,
       guardianPhone: row.guardian_phone,
+      notes: (row.notes as string | null | undefined) ?? null,
       status,
       isSpecial: row.is_special,
       isLinkedToSessions: row.is_linked_to_sessions,
@@ -158,6 +156,8 @@ export class ClubSubscriptionsService {
       createdByName: extras?.createdByName ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+      memberCode: member?.member_code ?? null,
+      memberPhone: member?.phone ?? (row.guardian_phone as string | null) ?? null,
       activeFreeze: activeFreeze
         ? {
             id: activeFreeze.id,
@@ -174,32 +174,18 @@ export class ClubSubscriptionsService {
     };
   }
 
-  private async enrichSubNames(rows: Array<{
-    id?: number;
-    subscription_number?: string;
-    sales_id: number | null;
-    employee_id: number | null;
-    private_trainer_id: number | null;
-    created_by: number | null;
-  }>) {
-    const employeeIds = [...new Set(rows.flatMap((r) => [r.sales_id, r.employee_id]).filter((id): id is number => id != null))];
-    const trainerIds = [...new Set(rows.map((r) => r.private_trainer_id).filter((id): id is number => id != null))];
+  private async enrichSubNames(rows: Array<{ sales_id: number | null; created_by: number | null }>) {
+    const salesIds = [...new Set(rows.map((r) => r.sales_id).filter((id): id is number => id != null))];
     const userIds = [...new Set(rows.flatMap((r) => [
       r.created_by,
       ...((r as typeof r & { freezes?: Array<{ created_by: number | null }> }).freezes ?? [])
         .map((freeze) => freeze.created_by),
     ]).filter((id): id is number => id != null))];
-    const [employees, trainers, users, legacyStaffBySubId] = await Promise.all([
-      employeeIds.length
+    const [salesEmps, users] = await Promise.all([
+      salesIds.length
         ? this.prisma.employees.findMany({
-            where: { id: { in: employeeIds } },
+            where: { id: { in: salesIds } },
             select: { id: true, employee: true },
-          })
-        : [],
-      trainerIds.length
-        ? this.prisma.club_trainers.findMany({
-            where: { id: { in: trainerIds } },
-            select: { id: true, name: true },
           })
         : [],
       userIds.length
@@ -208,15 +194,10 @@ export class ClubSubscriptionsService {
             select: { user_id: true, name: true },
           })
         : [],
-      loadLegacySubscriptionStaff(this.prisma, rows),
     ]);
     return {
-      legacyStaffBySubId,
-      employeeNameById: new Map<number, string | null>(
-        employees.map((e) => [e.id, e.employee ?? null] as const),
-      ),
-      trainerNameById: new Map<number, string | null>(
-        trainers.map((trainer) => [trainer.id, trainer.name ?? null] as const),
+      salesNameById: new Map<number, string | null>(
+        salesEmps.map((e) => [e.id, e.employee ?? null] as const),
       ),
       userNameById: new Map<number, string | null>(
         users.map((u) => [u.user_id, u.name ?? null] as const),
@@ -228,21 +209,6 @@ export class ClubSubscriptionsService {
     return {
       OR: [{ is_special: true }, { type: { is_special_offer: true } }],
     };
-  }
-
-  private categoryFilter(gender: ClubGender): Prisma.club_subscriptionsWhereInput {
-    return {
-      OR: [
-        { gender },
-        { gender: null, member: { is: { gender } } },
-      ],
-    };
-  }
-
-  /** Applies the authenticated employee's men/women section as a server-side audience. */
-  private subscriptionAudienceFilter(user?: JwtUser): Prisma.club_subscriptionsWhereInput | null {
-    const gender = this.branchScope.memberGenderFilter(user);
-    return gender ? this.categoryFilter(gender) : null;
   }
 
   /**
@@ -269,6 +235,7 @@ export class ClubSubscriptionsService {
   private async assertNoDuplicateLiveSubscription(
     data: UpsertClubSubscriptionDto,
     excludeSubscriptionId?: number,
+    tx?: Prisma.TransactionClient,
   ) {
     if (!data.memberId) return;
 
@@ -276,18 +243,22 @@ export class ClubSubscriptionsService {
       ? { special_class_type_id: data.specialClassTypeId }
       : data.subscriptionTypeId
         ? { subscription_type_id: data.subscriptionTypeId }
+        : data.privatePackageId
+          ? { private_package_id: data.privatePackageId }
         : data.subscriptionType?.trim()
           ? { subscription_type: data.subscriptionType.trim() }
           : null;
     if (!identity) return;
 
-    const existing = await this.prisma.club_subscriptions.findMany({
+    const db = tx ?? this.prisma;
+    const existing = await db.club_subscriptions.findMany({
       where: {
         member_id: data.memberId,
         ...identity,
         ...(excludeSubscriptionId ? { id: { not: excludeSubscriptionId } } : {}),
       },
       select: {
+        id: true,
         status: true,
         subscription_start_date: true,
         subscription_end_date: true,
@@ -297,7 +268,7 @@ export class ClubSubscriptionsService {
       },
     });
 
-    const hasLiveDuplicate = existing.some((subscription) => {
+    const liveDuplicate = existing.find((subscription) => {
       if (subscription.status === 'frozen') return true;
       return deriveSessionAwareStatus({
         startDate: subscription.subscription_start_date,
@@ -308,54 +279,21 @@ export class ClubSubscriptionsService {
       }) !== 'expired';
     });
 
-    if (hasLiveDuplicate) {
-      throw new BadRequestException('العضو مشترك بالفعل في هذا الاشتراك');
+    if (liveDuplicate) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'SUBSCRIPTION_RENEWAL_REQUIRED',
+        message: 'العضو لديه نفس الباقة بالفعل — استخدم تجديد / تمديد',
+        existingSubscriptionId: liveDuplicate.id,
+        canRenew: true,
+      });
     }
   }
 
-  async listTransferSources(q: ListClubSubscriptionsDto, user: JwtUser) {
-    return this.list(Object.assign(new ListClubSubscriptionsDto(), q, { status: 'active', isSpecial: 'false' }), user, true);
-  }
-
-  async listRefundSources(q: ListClubSubscriptionsDto, user: JwtUser) {
-    return this.list(Object.assign(new ListClubSubscriptionsDto(), q, { status: 'active' }), user, false, true);
-  }
-
-  async operationBranchOptions(user: JwtUser) {
-    const allowed = await clubOperationBranchIds(this.branchScope, this.branchGroups, user);
-    const rows = await this.prisma.tbl_branches.findMany({
-      where: allowed === null ? {} : { branch_id: { in: allowed } },
-      select: { branch_id: true, branch_name: true },
-      orderBy: { branch_id: 'asc' },
-    });
-    return rows.map((row) => ({ id: row.branch_id, name: row.branch_name }));
-  }
-
-  async operationSubscription(id: number, user: JwtUser) {
-    const row = await this.prisma.club_subscriptions.findUnique({ where: { id }, include: { member: true } });
-    if (!row || row.member?.is_deleted) throw new NotFoundException('الاشتراك غير موجود');
-    await assertClubOperationBranch(this.branchScope, this.branchGroups, user, row.branch_id);
-    if (!this.branchScope.isMemberGenderAllowed(user, row.gender ?? row.member?.gender)) throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
-    return this.mapSub(row);
-  }
-
-  async list(q: ListClubSubscriptionsDto, user?: JwtUser, transferSources = false, refundSources = false) {
+  async list(q: ListClubSubscriptionsDto, user?: JwtUser) {
     const and: Prisma.club_subscriptionsWhereInput[] = [
       this.visibleMemberSubscriptionFilter(),
     ];
-    if (refundSources) and.push({ member_id: { not: null }, paid_amount: { gt: 0 } });
-
-    if (transferSources) {
-      and.push({ member_id: { not: null }, private_package_id: null, remaining_amount: { lte: 0.009 } });
-      and.push({ OR: [{ subscription_type: null }, { AND: [
-        { subscription_type: { not: { contains: 'private' } } },
-        { subscription_type: { not: { contains: 'برايفت' } } },
-      ] }] });
-      and.push({ OR: [
-        { is_linked_to_sessions: false },
-        { sessions_used: { lt: this.prisma.club_subscriptions.fields.sessions_count } },
-      ] });
-    }
 
     if (q.search?.trim()) {
       const s = q.search.trim();
@@ -365,24 +303,27 @@ export class ClubSubscriptionsService {
           { subscription_number: { contains: s } },
           { subscription_type: { contains: s } },
           { receipt_number: { contains: s } },
-          { member: { is: { OR: [
-            { member_code: { contains: s } },
-            { phone: { contains: s } },
-            { name: { contains: s } },
-          ] } } },
+          { guardian_phone: { contains: s } },
+          {
+            member: {
+              is: {
+                OR: [
+                  { name: { contains: s } },
+                  { member_code: { contains: s } },
+                  { phone: { contains: s } },
+                ],
+              },
+            },
+          },
         ],
       });
     }
     if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
     // Default a branch-scoped user to their allowed branches (intersects any explicit filter).
-    const scope = transferSources || refundSources
-      ? await clubOperationBranchIds(this.branchScope, this.branchGroups, user)
-      : this.branchScope.resolveListFilter(user, q.branch ?? null);
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
     if (q.subscriptionType) and.push({ subscription_type: { contains: q.subscriptionType } });
-    const audience = this.subscriptionAudienceFilter(user);
-    if (audience) and.push(audience);
-    else if (q.gender === 'male' || q.gender === 'female') and.push(this.categoryFilter(q.gender as ClubGender));
+    if (q.gender === 'male' || q.gender === 'female') and.push({ gender: q.gender as ClubGender });
     if (q.memberId) and.push({ member_id: Number(q.memberId) });
     if (q.memberName) and.push({ customer_name: { contains: q.memberName } });
     if (q.receiptNumber) and.push({ receipt_number: { contains: q.receiptNumber } });
@@ -397,22 +338,15 @@ export class ClubSubscriptionsService {
     }
     if (q.hasDiscount === 'true' || q.hasDiscount === '1') and.push({ discount_enabled: true });
     if (q.isTimeBased === 'true' || q.isTimeBased === '1') and.push({ is_time_based: true });
-    if (q.isLinkedToSessions === 'true' || q.isLinkedToSessions === '1') and.push({ is_linked_to_sessions: true });
-    if (q.isLinkedToSessions === 'false' || q.isLinkedToSessions === '0') and.push({ is_linked_to_sessions: false });
     if (q.endDateFrom) and.push({ subscription_end_date: { gte: q.endDateFrom } });
     if (q.endDateTo) and.push({ subscription_end_date: { lte: q.endDateTo } });
     if (q.startDateFrom) and.push({ subscription_start_date: { gte: q.startDateFrom } });
     if (q.startDateTo) and.push({ subscription_start_date: { lte: q.startDateTo } });
-    if (q.registrationDateFrom) and.push({ registration_date: { gte: q.registrationDateFrom } });
-    if (q.registrationDateTo) and.push({ registration_date: { lte: q.registrationDateTo } });
     if (q.expiresWithinDays) {
       const days = Number(q.expiresWithinDays);
       if (Number.isFinite(days) && days >= 0) {
         const today = localDateString();
-        const target = new Date();
-        target.setDate(target.getDate() + days);
-        const targetIso = target.toISOString().slice(0, 10);
-        and.push({ subscription_end_date: { gte: today, lte: targetIso } });
+        and.push({ subscription_end_date: { gte: today, lte: addDays(today, days) } });
       }
     }
 
@@ -438,54 +372,56 @@ export class ClubSubscriptionsService {
     }
 
     const where: Prisma.club_subscriptionsWhereInput = and.length ? { AND: and } : {};
+    // Member profile/reception cards: load the full member set so renewal history can be
+    // collapsed to the current working period before pagination.
+    const collapseRenewalHistory = q.memberId != null;
 
     const [rows, total] = await Promise.all([
       this.prisma.club_subscriptions.findMany({
         where,
         include: {
-          member: { select: { gender: true, member_code: true, phone: true } },
           freezes: {
             where: { is_active: true },
             orderBy: { id: 'desc' },
             take: 1,
           },
+          renewal_successor: { select: { id: true } },
+          member: { select: { member_code: true, phone: true } },
         },
-        orderBy: { id: 'desc' },
-        skip: q.skip,
-        take: q.take,
+        orderBy: q.expiresWithinDays
+          ? { subscription_end_date: 'asc' }
+          : { id: 'desc' },
+        ...(collapseRenewalHistory ? {} : { skip: q.skip, take: q.take }),
       }),
       this.prisma.club_subscriptions.count({ where }),
     ]);
 
-    const branchIds = [...new Set(rows.map((row) => row.branch_id))];
-    const branches = branchIds.length
-      ? await this.prisma.tbl_branches.findMany({
-          where: { branch_id: { in: branchIds } },
-          select: { branch_id: true, branch_name: true },
-        })
-      : [];
-    const branchNameById = new Map(branches.map((branch) => [branch.branch_id, branch.branch_name ?? null] as const));
-    const { employeeNameById, trainerNameById, userNameById, legacyStaffBySubId } = await this.enrichSubNames(rows);
-    const data = rows.map((r) =>
+    const { salesNameById, userNameById } = await this.enrichSubNames(rows);
+    let data = rows.map((r) =>
       this.mapSub(r, {
-        salesName: r.sales_id ? employeeNameById.get(r.sales_id) ?? null : null,
-        assignedStaffName: (r.private_trainer_id
-          ? trainerNameById.get(r.private_trainer_id) ?? null
-          : r.employee_id
-            ? employeeNameById.get(r.employee_id) ?? null
-            : null) ?? legacyStaffBySubId.get(r.id)?.employeeName ?? null,
-        createdByName: (r.created_by ? userNameById.get(r.created_by) ?? null : null) ?? legacyStaffBySubId.get(r.id)?.creatorName ?? null,
-        branchName: branchNameById.get(r.branch_id) ?? null,
+        salesName: r.sales_id ? salesNameById.get(r.sales_id) ?? null : null,
+        createdByName: r.created_by ? userNameById.get(r.created_by) ?? null : null,
         freezeCreatedByName: r.freezes[0]?.created_by
           ? userNameById.get(r.freezes[0].created_by) ?? null
           : null,
       }),
     );
+    if (collapseRenewalHistory) {
+      data = selectCurrentSubscriptionsForMemberDisplay(data as any[]) as typeof data;
+      const page = q.page ?? 1;
+      const pageSize = q.pageSize ?? 20;
+      const start = (page - 1) * pageSize;
+      return paginated(data.slice(start, start + pageSize), data.length, page, pageSize);
+    }
     return paginated(data, total, q.page, q.pageSize);
   }
 
   async findOne(id: number, user?: JwtUser) {
-    const row = await this.prisma.club_subscriptions.findUnique({ where: { id } });
+    const row = await this.prisma.club_subscriptions.findUnique({
+      where: { id },
+      include: {
+        freezes: { where: { is_active: true }, orderBy: { id: 'desc' }, take: 1 }, renewal_successor: { select: { id: true } } },
+    });
     if (!row) throw new NotFoundException('الاشتراك غير موجود');
     this.assertBranchAccess(user, row.branch_id);
     return this.mapSub(row);
@@ -498,9 +434,16 @@ export class ClubSubscriptionsService {
    * user or everyone. The server owns this scope so changing query parameters in the browser
    * cannot reveal another cashier's activity.
    */
-  async dailyCashierReport(user: JwtUser, requestedUserId?: string) {
+  async dailyCashierReport(user: JwtUser, requestedUserId?: string, requestedDate?: string) {
     const today = localDateString();
-    const isSystemAdmin = await this.permissions.isSuperAdmin(user.sub);
+    if (requestedDate != null && requestedDate !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
+      throw new BadRequestException('تاريخ غير صالح');
+    }
+    const reportDate = requestedDate && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : today;
+    const isSystemAdmin = canViewAllCashiers(
+      user,
+      await this.permissions.isSuperAdmin(user.sub),
+    );
     const parsedUserId = Number(requestedUserId);
     const selectedUserId =
       isSystemAdmin && Number.isInteger(parsedUserId) && parsedUserId > 0
@@ -513,14 +456,14 @@ export class ClubSubscriptionsService {
       : this.branchScope.resolveListFilter(user, null);
 
     const subscriptionWhere: Prisma.club_subscriptionsWhereInput = {
-      registration_date: today,
+      registration_date: reportDate,
       // An entitlement moved from another member is not a new cashier sale.
       transferred_credit_amount: 0,
       ...(selectedUserId != null ? { created_by: selectedUserId } : {}),
       ...(allowedBranchIds ? { branch_id: { in: allowedBranchIds } } : {}),
     };
     const receiptWhere: Prisma.club_receiptsWhereInput = {
-      receipt_date: today,
+      receipt_date: reportDate,
       status: { in: ['مدفوعة', 'paid'] },
       ...(selectedUserId != null ? { created_by: selectedUserId } : {}),
       ...(allowedBranchIds
@@ -533,14 +476,33 @@ export class ClubSubscriptionsService {
         : {}),
     };
 
-    const [subscriptions, receipts, accounts] = await Promise.all([
+    const [subscriptions, receipts, accounts, expenses] = await Promise.all([
       this.prisma.club_subscriptions.findMany({
         where: subscriptionWhere,
         orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.club_receipts.findMany({
         where: receiptWhere,
-        select: { amount: true },
+        select: {
+          id: true,
+          receipt_number: true,
+          subscription_id: true,
+          member_name: true,
+          amount: true,
+          type: true,
+          payment_method: true,
+          description: true,
+          created_at: true,
+          created_by: true,
+          subscription: {
+            select: {
+              subscription_number: true,
+              subscription_type: true,
+            },
+          },
+          payments: { select: { method: true, amount: true }, orderBy: { id: 'asc' } },
+        },
+        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
       }),
       this.prisma.users.findMany({
         where: isSystemAdmin
@@ -548,6 +510,21 @@ export class ClubSubscriptionsService {
           : { user_id: user.sub },
         select: { user_id: true, name: true, username: true },
         orderBy: { name: 'asc' },
+      }),
+      this.prisma.fin_expenses.findMany({
+        where: {
+          is_deleted: false,
+          approval_status: { not: 'مرفوض' },
+          // Automatic stock costs are not cash personally spent by the cashier.
+          AND: [
+            { OR: [{ notes: null }, { notes: { not: 'مستند تلقائي مربوط بالنظام' } }] },
+            { expense_number: { not: { startsWith: 'CAFE-' } } },
+          ],
+          expense_date: { gte: reportDate, lte: `${reportDate}T23:59:59` },
+          ...(selectedUserId != null ? { created_by: selectedUserId } : {}),
+          ...(allowedBranchIds ? { branch_id: { in: allowedBranchIds } } : {}),
+        },
+        orderBy: [{ expense_date: 'desc' }, { id: 'desc' }],
       }),
     ]);
 
@@ -575,8 +552,129 @@ export class ClubSubscriptionsService {
       };
     });
 
+    const collectedByMethod: Record<string, number> = {};
+    const addMethod = (method: string | null | undefined, amount: number) => {
+      if (amount <= 0) return;
+      const key = method?.trim() || 'cash';
+      collectedByMethod[key] = (collectedByMethod[key] ?? 0) + amount;
+    };
+    const quickServiceRows: Array<{
+      id: number;
+      receiptNumber: string;
+      customerName: string | null;
+      serviceName: string;
+      amount: number;
+      paymentMethod: string;
+      payments: Array<{ method: string; amount: number }>;
+      paymentsTotal: number;
+      reconciliationDifference: number;
+      isReconciled: boolean;
+      createdAt: Date;
+      createdByUserId: number | null;
+      createdByName: string;
+    }> = [];
+    const receiptRows: Array<{
+      id: number;
+      receiptNumber: string;
+      subscriptionId: number | null;
+      subscriptionNumber: string | null;
+      customerName: string | null;
+      subscriptionType: string;
+      amount: number;
+      paymentMethod: string;
+      payments: Array<{ method: string; amount: number }>;
+      paymentsTotal: number;
+      reconciliationDifference: number;
+      isReconciled: boolean;
+      createdAt: Date;
+      createdByUserId: number | null;
+      createdByName: string;
+    }> = [];
+    let quickServicesAmount = 0;
+    let collectedToday = 0;
+    let collectedNonQuickAmount = 0;
+    let unreconciledReceiptsCount = 0;
+
+    for (const receipt of receipts) {
+      const amount = toNum(receipt.amount);
+      collectedToday += amount;
+      const lines = receipt.payments?.length
+        ? receipt.payments
+        : [{ method: receipt.payment_method ?? 'cash', amount: receipt.amount }];
+      const payments = lines.map((line) => ({ method: line.method, amount: toNum(line.amount) }));
+      const receiptPaymentsTotal = roundMoney(
+        payments.reduce((sum, payment) => sum + payment.amount, 0),
+      );
+      const receiptReconciliationDifference = roundMoney(amount - receiptPaymentsTotal);
+      const isReceiptReconciled = receiptReconciliationDifference === 0;
+      if (!isReceiptReconciled) unreconciledReceiptsCount += 1;
+      for (const line of payments) addMethod(line.method, line.amount);
+
+      if (receipt.type === 'quick_service') {
+        quickServicesAmount += amount;
+        const description = receipt.description?.trim() || '';
+        const named = description.match(/^خدمة سريعة:\s*(.+?)(?:\s+—|$)/);
+        quickServiceRows.push({
+          id: receipt.id,
+          receiptNumber: receipt.receipt_number,
+          customerName: receipt.member_name,
+          serviceName: named?.[1]?.trim() || description || 'بيع سريع',
+          amount,
+          paymentMethod: receipt.payment_method ?? lines[0]?.method ?? 'cash',
+          payments,
+          paymentsTotal: receiptPaymentsTotal,
+          reconciliationDifference: receiptReconciliationDifference,
+          isReconciled: isReceiptReconciled,
+          createdAt: receipt.created_at,
+          createdByUserId: receipt.created_by,
+          createdByName: displayName(receipt.created_by),
+        });
+        continue;
+      }
+      collectedNonQuickAmount += amount;
+      receiptRows.push({
+        id: receipt.id,
+        receiptNumber: receipt.receipt_number,
+        subscriptionId: receipt.subscription_id,
+        subscriptionNumber: receipt.subscription?.subscription_number ?? null,
+        customerName: receipt.member_name,
+        subscriptionType: receipt.subscription?.subscription_type ?? receipt.type ?? 'اشتراك',
+        amount,
+        paymentMethod: receipt.payment_method ?? lines[0]?.method ?? 'cash',
+        payments,
+        paymentsTotal: receiptPaymentsTotal,
+        reconciliationDifference: receiptReconciliationDifference,
+        isReconciled: isReceiptReconciled,
+        createdAt: receipt.created_at,
+        createdByUserId: receipt.created_by,
+        createdByName: displayName(receipt.created_by),
+      });
+    }
+
+    const paymentsTotal = roundMoney(
+      Object.values(collectedByMethod).reduce((sum, amount) => sum + amount, 0),
+    );
+    const reconciliationDifference = roundMoney(collectedToday - paymentsTotal);
+    const expenseRows = expenses.map((expense) => {
+      const amount = Number(expense.total_amount);
+      const paidAmount = expense.paid_amount != null ? Number(expense.paid_amount)
+        : expense.payment_status === 'مدفوع' ? amount : 0;
+      return {
+        id: expense.id, expenseNumber: expense.expense_number,
+        category: expense.category, businessUnit: expense.business_unit,
+        amount, paidAmount, remainingAmount: roundMoney(Math.max(0, amount - paidAmount)),
+        paymentNeedsReview: expense.paid_amount == null && expense.payment_status === 'جزئي',
+        paymentMethod: expense.payment_method,
+        payments: Array.isArray(expense.payments) ? expense.payments : [],
+        paymentStatus: expense.payment_status, approvalStatus: expense.approval_status,
+        expenseDate: expense.expense_date, createdAt: expense.created_at,
+        createdByName: displayName(expense.created_by),
+      };
+    });
+
     return {
-      date: today,
+      date: reportDate,
+      isToday: reportDate === today,
       isSystemAdmin,
       lockedUser: !isSystemAdmin,
       selectedUserId,
@@ -588,13 +686,28 @@ export class ClubSubscriptionsService {
             .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
         : [{ id: user.sub, name: displayName(user.sub) }],
       summary: {
+        expensesPaidAmount: roundMoney(expenseRows.reduce((sum, row) => sum + row.paidAmount, 0)),
+        expensesNeedingReview: expenseRows.filter((row) => row.paymentNeedsReview).length,
         subscriptionsCount: rows.length,
         totalValue: rows.reduce((sum, row) => sum + row.subscriptionValue, 0),
         paidAmount: rows.reduce((sum, row) => sum + row.paidAmount, 0),
-        collectedToday: receipts.reduce((sum, row) => sum + toNum(row.amount), 0),
+        collectedToday,
+        collectedNonQuickAmount,
         remainingAmount: rows.reduce((sum, row) => sum + row.remainingAmount, 0),
+        receiptsCount: receipts.length,
+        subscriptionReceiptsCount: receiptRows.length,
+        quickServicesCount: quickServiceRows.length,
+        quickServicesAmount,
+        collectedByMethod,
+        paymentsTotal,
+        reconciliationDifference,
+        unreconciledReceiptsCount,
+        isReconciled: reconciliationDifference === 0 && unreconciledReceiptsCount === 0,
       },
       rows,
+      receiptRows,
+      quickServiceRows,
+      expenseRows,
     };
   }
 
@@ -864,6 +977,53 @@ export class ClubSubscriptionsService {
     });
   }
 
+  /** Allocate inside the caller's transaction so the number stays protected until INSERT commits. */
+  private async generateSubNumberForMemberInTransaction(
+    memberId: number | null,
+    tx: Prisma.TransactionClient,
+  ): Promise<string> {
+    const member = memberId
+      ? await tx.club_members.findUnique({
+          where: { id: memberId },
+          select: { member_code: true },
+        })
+      : null;
+    const code = member?.member_code?.trim();
+    if (!code) {
+      const rows = await tx.$queryRaw<{ maxNum: number | null }[]>`
+        SELECT MAX(CAST(SUBSTRING(subscription_number, 4) AS UNSIGNED)) AS maxNum
+        FROM club_subscriptions WHERE subscription_number LIKE 'SUB%'
+      `;
+      return `SUB${String(nextSeqFromMax(rows[0]?.maxNum)).padStart(6, '0')}`;
+    }
+    const taken = await tx.club_subscriptions.findMany({
+      where: {
+        OR: [{ subscription_number: code }, { subscription_number: { startsWith: `${code}-` } }],
+      },
+      select: { subscription_number: true },
+    });
+    const used = new Set(taken.map((row) => row.subscription_number));
+    if (!used.has(code)) return code;
+    let suffix = 2;
+    while (used.has(`${code}-${suffix}`)) suffix += 1;
+    return `${code}-${suffix}`;
+  }
+
+  /** The catalog hides a global package once this branch has its own copy. The sale must do the same. */
+  private async assertBranchPackageNotBypassed(subscriptionTypeId: number, branchId: number) {
+    const branchCopies = await this.prisma.club_subscription_types.findMany({
+      where: { source_subscription_type_id: subscriptionTypeId, is_active: true },
+      select: {
+        branch_id: true,
+        apply_to_all_branches: true,
+        branches: { select: { branch_id: true } },
+      },
+    });
+    if (branchCopies.some((row) => isSubscriptionTypeAvailableAtBranch(row, branchId))) {
+      throw new BadRequestException('هذه الباقة لها نسخة خاصة بفرع العضو. اختر باقة الفرع');
+    }
+  }
+
   async create(
     dto: UpsertClubSubscriptionDto,
     userOrId: JwtUser | number,
@@ -885,6 +1045,24 @@ export class ClubSubscriptionsService {
       // package, trainer and branch.
       isSpecial: internal?.privateEnrollment ? true : false,
     };
+
+    validateSubscriptionCustomerSelection(data);
+    if (data.memberId) {
+      const member = await assertMemberExists(this.prisma, data.memberId).catch((e) => {
+        throw new BadRequestException(e.message);
+      });
+      const profile = await this.prisma.club_members.findUnique({
+        where: { id: member.id },
+        select: { branch_id: true },
+      });
+      if (!profile) throw new BadRequestException('العضو غير موجود');
+      data = {
+        ...data,
+        customerName: member.name,
+        branchId: profile.branch_id,
+        isWalkIn: false,
+      };
+    }
 
     // Special subscriptions are session entitlements for one class type. The buyer may choose
     // fewer sessions than the configured package, never more than its original allowance.
@@ -911,13 +1089,13 @@ export class ClubSubscriptionsService {
 
       data = {
         ...data,
-        branchId: data.branchId ?? mem?.branch_id,
+        branchId: mem?.branch_id ?? data.branchId,
         customerName: data.customerName ?? member.name,
         subscriptionTypeId: undefined,
         subscriptionType: classType.name,
         subscriptionValue: toNum(classType.single_session_price) * sessionsCount,
         subscriptionStartDate: data.startDate,
-        subscriptionEndDate: addDays(data.startDate, validityDays),
+        subscriptionEndDate: addDays(data.startDate, Math.max(1, validityDays) - 1),
         isSpecial: true,
         isLinkedToSessions: true,
         sessionsCount,
@@ -948,11 +1126,20 @@ export class ClubSubscriptionsService {
         },
       });
       if (!type) throw new BadRequestException('نوع الاشتراك غير موجود');
+      if (!type.is_active) throw new BadRequestException('نوع الاشتراك غير نشط');
       const mem = member
         ? await this.prisma.club_members.findUnique({ where: { id: member.id } })
         : null;
+      // The sale price follows the member's branch (per-branch override), never the browser.
+      const priceBranchId = mem?.branch_id ?? data.branchId ?? null;
+      const defaultPrice = toNum(type.price);
+      const packagePrice = resolveTypePriceForBranch(
+        defaultPrice,
+        priceBranchId,
+        await loadBranchPricesForType(this.prisma, type.id),
+      );
       let sessionsCount: number | undefined;
-      let subscriptionValue = toNum(type.price);
+      let subscriptionValue = packagePrice;
       if (type.is_linked_to_sessions) {
         const packageSessions = Number(type.sessions_count);
         if (!Number.isInteger(packageSessions) || packageSessions < 1) {
@@ -962,12 +1149,16 @@ export class ClubSubscriptionsService {
         if (!Number.isInteger(sessionsCount) || sessionsCount < 1 || sessionsCount > packageSessions) {
           throw new BadRequestException(`عدد الحصص يجب أن يكون من 1 إلى ${packageSessions}`);
         }
-        const matrix = (type.session_prices ?? []).map((row) => ({
-          sessionsCount: row.sessions_count,
-          price: toNum(row.price),
-        }));
+        const matrix = scaleSessionMatrixForPackagePrice(
+          (type.session_prices ?? []).map((row) => ({
+            sessionsCount: row.sessions_count,
+            price: toNum(row.price),
+          })),
+          defaultPrice,
+          packagePrice,
+        );
         subscriptionValue = resolveSessionMatrixPrice({
-          packagePrice: toNum(type.price),
+          packagePrice,
           maxSessions: packageSessions,
           selectedSessions: sessionsCount,
           matrix,
@@ -993,8 +1184,8 @@ export class ClubSubscriptionsService {
         employeeId: data.employeeId ?? mem?.employee_id ?? undefined,
         salesId: data.salesId ?? mem?.sales_id ?? undefined,
         isSpecial: false,
-        branchId: data.branchId ?? mem?.branch_id,
       };
+      if (mem) data.branchId = mem.branch_id;
     }
 
     if (!data.branchId || !data.customerName || !data.subscriptionStartDate || !data.subscriptionEndDate) {
@@ -1006,14 +1197,30 @@ export class ClubSubscriptionsService {
       const assignedType = await this.prisma.club_subscription_types.findUnique({
         where: { id: data.subscriptionTypeId },
         select: {
+          name: true,
+          is_active: true,
+          is_linked_to_sessions: true,
+          sessions_count: true,
           branch_id: true,
           apply_to_all_branches: true,
           branches: { select: { branch_id: true } },
         },
       });
-      if (!assignedType || !isSubscriptionTypeAvailableAtBranch(assignedType, data.branchId)) {
-        throw new ForbiddenException('الخطة المختارة غير متاحة في فرع العميل');
+      if (!assignedType) throw new BadRequestException('نوع الاشتراك غير موجود');
+      if (!assignedType.is_active) throw new BadRequestException('نوع الاشتراك غير نشط');
+      if (!isSubscriptionTypeAvailableAtBranch(assignedType, data.branchId)) {
+        throw new ForbiddenException(
+          `الخطة «${assignedType.name}» غير مفعّلة على فرع العضو. أعد اختيار الخطة بعد اختيار العضو أو فعّل الفرع من إعدادات الباقات`,
+        );
       }
+      await this.assertBranchPackageNotBypassed(data.subscriptionTypeId, data.branchId);
+      // The package decides whether the subscription is session-based — never the client
+      // payload. A form that sends its own end date used to skip the package lookup, so a
+      // sessions package (e.g. «TRX 8S») could be saved as a day-based subscription.
+      data.isLinkedToSessions = assignedType.is_linked_to_sessions;
+      data.sessionsCount = assignedType.is_linked_to_sessions
+        ? data.sessionsCount ?? assignedType.sessions_count ?? undefined
+        : undefined;
     }
 
     assertDateOrder(data.subscriptionStartDate, data.subscriptionEndDate);
@@ -1036,54 +1243,20 @@ export class ClubSubscriptionsService {
         where: { id: member.id },
         select: { branch_id: true },
       });
-      const sharesSelectedGroup = memberBranch
-        ? await this.branchGroups.sharesGroup(memberBranch.branch_id, data.branchId)
-        : false;
-      if (!memberBranch || !(isSystemAdmin(user) || shareClubMemberIdentity(memberBranch.branch_id, data.branchId) || sharesSelectedGroup)) {
+      if (!memberBranch || memberBranch.branch_id !== data.branchId) {
         throw new ForbiddenException('لا يمكن إنشاء اشتراك لعضو تابع لفرع آخر');
       }
+      this.assertBranchAccess(user, memberBranch.branch_id);
       await this.assertNoDuplicateLiveSubscription(data);
     }
 
     const subValue = data.subscriptionValue ?? 0;
-    const requestedPoints = data.pointsToRedeem ?? null;
-    const memberGrantId = data.memberDiscountGrantId ?? null;
-    if (requestedPoints != null && (
-      data.discountCodeId != null ||
-      data.discountEnabled === true ||
-      (data.discountValue ?? 0) > 0 || memberGrantId != null
-    )) {
-      throw new BadRequestException('اختر خصم النقاط أو كود الخصم أو الخصم اليدوي، وليس أكثر من نوع واحد');
-    }
-    const resolvedDiscount = requestedPoints != null
-      ? await (async () => {
-          if (!data.memberId) throw new BadRequestException('خصم النقاط يتطلب اختيار عضو');
-          const account = await this.points.memberAccount(data.memberId);
-          if (!account.conversion) throw new BadRequestException('إعداد تحويل النقاط غير موجود');
-          const quote = this.points.quoteRedemption({
-            availablePoints: account.points,
-            requestedPoints,
-            subscriptionValue: subValue,
-            conversion: account.conversion,
-          });
-          return {
-            discountEnabled: true,
-            discountCodeId: null,
-            discountPercentage: null,
-            discountValue: quote.value,
-          };
-        })()
-      : memberGrantId != null
-        ? await (async () => {
-            if (!data.memberId || data.discountCodeId != null || data.discountEnabled === true || (data.discountValue ?? 0) > 0) throw new BadRequestException('الكود الممنوح لا يُجمع مع خصم آخر');
-            return this.discountCodes.resolveMemberGrant(memberGrantId, data.memberId, subValue);
-          })()
-        : await this.discountCodes.resolveDiscount({
-          subscriptionValue: subValue,
-          discountCodeId: data.discountCodeId,
-          discountEnabled: data.discountEnabled,
-          discountValue: data.discountValue,
-        });
+    const resolvedDiscount = await this.discountCodes.resolveDiscount({
+      subscriptionValue: subValue,
+      discountCodeId: data.discountCodeId,
+      discountEnabled: data.discountEnabled,
+      discountValue: data.discountValue,
+    });
     const discountEnabled = resolvedDiscount.discountEnabled;
     const discount = resolvedDiscount.discountValue;
     const paid = data.paidAmount ?? 0;
@@ -1104,7 +1277,6 @@ export class ClubSubscriptionsService {
 
     // Overlapping live subscriptions are allowed (sessions package + monthly membership together).
 
-    const subNumber = await this.generateSubNumberForMember(data.memberId ?? null);
     const status = deriveSessionAwareStatus({
       startDate: data.subscriptionStartDate,
       endDate: data.subscriptionEndDate,
@@ -1113,11 +1285,12 @@ export class ClubSubscriptionsService {
       sessionsUsed: 0,
     });
 
-    // Chart setup is independent from this subscription. Doing it here keeps the write
-    // transaction short: only the subscription, receipt and journal entry are atomic together.
-    if (paid > 0) await this.accounting.prepareForJournal();
-
-    const row = await this.prisma.$transaction(async (tx) => {
+    const { row, subNumber } = await retryOnUniqueViolation(() => this.prisma.$transaction(async (tx) => {
+      if (data.memberId) {
+        await tx.$queryRaw`SELECT id FROM club_members WHERE id = ${data.memberId} FOR UPDATE`;
+        await this.assertNoDuplicateLiveSubscription(data, undefined, tx);
+      }
+      const subNumber = await this.generateSubNumberForMemberInTransaction(data.memberId ?? null, tx);
       const created = await tx.club_subscriptions.create({
         data: {
           subscription_number: subNumber,
@@ -1126,6 +1299,7 @@ export class ClubSubscriptionsService {
           member_id: data.memberId ?? null,
           customer_name: data.customerName!,
           subscription_type_id: data.subscriptionTypeId ?? null,
+          purchased_benefits: await captureBenefits(tx, data.subscriptionTypeId),
           special_class_type_id: data.specialClassTypeId ?? null,
           private_package_id: data.privatePackageId ?? null,
           private_trainer_id: data.privateTrainerId ?? null,
@@ -1138,7 +1312,6 @@ export class ClubSubscriptionsService {
           discount_code_id: resolvedDiscount.discountCodeId,
           discount_percentage: resolvedDiscount.discountPercentage,
           discount_value: discount,
-          points_redeemed: requestedPoints ?? 0,
           paid_amount: paid,
           remaining_amount: remaining,
           gender: data.gender ?? null,
@@ -1148,6 +1321,7 @@ export class ClubSubscriptionsService {
           customer_source_id: data.customerSourceId ?? null,
           guardian_name: data.guardianName ?? null,
           guardian_phone: data.guardianPhone ?? null,
+          notes: data.notes?.trim() || null,
           status,
           is_special: !!data.isSpecial,
           is_linked_to_sessions: !!data.isLinkedToSessions,
@@ -1161,49 +1335,6 @@ export class ClubSubscriptionsService {
         },
       });
 
-      let memberCode: string | null = null;
-      if (created.member_id != null) {
-        const memberRows = await tx.$queryRaw<Array<{ member_code: string | null }>>(
-          Prisma.sql`SELECT member_code FROM club_members WHERE id=${created.member_id} LIMIT 1`,
-        );
-        memberCode = memberRows[0]?.member_code ?? null;
-      }
-
-      if (requestedPoints != null && created.member_id != null) {
-        await this.points.redeemForSubscription({
-          memberId: created.member_id,
-          memberCode,
-          subscriptionId: created.id,
-          subscriptionTypeId: created.subscription_type_id,
-          subscriptionTypeName: created.subscription_type,
-          requestedPoints,
-          subscriptionValue: subValue,
-          publisher: userId,
-        }, tx);
-      }
-
-      if (memberGrantId != null && created.member_id != null) {
-        await this.discountCodes.consumeMemberGrant({ grantId: memberGrantId, memberId: created.member_id, memberCode, subscriptionId: created.id, subscriptionValue: subValue, publisher: userId }, tx);
-      }
-
-      if (created.member_id != null && created.subscription_type_id != null) {
-        const packageRow = await tx.club_subscription_types.findUnique({
-          where: { id: created.subscription_type_id },
-          select: { wallet_points: true, name: true },
-        });
-        if ((packageRow?.wallet_points ?? 0) > 0) {
-          await this.points.recordEarnedForSubscription({
-            memberId: created.member_id,
-            memberCode,
-            subscriptionId: created.id,
-            subscriptionTypeId: created.subscription_type_id,
-            subscriptionTypeName: packageRow?.name ?? created.subscription_type,
-            points: packageRow!.wallet_points!,
-            publisher: userId,
-          }, tx);
-        }
-      }
-
       if (paid > 0) {
         const receipt = await this.receipts.createForSubscription(
           created.id,
@@ -1213,7 +1344,6 @@ export class ClubSubscriptionsService {
             memberId: data.memberId,
             paymentMethod: data.paymentMethod,
             payments: paymentSplits,
-            receiptNumber: data.receiptNumber,
             createdBy: userId,
           },
           tx,
@@ -1232,14 +1362,13 @@ export class ClubSubscriptionsService {
             createdBy: userId,
             registrationDate: created.registration_date,
             kind: 'subscription',
-            chartReady: true,
           },
           tx,
         );
       }
 
-      return created;
-    }, { maxWait: 10000, timeout: 15000 });
+      return { row: created, subNumber };
+    }, { maxWait: 10000, timeout: 15000 }));
 
     await this.audit.log({
       entityType: 'club_subscription',
@@ -1264,13 +1393,10 @@ export class ClubSubscriptionsService {
   }
 
   async update(id: number, dto: Partial<UpsertClubSubscriptionDto>, user?: JwtUser) {
-    const existing = await this.prisma.club_subscriptions.findUnique({ where: { id } });
+    const existing = await this.prisma.club_subscriptions.findUnique({ where: { id }, include: transferSourceRelations });
     if (!existing) throw new NotFoundException('الاشتراك غير موجود');
     this.assertBranchAccess(user, existing.branch_id);
-
-    if (dto.pointsToRedeem !== undefined) {
-      throw new BadRequestException('لا يمكن تعديل النقاط المستبدلة بعد إنشاء الاشتراك');
-    }
+    assertSubscriptionNotTransferred(existing);
 
     if (dto.memberId != null) {
       const member = await this.prisma.club_members.findFirst({
@@ -1278,7 +1404,8 @@ export class ClubSubscriptionsService {
         select: { branch_id: true },
       });
       if (!member) throw new NotFoundException('العضو غير موجود');
-      if (!isSystemAdmin(user) && !shareClubMemberIdentity(member.branch_id, existing.branch_id)) {
+      this.assertBranchAccess(user, member.branch_id);
+      if (member.branch_id !== existing.branch_id) {
         throw new ForbiddenException('لا يمكن ربط اشتراك بعضو تابع لفرع آخر');
       }
     }
@@ -1315,14 +1442,14 @@ export class ClubSubscriptionsService {
       const startChanged = dto.subscriptionStartDate != null && dto.subscriptionStartDate !== existing.subscription_start_date;
       const previousValidityDays = Math.max(
         1,
-        daysBetween(existing.subscription_start_date, existing.subscription_end_date),
+        daysBetween(existing.subscription_start_date, existing.subscription_end_date) + 1,
       );
       const validityDays = dto.validityDays ?? previousValidityDays;
       if (!Number.isInteger(validityDays) || validityDays < 1) {
         throw new BadRequestException('مدة صلاحية الاشتراك يجب أن تكون رقمًا صحيحًا أكبر من صفر');
       }
       if (dto.subscriptionEndDate == null && (specialChanged || startChanged || dto.validityDays !== undefined)) {
-        end = addDays(start, validityDays);
+        end = addDays(start, validityDays - 1);
       }
     }
     const selectedTypeId = dto.subscriptionTypeId ?? existing.subscription_type_id;
@@ -1330,6 +1457,7 @@ export class ClubSubscriptionsService {
       ? await this.prisma.club_subscription_types.findUnique({
           where: { id: selectedTypeId },
           select: {
+            is_active: true,
             is_linked_to_sessions: true,
             sessions_count: true,
             price: true,
@@ -1346,8 +1474,19 @@ export class ClubSubscriptionsService {
       : null;
     if (dto.subscriptionTypeId != null) {
       if (!selectedType) throw new BadRequestException('نوع الاشتراك غير موجود');
+      // Switching to another plan must land on an active one. Re-saving the current plan is
+      // still allowed after it was deactivated, so old subscriptions stay editable.
+      if (
+        dto.subscriptionTypeId !== existing.subscription_type_id &&
+        !selectedType.is_active
+      ) {
+        throw new BadRequestException('نوع الاشتراك غير نشط');
+      }
       if (!isSubscriptionTypeAvailableAtBranch(selectedType, existing.branch_id)) {
         throw new ForbiddenException('الخطة المختارة غير متاحة في فرع الاشتراك');
+      }
+      if (dto.subscriptionTypeId !== existing.subscription_type_id) {
+        await this.assertBranchPackageNotBypassed(dto.subscriptionTypeId, existing.branch_id);
       }
       linkedToSessions = selectedType.is_linked_to_sessions;
       resolvedSessionsCount = selectedType.is_linked_to_sessions
@@ -1382,10 +1521,32 @@ export class ClubSubscriptionsService {
     ) {
       throw new BadRequestException('عدد الحصص لا يمكن أن يكون أقل من عدد الحصص المستخدمة');
     }
+    // Prices follow the subscription's branch (per-branch package override).
+    const typeDefaultPrice = selectedType ? toNum(selectedType.price) : 0;
+    const typeBranchPrice = selectedType && selectedTypeId
+      ? resolveTypePriceForBranch(
+          typeDefaultPrice,
+          existing.branch_id,
+          await loadBranchPricesForType(this.prisma, selectedTypeId),
+        )
+      : 0;
+    const typeIdChanged =
+      dto.subscriptionTypeId != null && dto.subscriptionTypeId !== existing.subscription_type_id;
+    const sessionsChanged =
+      dto.sessionsCount !== undefined && dto.sessionsCount !== existing.sessions_count;
     let subValue = specialClassType
       ? roundMoney(toNum(specialClassType.single_session_price) * (resolvedSessionsCount ?? 1))
-      : dto.subscriptionValue ?? toNum(existing.subscription_value);
-    if (linkedToSessions && !specialClassType && selectedType) {
+      : dto.subscriptionValue ?? (selectedType && typeIdChanged
+        ? typeBranchPrice
+        : toNum(existing.subscription_value));
+    // Re-price a sessions package only when the plan, the session count or the value is being
+    // edited; an unrelated edit must not silently re-price a subscription sold earlier.
+    if (
+      linkedToSessions &&
+      !specialClassType &&
+      selectedType &&
+      (typeIdChanged || sessionsChanged || dto.subscriptionValue != null)
+    ) {
       const packageSessions = Number(selectedType.sessions_count);
       if (!Number.isInteger(packageSessions) || packageSessions < 1) {
         throw new BadRequestException('عدد حصص الباقة غير مضبوط');
@@ -1398,12 +1559,16 @@ export class ClubSubscriptionsService {
       ) {
         throw new BadRequestException(`عدد الحصص يجب أن يكون من 1 إلى ${packageSessions}`);
       }
-      const matrix = (selectedType.session_prices ?? []).map((row) => ({
-        sessionsCount: row.sessions_count,
-        price: toNum(row.price),
-      }));
+      const matrix = scaleSessionMatrixForPackagePrice(
+        (selectedType.session_prices ?? []).map((row) => ({
+          sessionsCount: row.sessions_count,
+          price: toNum(row.price),
+        })),
+        typeDefaultPrice,
+        typeBranchPrice,
+      );
       subValue = resolveSessionMatrixPrice({
-        packagePrice: toNum(selectedType.price),
+        packagePrice: typeBranchPrice,
         maxSessions: packageSessions,
         selectedSessions: requestedSessions,
         matrix,
@@ -1413,9 +1578,6 @@ export class ClubSubscriptionsService {
       dto.discountCodeId !== undefined ||
       dto.discountEnabled !== undefined ||
       dto.discountValue !== undefined;
-    if (existing.points_redeemed > 0 && discountChanged) {
-      throw new BadRequestException('لا يمكن استبدال خصم النقاط بخصم آخر بعد إنشاء الاشتراك');
-    }
     const resolvedDiscount = discountChanged
       ? await this.discountCodes.resolveDiscount({
           subscriptionValue: subValue,
@@ -1457,7 +1619,24 @@ export class ClubSubscriptionsService {
       id,
     );
 
-    const row = await this.prisma.club_subscriptions.update({
+    const row = await this.prisma.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${id} FOR UPDATE`;
+      const current = await tx.club_subscriptions.findUnique({ where: { id }, include: { ...transferSourceRelations, freezes: { where: { is_active: true } } } });
+      if (!current) throw new NotFoundException('الاشتراك غير موجود');
+      assertSubscriptionNotTransferred(current);
+      if (current.updated_at.getTime() !== existing.updated_at.getTime()) {
+        throw new BadRequestException('الاشتراك اتغيّر أثناء التعديل؛ حدّث الصفحة وحاول تاني');
+      }
+      const frozen = current.status === 'frozen' || current.renewal_hold || current.freezes?.some(freeze => freeze.is_active);
+      if (frozen && (
+        start !== current.subscription_start_date || end !== current.subscription_end_date ||
+        linkedToSessions !== current.is_linked_to_sessions ||
+        (linkedToSessions ? resolvedSessionsCount : null) !== current.sessions_count ||
+        (dto.memberId !== undefined && dto.memberId !== current.member_id) ||
+        (dto.subscriptionTypeId !== undefined && dto.subscriptionTypeId !== current.subscription_type_id) ||
+        (dto.specialClassTypeId !== undefined && dto.specialClassTypeId !== current.special_class_type_id)
+      )) throw new BadRequestException('فك التجميد أولًا قبل تغيير مدة الاشتراك أو الباقة أو العضو');
+      return tx.club_subscriptions.update({
       where: { id },
       data: {
         ...(dto.customerName != null ? { customer_name: dto.customerName } : {}),
@@ -1494,6 +1673,7 @@ export class ClubSubscriptionsService {
         ...(dto.customerSourceId !== undefined ? { customer_source_id: dto.customerSourceId } : {}),
         ...(dto.guardianName !== undefined ? { guardian_name: dto.guardianName } : {}),
         ...(dto.guardianPhone !== undefined ? { guardian_phone: dto.guardianPhone } : {}),
+        ...(dto.notes !== undefined ? { notes: dto.notes?.trim() || null } : {}),
         ...(dto.isSpecial !== undefined ? { is_special: dto.isSpecial } : {}),
         ...(dto.isTimeBased !== undefined ? { is_time_based: dto.isTimeBased } : {}),
         ...(dto.timeFrom !== undefined ? { time_from: dto.timeFrom } : {}),
@@ -1501,7 +1681,7 @@ export class ClubSubscriptionsService {
         is_linked_to_sessions: linkedToSessions,
         sessions_count: linkedToSessions ? resolvedSessionsCount : null,
         ...(dto.memberId !== undefined ? { member_id: dto.memberId } : {}),
-        status: deriveSessionAwareStatus({
+        status: frozen ? 'frozen' : deriveSessionAwareStatus({
           startDate: start,
           endDate: end,
           isLinkedToSessions: linkedToSessions,
@@ -1515,6 +1695,7 @@ export class ClubSubscriptionsService {
             transferredCredit,
         ),
       },
+    });
     });
 
     await this.audit.log({
@@ -1534,28 +1715,34 @@ export class ClubSubscriptionsService {
   }
 
   async remove(id: number, user?: JwtUser) {
-    const existing = await this.prisma.club_subscriptions.findUnique({ where: { id } });
+    const existing = await this.prisma.club_subscriptions.findUnique({ where: { id }, include: transferDeletionRelations });
     if (!existing) throw new NotFoundException('الاشتراك غير موجود');
     this.assertBranchAccess(user, existing.branch_id);
+    assertSubscriptionCanBeDeleted(existing);
 
-    // A subscription with financial history (receipts) or an active/completed refund must not be
-    // hard-deleted — deleting would orphan GL entries and drop the audit trail. Direct to refund.
-    const [receiptCount, refundCount] = await Promise.all([
-      this.prisma.club_receipts.count({ where: { subscription_id: id } }),
-      this.prisma.club_subscription_refunds.count({
-        where: { subscription_id: id, status: { not: 'cancelled' } },
-      }),
-    ]);
-    if (receiptCount > 0 || refundCount > 0) {
-      throw new BadRequestException(
-        'لا يمكن حذف اشتراك له إيصالات أو عمليات استرداد — استخدم عملية الاسترداد بدلاً من الحذف',
-      );
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        // Serialize against a payment or transfer made after the initial read.
+        await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${id} FOR UPDATE`;
+        const current = await tx.club_subscriptions.findUnique({ where: { id }, include: transferDeletionRelations });
+        if (!current) throw new NotFoundException('الاشتراك غير موجود');
+        assertSubscriptionCanBeDeleted(current);
+        const [receiptCount, refundCount] = await Promise.all([
+          tx.club_receipts.count({ where: { subscription_id: id } }),
+          tx.club_subscription_refunds.count({ where: { subscription_id: id } }),
+        ]);
+        if (receiptCount > 0 || refundCount > 0) {
+          throw new BadRequestException('لا يمكن حذف اشتراك له إيصالات أو عمليات استرداد، حفاظًا على سجل المدفوعات. استخدم الاسترداد عند رد مبلغ فعليًا، أو تواصل مع الدعم لتصحيح اشتراك مكرر.');
+        }
+        await tx.club_subscription_freezes.deleteMany({ where: { subscription_id: id } });
+        await tx.club_subscriptions.delete({ where: { id } });
+      });
+    } catch (error) {
+      if ((error as { code?: string })?.code === 'P2003') {
+        throw new BadRequestException('لا يمكن حذف هذا الاشتراك لأنه مرتبط بسجلات أخرى مثل الحضور أو التحويلات. تواصل مع الدعم لتصحيح حالته مع الحفاظ على السجل.');
+      }
+      throw error;
     }
-
-    await this.prisma.$transaction(async (tx) => {
-      await tx.club_subscription_freezes.deleteMany({ where: { subscription_id: id } });
-      await tx.club_subscriptions.delete({ where: { id } });
-    });
 
     await this.audit.log({
       entityType: 'club_subscription',
@@ -1565,6 +1752,29 @@ export class ClubSubscriptionsService {
       before: this.mapSub(existing),
     });
     return { success: true };
+  }
+
+  /** Member-visible note only — no money, dates or entitlement change. */
+  async updateNotes(id: number, notes: string | null | undefined, user?: JwtUser) {
+    const sub = await this.prisma.club_subscriptions.findUnique({ where: { id } });
+    if (!sub) throw new NotFoundException('الاشتراك غير موجود');
+    this.assertBranchAccess(user, sub.branch_id);
+    const value = typeof notes === 'string' ? notes.trim() : '';
+    if (value.length > 2000) throw new BadRequestException('الملاحظة يجب ألا تزيد عن 2000 حرف');
+    const row = await this.prisma.club_subscriptions.update({
+      where: { id },
+      data: { notes: value || null },
+    });
+    await this.audit.log({
+      entityType: 'club_subscription',
+      entityId: id,
+      action: 'update_notes',
+      actorUserId: user?.sub,
+      branchId: sub.branch_id,
+      before: { notes: sub.notes },
+      after: { notes: row.notes },
+    });
+    return this.mapSub(row);
   }
 
   async patchSessions(id: number, sessionsUsed: number, user?: JwtUser) {
@@ -1587,8 +1797,17 @@ export class ClubSubscriptionsService {
       data.sessions_count = sessionsFromType;
       data.is_linked_to_sessions = true;
     }
-    const row = await this.prisma.club_subscriptions.update({ where: { id }, data });
-    return this.mapSub(row);
+    const result = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.club_subscriptions.update({ where: { id }, data });
+      const effectiveMax = row.sessions_count;
+      const promotion =
+        this.lifecycle && effectiveMax != null && row.sessions_used >= effectiveMax
+          ? await this.lifecycle.promoteAfterQuotaExhaustion(id, localDateString(), tx)
+          : null;
+      return { row, promotion };
+    });
+    await this.finalizeQuotaPromotion(result.promotion, id, sub.branch_id, user);
+    return this.mapSub(result.row);
   }
 
   async useSession(id: number, user?: JwtUser) {
@@ -1603,11 +1822,49 @@ export class ClubSubscriptionsService {
     if (max > 0 && used >= max) {
       throw new BadRequestException('لا توجد حصص متبقية');
     }
-    const row = await this.prisma.club_subscriptions.update({
-      where: { id },
-      data: { sessions_used: used + 1, is_linked_to_sessions: true },
+    const result = await this.prisma.$transaction(async (tx) => {
+      await lockFreezeSource(tx, id);
+      const current = await tx.club_subscriptions.findUnique({ where: { id }, include: { freezes: { where: { is_active: true } } } });
+      if (!current) throw new NotFoundException('الاشتراك غير موجود');
+      this.assertBranchAccess(user, current.branch_id);
+      if (current.status === 'frozen' || current.renewal_hold || current.freezes.length) throw new BadRequestException('لا يمكن استخدام حصة من اشتراك مجمّد');
+      const changed = await tx.$executeRaw`
+        UPDATE club_subscriptions
+        SET sessions_used = sessions_used + 1, is_linked_to_sessions = 1
+        WHERE id = ${id}
+          AND (sessions_count IS NULL OR sessions_used < sessions_count)
+      `;
+      if (changed !== 1) throw new BadRequestException('لا توجد حصص متبقية');
+      const row = await tx.club_subscriptions.findUnique({ where: { id } });
+      if (!row) throw new NotFoundException('الاشتراك غير موجود');
+      const promotion =
+        this.lifecycle && row.sessions_count != null && row.sessions_used >= row.sessions_count
+          ? await this.lifecycle.promoteAfterQuotaExhaustion(id, localDateString(), tx)
+          : null;
+      return { row, promotion };
     });
-    return this.mapSub(row);
+    await this.finalizeQuotaPromotion(result.promotion, id, sub.branch_id, user);
+    return this.mapSub(result.row);
+  }
+
+  private async finalizeQuotaPromotion(
+    promotion: RenewalPromotionResult | null,
+    exhaustedSubscriptionId: number,
+    branchId: number,
+    user?: JwtUser,
+  ) {
+    if (!promotion?.activatedSubscriptionId) return;
+    await this.lifecycle?.syncActivatedMember(promotion.activatedSubscriptionId);
+    await this.audit.log({
+      entityType: 'club_subscription',
+      entityId: promotion.activatedSubscriptionId,
+      action: 'subscription_renewal_activated_early',
+      actorUserId: user?.sub,
+      actorName: user?.name ?? undefined,
+      branchId,
+      before: { exhaustedSubscriptionId },
+      after: promotion,
+    });
   }
 
   async processPayment(
@@ -1620,31 +1877,27 @@ export class ClubSubscriptionsService {
       user?: JwtUser;
     },
   ) {
-    if (paymentAmount <= 0) throw new BadRequestException('مبلغ الدفع غير صالح');
+    if (!Number.isFinite(paymentAmount) || paymentAmount <= 0) throw new BadRequestException('مبلغ الدفع غير صالح');
     const { paymentMethod, user } = opts ?? {};
-    // Validated up front: a bad split must not reach the advisory lock / receipt insert.
+    // Validate splits before locking the balance or inserting a receipt.
     const paymentSplits = resolveClubPayments(paymentAmount, paymentMethod, opts?.payments);
 
-    const { updated, receiptNumber, sub, prevRemaining, prevPaid } = await this.prisma.$transaction(
+    const { updated, receiptNumber } = await this.prisma.$transaction(
       async (tx) => {
-        // Serialize concurrent installments on this subscription with a MySQL advisory lock (same
-        // pattern as generateSubNumber). A plain findUnique is NOT a locking read, so without this
-        // two concurrent payments could both pass the overpay guard and over-collect. GET_LOCK runs
-        // on the tx's pooled connection; it is released when the tx connection is returned.
-        await tx.$queryRaw`SELECT GET_LOCK(${`club_sub_pay_${id}`}, 10)`;
-        try {
-          const sub = await tx.club_subscriptions.findUnique({ where: { id } });
-          if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-          this.assertBranchAccess(user, sub.branch_id);
+        // Payments, waivers, receipts and refunds must share a lock until COMMIT.
+        await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${id} FOR UPDATE`;
+        const sub = await tx.club_subscriptions.findUnique({ where: { id } });
+        if (!sub) throw new NotFoundException('الاشتراك غير موجود');
+        this.assertBranchAccess(user, sub.branch_id);
 
-          // Re-read remaining INSIDE the lock so a concurrent payment can't overshoot the balance.
-          const prevRemaining = toNum(sub.remaining_amount);
-          const prevPaid = toNum(sub.paid_amount);
-          if (paymentAmount > prevRemaining) {
-            throw new BadRequestException('مبلغ الدفع يتجاوز المبلغ المتبقي');
-          }
+        // Re-read remaining INSIDE the lock so a concurrent payment can't overshoot the balance.
+        const prevRemaining = toNum(sub.remaining_amount);
+        const prevPaid = toNum(sub.paid_amount);
+        if (paymentAmount > prevRemaining) {
+          throw new BadRequestException('مبلغ الدفع يتجاوز المبلغ المتبقي');
+        }
 
-          const receipt = await retryOnUniqueViolation(async () => {
+        const receipt = await retryOnUniqueViolation(async () => {
           const receiptNumber = await this.receipts.nextReceiptNumber(tx);
           return tx.club_receipts.create({
             data: {
@@ -1668,12 +1921,16 @@ export class ClubSubscriptionsService {
           });
         });
 
-        // Recompute paid/remaining from the receipt ledger (single source of truth) within the tx.
+        // Recompute paid/remaining within the tx. The receipt ledger is the source of truth for
+        // money booked THROUGH this system, but subscriptions migrated from the old system (or
+        // whose down payment predates receipts) carry a real paid_amount with no matching receipt.
+        // Trusting the ledger alone would erase that payment on the first installment and push
+        // the debt back up. Take the larger of the two so a payment can only reduce the balance.
         const agg = await tx.club_receipts.aggregate({
           where: { subscription_id: id },
           _sum: { amount: true },
         });
-        const paid = toNum(agg._sum.amount);
+        const paid = Math.max(toNum(agg._sum.amount), roundMoney(prevPaid + paymentAmount));
         const remaining = Math.max(0, remainingAmount(
           toNum(sub.subscription_value),
           sub.discount_enabled,
@@ -1703,23 +1960,19 @@ export class ClubSubscriptionsService {
           tx,
         );
 
-          return { updated, receiptNumber: receipt.receipt_number, sub, prevRemaining, prevPaid };
-        } finally {
-          await tx.$queryRaw`SELECT RELEASE_LOCK(${`club_sub_pay_${id}`})`;
-        }
+        await this.audit.log({
+          entityType: 'club_subscription',
+          entityId: id,
+          action: 'payment',
+          branchId: sub.branch_id,
+          before: { remainingAmount: prevRemaining, paidAmount: prevPaid },
+          after: { paymentAmount, remainingAmount: toNum(updated.remaining_amount), receiptNumber: receipt.receipt_number },
+        }, tx);
+        return { updated, receiptNumber: receipt.receipt_number };
       },
     );
 
-    await this.audit.log({
-      entityType: 'club_subscription',
-      entityId: id,
-      action: 'payment',
-      branchId: sub.branch_id,
-      before: { remainingAmount: prevRemaining, paidAmount: prevPaid },
-      after: { paymentAmount, remainingAmount: toNum(updated.remaining_amount), receiptNumber },
-    });
-
-    return { subscription: this.mapSub(updated), paymentAmount };
+    return { subscription: this.mapSub(updated), paymentAmount, receiptNumber };
   }
 
   async processWaiver(
@@ -1732,54 +1985,49 @@ export class ClubSubscriptionsService {
       throw new BadRequestException('مبلغ الإعفاء غير صالح');
     }
     const result = await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT GET_LOCK(${`club_sub_waiver_${id}`}, 10)`;
-      try {
-        const sub = await tx.club_subscriptions.findUnique({
-          where: { id },
-          include: { member: { select: { name: true } } },
-        });
-        if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-        this.assertBranchAccess(user, sub.branch_id);
-        const remaining = toNum(sub.remaining_amount);
-        if (amount > remaining) throw new BadRequestException('مبلغ الإعفاء يتجاوز المبلغ المتبقي');
+      await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${id} FOR UPDATE`;
+      const sub = await tx.club_subscriptions.findUnique({
+        where: { id },
+        include: { member: { select: { name: true } } },
+      });
+      if (!sub) throw new NotFoundException('الاشتراك غير موجود');
+      this.assertBranchAccess(user, sub.branch_id);
+      const remaining = toNum(sub.remaining_amount);
+      if (amount > remaining) throw new BadRequestException('مبلغ الإعفاء يتجاوز المبلغ المتبقي');
 
-        const waiver = await tx.club_subscription_waivers.create({
-          data: {
-            subscription_id: id,
-            member_id: sub.member_id,
-            member_name: sub.customer_name ?? sub.member?.name ?? null,
-            amount,
-            waiver_date: localDateString(),
-            reason: reason?.trim() || null,
-            created_by: user?.sub ?? null,
-          },
-        });
-        const updated = await tx.club_subscriptions.update({
-          where: { id },
-          data: {
-            waived_amount: { increment: amount },
-            remaining_amount: { decrement: amount },
-          },
-        });
-        return { waiver, updated, previousRemaining: remaining };
-      } finally {
-        await tx.$queryRaw`SELECT RELEASE_LOCK(${`club_sub_waiver_${id}`})`;
-      }
-    });
-
-    await this.audit.log({
-      entityType: 'club_subscription_waiver',
-      entityId: result.waiver.id,
-      action: 'create',
-      actorUserId: user?.sub,
-      branchId: result.updated.branch_id,
-      before: { remainingAmount: result.previousRemaining },
-      after: {
-        subscriptionId: id,
-        amount,
-        remainingAmount: toNum(result.updated.remaining_amount),
-        reason: reason?.trim() || null,
-      },
+      const waiver = await tx.club_subscription_waivers.create({
+        data: {
+          subscription_id: id,
+          member_id: sub.member_id,
+          member_name: sub.customer_name ?? sub.member?.name ?? null,
+          amount,
+          waiver_date: localDateString(),
+          reason: reason?.trim() || null,
+          created_by: user?.sub ?? null,
+        },
+      });
+      const updated = await tx.club_subscriptions.update({
+        where: { id },
+        data: {
+          waived_amount: { increment: amount },
+          remaining_amount: { decrement: amount },
+        },
+      });
+      await this.audit.log({
+        entityType: 'club_subscription_waiver',
+        entityId: waiver.id,
+        action: 'create',
+        actorUserId: user?.sub,
+        branchId: updated.branch_id,
+        before: { remainingAmount: remaining },
+        after: {
+          subscriptionId: id,
+          amount,
+          remainingAmount: toNum(updated.remaining_amount),
+          reason: reason?.trim() || null,
+        },
+      }, tx);
+      return { waiver, updated, previousRemaining: remaining };
     });
 
     return { subscription: this.mapSub(result.updated), waiverAmount: amount };
@@ -1878,11 +2126,11 @@ export class ClubSubscriptionsService {
       sub.subscription_end_date >= today ? addDays(sub.subscription_end_date, 1) : today;
     const duration =
       renewalDays ??
-      daysBetween(sub.subscription_start_date, sub.subscription_end_date);
+      (daysBetween(sub.subscription_start_date, sub.subscription_end_date) + 1);
     if (!Number.isInteger(duration) || duration < 1) {
       throw new BadRequestException('مدة التجديد يجب أن تكون رقمًا صحيحًا أكبر من صفر');
     }
-    const newEnd = addDays(newStart, duration);
+    const newEnd = addDays(newStart, duration - 1);
     const newStatus = deriveSessionAwareStatus({
       startDate: newStart,
       endDate: newEnd,
@@ -1920,6 +2168,7 @@ export class ClubSubscriptionsService {
           member_id: sub.member_id,
           customer_name: sub.customer_name,
           subscription_type_id: sub.subscription_type_id,
+          purchased_benefits: await captureBenefits(tx, sub.subscription_type_id),
           special_class_type_id: sub.special_class_type_id,
           subscription_type: sub.subscription_type,
           subscription_start_date: newStart,
@@ -2047,6 +2296,7 @@ export class ClubSubscriptionsService {
 
   /** Align member profile dates, plan label, and active flag with a linked subscription. */
   private async syncMemberProfileFromSubscription(sub: {
+    id: number;
     member_id: number | null;
     subscription_start_date: string;
     subscription_end_date: string;
@@ -2058,10 +2308,44 @@ export class ClubSubscriptionsService {
   }) {
     if (!sub.member_id) return;
 
+    // Several subscriptions can belong to one member. Deriving is_active from only the last
+    // edited row lets an expired/upcoming package deactivate a member whose Zumba or gym package
+    // is still live. Reconcile the summary from every current entitlement instead.
+    const memberSubscriptions = await this.prisma.club_subscriptions.findMany({
+      where: { member_id: sub.member_id },
+      select: {
+        id: true,
+        subscription_start_date: true,
+        subscription_end_date: true,
+        subscription_type_id: true,
+        status: true,
+        is_linked_to_sessions: true,
+        sessions_count: true,
+        sessions_used: true,
+      },
+      orderBy: [{ subscription_end_date: 'desc' }, { id: 'desc' }],
+    });
+    const liveSubscriptions = memberSubscriptions.filter(
+      (row) =>
+        row.status !== 'frozen' &&
+        row.status !== 'expired' &&
+        deriveSessionAwareStatus({
+          startDate: row.subscription_start_date,
+          endDate: row.subscription_end_date,
+          isLinkedToSessions: row.is_linked_to_sessions,
+          sessionsCount: row.sessions_count,
+          sessionsUsed: row.sessions_used,
+        }) === 'active',
+    );
+    const profileSub =
+      liveSubscriptions.find((row) => row.id === sub.id) ??
+      liveSubscriptions[0] ??
+      sub;
+
     let membershipTypeId: number | undefined;
-    if (sub.subscription_type_id) {
+    if (profileSub.subscription_type_id) {
       const st = await this.prisma.club_subscription_types.findUnique({
-        where: { id: sub.subscription_type_id },
+        where: { id: profileSub.subscription_type_id },
       });
       if (st) {
         let mt = await this.prisma.club_membership_types.findFirst({
@@ -2085,245 +2369,86 @@ export class ClubSubscriptionsService {
       }
     }
 
-    const today = localDateString();
-    const isSessions = !!sub.is_linked_to_sessions;
-    const openEnded = isOpenEndedEndDate(sub.subscription_end_date);
-    const active =
-      sub.status !== 'expired' &&
-      sub.status !== 'frozen' &&
-      (isSessions
-        ? sub.subscription_start_date <= today &&
-          (openEnded || sub.subscription_end_date >= today) &&
-          (sub.sessions_count == null || (sub.sessions_used ?? 0) < sub.sessions_count)
-        : sub.subscription_end_date >= today);
+    const openEnded = isOpenEndedEndDate(profileSub.subscription_end_date);
 
     await this.prisma.club_members.update({
       where: { id: sub.member_id },
       data: {
-        start_date: sub.subscription_start_date,
+        start_date: profileSub.subscription_start_date,
         // Don't stamp the legacy open-ended sentinel onto the member profile.
-        ...(openEnded ? {} : { end_date: sub.subscription_end_date }),
-        is_active: active,
+        ...(openEnded ? {} : { end_date: profileSub.subscription_end_date }),
+        is_active: liveSubscriptions.length > 0,
         ...(membershipTypeId != null ? { membership_type_id: membershipTypeId } : {}),
       },
     });
   }
 
-  async freeze(
-    id: number,
-    days?: number,
-    reason?: string,
-    userId?: number,
-    user?: JwtUser,
-    freezeStartDate?: string,
-    freezeEndDate?: string,
-  ) {
+  /** The rules freeze() enforces, without writing. Used before a member-app request is accepted. */
+  async assertFreezable(id: number, days?: number, user?: JwtUser, client: PrismaService | Prisma.TransactionClient = this.prisma) {
+    return assertCanFreeze(client, id, normalizedFreezeDays(days), branch => this.assertBranchAccess(user, branch));
+  }
 
+  async freezePreview(id: number, user?: JwtUser) {
     const sub = await this.prisma.club_subscriptions.findUnique({ where: { id } });
     if (!sub) throw new NotFoundException('الاشتراك غير موجود');
     this.assertBranchAccess(user, sub.branch_id);
+    const allowance = await freezeAllowance(this.prisma, sub);
+    const queue = await renewalQueue(this.prisma, sub);
+    let blockedReason: string | null = null;
+    try { await this.assertFreezable(id, 0, user); } catch (error) { blockedReason = error instanceof Error ? error.message : 'تعذر التحقق من التجميد'; }
+    return { subscriptionNumber: sub.subscription_number, customerName: sub.customer_name,
+      remainingDays: allowance.remainingDays, remainingTimes: allowance.remainingTimes, minDays: allowance.policy.min_freeze ?? 0,
+      subscriptionEndDate: sub.subscription_end_date, queuedRenewals: queue.length, blockedReason, plannedEndDate: allowance.remainingDays == null ? null : addDays(localDateString(), allowance.remainingDays) };
+  }
 
-    if (sub.status === 'frozen') {
-      throw new BadRequestException('الاشتراك مجمّد بالفعل');
-    }
-    // Only a currently date-active subscription can be frozen.
-    if (deriveSubStatus(sub.subscription_start_date, sub.subscription_end_date) !== 'active') {
-      throw new BadRequestException('لا يمكن تجميد اشتراك غير نشط');
-    }
-    const existingFreeze = await this.prisma.club_subscription_freezes.findFirst({
-      where: { subscription_id: id, is_active: true },
-    });
-    if (existingFreeze) {
-      throw new BadRequestException('يوجد تجميد نشط لهذا الاشتراك بالفعل');
-    }
-
-    if (sub.subscription_type_id) {
-      const type = await this.prisma.club_subscription_types.findUnique({
-        where: { id: sub.subscription_type_id },
-      });
-      if (type && !type.is_linked_to_freeze) {
-        throw new BadRequestException('نوع الاشتراك لا يدعم التجميد');
+  async freeze(id: number, days?: number, reason?: string, userId?: number, user?: JwtUser, client?: Prisma.TransactionClient) {
+    const plannedDays = normalizedFreezeDays(days);
+    const today = localDateString();
+    const apply = async (tx: Prisma.TransactionClient) => {
+      await lockFreezeSource(tx, id);
+      const { sub, freezeBudgetDays } = await this.assertFreezable(id, plannedDays, user, tx);
+      const queue = await renewalQueue(tx, sub);
+      if (queue.some(next => next.sessions_used > 0 || next.status === 'frozen' || ['cancelled', 'transferred', 'refunded'].includes(next.status))) {
+        throw new BadRequestException('يوجد تجديد لاحق مستخدم أو مجمّد أو ملغي؛ راجع سلسلة التجديد أولًا');
       }
-      // freeze_days on the package = max number of freeze times (not total freeze days).
-      if (type?.freeze_days != null) {
-        const usedCount = await this.prisma.club_subscription_freezes.count({
-          where: { subscription_id: id },
-        });
-        if (usedCount >= type.freeze_days) {
-          throw new BadRequestException(
-            `تم استنفاذ عدد مرات التجميد المسموح بها (${type.freeze_days})`,
-          );
-        }
-      }
-    }
+      const ids = [id, ...queue.map(next => next.id)];
+      const reserved = await tx.club_class_enrollments.count({ where: { subscription_id: { in: ids }, attendance_status: 'registered', class: { class_date: { gte: today } } } });
 
-    const today = localDateString();
-    const startDate = freezeStartDate || today;
-    const endDate = freezeEndDate || (
-      days != null && Number.isFinite(Number(days)) && Number(days) > 0
-        ? addDays(startDate, Math.floor(Number(days)))
-        : null
-    );
-    if (!endDate) {
-      throw new BadRequestException('يجب تحديد تاريخ نهاية التجميد');
-    }
-    assertDateOrder(startDate, endDate, 'تاريخ نهاية التجميد يجب أن يكون بعد تاريخ بدايته أو مساويًا له');
-    const plannedDays = daysBetween(startDate, endDate);
-    if (plannedDays < 1) {
-      throw new BadRequestException('مدة التجميد يجب أن تكون يومًا واحدًا على الأقل');
-    }
-    const newEnd = isOpenEndedEndDate(sub.subscription_end_date)
-      ? sub.subscription_end_date
-      : addDays(sub.subscription_end_date, plannedDays);
-    const row = await this.prisma.$transaction(async (tx) => {
-      await tx.club_subscription_freezes.create({
-        data: {
-          subscription_id: id,
-          freeze_start_date: startDate,
-          freeze_end_date: endDate,
-          planned_days: plannedDays,
-          original_end_date: sub.subscription_end_date,
-          reason: reason ?? null,
-          is_active: true,
-          branch_id: sub.branch_id,
-          created_by: userId ?? null,
-        },
-      });
-      return tx.club_subscriptions.update({
-        where: { id },
-        // The extension is posted immediately, so the end date is always correct even while
-        // the subscription is still stopped.
-        data: { status: 'frozen', subscription_end_date: newEnd },
-      });
-    });
-
-    await this.audit.log({
-      entityType: 'club_subscription',
-      entityId: id,
-      action: 'freeze',
-      actorUserId: userId,
-      branchId: sub.branch_id,
-      before: { status: sub.status, subscriptionEndDate: sub.subscription_end_date },
-      after: { status: 'frozen', freezeStartDate: startDate, freezeEndDate: endDate, subscriptionEndDate: newEnd, plannedDays, reason },
-    });
-
-    return this.mapSub(row);
+      if (reserved > 0) throw new BadRequestException('ألغِ حجوزات الكلاسات المرتبطة بهذا الاشتراك وتجديداته قبل التجميد');
+      const activeFreeze = await tx.club_subscription_freezes.create({ data: {
+        subscription_id: id, freeze_start_date: today,
+        freeze_end_date: plannedDays || freezeBudgetDays ? addDays(today, plannedDays || freezeBudgetDays) : null,
+        planned_days: plannedDays, original_end_date: sub.subscription_end_date, reason: reason ?? null,
+        is_active: true, branch_id: sub.branch_id, created_by: userId ?? null,
+      } });
+      if (queue.length) await tx.club_subscriptions.updateMany({ where: { id: { in: queue.map(next => next.id) } }, data: { status: 'frozen', renewal_hold: true } });
+      const row = await tx.club_subscriptions.update({ where: { id }, data: { status: 'frozen' } });
+      await this.audit.log({ entityType: 'club_subscription', entityId: id, action: 'freeze', actorUserId: userId, branchId: sub.branch_id,
+        before: { status: sub.status, subscriptionEndDate: sub.subscription_end_date }, after: { status: 'frozen', plannedDays, reason, heldRenewals: queue.length } }, tx);
+      return this.mapSub({ ...row, freezes: [activeFreeze] });
+    };
+    return client ? apply(client) : this.prisma.$transaction(apply, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
-  /** A freeze may be adjusted only while today's date is inside its configured period. */
-  async updateFreeze(id: number, freezeEndDate?: string, reason?: string, userId?: number, user?: JwtUser) {
-    const sub = await this.prisma.club_subscriptions.findUnique({ where: { id } });
-    if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-    this.assertBranchAccess(user, sub.branch_id);
-    const freeze = await this.prisma.club_subscription_freezes.findFirst({
-      where: { subscription_id: id, is_active: true }, orderBy: { id: 'desc' },
-    });
-    if (!freeze) throw new BadRequestException('لا يوجد تجميد نشط لهذا الاشتراك');
-    const today = localDateString();
-    if (!freeze.freeze_end_date || today < freeze.freeze_start_date || today > freeze.freeze_end_date) {
-      throw new BadRequestException('يمكن تعديل التجميد خلال فترة التوقيف فقط');
-    }
-    if (!freezeEndDate) throw new BadRequestException('يجب تحديد تاريخ نهاية التجميد');
-    assertDateOrder(freeze.freeze_start_date, freezeEndDate, 'تاريخ نهاية التجميد يجب أن يكون بعد تاريخ بدايته أو مساويًا له');
-    const newDays = daysBetween(freeze.freeze_start_date, freezeEndDate);
-    if (newDays < 1) throw new BadRequestException('مدة التجميد يجب أن تكون يومًا واحدًا على الأقل');
-    const delta = newDays - freeze.planned_days;
-    const newEnd = isOpenEndedEndDate(sub.subscription_end_date)
-      ? sub.subscription_end_date
-      : addDays(sub.subscription_end_date, delta);
-    const row = await this.prisma.$transaction(async (tx) => {
-      await tx.club_subscription_freezes.update({
-        where: { id: freeze.id },
-        data: { freeze_end_date: freezeEndDate, planned_days: newDays, ...(reason !== undefined ? { reason: reason || null } : {}) },
-      });
-      return tx.club_subscriptions.update({ where: { id }, data: { subscription_end_date: newEnd } });
-    });
-    await this.audit.log({ entityType: 'club_subscription', entityId: id, action: 'freeze_update', actorUserId: userId, branchId: sub.branch_id,
-      before: { freezeEndDate: freeze.freeze_end_date, subscriptionEndDate: sub.subscription_end_date },
-      after: { freezeEndDate, subscriptionEndDate: newEnd, plannedDays: newDays }, });
-    return this.mapSub(row);
+  async unfreeze(id: number, userId?: number, user?: JwtUser, automatic = false) {
+    const result = await this.prisma.$transaction(tx => thawPeriod(tx, id, branch => this.assertBranchAccess(user, branch), automatic), { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    if (!result) return null;
+    await this.audit.log({ entityType: 'club_subscription', entityId: id, action: result.repairedOrphan ? 'unfreeze_orphan_repair' : 'unfreeze', actorUserId: userId, branchId: result.sub.branch_id,
+      before: { status: 'frozen', subscriptionEndDate: result.sub.subscription_end_date },
+      after: { status: result.row.status, subscriptionEndDate: result.row.subscription_end_date, actualDays: result.actualDays, repairedOrphan: result.repairedOrphan, shiftedRenewals: result.shiftedRenewals, automatic } });
+    return this.mapSub(result.row);
   }
 
-  /** Releases date-based freezes after their final stopped day. Their end-date extension was
-   * already applied at creation, so this only restores the normal subscription status. */
-  async releaseFinishedFreezes() {
-    const today = localDateString();
-    const freezes = await this.prisma.club_subscription_freezes.findMany({
-      where: { is_active: true, freeze_end_date: { lt: today } },
-      include: { subscription: true },
-    });
-    for (const freeze of freezes) {
-      const sub = freeze.subscription;
-      const status = deriveSessionAwareStatus({
-        startDate: sub.subscription_start_date,
-        endDate: sub.subscription_end_date,
-        isLinkedToSessions: sub.is_linked_to_sessions,
-        sessionsCount: sub.sessions_count,
-        sessionsUsed: sub.sessions_used,
-      });
-      await this.prisma.$transaction(async (tx) => {
-        await tx.club_subscription_freezes.update({
-          where: { id: freeze.id },
-          data: { is_active: false, actual_days: freeze.planned_days },
-        });
-        await tx.club_subscriptions.update({ where: { id: sub.id }, data: { status } });
-      });
-      if (sub.member_id) await this.syncMemberProfileFromSubscription({ ...sub, status });
+  async resumeDueFreezes() {
+    const due = await this.prisma.club_subscription_freezes.findMany({ where: { is_active: true, freeze_end_date: { lte: localDateString() } }, select: { subscription_id: true } });
+    const errors: string[] = [];
+    for (const freeze of due) {
+      try { await this.unfreeze(freeze.subscription_id, undefined, undefined, true); }
+      catch (error) { errors.push(`${freeze.subscription_id}: ${error instanceof Error ? error.message : error}`); }
     }
-    return freezes.length;
-  }
-
-  async unfreeze(id: number, userId?: number, user?: JwtUser) {
-    const sub = await this.prisma.club_subscriptions.findUnique({ where: { id } });
-    if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-    this.assertBranchAccess(user, sub.branch_id);
-
-    const freeze = await this.prisma.club_subscription_freezes.findFirst({
-      where: { subscription_id: id, is_active: true },
-      orderBy: { id: 'desc' },
-    });
-    if (!freeze) {
-      throw new BadRequestException('لا يوجد تجميد نشط لهذا الاشتراك');
-    }
-
-    const today = localDateString();
-    // The full planned duration has already extended the end date at freeze creation. Ending a
-    // freeze early returns only its unused days, preventing a second extension on unfreeze.
-    const actualDays = Math.max(0, daysBetween(freeze.freeze_start_date, today));
-    const unusedDays = Math.max(0, freeze.planned_days - actualDays);
-    const newEnd = isOpenEndedEndDate(sub.subscription_end_date)
-      ? sub.subscription_end_date
-      : addDays(sub.subscription_end_date, -unusedDays);
-    const newStatus = deriveSessionAwareStatus({
-      startDate: sub.subscription_start_date,
-      endDate: newEnd,
-      isLinkedToSessions: sub.is_linked_to_sessions,
-      sessionsCount: sub.sessions_count,
-      sessionsUsed: sub.sessions_used,
-    });
-
-    const row = await this.prisma.$transaction(async (tx) => {
-      await tx.club_subscription_freezes.update({
-        where: { id: freeze.id },
-        data: { is_active: false, freeze_end_date: today, actual_days: actualDays },
-      });
-      return tx.club_subscriptions.update({
-        where: { id },
-        data: { subscription_end_date: newEnd, status: newStatus },
-      });
-    });
-
-    await this.audit.log({
-      entityType: 'club_subscription',
-      entityId: id,
-      action: 'unfreeze',
-      actorUserId: userId,
-      branchId: sub.branch_id,
-      before: { status: 'frozen', subscriptionEndDate: sub.subscription_end_date },
-      after: { status: newStatus, subscriptionEndDate: newEnd, actualDays },
-    });
-
-    return this.mapSub(row);
+    await this.prisma.club_subscriptions.updateMany({ where: { status: 'upcoming', renewal_hold: false,
+      subscription_start_date: { lte: localDateString() }, subscription_end_date: { gte: localDateString() } }, data: { status: 'active' } });
+    return errors;
   }
 
   async transferMember(id: number, memberId: number, user?: JwtUser) {
@@ -2334,7 +2459,8 @@ export class ClubSubscriptionsService {
     if (!sub) throw new NotFoundException('الاشتراك غير موجود');
     if (!member) throw new NotFoundException('العضو غير موجود');
     this.assertBranchAccess(user, sub.branch_id);
-    if (!isSystemAdmin(user) && !shareClubMemberIdentity(member.branch_id, sub.branch_id)) {
+    this.assertBranchAccess(user, member.branch_id);
+    if (member.branch_id !== sub.branch_id) {
       throw new ForbiddenException('لا يمكن نقل الاشتراك إلى عضو تابع لفرع آخر');
     }
 
@@ -2342,6 +2468,10 @@ export class ClubSubscriptionsService {
       throw new BadRequestException(e.message);
     });
 
+    if (sub.renewed_from_subscription_id || await this.prisma.club_subscriptions.findUnique({ where: { renewed_from_subscription_id: id } })) {
+      throw new BadRequestException('لا يمكن فصل اشتراك من سلسلة تجديد؛ سوِّ التجديدات أولًا');
+    }
+    if (sub.status === 'frozen') throw new BadRequestException('فك التجميد قبل نقل العضوية');
     const row = await this.prisma.club_subscriptions.update({
       where: { id },
       data: { member_id: memberId, customer_name: member.name },
@@ -2359,14 +2489,12 @@ export class ClubSubscriptionsService {
     return this.mapSub(row);
   }
 
-  async statistics(isSpecial?: string, user?: JwtUser, dateFrom?: string, dateTo?: string) {
+  async statistics(isSpecial?: string, user?: JwtUser) {
     const and: Prisma.club_subscriptionsWhereInput[] = [
       this.visibleMemberSubscriptionFilter(),
     ];
     const scope = this.branchScope.resolveListFilter(user, null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
-    const audience = this.subscriptionAudienceFilter(user);
-    if (audience) and.push(audience);
     if (isSpecial === 'true' || isSpecial === '1') and.push(this.specialSubscriptionFilter());
     if (isSpecial === 'false' || isSpecial === '0') {
       and.push({
@@ -2376,24 +2504,9 @@ export class ClubSubscriptionsService {
         ],
       });
     }
-    if (dateFrom || dateTo) {
-      and.push({ registration_date: { gte: dateFrom, lte: dateTo } });
-    }
 
     const where: Prisma.club_subscriptionsWhereInput = and.length ? { AND: and } : {};
-    // The summary needs only these values. Avoid loading every subscription column just to
-    // calculate the dashboard cards; this endpoint is requested when the subscriptions screen opens.
-    const rows = await this.prisma.club_subscriptions.findMany({
-      where,
-      select: {
-        subscription_start_date: true,
-        subscription_end_date: true,
-        subscription_value: true,
-        transferred_credit_amount: true,
-        paid_amount: true,
-        remaining_amount: true,
-      },
-    });
+    const rows = await this.prisma.club_subscriptions.findMany({ where });
     let total = 0;
     let active = 0;
     let expired = 0;
@@ -2442,8 +2555,6 @@ export class ClubSubscriptionsService {
     if (query.branch && query.branch !== 'all') and.push({ branch_id: Number(query.branch) });
     const scope = this.branchScope.resolveListFilter(user, query.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
-    const audience = this.subscriptionAudienceFilter(user);
-    if (audience) and.push(audience);
     if (query.search?.trim()) {
       const s = query.search.trim();
       and.push({
@@ -2487,41 +2598,32 @@ export class ClubSubscriptionsService {
     };
   }
 
-  async expiredReport(query: { branch?: string; search?: string; page?: string; pageSize?: string }, user?: JwtUser) {
-    const and: Prisma.club_subscriptionsWhereInput[] = [
-      // Do this in SQL rather than loading the complete subscription history and filtering it
-      // in Node. The report otherwise competes with new-subscription transactions for DB capacity.
-      { subscription_end_date: { lt: localDateString() } },
-    ];
+  async expiredReport(query: { branch?: string; search?: string }, user?: JwtUser) {
+    const and: Prisma.club_subscriptionsWhereInput[] = [];
     if (query.branch && query.branch !== 'all') and.push({ branch_id: Number(query.branch) });
     const scope = this.branchScope.resolveListFilter(user, query.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
-    const audience = this.subscriptionAudienceFilter(user);
-    if (audience) and.push(audience);
-    if (query.search?.trim()) {
-      const search = query.search.trim();
-      and.push({
-        OR: [
-          { customer_name: { contains: search } },
-          { subscription_number: { contains: search } },
-        ],
-      });
-    }
-    const page = Math.max(1, Number(query.page) || 1);
-    const pageSize = Math.min(100, Math.max(1, Number(query.pageSize) || 20));
-    const where = { AND: and };
-    const [rows, count] = await Promise.all([
-      this.prisma.club_subscriptions.findMany({
-        where,
-        orderBy: { subscription_end_date: 'desc' },
-        skip: (page - 1) * pageSize,
-        take: pageSize,
-      }),
-      this.prisma.club_subscriptions.count({ where }),
-    ]);
+    const rows = await this.prisma.club_subscriptions.findMany({
+      where: and.length ? { AND: and } : {},
+      include: { member: { select: { member_code: true, phone: true } } },
+      orderBy: { subscription_end_date: 'desc' },
+    });
     type SubRow = ReturnType<ClubSubscriptionsService['mapSub']>;
-    const list: SubRow[] = rows.map((r) => this.mapSub(r));
-    return { data: list, count, page, pageSize };
+    let list: SubRow[] = rows
+      .filter((r) => deriveSubStatus(r.subscription_start_date, r.subscription_end_date) === 'expired')
+      .map((r) => this.mapSub(r));
+    if (query.search?.trim()) {
+      const s = query.search.trim().toLowerCase();
+      list = list.filter(
+        (x) =>
+          String(x.customerName ?? '').toLowerCase().includes(s) ||
+          String(x.subscriptionNumber).toLowerCase().includes(s) ||
+          String(x.memberCode ?? '').toLowerCase().includes(s) ||
+          String(x.memberPhone ?? '').toLowerCase().includes(s) ||
+          String(x.subscriptionType ?? '').toLowerCase().includes(s),
+      );
+    }
+    return { data: list, count: list.length };
   }
 
   async updateExpiredStatuses(): Promise<number> {

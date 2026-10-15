@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Cron } from '@nestjs/schedule';
 import { runWithMysqlLock } from '../../common/automation/cron-dedup.util';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -85,6 +86,9 @@ export class FinanceRecurringCron {
               amount: src.amount,
               tax_amount: src.tax_amount,
               total_amount: src.total_amount,
+              business_unit: src.business_unit,
+              paid_amount: src.paid_amount,
+              payments: src.payments == null ? Prisma.JsonNull : src.payments as Prisma.InputJsonValue,
               payment_method: src.payment_method,
               payment_status: src.payment_status,
               approval_status: EXPENSE_APPROVED,
@@ -104,6 +108,8 @@ export class FinanceRecurringCron {
               branchId: created.branch_id ?? undefined,
               expenseDate: created.expense_date,
               totalAmount: toNumber(created.total_amount),
+              paidAmount: created.paid_amount != null ? toNumber(created.paid_amount) : created.payment_status === 'مدفوع' ? toNumber(created.total_amount) : 0,
+              payments: Array.isArray(created.payments) ? created.payments as unknown as { method: string; amount: number }[] : undefined,
               paymentMethod: created.payment_method,
               createdBy,
             },

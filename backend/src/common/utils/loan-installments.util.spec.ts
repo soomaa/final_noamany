@@ -1,25 +1,36 @@
-import {
-  buildLoanInstallments,
-  khsmToDateM,
-  resolveLoanInstallmentCount,
-} from './loan-installments.util';
+import { addCalendarMonths, buildLoanInstallments, khsmToDateM } from './loan-installments.util';
 
-describe('legacy loan installment rules', () => {
-  it.each([1, 2])('forces repayment method %s to one installment', (method) => {
-    expect(resolveLoanInstallmentCount(method, 12)).toBe(1);
+describe('loan installment calendar dates', () => {
+  it('caps month-end installments instead of skipping February', () => {
+    expect(addCalendarMonths('2026-01-31', 1)).toBe('2026-02-28');
+    expect(addCalendarMonths('2028-01-31', 1)).toBe('2028-02-29');
+    expect(addCalendarMonths('2026-12-31', 1)).toBe('2027-01-31');
+    expect(addCalendarMonths('2026-02-28', 1)).toBe('2026-03-31');
+    expect(addCalendarMonths('2026-01-30', 1)).toBe('2026-02-28');
   });
 
-  it('keeps the requested count for monthly payroll deduction', () => {
-    expect(resolveLoanInstallmentCount(3, 6)).toBe(6);
+  it('builds deterministic month/year values from date-only input', () => {
+    const rows = buildLoanInstallments(300, 3, '2026-12-31');
+    expect(rows.map((row) => [row.dueDate, row.month, row.year])).toEqual([
+      ['2026-12-31', 12, 2026],
+      ['2027-01-31', 1, 2027],
+      ['2027-02-28', 2, 2027],
+    ]);
+    expect(khsmToDateM('2026-12-31', 3)).toBe('2027-02-28');
   });
 
-  it('creates the schedule immediately from the deduction start date', () => {
-    const schedule = buildLoanInstallments(1000, 6, '2026-08-11');
+  it('keeps canonical Cairo due-date epochs aligned across the DST boundary', () => {
+    const rows = buildLoanInstallments(200, 2, '2026-03-31');
+    expect(rows.map((row) => row.dueDate)).toEqual(['2026-03-31', '2026-04-30']);
+    expect(rows.map((row) => new Date(Number(row.qstDate) * 1000).toISOString())).toEqual([
+      '2026-03-30T22:00:00.000Z',
+      '2026-04-29T21:00:00.000Z',
+    ]);
+  });
 
-    expect(schedule).toHaveLength(6);
-    expect(schedule[0]).toMatchObject({ dueDate: '2026-08-11', amount: 167, month: 8, year: 2026 });
-    expect(schedule[5]).toMatchObject({ dueDate: '2027-01-11', amount: 165, month: 1, year: 2027 });
-    expect(schedule.reduce((sum, installment) => sum + installment.amount, 0)).toBe(1000);
-    expect(khsmToDateM('2026-08-11', 6)).toBe('2027-01-11');
+  it('fails closed for invalid date-only input', () => {
+    expect(() => addCalendarMonths('2026-02-30', 1)).toThrow('التاريخ غير صحيح');
+    expect(() => buildLoanInstallments(100, 2, 'not-a-date')).toThrow();
+    expect(() => khsmToDateM('2026-13-01', 2)).toThrow();
   });
 });

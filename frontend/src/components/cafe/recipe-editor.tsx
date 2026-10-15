@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { Check, ChevronsUpDown, Plus, Search, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
@@ -18,6 +19,8 @@ import type { InventorySection } from '@/types/inventory';
 import { cafeUnitLabel, compatibleCafeUnitOptions, convertCafeUnit, defaultCafeRecipeUnit } from '@/lib/cafe-units';
 import { cn } from '@/lib/utils';
 import { InlineRawMaterialDialog } from './inline-raw-material-dialog';
+import { recipeIngredientOptionsForLine } from '@/lib/cafe-recipe-options';
+import { uiStatic } from '@/lib/ui-static';
 
 export interface RecipeLine {
   ingredientId: number;
@@ -34,6 +37,7 @@ export interface RecipeIngredientOption {
   costPrice?: number;
   inventorySection?: InventorySection;
   inventoryKind?: 'general' | 'raw_material' | 'ready_product' | 'manufactured_internal';
+  isSelectable?: boolean;
 }
 
 interface RecipeEditorProps {
@@ -68,9 +72,9 @@ function normalizeIngredientSearch(value: string) {
     .toLocaleLowerCase('ar')
     .normalize('NFD')
     .replace(/[\u064b-\u065f\u0670]/g, '')
-    .replace(/[أإآ]/g, 'ا')
-    .replace(/ى/g, 'ي')
-    .replace(/ة/g, 'ه')
+    .replace(/[أإآ]/g, uiStatic('ا'))
+    .replace(/ى/g, uiStatic('ي'))
+    .replace(/ة/g, uiStatic('ه'))
     .replace(/\s+/g, ' ');
 }
 
@@ -152,7 +156,10 @@ function IngredientCombobox({
         setOpen(nextOpen);
         if (!nextOpen) setQuery('');
       }}
-      modal={false}
+      // This combobox is portalled from inside a modal Dialog. Keeping the
+      // popover modal gives it the active scroll lock, so wheel and touch
+      // gestures reach the long results list instead of being blocked.
+      modal
     >
       <PopoverTrigger asChild>
         <Button
@@ -201,10 +208,10 @@ function IngredientCombobox({
             />
           </div>
           <p className="mt-2 px-1 text-xs text-muted-foreground">
-            {resultCount} {ui('عنصر متاح — اختر من القسم المناسب')}
+            {formatDisplayNumber(resultCount)} {ui('عنصر متاح — اختر من القسم المناسب')}
           </p>
         </div>
-        <div className="max-h-[24rem] space-y-2 overflow-y-auto bg-muted/15 p-2">
+        <div className="max-h-[24rem] touch-pan-y space-y-2 overflow-y-auto overscroll-contain bg-muted/15 p-2 [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch]">
           {filteredGroups.length === 0 ? (
             <p className="rounded-xl border border-dashed bg-background py-10 text-center text-sm text-muted-foreground">
               {ui('لا توجد خامة مطابقة للبحث')}
@@ -219,7 +226,7 @@ function IngredientCombobox({
                     {meta.label}
                   </span>
                   <span className="rounded-full bg-background/70 px-2 py-0.5 text-xs font-bold">
-                    {group.options.length}
+                    {formatDisplayNumber(group.options.length)}
                   </span>
                 </div>
                 <div className="grid gap-1 p-1.5">
@@ -321,7 +328,7 @@ export function RecipeEditor({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Label>{ui('مكونات الوصفة')}</Label>
         <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" onClick={addLine} disabled={disabled}>
+          <Button permissionAction={null} type="button" variant="outline" size="sm" onClick={addLine} disabled={disabled}>
             <Plus className="me-1 size-4" />
             {ui('إضافة مكون / Addition')}
           </Button>
@@ -357,7 +364,7 @@ export function RecipeEditor({
                       unit: defaultCafeRecipeUnit(selected?.unitOfMeasure ?? 'piece'),
                     });
                   }}
-                  options={ingredientOptions}
+                  options={recipeIngredientOptionsForLine(ingredientOptions, line.ingredientId)}
                   placeholder={ui('اختر عنصر المخزون')}
                   disabled={disabled}
                 />
@@ -397,7 +404,7 @@ export function RecipeEditor({
                   <SelectContent>
                     {compatibleCafeUnitOptions(ingredient?.unitOfMeasure ?? line.unit).map((u) => (
                       <SelectItem key={u.value} value={u.value}>
-                        {u.label}
+                        {ui(u.label)}
                       </SelectItem>
                     ))}
                   </SelectContent>

@@ -1,3 +1,6 @@
+import { PosEmployeeOptionsController } from './pos-employee-options.controller';
+import { PosStockWatchController } from './pos-stock-watch.controller';
+import { PosStockWatchService } from './pos-stock-watch.service';
 import { Module } from '@nestjs/common';
 import { AccountingModule } from '../accounting/accounting.module';
 import { InventoryModule } from '../inventory/inventory.module';
@@ -21,10 +24,12 @@ import { PosInvoiceTemplatesService, PosPaymentMethodsService } from './pos-admi
 import { PosNotificationRulesService, PosReportTemplatesService, PosSettingsService } from './pos-admin/pos-reports-notifications.service';
 import { BillingStatementsController } from './billing-statements.controller';
 import { BillingStatementsService } from './billing-statements.service';
+import { CafeBundlesModule } from '../cafe/cafe-bundles.module';
 
 @Module({
-  imports: [InventoryModule, AccountingModule, AuthModule],
-  controllers: [
+  imports: [InventoryModule, AccountingModule, AuthModule, CafeBundlesModule],
+  controllers: [PosEmployeeOptionsController,
+    PosStockWatchController,
     QuickSalesController,
     ShiftsController,
     ShiftSessionsController,
@@ -39,6 +44,7 @@ import { BillingStatementsService } from './billing-statements.service';
   ],
   providers: [
     QuickSalesService,
+    PosStockWatchService,
     ShiftsService,
     ShiftSessionsService,
     ShiftWindowService,

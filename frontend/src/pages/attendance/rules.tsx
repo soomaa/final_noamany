@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/common/page-header';
+import { NotImplementedState } from '@/components/common/states';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -8,8 +9,10 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { api, apiError } from '@/lib/api';
 import { getAttendanceRules } from '@/lib/i18n-constants';
+import { isNotImplemented } from '@/lib/api-hooks';
 import { useQuery } from '@tanstack/react-query';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 interface RuleConfig {
   key: string;
@@ -21,8 +24,10 @@ interface RuleConfig {
 
 export function AttendanceRulesPage() {
   const { t, ui } = useLocale();
+  const { can } = usePermission();
+  const canConfigure = can('attendance.rules:configure');
   const attendanceRules = useMemo(() => getAttendanceRules(t), [t]);
-  const { data, refetch } = useQuery({
+  const { data, isError, error, refetch } = useQuery({
     queryKey: ['attendance', 'rules'],
     queryFn: async () => {
       const { data: rules } = await api.get<RuleConfig[]>('/attendance/rules');
@@ -43,6 +48,7 @@ export function AttendanceRulesPage() {
   };
 
   const saveAll = async () => {
+    if (!canConfigure) return;
     try {
       const payload = attendanceRules.map((r) => getRule(r.key));
       await api.patch('/attendance/rules', { rules: payload });
@@ -53,12 +59,40 @@ export function AttendanceRulesPage() {
     }
   };
 
+  if (isError && isNotImplemented(error)) {
+    return (
+      <div>
+        <PageHeader title={ui('قواعد الدوام')} />
+        <NotImplementedState title={ui('قواعد الدوام قيد الإعداد — يمكنك ضبط القواعد محلياً حتى يكتمل الخادم')} />
+        <div className="mt-6 grid gap-4 md:grid-cols-2">
+          {attendanceRules.map((rule) => {
+            const cfg = getRule(rule.key);
+            return (
+              <Card key={rule.key}>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-base">{rule.label}</CardTitle>
+                  <Switch disabled={!canConfigure} checked={cfg.enabled} onCheckedChange={(v) => updateRule(rule.key, { enabled: v })} />
+                </CardHeader>
+                <CardContent className="grid gap-3 sm:grid-cols-3">
+                  <div><Label className="text-xs">{ui('الحد (د)')}</Label><Input className="mt-1 nums" value={cfg.threshold ?? ''} onChange={(e) => updateRule(rule.key, { threshold: e.target.value })} /></div>
+                  <div><Label className="text-xs">{ui('سماحية')}</Label><Input className="mt-1 nums" value={cfg.graceMin ?? ''} onChange={(e) => updateRule(rule.key, { graceMin: e.target.value })} /></div>
+                  <div><Label className="text-xs">{ui('المعامل')}</Label><Input className="mt-1 nums" value={cfg.multiplier ?? ''} onChange={(e) => updateRule(rule.key, { multiplier: e.target.value })} /></div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+        {canConfigure ? <Button permissionAction="configure" className="mt-6" onClick={() => void saveAll()}>{ui('حفظ القواعد')}</Button> : null}
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         title={ui('قواعد الدوام')}
         description={ui('التأخير · الانصراف المبكر · الغياب · الإضافي · الراحة الأسبوعية · العطلات · الساعات المرنة')}
-        actions={<Button onClick={() => void saveAll()}>{ui('حفظ الكل')}</Button>}
+        actions={canConfigure ? <Button permissionAction="configure" onClick={() => void saveAll()}>{ui('حفظ الكل')}</Button> : undefined}
       />
       <div className="grid gap-4 md:grid-cols-2">
         {attendanceRules.map((rule) => {
@@ -67,7 +101,7 @@ export function AttendanceRulesPage() {
             <Card key={rule.key}>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="text-base">{rule.label}</CardTitle>
-                <Switch checked={cfg.enabled} onCheckedChange={(v) => updateRule(rule.key, { enabled: v })} />
+                <Switch disabled={!canConfigure} checked={cfg.enabled} onCheckedChange={(v) => updateRule(rule.key, { enabled: v })} />
               </CardHeader>
               <CardContent className="grid gap-3 sm:grid-cols-3">
                 <div><Label className="text-xs">{ui('الحد (د)')}</Label><Input className="mt-1 nums" value={cfg.threshold ?? ''} onChange={(e) => updateRule(rule.key, { threshold: e.target.value })} /></div>

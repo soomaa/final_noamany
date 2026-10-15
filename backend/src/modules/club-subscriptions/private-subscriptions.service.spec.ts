@@ -122,16 +122,18 @@ describe('PrivateSubscriptionsService package branch scope', () => {
       trainerId: 30,
       discountValue: 0,
       paidAmount: 500,
+      notes: 'ملاحظة للعضو في البرايفت',
     }, user);
 
     expect(subscriptions.create).toHaveBeenCalledWith(
       expect.objectContaining({
         privatePackageId: 20,
+        notes: 'ملاحظة للعضو في البرايفت',
         privateTrainerId: 30,
         isSpecial: true,
         isLinkedToSessions: true,
       }),
-      7,
+      user,
       { privateEnrollment: true },
     );
   });

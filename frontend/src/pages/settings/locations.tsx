@@ -17,6 +17,7 @@ import { Label } from '@/components/ui/label';
 import { api, apiError } from '@/lib/api';
 import { confirm } from '@/lib/confirm';
 import { cn, toArabicDigits } from '@/lib/utils';
+import { usePermission } from '@/hooks/use-permission';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
 
@@ -46,7 +47,11 @@ interface DialogState {
 
 export function LocationsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
   const queryClient = useQueryClient();
+  const canCreate = can('admin.locations:create');
+  const canUpdate = can('admin.locations:update');
+  const canDelete = can('admin.locations:delete');
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['locations', 'tree'],
@@ -98,6 +103,7 @@ export function LocationsPage() {
 
   const save = async () => {
     if (!dialog) return;
+    if (dialog.id ? !canUpdate : !canCreate) return;
     if (!dialog.name.trim()) {
       toast.error(ui('الاسم مطلوب'));
       return;
@@ -125,6 +131,7 @@ export function LocationsPage() {
   };
 
   const remove = async (node: LocationNode) => {
+    if (!canDelete) return;
     const ok = await confirm({
       title: `${ui('حذف')} ${TYPE_LABELS[node.type ?? 'country']}`,
       description: `${ui('هل تريد حذف «')}${node.name ?? ''}${ui('»؟')}`,
@@ -182,9 +189,9 @@ export function LocationsPage() {
               loading={isLoading}
               selectedId={countryId}
               onSelect={selectCountry}
-              onAdd={() => openAdd('country', null)}
-              onEdit={openEdit}
-              onDelete={remove}
+              onAdd={canCreate ? () => openAdd('country', null) : undefined}
+              onEdit={canUpdate ? openEdit : undefined}
+              onDelete={canDelete ? remove : undefined}
               emptyText={ui('لا توجد دول بعد')}
             />
             <LocationColumn
@@ -194,9 +201,9 @@ export function LocationsPage() {
               loading={false}
               selectedId={cityId}
               onSelect={setCityId}
-              onAdd={selectedCountry ? () => openAdd('city', selectedCountry.id) : undefined}
-              onEdit={openEdit}
-              onDelete={remove}
+              onAdd={canCreate && selectedCountry ? () => openAdd('city', selectedCountry.id) : undefined}
+              onEdit={canUpdate ? openEdit : undefined}
+              onDelete={canDelete ? remove : undefined}
               placeholder={ui('اختر دولة لعرض مدنها')}
               hasParent={!!selectedCountry}
               emptyText={ui('لا توجد مدن لهذه الدولة')}
@@ -207,9 +214,9 @@ export function LocationsPage() {
               nodes={regions}
               loading={false}
               selectedId={null}
-              onAdd={selectedCity ? () => openAdd('region', selectedCity.id) : undefined}
-              onEdit={openEdit}
-              onDelete={remove}
+              onAdd={canCreate && selectedCity ? () => openAdd('region', selectedCity.id) : undefined}
+              onEdit={canUpdate ? openEdit : undefined}
+              onDelete={canDelete ? remove : undefined}
               placeholder={ui('اختر مدينة لعرض مناطقها')}
               hasParent={!!selectedCity}
               emptyText={ui('لا توجد مناطق لهذه المدينة')}
@@ -244,9 +251,11 @@ export function LocationsPage() {
             <Button variant="outline" onClick={() => setDialog(null)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()} disabled={saving}>
-              {ui('حفظ')}
-            </Button>
+            {(dialog?.id ? canUpdate : canCreate) && (
+              <Button permissionAction={dialog?.id ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>
+                {ui('حفظ')}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -262,8 +271,8 @@ interface LocationColumnProps {
   selectedId: number | null;
   onSelect?: (id: number) => void;
   onAdd?: () => void;
-  onEdit: (node: LocationNode) => void;
-  onDelete: (node: LocationNode) => void;
+  onEdit?: (node: LocationNode) => void;
+  onDelete?: (node: LocationNode) => void;
   placeholder?: string;
   hasParent?: boolean;
   emptyText: string;
@@ -314,30 +323,36 @@ function LocationColumn({ title,
                 {onSelect && <ChevronLeft className="size-4 shrink-0 text-muted-foreground" />}
                 <span className="truncate">{node.name ?? '—'}</span>
               </span>
-              <span className="flex shrink-0 items-center gap-0.5">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={ui('تعديل')}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onEdit(node);
-                  }}
-                >
-                  <Pencil className="size-4" />
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={ui('حذف')}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    void onDelete(node);
-                  }}
-                >
-                  <Trash2 className="size-4 text-destructive" />
-                </Button>
-              </span>
+              {(onEdit || onDelete) && (
+                <span className="flex shrink-0 items-center gap-0.5">
+                  {onEdit && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={ui('تعديل')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onEdit(node);
+                      }}
+                    >
+                      <Pencil className="size-4" />
+                    </Button>
+                  )}
+                  {onDelete && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label={ui('حذف')}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onDelete(node);
+                      }}
+                    >
+                      <Trash2 className="size-4 text-destructive" />
+                    </Button>
+                  )}
+                </span>
+              )}
             </div>
           ))
         )}

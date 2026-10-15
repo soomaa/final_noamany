@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { cairoDateString, cairoTimeString } from '../../common/utils/cairo-date';
 
 export interface PushPayload {
   title: string;
@@ -60,8 +61,8 @@ export class PushService {
     fromUserId?: number,
   ): Promise<SendResult> {
     const now = new Date();
-    const dateAr = now.toISOString().slice(0, 10); // 'YYYY-MM-DD'
-    const timeAr = now.toTimeString().slice(0, 5); // 'HH:MM'
+    const dateAr = cairoDateString(now);
+    const timeAr = cairoTimeString(now);
     const message = body ? `${title} — ${body}` : title;
 
     let sent = 0;

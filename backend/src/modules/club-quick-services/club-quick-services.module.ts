@@ -1,10 +1,11 @@
 import { Module } from '@nestjs/common';
 import { ClubSubscriptionsModule } from '../club-subscriptions/club-subscriptions.module';
+import { ClubSalesModule } from '../club-sales/club-sales.module';
 import { ClubQuickServicesController } from './club-quick-services.controller';
 import { ClubQuickServicesService } from './club-quick-services.service';
 
 @Module({
-  imports: [ClubSubscriptionsModule],
+  imports: [ClubSubscriptionsModule, ClubSalesModule],
   controllers: [ClubQuickServicesController],
   providers: [ClubQuickServicesService],
   exports: [ClubQuickServicesService],

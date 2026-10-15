@@ -10,10 +10,21 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { api } from '@/lib/api';
 import { afterMenuClose } from '@/lib/confirm';
+import { useLocation } from 'react-router-dom';
+import { usePermission } from '@/hooks/use-permission';
 
 import type { ColumnDef } from '@tanstack/react-table';
 import { MemberCell } from '@/components/club/member-cell';
-import type { MemberRowFields } from '@/types/fitness';
+import type { InbodyMeasurementRow, MemberRowFields } from '@/types/fitness';
+import { uiStatic } from '@/lib/ui-static';
+
+export const INBODY_SETTLEMENT_LABELS: Record<InbodyMeasurementRow['settlementSource'], string> = {
+  subscription: uiStatic('ضمن اشتراك الجيم'),
+  package: uiStatic('من باقة InBody'),
+  package_purchase: uiStatic('شراء باقة InBody'),
+  paid_single: uiStatic('قياس مدفوع'),
+  legacy: uiStatic('سجل سابق'),
+};
 export function memberColumnDef<T extends MemberRowFields & { customerName?: string | null }>(
   header: string,
 ): ColumnDef<T> {
@@ -80,11 +91,17 @@ export function jsonArrayToLines(value: unknown): string {
 interface RowActionsProps {
   editLabel: string;
   deleteLabel: string;
-  onEdit: () => void;
-  onDelete: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }
 
 export function RowActions({ editLabel, deleteLabel, onEdit, onDelete }: RowActionsProps) {
+  const { pathname } = useLocation();
+  const { can, isReady, hasError, resourceForRoute } = usePermission();
+  const resource = resourceForRoute(pathname);
+  const showEdit = Boolean(onEdit && isReady && !hasError && resource && can(`${resource}:update`));
+  const showDelete = Boolean(onDelete && isReady && !hasError && resource && can(`${resource}:delete`));
+  if (!showEdit && !showDelete) return null;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -93,13 +110,13 @@ export function RowActions({ editLabel, deleteLabel, onEdit, onDelete }: RowActi
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        <DropdownMenuItem onSelect={() => afterMenuClose(onEdit)}>
+        {showEdit && onEdit ? <DropdownMenuItem onSelect={() => afterMenuClose(onEdit)}>
           <Pencil className="size-4" /> {editLabel}
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem className="text-destructive" onSelect={() => afterMenuClose(onDelete)}>
+        </DropdownMenuItem> : null}
+        {showEdit && showDelete ? <DropdownMenuSeparator /> : null}
+        {showDelete && onDelete ? <DropdownMenuItem className="text-destructive" onSelect={() => afterMenuClose(onDelete)}>
           <Trash2 className="size-4" /> {deleteLabel}
-        </DropdownMenuItem>
+        </DropdownMenuItem> : null}
       </DropdownMenuContent>
     </DropdownMenu>
   );

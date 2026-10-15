@@ -1,0 +1,1 @@
+import{t as o,i as e}from"./index-BaoRHNB2.js";import"./input-DB6XSItX.js";import"./api-hooks-DV2pG7b3.js";import"./data-table-BPyaf8zU.js";import"./card-CPkenXbO.js";function c(i,t){return{id:"index",header:e("م"),cell:({row:r})=>o((i-1)*t+r.index+1)}}export{c as i};

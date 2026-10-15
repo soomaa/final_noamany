@@ -33,14 +33,14 @@ export class WebhookDeliveryService {
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
-      'User-Agent': 'Noamany-Webhooks/1.0',
-      'X-Noamany-Event': delivery.event_type,
-      'X-Noamany-Delivery': String(delivery.id),
-      'X-Noamany-Timestamp': timestamp,
+      'User-Agent': 'ONE80-Webhooks/1.0',
+      'X-ONE80-Event': delivery.event_type,
+      'X-ONE80-Delivery': String(delivery.id),
+      'X-ONE80-Timestamp': timestamp,
     };
 
     if (delivery.endpoint.secret) {
-      headers['X-Noamany-Signature'] = signWebhookPayload(
+      headers['X-ONE80-Signature'] = signWebhookPayload(
         delivery.endpoint.secret,
         timestamp,
         rawBody,

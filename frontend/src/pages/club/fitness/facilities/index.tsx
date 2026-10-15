@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
 import { useFitnessT } from '@/hooks/use-fitness-t';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
@@ -21,6 +22,10 @@ import { RowActions, SELECT_CLS } from '../shared';
 
 export function FitnessFacilitiesPage() {
   const ft = useFitnessT();
+  const { can } = usePermission();
+  const canCreate = can('club.fitness.facilities:create');
+  const canUpdate = can('club.fitness.facilities:update');
+  const canDelete = can('club.fitness.facilities:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<ClubFacilityRow>('club-facilities', params);
   const { data: branches } = useBranches();
@@ -47,6 +52,7 @@ export function FitnessFacilitiesPage() {
   );
 
   const openCreate = () => {
+    if (!canCreate) return;
     setEditId(null);
     setForm({
       name: '',
@@ -60,6 +66,7 @@ export function FitnessFacilitiesPage() {
   };
 
   const openEdit = (row: ClubFacilityRow) => {
+    if (!canUpdate) return;
     setEditId(row.id);
     setForm({
       name: row.name,
@@ -73,6 +80,7 @@ export function FitnessFacilitiesPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.name.trim() || !form.branchId) {
       toast.error(ft('common.name'));
       return;
@@ -115,35 +123,36 @@ export function FitnessFacilitiesPage() {
       {
         id: 'actions',
         header: ft('common.actions'),
-        cell: ({ row }) => (
+        cell: ({ row }) => !canUpdate && !canDelete ? null : (
           <RowActions
             editLabel={ft('common.edit')}
             deleteLabel={ft('common.delete')}
-            onEdit={() => openEdit(row.original)}
-            onDelete={() =>
+            onEdit={canUpdate ? () => openEdit(row.original) : undefined}
+            onDelete={canDelete ? () =>
               void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
-                if (ok) deleteMutation.mutate(row.original.id);
+                if (ok && canDelete) deleteMutation.mutate(row.original.id);
               })
-            }
+            : undefined}
           />
         ),
       },
     ],
-    [ft],
+    [ft, canUpdate, canDelete, deleteMutation],
   );
 
   return (
     <div className="space-y-6">
       <PageHeader
         title={ft('facilities.title')}
-        actions={
+        actions={canCreate ? (
           <Button variant="brand" onClick={openCreate}>
             <Plus className="size-4" /> {ft('facilities.newFacility')}
           </Button>
-        }
+        ) : undefined}
       />
       <FilterBar fields={filters} />
       <DataTable
+        exportSource={{ resource: 'club-facilities', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -158,7 +167,7 @@ export function FitnessFacilitiesPage() {
         onRetry={() => void refetch()}
         emptyTitle={ft('common.noData')}
       />
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open && (editId ? canUpdate : canCreate)} onOpenChange={setOpen}>
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editId ? ft('common.edit') : ft('facilities.newFacility')}</DialogTitle>
@@ -187,7 +196,7 @@ export function FitnessFacilitiesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
+            <Button variant="brand" permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

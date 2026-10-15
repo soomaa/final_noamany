@@ -1,0 +1,24 @@
+{
+  "common": {
+    "user": "مستخدم", "unknownInitial": "؟", "close": "إغلاق",
+    "searchPlaceholder": "بحث عن موظف، قسم، تقرير…", "noNotifications": "لا توجد إشعارات جديدة",
+    "viewAllNotifications": "عرض كل الإشعارات", "profile": "الملف الشخصي", "logout": "تسجيل الخروج",
+    "notifications": "الإشعارات", "menu": "القائمة", "toggleTheme": "تبديل المظهر",
+    "toggleLanguage": "تبديل اللغة", "lightMode": "الوضع الفاتح", "darkMode": "الوضع الداكن",
+    "arabic": "العربية", "english": "English", "morning": "صباحاً", "evening": "مساءً"
+  },
+  "greeting": { "morning": "صباح الخير", "afternoon": "مساء الخير", "night": "مساء النور" },
+  "levels": { "1": "مدير على النظام", "2": "موظف على النظام", "3": "مدير فرع أو إدارة" },
+  "login": {
+    "badge": "منصّة إدارة الموارد البشرية", "titlePrefix": "إدارة متكاملة لـ", "rotate1": "الموظفين",
+    "rotate2": "الحضور", "rotate3": "الإجازات", "rotate4": "الرواتب", "rotate5": "الطلبات", "rotate6": "التقارير",
+    "subtitle": "منصة موحدة لإدارة الموظفين والحضور والإجازات والرواتب والعمليات في مكان واحد.",
+    "feature1": "موظفون · فروع · هيكل تنظيمي", "feature2": "حضور · إجازات · طلبات",
+    "feature3": "رواتب · تقارير · عمليات", "formTitle": "تسجيل الدخول",
+    "formSubtitle": "مرحباً بك — أدخل بيانات حسابك للمتابعة", "username": "اسم المستخدم",
+    "password": "كلمة المرور", "usernameRequired": "اسم المستخدم مطلوب", "passwordRequired": "كلمة المرور مطلوبة",
+    "showPassword": "إظهار كلمة المرور", "hidePassword": "إخفاء كلمة المرور", "submit": "دخول إلى النظام",
+    "success": "تم تسجيل الدخول بنجاح", "error": "بيانات الدخول غير صحيحة", "copyright": "© {{year}} نظام الموارد البشرية"
+  },
+  "app": { "title": "إدارة الموارد البشرية" }
+}

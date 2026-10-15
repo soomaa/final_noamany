@@ -57,6 +57,7 @@ function ReturnsTab() {
         </Button>
       </div>
       <DataTable
+        exportSource={{ resource: 'purchase-returns', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -176,6 +177,7 @@ function DebitNotesTab() {
         </Button>
       </div>
       <DataTable
+        exportSource={{ resource: 'debit-notes', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}

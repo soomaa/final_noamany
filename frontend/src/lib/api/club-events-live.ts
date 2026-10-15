@@ -47,9 +47,6 @@ export const clubEventsLiveApi = {
   listRecentAttendees: (eventId: number | string) =>
     api.get(`/club-events/${eventId}/live/attendees/recent`).then((r) => r.data),
 
-  listPrivateRecentAttendees: (eventId: number | string) =>
-    api.get(`/club-events/${eventId}/live/attendees/recent-private`).then((r) => r.data),
-
   guestCheckin: (
     eventId: number | string,
     data: { name: string; phone: string; title?: string | null; source?: string },

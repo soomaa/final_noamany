@@ -1,3 +1,4 @@
+import { formatMoneyNumber } from '@/lib/formatters';
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   AlertTriangle,
@@ -47,6 +48,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBranches } from "@/hooks/use-branches";
 import { useCurrentShiftSession } from "@/hooks/use-shift-session";
+import { usePermission } from "@/hooks/use-permission";
 import { api, apiError } from "@/lib/api";
 import { formatDateTime, formatTime, localToday } from "@/lib/formatters";
 import { confirm, confirmWithPreview } from "@/lib/confirm";
@@ -146,6 +148,10 @@ const SHIFT_TIME_PRESETS = [
 
 export function SalesShiftsPage() {
   const { ui, locale } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can("gym-sales.sales.shifts:create");
+  const canUpdate = can("gym-sales.sales.shifts:update");
+  const canDelete = can("gym-sales.sales.shifts:delete");
   const queryClient = useQueryClient();
   const { data: branches } = useBranches();
   const [branchFilter, setBranchFilter] = useState("");
@@ -249,6 +255,7 @@ export function SalesShiftsPage() {
     totalCash: number;
     expectedClosingBalance: number | null;
   }) => {
+    if (!canUpdate) return;
     const expected =
       session.expectedClosingBalance ??
       session.totalCash + session.openingBalance;
@@ -270,8 +277,9 @@ export function SalesShiftsPage() {
   );
 
   const deleteShiftTemplate = async (shift: ShiftRow) => {
+    if (!canDelete) return;
     const accepted = await confirm({
-      title: ui(`حذف قالب «${shift.shiftName}»؟`),
+      title: `${ui('حذف قالب «')}${shift.shiftName}${ui('»؟')}`,
       description: ui(
         "سيختفي القالب من قائمة الورديات ولن يمكن فتح جلسات جديدة منه. سجلات الورديات والمبيعات السابقة ستظل محفوظة.",
       ),
@@ -322,9 +330,10 @@ export function SalesShiftsPage() {
       {
         id: "actions",
         header: ui("إجراء"),
-        cell: ({ row }) => (
+        cell: ({ row }) => !canUpdate && !canDelete ? null : (
           <div className="flex items-center gap-1">
-            <Button
+            {canUpdate ? <Button
+              permissionAction="update"
               variant="ghost"
               size="sm"
               onClick={() => {
@@ -344,8 +353,9 @@ export function SalesShiftsPage() {
             >
               <Pencil className="ms-1 h-3 w-3" />
               {ui("تعديل")}
-            </Button>
-            <Button
+            </Button> : null}
+            {canDelete ? <Button
+              permissionAction="delete"
               variant="ghost"
               size="sm"
               className="text-destructive hover:bg-destructive/10 hover:text-destructive"
@@ -354,16 +364,16 @@ export function SalesShiftsPage() {
             >
               <Trash2 className="ms-1 size-3.5" />
               {ui("حذف")}
-            </Button>
+            </Button> : null}
           </div>
         ),
       },
     ],
-    [deleteMutation, effectiveBranch, params.page, params.pageSize, ui],
+    [canDelete, canUpdate, deleteMutation, effectiveBranch, params.page, params.pageSize, ui],
   );
 
   const startSession = async () => {
-    if (!startShiftId || !effectiveBranch || startingSession) return;
+    if (!canCreate || !startShiftId || !effectiveBranch || startingSession) return;
     setStartingSession(true);
     try {
       await api.post("/shift-sessions/start", {
@@ -382,7 +392,7 @@ export function SalesShiftsPage() {
   };
 
   const closeSession = async () => {
-    if (!closeId || closingSession) return;
+    if (!canUpdate || !closeId || closingSession) return;
     if (
       Math.abs(
         Number(cashDropAmount) +
@@ -450,7 +460,7 @@ export function SalesShiftsPage() {
   };
 
   const createShift = async () => {
-    if (creatingShift) return;
+    if ((editingShiftId ? !canUpdate : !canCreate) || creatingShift) return;
     setCreatingShift(true);
     try {
       const payload = {
@@ -494,7 +504,8 @@ export function SalesShiftsPage() {
       )}
       actions={
         <div className="flex gap-2">
-          <Button
+          {canCreate ? <Button
+            permissionAction="create"
             variant="outline"
             onClick={() => {
               setEditingShiftId(null);
@@ -512,14 +523,15 @@ export function SalesShiftsPage() {
           >
             <Plus className="ms-1 h-4 w-4" />
             {ui("وردية جديدة")}
-          </Button>
-          <Button
+          </Button> : null}
+          {canCreate ? <Button
+            permissionAction="create"
             onClick={() => setShiftOpen(true)}
             disabled={!!currentSession}
           >
             <Play className="ms-1 h-4 w-4" />
             {ui("فتح جلسة")}
-          </Button>
+          </Button> : null}
         </div>
       }
     >
@@ -603,7 +615,8 @@ export function SalesShiftsPage() {
                 </div>
 
                 <div className="flex shrink-0 flex-col gap-2 sm:flex-row lg:flex-col xl:flex-row">
-                  <Button
+                  {canUpdate ? <Button
+                    permissionAction="update"
                     type="button"
                     size="lg"
                     className="h-12 gap-2 rounded-xl px-5 shadow-md"
@@ -615,8 +628,9 @@ export function SalesShiftsPage() {
                   >
                     <ArrowLeftRight className="size-5" />
                     {ui("تسليم وتبديل الشيفت")}
-                  </Button>
-                  <Button
+                  </Button> : null}
+                  {canUpdate ? <Button
+                    permissionAction="update"
                     type="button"
                     size="lg"
                     variant="outline"
@@ -625,7 +639,7 @@ export function SalesShiftsPage() {
                   >
                     <Square className="size-4" />
                     {ui("إغلاق اليوم")}
-                  </Button>
+                  </Button> : null}
                 </div>
               </div>
 
@@ -726,10 +740,10 @@ export function SalesShiftsPage() {
                   </p>
                 </div>
               </div>
-              <Button onClick={() => setShiftOpen(true)}>
+              {canCreate ? <Button permissionAction="create" onClick={() => setShiftOpen(true)}>
                 <Play className="ms-1 size-4" />
                 {ui("فتح جلسة الآن")}
-              </Button>
+              </Button> : null}
             </section>
           )}
 
@@ -945,9 +959,7 @@ export function SalesShiftsPage() {
                     {ui("نقدي")}
                   </span>
                   <b className="nums mt-1 block">
-                    {toArabicDigits(
-                      (report?.summary.totalCash ?? 0).toFixed(2),
-                    )}
+                    {formatMoneyNumber((report?.summary.totalCash ?? 0))}
                   </b>
                 </div>
                 <div className="bg-card p-4">
@@ -955,9 +967,7 @@ export function SalesShiftsPage() {
                     {ui("بطاقات")}
                   </span>
                   <b className="nums mt-1 block">
-                    {toArabicDigits(
-                      (report?.summary.totalCard ?? 0).toFixed(2),
-                    )}
+                    {formatMoneyNumber((report?.summary.totalCard ?? 0))}
                   </b>
                 </div>
                 <div className="bg-card p-4">
@@ -965,9 +975,7 @@ export function SalesShiftsPage() {
                     {ui("محفظة")}
                   </span>
                   <b className="nums mt-1 block">
-                    {toArabicDigits(
-                      (report?.summary.totalWallet ?? 0).toFixed(2),
-                    )}
+                    {formatMoneyNumber((report?.summary.totalWallet ?? 0))}
                   </b>
                 </div>
                 <div className="bg-card p-4">
@@ -975,9 +983,7 @@ export function SalesShiftsPage() {
                     {ui("تحويل بنكي")}
                   </span>
                   <b className="nums mt-1 block">
-                    {toArabicDigits(
-                      (report?.summary.totalTransfer ?? 0).toFixed(2),
-                    )}
+                    {formatMoneyNumber((report?.summary.totalTransfer ?? 0))}
                   </b>
                 </div>
                 <div className="bg-card p-4">
@@ -985,9 +991,7 @@ export function SalesShiftsPage() {
                     {ui("مصروفات")}
                   </span>
                   <b className="nums mt-1 block text-rose-600">
-                    {toArabicDigits(
-                      (report?.summary.pettyExpenses ?? 0).toFixed(2),
-                    )}
+                    {formatMoneyNumber((report?.summary.pettyExpenses ?? 0))}
                   </b>
                 </div>
                 <div className="bg-card p-4">
@@ -995,9 +999,7 @@ export function SalesShiftsPage() {
                     {ui("توريد للخزنة")}
                   </span>
                   <b className="nums mt-1 block text-amber-600">
-                    {toArabicDigits(
-                      (report?.summary.cashDropAmount ?? 0).toFixed(2),
-                    )}
+                    {formatMoneyNumber((report?.summary.cashDropAmount ?? 0))}
                   </b>
                 </div>
               </div>
@@ -1067,29 +1069,27 @@ export function SalesShiftsPage() {
                           `#${row.userId}`}
                       </td>
                       <td className="nums text-center">
-                        {toArabicDigits(row.totalSales.toFixed(2))}
+                        {formatMoneyNumber(row.totalSales)}
                       </td>
                       <td className="nums text-center">
-                        {toArabicDigits(row.totalCash.toFixed(2))}
+                        {formatMoneyNumber(row.totalCash)}
                       </td>
                       <td className="nums text-center">
                         {row.expectedClosingBalance == null
                           ? "—"
-                          : toArabicDigits(
-                              row.expectedClosingBalance.toFixed(2),
-                            )}
+                          : formatMoneyNumber(row.expectedClosingBalance)}
                       </td>
                       <td className="nums text-center">
                         {row.closingBalance == null
                           ? "—"
-                          : toArabicDigits(row.closingBalance.toFixed(2))}
+                          : formatMoneyNumber(row.closingBalance)}
                       </td>
                       <td
                         className={`nums text-center font-bold ${(row.cashDifference ?? 0) < -0.01 ? "text-destructive" : (row.cashDifference ?? 0) > 0.01 ? "text-amber-600" : "text-emerald-600"}`}
                       >
                         {row.cashDifference == null
                           ? "—"
-                          : toArabicDigits(row.cashDifference.toFixed(2))}
+                          : formatMoneyNumber(row.cashDifference)}
                       </td>
                       <td className="text-center">
                         <Badge
@@ -1119,7 +1119,7 @@ export function SalesShiftsPage() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={shiftOpen} onOpenChange={setShiftOpen}>
+      <Dialog open={shiftOpen && canCreate} onOpenChange={setShiftOpen}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{ui("فتح جلسة وردية")}</DialogTitle>
@@ -1153,6 +1153,7 @@ export function SalesShiftsPage() {
           </div>
           <DialogFooter>
             <Button
+              permissionAction="create"
               onClick={() => void startSession()}
               disabled={startingSession}
             >
@@ -1163,7 +1164,7 @@ export function SalesShiftsPage() {
       </Dialog>
 
       <Dialog
-        open={closeId != null}
+        open={closeId != null && canUpdate}
         onOpenChange={(o) => !o && setCloseId(null)}
       >
         <DialogContent>
@@ -1213,7 +1214,7 @@ export function SalesShiftsPage() {
                 <div className="flex items-center justify-between gap-3">
                   <Label className="font-bold text-destructive">{ui("سبب عجز النقدية")}</Label>
                   <b className="nums text-sm text-destructive">
-                    -{toArabicDigits(closingShortage.toFixed(2))} EGP
+                    -{formatMoneyNumber(closingShortage)} EGP
                   </b>
                 </div>
                 <Textarea
@@ -1227,6 +1228,7 @@ export function SalesShiftsPage() {
           </div>
           <DialogFooter>
             <Button
+              permissionAction="update"
               onClick={() => void closeSession()}
               disabled={
                 closingSession ||
@@ -1240,7 +1242,7 @@ export function SalesShiftsPage() {
       </Dialog>
 
       <Dialog
-        open={createOpen}
+        open={createOpen && (editingShiftId ? canUpdate : canCreate)}
         onOpenChange={(open) => {
           setCreateOpen(open);
           if (!open) setEditingShiftId(null);
@@ -1413,7 +1415,7 @@ export function SalesShiftsPage() {
           </div>
 
           <DialogFooter className="border-t bg-muted/20 px-6 py-4 sm:justify-start">
-            <Button onClick={() => void createShift()} disabled={creatingShift}>
+            <Button permissionAction={editingShiftId ? "update" : "create"} onClick={() => void createShift()} disabled={creatingShift}>
               {ui(editingShiftId ? "حفظ التعديلات" : "حفظ الوردية")}
             </Button>
             <Button

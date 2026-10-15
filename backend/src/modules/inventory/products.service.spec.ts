@@ -91,6 +91,7 @@ describe('ProductsService quantity alerts', () => {
       manufacturer: null,
       supplier: null,
       unit_template: null,
+      packages: [],
     };
     const prisma = {
       inv_products: {
@@ -150,6 +151,58 @@ describe('ProductsService opening stock branch', () => {
     }).resolveOpeningStockBranchId();
 
     expect(branchId).toBe(3);
+  });
+});
+
+describe('ProductsService packaged raw materials', () => {
+  it('stores multiple package sizes under one base-unit material', async () => {
+    const created = { id: 77, product_code: 'SYRUP-001', name_ar: 'فانيليا' };
+    const tx = {
+      inv_products: { create: jest.fn().mockResolvedValue(created) },
+      inv_supplier_products: { create: jest.fn().mockResolvedValue({}) },
+    };
+    const prisma = {
+      inv_products: { findFirst: jest.fn().mockResolvedValue(null) },
+      $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
+    };
+    const service = new ProductsService(
+      prisma as never,
+      { applyMovement: jest.fn() } as never,
+      {} as never,
+      { ensureChart: jest.fn() } as never,
+      { resolveListFilter: () => null, isBranchAllowed: () => true } as never,
+    );
+    jest.spyOn(service, 'findOne').mockResolvedValue({ id: created.id } as never);
+
+    await service.create({
+      productCode: 'SYRUP-001',
+      nameAr: 'فانيليا',
+      inventoryKind: 'raw_material',
+      supplierId: 9,
+      isPackaged: true,
+      packages: [
+        { packageSize: 700, packageUnit: 'ml', packagePrice: 170 },
+        { packageSize: 1.25, packageUnit: 'L', packagePrice: 210 },
+      ],
+    }, 1);
+
+    expect(tx.inv_products.create).toHaveBeenCalledTimes(1);
+    expect(tx.inv_products.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        is_packaged: true,
+        unit_of_measure: 'ml',
+        cost_price: 0.242857,
+        packages: {
+          create: [
+            expect.objectContaining({ package_base_quantity: 700, package_price: 170, is_default: true }),
+            expect.objectContaining({ package_base_quantity: 1250, package_price: 210, is_default: false }),
+          ],
+        },
+      }),
+    }));
+    expect(tx.inv_supplier_products.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ product_id: 77, purchase_unit: 'package' }),
+    }));
   });
 });
 

@@ -10,9 +10,10 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { api, apiError } from '@/lib/api';
 import { confirm } from '@/lib/confirm';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { uiStatic } from '@/lib/ui-static';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 interface WebhookEndpoint {
   id: number;
@@ -54,6 +55,8 @@ const EVENT_LABELS_AR: Record<string, string> = {
 
 export function WebhooksSettingsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canManage = can('admin.webhooks:manage');
   const [name, setName] = useState('');
   const [url, setUrl] = useState('');
   const [secret, setSecret] = useState('');
@@ -83,6 +86,7 @@ export function WebhooksSettingsPage() {
   };
 
   const create = async () => {
+    if (!canManage) return;
     if (!name.trim() || !url.trim() || !selectedEvents.length) {
       toast.error(ui('أكمل الحقول المطلوبة'));
       return;
@@ -108,11 +112,13 @@ export function WebhooksSettingsPage() {
   };
 
   const toggle = async (id: number, active: boolean) => {
+    if (!canManage) return;
     await api.patch(`/webhooks/endpoints/${id}/toggle`, null, { params: { active: String(active) } });
     void refetchEndpoints();
   };
 
   const remove = async (id: number) => {
+    if (!canManage) return;
     const ok = await confirm({ title: ui('حذف Webhook؟'), variant: 'destructive' });
     if (!ok) return;
     await api.delete(`/webhooks/endpoints/${id}`);
@@ -121,6 +127,7 @@ export function WebhooksSettingsPage() {
   };
 
   const test = async (id: number) => {
+    if (!canManage) return;
     try {
       await api.post(`/webhooks/endpoints/${id}/test`);
       toast.success(ui('تم إرسال اختبار — راجع سجل التسليم'));
@@ -152,7 +159,7 @@ export function WebhooksSettingsPage() {
         </span>
       </div>
 
-      <Card>
+      {canManage ? <Card>
         <CardHeader>
           <CardTitle className="text-base">{ui('إضافة endpoint')}</CardTitle>
         </CardHeader>
@@ -171,7 +178,7 @@ export function WebhooksSettingsPage() {
               <Input
                 value={secret}
                 onChange={(e) => setSecret(e.target.value)}
-                placeholder={ui('اختياري — للتحقق X-Noamany-Signature')}
+                placeholder={ui('اختياري — للتحقق X-ONE80-Signature')}
                 dir="ltr"
                 type="password"
               />
@@ -203,7 +210,7 @@ export function WebhooksSettingsPage() {
             {ui('إضافة')}
           </Button>
         </CardContent>
-      </Card>
+      </Card> : null}
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">{ui('Endpoints')}</h2>
@@ -226,6 +233,7 @@ export function WebhooksSettingsPage() {
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     <StatusBadge status={ep.isActive ? 'active' : 'suspended'} />
+                    {canManage ? <>
                     <Button size="sm" variant="outline" onClick={() => void test(ep.id)}>
                       <Send className="size-3.5" />
                     </Button>
@@ -239,6 +247,7 @@ export function WebhooksSettingsPage() {
                     <Button size="sm" variant="destructive" onClick={() => void remove(ep.id)}>
                       <Trash2 className="size-3.5" />
                     </Button>
+                    </> : null}
                   </div>
                 </div>
               </div>
@@ -264,7 +273,7 @@ export function WebhooksSettingsPage() {
             <tbody>
               {(deliveries ?? []).map((d) => (
                 <tr key={d.id} className="border-b last:border-0">
-                  <td className="nums p-3">{toArabicDigits(d.id)}</td>
+                  <td className="nums p-3">{formatDigits(d.id)}</td>
                   <td className="p-3">{d.endpointName}</td>
                   <td className="p-3">{ui(EVENT_LABELS_AR[d.eventType] ?? d.eventType)}</td>
                   <td className="p-3">
@@ -290,7 +299,7 @@ export function WebhooksSettingsPage() {
       <Card className="border-dashed">
         <CardContent className="space-y-2 p-4 text-xs text-muted-foreground">
           <p className="font-medium text-foreground">{ui('ترويسات التوقيع')}</p>
-          <p dir="ltr">X-Noamany-Event · X-Noamany-Delivery · X-Noamany-Timestamp · X-Noamany-Signature</p>
+          <p dir="ltr">X-ONE80-Event · X-ONE80-Delivery · X-ONE80-Timestamp · X-ONE80-Signature</p>
           <p>{ui('التوقيع')}: HMAC-SHA256 {ui('على')} &quot;{'{timestamp}.{body}'}&quot;</p>
         </CardContent>
       </Card>

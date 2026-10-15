@@ -17,6 +17,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtUser } from '../../common/types/jwt-user';
 import {
   ExpenseStatisticsQueryDto,
+  ExpenseUserOptionsQueryDto,
   ListExpensesDto,
   RejectExpenseDto,
   UpsertExpenseDto,
@@ -40,6 +41,11 @@ export class ExpensesController {
   @Get('statistics')
   statistics(@Query() query: ExpenseStatisticsQueryDto, @CurrentUser() user: JwtUser) {
     return this.service.statistics(query, user);
+  }
+
+  @Get('users')
+  userOptions(@Query() query: ExpenseUserOptionsQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.userOptions(query, user);
   }
 
   @Get(':id')

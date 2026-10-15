@@ -10,9 +10,13 @@ export interface AppConfig {
   };
   bcryptRounds: number;
   uploadDir: string;
+  privateUploadDir: string;
   publicUploadBase: string;
   redis: {
     url: string | null;
+  };
+  observability: {
+    metricsToken: string | null;
   };
   payroll: {
     /** Days used to derive the daily/hourly rate (legacy fixed 30). */
@@ -21,8 +25,19 @@ export interface AppConfig {
     hoursPerDay: number;
     /** Weekly off-day used when an employee has no configured off-day. */
     defaultOffDay: string;
-    /** Employee codes exempt from absence/lateness deductions (legacy hardcoded set). */
+    /** Explicit host-supplied employee codes exempt from deductions; empty by default. */
     deductionExemptEmpCodes: number[];
+  };
+  attendance: {
+    /** Network ranges that may contain attendance devices. Empty means no outbound device access. */
+    deviceAllowedCidrs: string[];
+  };
+  dashboard: {
+    /**
+     * Virtual "parent" branches that aggregate several physical branches.
+     * No topology is inferred by the portable default.
+     */
+    branchFanout: Record<number, number[]>;
   };
 }
 
@@ -30,31 +45,36 @@ export interface AppConfig {
 function parseIntList(value: string | undefined): number[] {
   if (!value) return [];
   return value
-    .split(",")
+    .split(',')
     .map((s) => parseInt(s.trim(), 10))
     .filter((n) => Number.isFinite(n));
 }
 
-const DEV_ACCESS_FALLBACK = "dev-access-secret";
-const DEV_REFRESH_FALLBACK = "dev-refresh-secret";
+/** Parse "3=6,7,3;10=11,12" into { 3: [6,7,3], 10: [11,12] }. */
+function parseBranchFanout(value: string | undefined): Record<number, number[]> {
+  const out: Record<number, number[]> = {};
+  if (!value) return out;
+  for (const group of value.split(';')) {
+    const [key, list] = group.split('=');
+    const virtualId = parseInt((key ?? '').trim(), 10);
+    if (!Number.isFinite(virtualId)) continue;
+    out[virtualId] = parseIntList(list);
+  }
+  return out;
+}
+
+const DEV_ACCESS_FALLBACK = 'dev-access-secret';
+const DEV_REFRESH_FALLBACK = 'dev-refresh-secret';
 
 /**
  * Resolve a JWT secret. In production we refuse to boot with a missing or default
  * secret — otherwise anyone who knows the well-known dev value could forge tokens.
  */
-function resolveSecret(
-  value: string | undefined,
-  fallback: string,
-  name: string,
-): string {
-  const isProd = (process.env.NODE_ENV ?? "development") === "production";
+function resolveSecret(value: string | undefined, fallback: string, name: string): string {
+  const isProd = (process.env.NODE_ENV ?? 'development') === 'production';
   // Reject: missing, the well-known dev fallback, the shipped placeholder, or anything
   // too short/low-entropy to be a real secret. Prevents forging tokens with a known value.
-  const isPlaceholder =
-    !!value &&
-    (value.includes("<<") ||
-      value.includes("FILL") ||
-      value.includes("CHANGE"));
+  const isPlaceholder = !!value && (value.includes('<<') || value.includes('FILL') || value.includes('CHANGE'));
   const tooWeak = !!value && value.length < 32;
   if (isProd && (!value || value === fallback || isPlaceholder || tooWeak)) {
     throw new Error(
@@ -66,39 +86,43 @@ function resolveSecret(
 }
 
 export default (): AppConfig => ({
-  port: parseInt(process.env.PORT ?? "4000", 10),
-  nodeEnv: process.env.NODE_ENV ?? "development",
-  corsOrigins: (process.env.CORS_ORIGINS ?? "http://localhost:5173")
-    .split(",")
+  port: parseInt(process.env.PORT ?? '4000', 10),
+  nodeEnv: process.env.NODE_ENV ?? 'development',
+  corsOrigins: (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
+    .split(',')
     .map((o) => o.trim())
     .filter(Boolean),
   jwt: {
-    accessSecret: resolveSecret(
-      process.env.JWT_ACCESS_SECRET,
-      DEV_ACCESS_FALLBACK,
-      "JWT_ACCESS_SECRET",
-    ),
-    refreshSecret: resolveSecret(
-      process.env.JWT_REFRESH_SECRET,
-      DEV_REFRESH_FALLBACK,
-      "JWT_REFRESH_SECRET",
-    ),
-    accessTtl: process.env.JWT_ACCESS_TTL ?? "2h",
-    refreshTtl: process.env.JWT_REFRESH_TTL ?? "7d",
+    accessSecret: resolveSecret(process.env.JWT_ACCESS_SECRET, DEV_ACCESS_FALLBACK, 'JWT_ACCESS_SECRET'),
+    refreshSecret: resolveSecret(process.env.JWT_REFRESH_SECRET, DEV_REFRESH_FALLBACK, 'JWT_REFRESH_SECRET'),
+    accessTtl: process.env.JWT_ACCESS_TTL ?? '2h',
+    refreshTtl: process.env.JWT_REFRESH_TTL ?? '7d',
   },
-  bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS ?? "12", 10),
-  uploadDir: process.env.UPLOAD_DIR ?? "./uploads",
-  publicUploadBase: process.env.PUBLIC_UPLOAD_BASE ?? "/uploads",
+  bcryptRounds: parseInt(process.env.BCRYPT_ROUNDS ?? '12', 10),
+  uploadDir: process.env.UPLOAD_DIR ?? './uploads',
+  privateUploadDir: process.env.PRIVATE_UPLOAD_DIR ?? './private-uploads',
+  publicUploadBase: process.env.PUBLIC_UPLOAD_BASE ?? '/uploads',
   redis: {
     url: process.env.REDIS_URL ?? null,
   },
+  observability: {
+    metricsToken: process.env.METRICS_BEARER_TOKEN ?? null,
+  },
   payroll: {
-    workingDays: parseInt(process.env.PAYROLL_WORKING_DAYS ?? "30", 10),
-    hoursPerDay: parseInt(process.env.PAYROLL_HOURS_PER_DAY ?? "8", 10),
-    defaultOffDay: process.env.PAYROLL_DEFAULT_OFF_DAY ?? "Friday",
-    // Phase 2 will promote this to an employees.exempt_from_deductions DB column.
+    workingDays: parseInt(process.env.PAYROLL_WORKING_DAYS ?? '30', 10),
+    hoursPerDay: parseInt(process.env.PAYROLL_HOURS_PER_DAY ?? '8', 10),
+    defaultOffDay: process.env.PAYROLL_DEFAULT_OFF_DAY ?? 'Friday',
     deductionExemptEmpCodes: parseIntList(
-      process.env.PAYROLL_DEDUCTION_EXEMPT_EMP_CODES ?? "27,2,3,58,29,39",
+      process.env.PAYROLL_DEDUCTION_EXEMPT_EMP_CODES,
     ),
+  },
+  attendance: {
+    deviceAllowedCidrs: (process.env.ATTENDANCE_DEVICE_ALLOWED_CIDRS ?? '')
+      .split(',')
+      .map((cidr) => cidr.trim())
+      .filter(Boolean),
+  },
+  dashboard: {
+    branchFanout: parseBranchFanout(process.env.DASHBOARD_BRANCH_FANOUT),
   },
 });

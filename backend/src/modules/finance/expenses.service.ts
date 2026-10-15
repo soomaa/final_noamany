@@ -4,26 +4,31 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, ShiftSessionStatus } from '@prisma/client';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
-import { isReceptionEmployee } from '../../common/utils/reception-user.util';
-import { localDateString } from '../club-members/club-member.utils';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
+import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
+import { expectedDrawerBalance } from '../sales/cash-drawer.math';
+import { expensePayments } from './expense-payments';
 import {
   ExpenseStatisticsQueryDto,
+  ExpenseUserOptionsQueryDto,
   ListExpensesDto,
   RejectExpenseDto,
   UpsertExpenseDto,
 } from './dto/finance.dto';
 import {
+  createdByFilter,
+  resolveFinanceCreatorScope,
+} from './finance-user-scope';
+import {
   computeExpenseTotal,
   EXPENSE_APPROVED,
   nextFinDocNumber,
   notDeletedFilter,
-  roundMoney,
   toNumber,
 } from './finance.utils';
 
@@ -33,6 +38,7 @@ export class ExpensesService {
     private readonly prisma: PrismaService,
     private readonly moduleLedger: ModuleLedgerService,
     private readonly branchScope: BranchScopeService,
+    private readonly permissions: PermissionEngineService,
   ) {}
 
   private assertBranchAccess(user: JwtUser | undefined, branchId: number | null | undefined) {
@@ -41,27 +47,36 @@ export class ExpensesService {
     }
   }
 
+  private async assertCreatorAccess(
+    user: JwtUser | undefined,
+    createdBy: number | null | undefined,
+  ) {
+    if (!user) return;
+    const scope = await resolveFinanceCreatorScope(this.permissions, user, null, 'financial-reports.expenses');
+    if (scope.selectedUserId != null && createdBy !== scope.selectedUserId) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لمصروفات مستخدم آخر');
+    }
+  }
+
   private branchFilter(user?: JwtUser, requested?: string | number | null): Prisma.fin_expensesWhereInput | null {
     const scope = this.branchScope.resolveListFilter(user, requested ?? null);
     return scope === null ? null : { branch_id: { in: scope } };
   }
 
-  private receptionFilter(user?: JwtUser): Prisma.fin_expensesWhereInput | null {
-    return isReceptionEmployee(user) ? { branch_id: Number(user?.branch ?? 0), expense_date: localDateString() } : null;
-  }
-
-  private assertExpenseAccess(user: JwtUser | undefined, row: { branch_id: number | null; expense_date: string }) {
-    this.assertBranchAccess(user, row.branch_id);
-    if (isReceptionEmployee(user) && row.expense_date !== localDateString()) {
-      throw new ForbiddenException('موظف الاستقبال يمكنه الوصول إلى مصروفات اليوم لفرعه فقط');
-    }
-  }
-
-  private map(row: Prisma.fin_expensesGetPayload<object>) {
+  private map(
+    row: Prisma.fin_expensesGetPayload<object>,
+    extras?: { createdByName?: string | null },
+  ) {
     return {
       id: row.id,
       expenseNumber: row.expense_number,
       expenseDate: row.expense_date,
+      businessUnit: row.business_unit ?? 'gym',
+      paymentNeedsReview: row.paid_amount == null && row.payment_status === 'جزئي',
+      paidAmount: row.paid_amount != null ? toNumber(row.paid_amount) : row.payment_status === 'مدفوع' ? toNumber(row.total_amount) : 0,
+      remainingAmount: Math.max(0, toNumber(row.total_amount) - (row.paid_amount != null ? toNumber(row.paid_amount) : row.payment_status === 'مدفوع' ? toNumber(row.total_amount) : 0)),
+      payments: row.payments,
+      systemManaged: row.notes === 'مستند تلقائي مربوط بالنظام' || row.expense_number.startsWith('CAFE-'),
       category: row.category,
       subCategory: row.sub_category,
       amount: toNumber(row.amount),
@@ -78,13 +93,10 @@ export class ExpensesService {
       invoiceNumber: row.invoice_number,
       branchId: row.branch_id,
       departmentId: row.department_id,
-      genderScope: row.gender_scope ?? null,
-      parentId: row.parent_id ?? null,
-      nesba: row.nesba != null ? toNumber(row.nesba) : null,
-      mainValue: row.main_value != null ? toNumber(row.main_value) : null,
       attachments: row.attachments,
       notes: row.notes,
       createdBy: row.created_by,
+      createdByName: extras?.createdByName ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       isRecurring: row.is_recurring,
@@ -93,10 +105,31 @@ export class ExpensesService {
     };
   }
 
-  private buildListWhere(q: ListExpensesDto, user?: JwtUser): Prisma.fin_expensesWhereInput {
+  private async enrichCreatorNames(
+    rows: Prisma.fin_expensesGetPayload<object>[],
+  ) {
+    const userIds = [
+      ...new Set(rows.map((r) => r.created_by).filter((id): id is number => id != null)),
+    ];
+    if (!userIds.length) return rows.map((r) => this.map(r));
+    const users = await this.prisma.users.findMany({
+      where: { user_id: { in: userIds } },
+      select: { user_id: true, name: true },
+    });
+    const nameById = new Map(users.map((u) => [u.user_id, u.name]));
+    return rows.map((r) =>
+      this.map(r, {
+        createdByName: r.created_by != null ? nameById.get(r.created_by) ?? null : null,
+      }),
+    );
+  }
+
+  private async buildListWhere(
+    q: ListExpensesDto,
+    user?: JwtUser,
+  ): Promise<Prisma.fin_expensesWhereInput> {
     const and: Prisma.fin_expensesWhereInput[] = [notDeletedFilter()];
-    const reception = this.receptionFilter(user);
-    if (reception) and.push(reception);
+    if (q.businessUnit) and.push({ business_unit: q.businessUnit });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -121,21 +154,18 @@ export class ExpensesService {
       and.push({
         expense_date: {
           ...(q.dateFrom ? { gte: q.dateFrom } : {}),
-          ...(q.dateTo ? { lte: q.dateTo } : {}),
+          ...(q.dateTo ? { lte: q.dateTo.length === 10 ? `${q.dateTo}T23:59:59` : q.dateTo } : {}),
         },
       });
     }
-    // Gender scope filter — 'all' or omitted = no filter
-    if (q.genderScope && q.genderScope !== 'all') {
-      and.push({ gender_scope: q.genderScope as 'male' | 'female' });
-    }
-    // NOTE: split records (male 120 + female 80) are two independent rows.
-    // Do NOT filter parent_id — both rows must appear in the list.
+    const creator = await resolveFinanceCreatorScope(this.permissions, user, q.userId, 'financial-reports.expenses');
+    const creatorFilter = createdByFilter(creator.selectedUserId);
+    if ('created_by' in creatorFilter) and.push(creatorFilter);
     return { AND: and };
   }
 
   async list(q: ListExpensesDto, user?: JwtUser) {
-    const where = this.buildListWhere(q, user);
+    const where = await this.buildListWhere(q, user);
     const [rows, total] = await Promise.all([
       this.prisma.fin_expenses.findMany({
         where,
@@ -145,7 +175,29 @@ export class ExpensesService {
       }),
       this.prisma.fin_expenses.count({ where }),
     ]);
-    return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
+    const mapped = await this.enrichCreatorNames(rows);
+    return paginated(mapped, total, q.page, q.pageSize);
+  }
+
+  async userOptions(q: ExpenseUserOptionsQueryDto, user?: JwtUser) {
+    // Derive choices from accessible expenses, including historical creators.
+    // Never depend on admin.users permission or expose full user records.
+    const and: Prisma.fin_expensesWhereInput[] = [notDeletedFilter(), { created_by: { not: null } }];
+    if (q.businessUnit) and.push({ business_unit: q.businessUnit });
+    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
+    const branch = this.branchFilter(user, q.branchId ?? null);
+    if (branch) and.push(branch);
+    const creator = await resolveFinanceCreatorScope(this.permissions, user, null, 'financial-reports.expenses');
+    if (creator.selectedUserId != null) and.push(createdByFilter(creator.selectedUserId));
+    const creators = await this.prisma.fin_expenses.groupBy({ by: ['created_by'], where: { AND: and } });
+    const ids = creators.flatMap((row) => row.created_by == null ? [] : [row.created_by]);
+    if (!ids.length) return [];
+    const users = await this.prisma.users.findMany({
+      where: { user_id: { in: ids } },
+      select: { user_id: true, name: true },
+      orderBy: [{ name: 'asc' }, { user_id: 'asc' }],
+    });
+    return users.map((account) => ({ id: account.user_id, name: account.name }));
   }
 
   async findOne(id: number, user?: JwtUser) {
@@ -153,14 +205,15 @@ export class ExpensesService {
       where: { id, ...notDeletedFilter() },
     });
     if (!row) throw new NotFoundException('المصروف غير موجود');
-    this.assertExpenseAccess(user, row);
-    return this.map(row);
+    this.assertBranchAccess(user, row.branch_id);
+    await this.assertCreatorAccess(user, row.created_by);
+    const [mapped] = await this.enrichCreatorNames([row]);
+    return mapped;
   }
 
   async statistics(q: ExpenseStatisticsQueryDto, user?: JwtUser) {
     const and: Prisma.fin_expensesWhereInput[] = [notDeletedFilter()];
-    const reception = this.receptionFilter(user);
-    if (reception) and.push(reception);
+    if (q.businessUnit) and.push({ business_unit: q.businessUnit });
     if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
     const scope = this.branchFilter(user, q.branchId ?? null);
     if (scope) and.push(scope);
@@ -168,10 +221,13 @@ export class ExpensesService {
       and.push({
         expense_date: {
           ...(q.dateFrom ? { gte: q.dateFrom } : {}),
-          ...(q.dateTo ? { lte: q.dateTo } : {}),
+          ...(q.dateTo ? { lte: q.dateTo.length === 10 ? `${q.dateTo}T23:59:59` : q.dateTo } : {}),
         },
       });
     }
+    const creator = await resolveFinanceCreatorScope(this.permissions, user, q.userId, 'financial-reports.expenses');
+    const creatorFilter = createdByFilter(creator.selectedUserId);
+    if ('created_by' in creatorFilter) and.push(creatorFilter);
     const where = { AND: and };
     const [total, aggregate, byCategory, byApproval, byPayment] = await Promise.all([
       this.prisma.fin_expenses.count({ where }),
@@ -221,94 +277,92 @@ export class ExpensesService {
     const branchId = dto.branchId ?? (allowed === null ? undefined : allowed[0]);
     if (branchId != null) this.assertBranchAccess(user, branchId);
     const totals = computeExpenseTotal(dto.amount, dto.taxAmount ?? 0);
-    const today = localDateString();
-    const expenseDate = dto.expenseDate ?? today;
-    if (isReceptionEmployee(user) && expenseDate !== today) throw new ForbiddenException('موظف الاستقبال يمكنه تسجيل مصروفات اليوم فقط');
-
-    // --- Percentage-split creation (legacy: creates 2 linked records) ---
-    if (dto.hasPercentage) {
-      const malePct = dto.malePercentage ?? 0;
-      const femalePct = dto.femalePercentage ?? 0;
-      if (malePct < 0 || femalePct < 0 || malePct + femalePct !== 100) {
-        throw new BadRequestException('مجموع نسبة الرجال والحريم يجب أن يساوي 100');
-      }
-      const mainTotal = totals.totalAmount;
-      const maleAmount = roundMoney((mainTotal * malePct) / 100);
-      const femaleAmount = roundMoney(mainTotal - maleAmount); // avoid floating-point drift
-
-      const maleRow = await this.prisma.$transaction(async (tx) => {
-        const maleNumber = await nextFinDocNumber(tx, 'fin_expenses', 'expense_number', 'EXP');
-        const male = await tx.fin_expenses.create({
-          data: {
-            expense_number: maleNumber,
-            expense_date: expenseDate,
-            category: dto.category.trim(),
-            sub_category: dto.subCategory?.trim() ?? null,
-            amount: maleAmount,
-            tax_amount: 0,
-            total_amount: maleAmount,
-            payment_method: dto.paymentMethod ?? 'نقدي',
-            payment_status: dto.paymentStatus ?? 'معلق',
-            description: dto.description ?? null,
-            vendor: dto.vendor ?? null,
-            invoice_number: dto.invoiceNumber ?? null,
-            branch_id: branchId ?? null,
-            department_id: dto.departmentId ?? null,
-            notes: dto.notes ?? null,
-            is_recurring: false,
-            gender_scope: 'male',
-            nesba: malePct,
-            main_value: mainTotal,
-            created_by: userId,
-          },
-        });
-
-        const femaleNumber = await nextFinDocNumber(tx, 'fin_expenses', 'expense_number', 'EXP');
-        await tx.fin_expenses.create({
-          data: {
-            expense_number: femaleNumber,
-            expense_date: expenseDate,
-            category: dto.category.trim(),
-            sub_category: dto.subCategory?.trim() ?? null,
-            amount: femaleAmount,
-            tax_amount: 0,
-            total_amount: femaleAmount,
-            payment_method: dto.paymentMethod ?? 'نقدي',
-            payment_status: dto.paymentStatus ?? 'معلق',
-            description: dto.description ?? null,
-            vendor: dto.vendor ?? null,
-            invoice_number: dto.invoiceNumber ?? null,
-            branch_id: branchId ?? null,
-            department_id: dto.departmentId ?? null,
-            notes: dto.notes ?? null,
-            is_recurring: false,
-            gender_scope: 'female',
-            nesba: femalePct,
-            main_value: mainTotal,
-            parent_id: male.id,
-            created_by: userId,
-          },
-        });
-
-        return male;
-      });
-      return this.map(maleRow);
+    const payment = expensePayments(totals.totalAmount, dto);
+    const deductFromDrawer = dto.deductFromDrawer === true;
+    if (deductFromDrawer && branchId == null) {
+      throw new BadRequestException('اختر الفرع قبل خصم المصروف من الدرج');
     }
-
-    // --- Normal single-record creation ---
+    if (deductFromDrawer && payment.paymentMethod !== 'نقدي') {
+      throw new BadRequestException('خصم المصروف من الدرج متاح للمصروف النقدي فقط');
+    }
+    if (deductFromDrawer && payment.paidAmount <= 0) {
+      throw new BadRequestException('خصم المصروف من الدرج يتطلب أن تكون حالة الدفع مدفوع');
+    }
+    if (deductFromDrawer && totals.totalAmount < 0.01) {
+      throw new BadRequestException('المبلغ المخصوم من الدرج يجب ألا يقل عن 0.01 ج.م');
+    }
     const row = await this.prisma.$transaction(async (tx) => {
+      const policy = await tx.club_gym_policies.findUnique({
+        where: { id: 1 },
+        select: { require_expense_approval: true },
+      });
+      // Missing policy rows preserve ONE80's historical manual-approval workflow.
+      const requiresApproval = policy?.require_expense_approval ?? true;
+      let drawerSession: Prisma.sales_shift_sessionsGetPayload<object> | null = null;
+      let availableDrawerCash = 0;
+      if (deductFromDrawer) {
+        drawerSession = await tx.sales_shift_sessions.findFirst({
+          where: {
+            branch_id: branchId!,
+            status: ShiftSessionStatus.open,
+          },
+          orderBy: { start_time: 'desc' },
+        });
+        if (!drawerSession) {
+          throw new BadRequestException(
+            'لا توجد وردية مفتوحة في هذا الفرع لخصم المصروف من الدرج',
+          );
+        }
+        await tx.$queryRaw(Prisma.sql`
+          SELECT id FROM sales_shift_sessions WHERE id = ${drawerSession.id} FOR UPDATE
+        `);
+        drawerSession = await tx.sales_shift_sessions.findUnique({
+          where: { id: drawerSession.id },
+        });
+        if (!drawerSession || drawerSession.status !== ShiftSessionStatus.open) {
+          throw new BadRequestException('الوردية لم تعد مفتوحة');
+        }
+        const movements = await tx.sales_cash_drawer_transactions.findMany({
+          where: {
+            shift_session_id: drawerSession.id,
+            status: 'posted',
+            movement_type: {
+              in: ['petty_expense', 'custody_issue', 'custody_return', 'adjustment'],
+            },
+          },
+          select: { direction: true, amount: true },
+        });
+        const adjustments = movements.reduce(
+          (sum, movement) =>
+            sum + (movement.direction === 'in' ? toNumber(movement.amount) : -toNumber(movement.amount)),
+          0,
+        );
+        availableDrawerCash = expectedDrawerBalance(
+          toNumber(drawerSession.opening_balance),
+          toNumber(drawerSession.total_cash),
+          adjustments,
+        );
+        if (payment.paidAmount > availableDrawerCash + 0.001) {
+          throw new BadRequestException(
+            `الرصيد المتاح في الدرج ${availableDrawerCash.toFixed(2)} ج.م فقط`,
+          );
+        }
+      }
       const expenseNumber = await nextFinDocNumber(tx, 'fin_expenses', 'expense_number', 'EXP');
-      return tx.fin_expenses.create({
+      const created = await tx.fin_expenses.create({
         data: {
           expense_number: expenseNumber,
-          expense_date: expenseDate,
+          expense_date: dto.expenseDate ?? new Date().toISOString().slice(0, 19),
+          business_unit: dto.businessUnit ?? 'gym',
+          paid_amount: payment.paidAmount,
+          ...(payment.payments ? { payments: payment.payments } : {}),
           category: dto.category.trim(),
           sub_category: dto.subCategory?.trim() ?? null,
           amount: totals.amount,
           tax_amount: totals.taxAmount,
           total_amount: totals.totalAmount,
-          payment_method: dto.paymentMethod ?? 'نقدي',
-          payment_status: dto.paymentStatus ?? 'معلق',
+          payment_method: payment.paymentMethod,
+          payment_status: payment.paymentStatus,
           description: dto.description ?? null,
           vendor: dto.vendor ?? null,
           invoice_number: dto.invoiceNumber ?? null,
@@ -318,21 +372,63 @@ export class ExpensesService {
           is_recurring: dto.isRecurring ?? false,
           recurring_frequency: dto.recurringFrequency ?? null,
           next_recurring_date: dto.isRecurring
-            ? (dto.nextRecurringDate ?? expenseDate)
+            ? (dto.nextRecurringDate ?? dto.expenseDate ?? new Date().toISOString().slice(0, 10))
             : null,
-          gender_scope: dto.genderScope ?? null,
+          ...(!requiresApproval
+            ? {
+                approval_status: EXPENSE_APPROVED,
+                approved_by: userId,
+                approved_at: new Date(),
+                rejection_notes: null,
+              }
+            : {}),
           created_by: userId,
         },
       });
+      if (deductFromDrawer && drawerSession) {
+        await tx.sales_cash_drawer_transactions.create({
+          data: {
+            reference: `FIN-EXP-${created.id}`,
+            branch_id: branchId!,
+            shift_session_id: drawerSession.id,
+            movement_type: 'petty_expense',
+            direction: 'out',
+            amount: payment.paidAmount,
+            category: 'other',
+            description: `مصروف ${created.expense_number}: ${dto.description?.trim() || dto.category.trim()}`,
+            created_by: userId,
+          },
+        });
+        await tx.sales_shift_sessions.update({
+          where: { id: drawerSession.id },
+          data: {
+            expected_closing_balance: expectedDrawerBalance(
+              availableDrawerCash,
+              0,
+              -payment.paidAmount,
+            ),
+          },
+        });
+      }
+      if (!requiresApproval) {
+        await this.moduleLedger.postExpenseApproval(
+          {
+            expenseId: created.id,
+            expenseNumber: created.expense_number,
+            branchId: created.branch_id ?? undefined,
+            expenseDate: created.expense_date,
+            totalAmount: toNumber(created.total_amount),
+            paidAmount: created.paid_amount != null ? toNumber(created.paid_amount) : undefined,
+            payments: payment.payments,
+            paymentMethod: created.payment_method,
+            createdBy: userId,
+          },
+          tx,
+        );
+      }
+      return created;
     });
-    return this.map(row);
-  }
-
-  /** Resolve the split group root id for any row (parent or child). Returns null for single rows. */
-  private resolveSplitRootId(existing: { parent_id: number | null; nesba: unknown; id: number }): number | null {
-    if (existing.parent_id != null) return existing.parent_id;
-    if (existing.nesba != null) return existing.id;
-    return null;
+    return { ...this.map(row), drawerDeducted: deductFromDrawer };
   }
 
   async update(id: number, dto: Partial<UpsertExpenseDto>, user?: JwtUser) {
@@ -340,166 +436,24 @@ export class ExpensesService {
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('المصروف غير موجود');
-    this.assertExpenseAccess(user, existing);
-    if (isReceptionEmployee(user) && dto.expenseDate && dto.expenseDate !== localDateString()) throw new ForbiddenException('موظف الاستقبال يمكنه تسجيل مصروفات اليوم فقط');
+    this.assertBranchAccess(user, existing.branch_id);
+    await this.assertCreatorAccess(user, existing.created_by);
     if (dto.branchId != null) this.assertBranchAccess(user, dto.branchId);
-
-    const splitRootId = this.resolveSplitRootId(existing);
-
-    // --- Split group update (works from male row OR female row) ---
-    if (splitRootId != null) {
-      const group = await this.prisma.fin_expenses.findMany({
-        where: {
-          OR: [{ id: splitRootId }, { parent_id: splitRootId }],
-          ...notDeletedFilter(),
-        },
-      });
-      if (group.length === 0) throw new NotFoundException('المصروف غير موجود');
-      const parentRow = group.find((r) => r.id === splitRootId) ?? group[0];
-      if (group.some((r) => r.approval_status === EXPENSE_APPROVED)) {
-        throw new BadRequestException('لا يمكن تعديل مصروف معتمد');
-      }
-
-      // New total comes from the form's amount field (mainValue = full amount before split)
-      const prevTotal = toNumber(parentRow.main_value ?? parentRow.total_amount);
-      const newTotalRaw = dto.amount ?? prevTotal;
-      // New percentages: prefer payload, else keep stored split
-      let malePct: number;
-      let femalePct: number;
-      if (dto.hasPercentage && dto.malePercentage !== undefined && dto.femalePercentage !== undefined) {
-        malePct = dto.malePercentage;
-        femalePct = dto.femalePercentage;
-      } else if (dto.malePercentage !== undefined) {
-        malePct = dto.malePercentage;
-        femalePct = 100 - dto.malePercentage;
-      } else if (dto.femalePercentage !== undefined) {
-        femalePct = dto.femalePercentage;
-        malePct = 100 - dto.femalePercentage;
-      } else {
-        malePct = toNumber(parentRow.nesba);
-        femalePct = 100 - malePct;
-        // If editing from the female child and stored parent nesba missing, derive from child
-        if (!Number.isFinite(malePct) || malePct <= 0) {
-          const child = group.find((r) => r.parent_id === splitRootId);
-          if (child?.nesba != null) femalePct = toNumber(child.nesba);
-          malePct = 100 - femalePct;
-        }
-      }
-      if (!(malePct > 0 && femalePct > 0 && malePct + femalePct === 100)) {
-        throw new BadRequestException('مجموع نسبة الرجال والحريم يجب أن يساوي 100');
-      }
-      const totals = computeExpenseTotal(newTotalRaw, 0);
-      const newTotal = totals.totalAmount;
-      const maleAmount = roundMoney((newTotal * malePct) / 100);
-      const femaleAmount = roundMoney(newTotal - maleAmount);
-
-      const common = {
-        ...(dto.expenseDate !== undefined ? { expense_date: dto.expenseDate } : {}),
-        ...(dto.category !== undefined ? { category: dto.category.trim() } : {}),
-        ...(dto.subCategory !== undefined ? { sub_category: dto.subCategory?.trim() ?? null } : {}),
-        ...(dto.paymentMethod !== undefined ? { payment_method: dto.paymentMethod } : {}),
-        ...(dto.paymentStatus !== undefined ? { payment_status: dto.paymentStatus } : {}),
-        ...(dto.description !== undefined ? { description: dto.description } : {}),
-        ...(dto.vendor !== undefined ? { vendor: dto.vendor } : {}),
-        ...(dto.invoiceNumber !== undefined ? { invoice_number: dto.invoiceNumber } : {}),
-        ...(dto.branchId !== undefined ? { branch_id: dto.branchId } : {}),
-        ...(dto.departmentId !== undefined ? { department_id: dto.departmentId } : {}),
-        ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
-      };
-
-      await this.prisma.$transaction(async (tx) => {
-        for (const r of group) {
-          const isParent = r.id === splitRootId;
-          await tx.fin_expenses.update({
-            where: { id: r.id },
-            data: {
-              ...common,
-              amount: isParent ? maleAmount : femaleAmount,
-              tax_amount: 0,
-              total_amount: isParent ? maleAmount : femaleAmount,
-              gender_scope: isParent ? 'male' : 'female',
-              nesba: isParent ? malePct : femalePct,
-              main_value: newTotal,
-            },
-          });
-        }
-      });
-
-      const refreshed = await this.prisma.fin_expenses.findFirst({
-        where: { id, ...notDeletedFilter() },
-      });
-      return this.map(refreshed!);
-    }
-
-    // --- Convert a single row into a split (user checked percentage on edit) ---
-    if (dto.hasPercentage) {
-      const malePct = dto.malePercentage ?? 60;
-      const femalePct = dto.femalePercentage ?? (100 - malePct);
-      if (!(malePct > 0 && femalePct > 0 && malePct + femalePct === 100)) {
-        throw new BadRequestException('مجموع نسبة الرجال والحريم يجب أن يساوي 100');
-      }
-      if (existing.approval_status === EXPENSE_APPROVED) {
-        throw new BadRequestException('لا يمكن تعديل مصروف معتمد');
-      }
-      const totals = computeExpenseTotal(dto.amount ?? toNumber(existing.total_amount), 0);
-      const newTotal = totals.totalAmount;
-      const maleAmount = roundMoney((newTotal * malePct) / 100);
-      const femaleAmount = roundMoney(newTotal - maleAmount);
-      const result = await this.prisma.$transaction(async (tx) => {
-        const parent = await tx.fin_expenses.update({
-          where: { id },
-          data: {
-            amount: maleAmount,
-            tax_amount: 0,
-            total_amount: maleAmount,
-            gender_scope: 'male',
-            nesba: malePct,
-            main_value: newTotal,
-          },
-        });
-        const femaleNumber = await nextFinDocNumber(tx, 'fin_expenses', 'expense_number', 'EXP');
-        await tx.fin_expenses.create({
-          data: {
-            expense_number: femaleNumber,
-            expense_date: dto.expenseDate ?? parent.expense_date,
-            category: (dto.category ?? parent.category).trim(),
-            sub_category: dto.subCategory?.trim() ?? parent.sub_category,
-            amount: femaleAmount,
-            tax_amount: 0,
-            total_amount: femaleAmount,
-            payment_method: dto.paymentMethod ?? parent.payment_method,
-            payment_status: dto.paymentStatus ?? parent.payment_status,
-            description: dto.description ?? parent.description,
-            vendor: dto.vendor ?? parent.vendor,
-            invoice_number: dto.invoiceNumber ?? parent.invoice_number,
-            branch_id: dto.branchId ?? parent.branch_id,
-            department_id: dto.departmentId ?? parent.department_id,
-            notes: dto.notes ?? parent.notes,
-            is_recurring: false,
-            gender_scope: 'female',
-            nesba: femalePct,
-            main_value: newTotal,
-            parent_id: parent.id,
-            created_by: parent.created_by,
-          },
-        });
-        return parent;
-      });
-      const refreshed = await this.prisma.fin_expenses.findFirst({
-        where: { id: result.id },
-      });
-      return this.map(refreshed!);
-    }
-
-    // --- Normal single-record update ---
-    if (existing.approval_status === EXPENSE_APPROVED) {
-      throw new BadRequestException('لا يمكن تعديل مصروف معتمد');
-    }
+    this.assertManualMutation(existing);
     const amount = dto.amount ?? toNumber(existing.amount);
     const taxAmount = dto.taxAmount ?? toNumber(existing.tax_amount);
     const totals = computeExpenseTotal(amount, taxAmount);
-
-    const row = await this.prisma.fin_expenses.update({
+    const payment = expensePayments(totals.totalAmount, {
+      ...dto,
+      paidAmount: dto.paidAmount ?? (existing.paid_amount != null ? toNumber(existing.paid_amount) : existing.payment_status === 'مدفوع' ? toNumber(existing.total_amount) : 0),
+      paymentMethod: dto.paymentMethod ?? existing.payment_method,
+      payments: dto.payments ?? (Array.isArray(existing.payments) ? existing.payments as unknown as UpsertExpenseDto['payments'] : undefined),
+    });
+    const row = await this.prisma.$transaction(async (tx) => {
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM fin_expenses WHERE id = ${id} FOR UPDATE`);
+    await this.assertUnchanged(tx, existing);
+    await this.syncDrawer(tx, id, payment.paidAmount, payment.paymentMethod, dto.branchId ?? existing.branch_id);
+    const updated = await tx.fin_expenses.update({
       where: { id },
       data: {
         ...(dto.expenseDate !== undefined ? { expense_date: dto.expenseDate } : {}),
@@ -508,18 +462,30 @@ export class ExpensesService {
         amount: totals.amount,
         tax_amount: totals.taxAmount,
         total_amount: totals.totalAmount,
-        ...(dto.paymentMethod !== undefined ? { payment_method: dto.paymentMethod } : {}),
-        ...(dto.paymentStatus !== undefined ? { payment_status: dto.paymentStatus } : {}),
+        ...(dto.businessUnit !== undefined ? { business_unit: dto.businessUnit } : {}),
+        paid_amount: payment.paidAmount,
+        ...(payment.payments ? { payments: payment.payments } : {}),
+        payment_method: payment.paymentMethod,
+        payment_status: payment.paymentStatus,
         ...(dto.description !== undefined ? { description: dto.description } : {}),
         ...(dto.vendor !== undefined ? { vendor: dto.vendor } : {}),
         ...(dto.invoiceNumber !== undefined ? { invoice_number: dto.invoiceNumber } : {}),
         ...(dto.branchId !== undefined ? { branch_id: dto.branchId } : {}),
         ...(dto.departmentId !== undefined ? { department_id: dto.departmentId } : {}),
         ...(dto.notes !== undefined ? { notes: dto.notes } : {}),
-        ...(dto.genderScope !== undefined ? { gender_scope: dto.genderScope ?? null } : {}),
       },
     });
-
+    if (existing.approval_status === EXPENSE_APPROVED) {
+      await this.moduleLedger.syncExpense({
+        expenseId: id, expenseNumber: updated.expense_number,
+        branchId: updated.branch_id ?? undefined, expenseDate: updated.expense_date,
+        totalAmount: toNumber(updated.total_amount), paidAmount: payment.paidAmount,
+        payments: payment.payments, paymentMethod: updated.payment_method,
+        createdBy: user?.sub ?? existing.created_by ?? 0, post: true,
+      }, tx);
+    }
+    return updated;
+    });
     return this.map(row);
   }
 
@@ -528,29 +494,24 @@ export class ExpensesService {
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('المصروف غير موجود');
-    this.assertExpenseAccess(user, existing);
-    // Resolve whole split group (parent + child) so deleting either row deletes both
-    const rootId = existing.parent_id ?? (existing.nesba != null ? existing.id : null);
-    const idsToDelete: number[] = [id];
-    if (rootId != null) {
-      const group = await this.prisma.fin_expenses.findMany({
-        where: {
-          OR: [{ id: rootId }, { parent_id: rootId }],
-          ...notDeletedFilter(),
-        },
-        select: { id: true, approval_status: true },
-      });
-      if (group.some((r) => r.approval_status === EXPENSE_APPROVED)) {
-        throw new BadRequestException('لا يمكن حذف مصروف معتمد');
-      }
-      for (const r of group) if (!idsToDelete.includes(r.id)) idsToDelete.push(r.id);
-    } else if (existing.approval_status === EXPENSE_APPROVED) {
-      throw new BadRequestException('لا يمكن حذف مصروف معتمد');
+    this.assertBranchAccess(user, existing.branch_id);
+    await this.assertCreatorAccess(user, existing.created_by);
+    this.assertManualMutation(existing);
+    await this.prisma.$transaction(async (tx) => {
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM fin_expenses WHERE id = ${id} FOR UPDATE`);
+    await this.assertUnchanged(tx, existing);
+    await this.syncDrawer(tx, id, 0, existing.payment_method, existing.branch_id);
+    if (existing.approval_status === EXPENSE_APPROVED) {
+      await this.moduleLedger.syncExpense({
+        expenseId: id, expenseNumber: existing.expense_number,
+        expenseDate: existing.expense_date, totalAmount: toNumber(existing.total_amount),
+        createdBy: user?.sub ?? existing.created_by ?? 0, post: false,
+      }, tx);
     }
-    const now = new Date();
-    await this.prisma.fin_expenses.updateMany({
-      where: { id: { in: idsToDelete } },
-      data: { is_deleted: true, deleted_at: now },
+    await tx.fin_expenses.update({
+      where: { id },
+      data: { is_deleted: true, deleted_at: new Date() },
+    });
     });
     return { success: true };
   }
@@ -560,53 +521,77 @@ export class ExpensesService {
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('المصروف غير موجود');
-    this.assertExpenseAccess(user, existing);
+    this.assertBranchAccess(user, existing.branch_id);
+    await this.assertCreatorAccess(user, existing.created_by);
     if (existing.approval_status === EXPENSE_APPROVED) {
       throw new BadRequestException('المصروف معتمد مسبقاً');
     }
-    // Resolve whole split group so approving either row approves both (male + female)
-    const rootId = existing.parent_id ?? (existing.nesba != null ? existing.id : null);
-    let groupIds = [id];
-    if (rootId != null) {
-      const group = await this.prisma.fin_expenses.findMany({
-        where: { OR: [{ id: rootId }, { parent_id: rootId }], ...notDeletedFilter() },
-        select: { id: true },
-      });
-      groupIds = group.map((r) => r.id);
-    }
     const row = await this.prisma.$transaction(async (tx) => {
-      const now = new Date();
-      for (const gid of groupIds) {
-        await tx.fin_expenses.update({
-          where: { id: gid },
-          data: {
-            approval_status: EXPENSE_APPROVED,
-            approved_by: userId,
-            approved_at: now,
-            rejection_notes: null,
-          },
-        });
-      }
-      // Post a ledger entry per row so male 120 + female 80 both hit accounting
-      for (const gid of groupIds) {
-        const r = await tx.fin_expenses.findFirst({ where: { id: gid } });
-        if (!r) continue;
-        await this.moduleLedger.postExpenseApproval(
-          {
-            expenseId: r.id,
-            expenseNumber: r.expense_number,
-            branchId: r.branch_id ?? undefined,
-            expenseDate: r.expense_date,
-            totalAmount: toNumber(r.total_amount),
-            paymentMethod: r.payment_method,
-            createdBy: userId,
-          },
-          tx,
-        );
-      }
-      return tx.fin_expenses.findFirst({ where: { id } });
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM fin_expenses WHERE id = ${id} FOR UPDATE`);
+      await this.assertUnchanged(tx, existing);
+      const updated = await tx.fin_expenses.update({
+        where: { id },
+        data: {
+          approval_status: EXPENSE_APPROVED,
+          approved_by: userId,
+          approved_at: new Date(),
+          rejection_notes: null,
+        },
+      });
+      await this.moduleLedger.postExpenseApproval(
+        {
+          expenseId: updated.id,
+          expenseNumber: updated.expense_number,
+          branchId: updated.branch_id ?? undefined,
+          expenseDate: updated.expense_date,
+          totalAmount: toNumber(updated.total_amount),
+          paidAmount: updated.paid_amount != null ? toNumber(updated.paid_amount) : updated.payment_status === 'مدفوع' ? toNumber(updated.total_amount) : 0,
+          payments: Array.isArray(updated.payments) ? updated.payments as unknown as UpsertExpenseDto['payments'] : undefined,
+          paymentMethod: updated.payment_method,
+          createdBy: userId,
+        },
+        tx,
+      );
+      return updated;
     });
-    return this.map(row!);
+    return this.map(row);
+  }
+
+  private assertManualMutation(row: Prisma.fin_expensesGetPayload<object>) {
+    if (row.notes === 'مستند تلقائي مربوط بالنظام' || row.expense_number.startsWith('CAFE-')) {
+      throw new BadRequestException('عدّل المستند التلقائي من شاشة مصدره');
+    }
+  }
+
+  private async assertUnchanged(tx: Prisma.TransactionClient, existing: Prisma.fin_expensesGetPayload<object>) {
+    const current = await tx.fin_expenses.findUnique({ where: { id: existing.id } });
+    if (!current || current.is_deleted) throw new NotFoundException('المصروف غير موجود');
+    if (current.updated_at.getTime() !== existing.updated_at.getTime()) {
+      throw new BadRequestException('المصروف اتغير أثناء العملية. حدّث الصفحة وحاول تاني');
+    }
+  }
+
+  private async syncDrawer(tx: Prisma.TransactionClient, id: number, paid: number, method: string | null, branch: number | null) {
+    const movement = await tx.sales_cash_drawer_transactions.findFirst({ where: { reference: `FIN-EXP-${id}`, status: 'posted' } });
+    if (!movement) return;
+    if (paid > 0 && (method !== 'نقدي' || branch !== movement.branch_id)) {
+      throw new BadRequestException('المصروف المخصوم من الدرج لازم يفضل نقدي وفي نفس الفرع');
+    }
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM sales_shift_sessions WHERE id = ${movement.shift_session_id} FOR UPDATE`);
+    const session = await tx.sales_shift_sessions.findUnique({ where: { id: movement.shift_session_id } });
+    if (!session || session.status !== ShiftSessionStatus.open) {
+      throw new BadRequestException('لا يمكن تعديل أو حذف مصروف درج بعد إغلاق ورديته');
+    }
+    const movements = await tx.sales_cash_drawer_transactions.findMany({ where: {
+      shift_session_id: session.id, status: 'posted',
+      movement_type: { in: ['petty_expense', 'custody_issue', 'custody_return', 'adjustment'] },
+    }, select: { direction: true, amount: true } });
+    const adjustments = movements.reduce((sum, row) => sum + (row.direction === 'in' ? toNumber(row.amount) : -toNumber(row.amount)), 0);
+    const balance = expectedDrawerBalance(toNumber(session.opening_balance), toNumber(session.total_cash), adjustments)
+      + toNumber(movement.amount) - paid;
+    if (balance < -0.001) throw new BadRequestException('رصيد الدرج لا يكفي للمبلغ المدفوع');
+    await tx.sales_cash_drawer_transactions.update({ where: { id: movement.id }, data: { amount: paid } });
+    await tx.sales_shift_sessions.update({ where: { id: session.id }, data: { expected_closing_balance: balance } });
   }
 
   async reject(id: number, dto: RejectExpenseDto, userId: number, user?: JwtUser) {
@@ -614,21 +599,13 @@ export class ExpensesService {
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('المصروف غير موجود');
-    this.assertExpenseAccess(user, existing);
+    this.assertBranchAccess(user, existing.branch_id);
+    await this.assertCreatorAccess(user, existing.created_by);
     if (existing.approval_status === EXPENSE_APPROVED) {
       throw new BadRequestException('لا يمكن رفض مصروف معتمد');
     }
-    const rootId = existing.parent_id ?? (existing.nesba != null ? existing.id : null);
-    let groupIds = [id];
-    if (rootId != null) {
-      const group = await this.prisma.fin_expenses.findMany({
-        where: { OR: [{ id: rootId }, { parent_id: rootId }], ...notDeletedFilter() },
-        select: { id: true },
-      });
-      groupIds = group.map((r) => r.id);
-    }
-    await this.prisma.fin_expenses.updateMany({
-      where: { id: { in: groupIds } },
+    const row = await this.prisma.fin_expenses.update({
+      where: { id },
       data: {
         approval_status: 'مرفوض',
         rejection_notes: dto.notes.trim(),
@@ -636,7 +613,6 @@ export class ExpensesService {
         approved_at: new Date(),
       },
     });
-    const row = await this.prisma.fin_expenses.findFirst({ where: { id } });
-    return this.map(row!);
+    return this.map(row);
   }
 }

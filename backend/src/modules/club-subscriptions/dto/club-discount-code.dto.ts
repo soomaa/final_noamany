@@ -1,6 +1,5 @@
 import { Transform } from 'class-transformer';
-import { Type } from 'class-transformer';
-import { ArrayMinSize, IsArray, IsBoolean, IsInt, IsNumber, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
+import { IsBoolean, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class CreateClubDiscountCodeDto {
   @Transform(({ value }) => String(value ?? '').trim().toUpperCase())
@@ -38,26 +37,3 @@ export class UpdateClubDiscountCodeDto {
   isActive?: boolean;
 }
 
-export class AssignDiscountCodeToEmployeeDto {
-  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) employeeId!: number;
-  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) codeId!: number;
-  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) count!: number;
-}
-
-export class DiscountCodeAllocationRowDto {
-  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) codeId!: number;
-  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) count!: number;
-}
-
-export class AssignDiscountCodesToEmployeeDto {
-  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) employeeId!: number;
-  @IsArray() @ArrayMinSize(1) @ValidateNested({ each: true }) @Type(() => DiscountCodeAllocationRowDto)
-  assignments!: DiscountCodeAllocationRowDto[];
-}
-
-export class GrantDiscountCodeToMemberDto {
-  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) employeeId!: number;
-  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) codeId!: number;
-  @Transform(({ value }) => Number(value)) @IsInt() @Min(1) memberId!: number;
-  @IsOptional() @IsString() expiresOn?: string;
-}

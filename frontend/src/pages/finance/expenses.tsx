@@ -1,10 +1,15 @@
+import { formatMoneyNumber, formatDateTime } from '@/lib/formatters';
+import { ClubPaymentSplitFields, singlePaymentRow, splitRowsTotal, type ClubPaymentSplitRow } from '@/components/club/club-payment-split-fields';
+import { clubPaymentMethodsLabel, type ClubPaymentMethod } from '@/components/club/club-payment-method-select';
+import { useClubT } from '@/hooks/use-club-t';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useQuery } from '@tanstack/react-query';
-import { Check, Pencil, Plus, Tag, Trash2, X } from 'lucide-react';
+import { LockKeyhole, Printer, Check, FileText, Pencil, Plus, Tag, Trash2, WalletCards, X } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
 import { FilterBar, type FilterField } from '@/components/common/filter-bar';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -15,34 +20,30 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useBranches } from '@/hooks/use-branches';
+import { useMyPermissions, usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
-import { localToday } from '@/lib/formatters';
+import { buildExpenseVoucherHtml, printHtmlDocument } from '@/lib/expense-voucher-print';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
+import { useAuth } from '@/store/auth';
 import {
   EXPENSE_CATEGORY_VALUES,
-  PAYMENT_METHOD_VALUES,
-  PAYMENT_STATUS_VALUES,
   financeOptions,
   type ExpenseCategory,
-  type ExpenseFormPayload,
   type ExpenseRow,
 } from '@/types/finance';
 import { useLocale } from '@/store/locale';
-import { useAuth } from '@/store/auth';
-import { usePermission } from '@/hooks/use-permission';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { FinancePageShell } from './finance-shell';
-
-const GENDER_OPTIONS = [
-  { value: '', label: 'الكل' },
-  { value: 'male', label: 'رجالي' },
-  { value: 'female', label: 'حريمي' },
-] as const;
+import { buildExpensePayload } from './expense-form';
+import { useClubPrintingPolicy } from '@/hooks/use-club-printing-policy';
+import { printThermalFinancialReceiptWithFallback } from '@/components/club/thermal-receipt-print';
+import { uiStatic } from '@/lib/ui-static';
 
 const EMPTY_FORM = {
   expenseDate: '',
@@ -50,8 +51,8 @@ const EMPTY_FORM = {
   subCategory: '',
   amount: '',
   // Canonical stored values (Arabic) — locale-independent, matches backend literals.
-  paymentMethod: 'نقدي',
-  paymentStatus: 'معلق',
+  paymentMethod: uiStatic('نقدي'),
+  paymentStatus: uiStatic('معلق'),
   description: '',
   vendor: '',
   invoiceNumber: '',
@@ -59,25 +60,70 @@ const EMPTY_FORM = {
   taxAmount: '',
   notes: '',
   branchId: '',
-  genderScope: '' as '' | 'male' | 'female',
-  hasPercentage: false,
-  malePercentage: '60',
-  femalePercentage: '40',
+  deductFromDrawer: false,
+  businessUnit: 'gym' as 'gym' | 'cafe',
+  paidAmount: '',
 };
 
+function dateTimeInput(value = new Date().toISOString()) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value.slice(0, 16);
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'Africa/Cairo', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(date).replace(' ', 'T');
+}
+
+function paymentRows(expense: ExpenseRow): ClubPaymentSplitRow[] {
+  if (expense.payments?.length) return expense.payments.map((row) => ({ method: row.method as ClubPaymentMethod, amount: String(row.amount) }));
+  const methods: Record<string, ClubPaymentMethod> = { 'نقدي': 'cash', 'بطاقة': 'card', 'فيزا': 'visa', 'تحويل بنكي': 'transfer', 'حساب بنكي': 'bank', 'محفظة': 'wallet', 'إنستا باي': 'instapay' };
+  return singlePaymentRow(methods[expense.paymentMethod] ?? 'cash', expense.paidAmount ?? (expense.paymentStatus === 'مدفوع' ? expense.totalAmount : 0));
+}
+
 export function FinanceExpensesPage() {
-  const { ui } = useLocale();
+  const { ui, dir, locale } = useLocale();
+  const ct = useClubT();
+  const { can } = usePermission();
+  const canCreate = can('financial-reports.expenses:create');
+  const { policy } = useClubPrintingPolicy();
+  const canUpdate = can('financial-reports.expenses:update');
+  const canDelete = can('financial-reports.expenses:delete');
+  const canApprove = can('financial-reports.expenses:approve');
+  const canReject = can('financial-reports.expenses:reject');
+  const { user } = useAuth();
+  const { data: permissions } = useMyPermissions();
+  const expenseScope = permissions?.scope['financial-reports.expenses'];
+  const ownExpensesOnly = !!permissions && !permissions.superAdmin && expenseScope !== 'global' && expenseScope !== 'branch';
+  const canFilterUsers = !!permissions && !ownExpensesOnly;
   const { params, setParams } = useListQuery();
-  const user = useAuth((state) => state.user);
-  const { superAdmin } = usePermission();
-  const title = user?.job_title ?? '';
-  const receptionOnly = !superAdmin && user?.level !== 1 && user?.level !== 3 && /(استقبال|ريسيبشن|ريسبشن|reception)/i.test(title) && !/(مدير|مشرف|رئيس|manager|supervisor|head)/i.test(title);
-  const expenseParams = receptionOnly ? { ...params, filters: { ...params.filters, branchId: String(user?.branch ?? 0), dateFrom: localToday(), dateTo: localToday() } } : params;
+  const businessUnit = params.filters.businessUnit === 'cafe' ? 'cafe' : 'gym';
+  const listParams = { ...params, filters: { ...params.filters, businessUnit } };
   const { data: branches } = useBranches();
-  const { data, isLoading, isError, refetch } = usePaginatedList<ExpenseRow>('expenses', expenseParams);
+  const printExpense = (expense: ExpenseRow) => printThermalFinancialReceiptWithFallback({
+    documentNumber: expense.expenseNumber,
+    transactionLabel: 'Expense voucher',
+    itemName: expense.description || expense.category,
+    customerName: expense.vendor,
+    branchName: branches?.find((branch) => branch.id === expense.branchId)?.name,
+    collectedAmount: expense.paidAmount ?? (expense.paymentStatus === 'مدفوع' ? expense.totalAmount : 0),
+    payments: expense.payments ?? undefined,
+    paymentMethod: expense.paymentMethod,
+    issuedAt: expense.expenseDate,
+    operatorName: user?.name,
+  }, policy);
+  const { data, isLoading, isError, refetch } = usePaginatedList<ExpenseRow>('expenses', listParams);
+  const expenseUsers = useQuery({
+    queryKey: ['expenses', 'users', user?.sub],
+    queryFn: async ({ signal }) => (await api.get<{ id: number; name: string | null }[]>('/expenses/users', {
+      signal,
+    })).data,
+    enabled: canFilterUsers,
+    retry: false,
+  });
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
+  const [payRows, setPayRows] = useState<ClubPaymentSplitRow[]>(singlePaymentRow());
+  const expenseTotal = Math.round(((Number(form.amount) || 0) + (Number(form.taxAmount) || 0)) * 100) / 100;
+  const paidTotal = splitRowsTotal(payRows);
+  const remainingTotal = Math.round((expenseTotal - paidTotal) * 100) / 100;
   const [saving, setSaving] = useState(false);
   const [actingId, setActingId] = useState<number | null>(null);
   const [rejectOpen, setRejectOpen] = useState(false);
@@ -99,15 +145,9 @@ export function FinanceExpensesPage() {
   const categoryOptions = financeOptions(
     activeCategoryNames.length ? activeCategoryNames : [...EXPENSE_CATEGORY_VALUES],
   );
-  const paymentMethodOptions = financeOptions(PAYMENT_METHOD_VALUES);
-  const paymentStatusOptions = financeOptions(PAYMENT_STATUS_VALUES);
-
-  // Derived: percentages must sum to 100 when hasPercentage is on
-  const malePct = Number(form.malePercentage) || 0;
-  const femalePct = Number(form.femalePercentage) || 0;
-  const percentageValid = !form.hasPercentage || (malePct + femalePct === 100 && malePct > 0 && femalePct > 0);
 
   const addCategory = async () => {
+    if (!canCreate) return;
     const name = newCat.trim();
     if (!name) return;
     setCatBusy(true);
@@ -124,6 +164,7 @@ export function FinanceExpensesPage() {
   };
 
   const toggleCategory = async (c: ExpenseCategory) => {
+    if (!canUpdate) return;
     try {
       await api.put(`/expense-categories/${c.id}`, { isActive: !c.isActive });
       void refetchCategories();
@@ -133,6 +174,7 @@ export function FinanceExpensesPage() {
   };
 
   const deleteCategory = async (c: ExpenseCategory) => {
+    if (!canDelete) return;
     const ok = await confirm({
       title: ui('حذف النوع'),
       description: `${ui('حذف «')}${c.name}${ui('»؟')}`,
@@ -156,6 +198,15 @@ export function FinanceExpensesPage() {
       type: 'select',
       options: (branches ?? []).map((b) => ({ value: String(b.id), label: b.name ?? '—' })),
     },
+    ...(canFilterUsers ? [{
+      key: 'userId',
+      label: ui('المستخدم'),
+      type: 'select' as const,
+      allLabel: ui('كل المستخدمين'),
+      placeholder: ui(expenseUsers.isPending ? 'جارٍ تحميل المستخدمين…' : 'كل المستخدمين'),
+      disabled: expenseUsers.isPending || expenseUsers.isError,
+      options: (expenseUsers.data ?? []).map((account) => ({ value: String(account.id), label: account.name ?? `#${account.id}` })),
+    }] : []),
     {
       key: 'category',
       label: ui('الفئة'),
@@ -172,19 +223,7 @@ export function FinanceExpensesPage() {
         { value: 'مرفوض', label: ui('مرفوض') },
       ],
     },
-    {
-      key: 'genderScope',
-      label: ui('النطاق'),
-      type: 'select',
-      options: GENDER_OPTIONS.filter((o) => o.value !== '').map((o) => ({ value: o.value, label: ui(o.label) })),
-    },
   ];
-
-  const genderLabel = (scope: 'male' | 'female' | null | undefined) => {
-    if (scope === 'male') return ui('رجالي');
-    if (scope === 'female') return ui('حريمي');
-    return '—';
-  };
 
   const columns = useMemo<ColumnDef<ExpenseRow>[]>(
     () => [
@@ -192,27 +231,23 @@ export function FinanceExpensesPage() {
       {
         accessorKey: 'expenseDate',
         header: ui('التاريخ'),
-        cell: ({ getValue }) => <span className="nums">{getValue() as string}</span>,
+        cell: ({ row }) => <span className="nums whitespace-nowrap">{formatDateTime(row.original.expenseDate.length > 10 ? row.original.expenseDate : `${row.original.expenseDate}T${dateTimeInput(row.original.createdAt).slice(11)}:00`, locale)}</span>,
       },
       { accessorKey: 'category', header: ui('الفئة') },
       { accessorKey: 'vendor', header: ui('المورد'), cell: ({ getValue }) => getValue() ?? '—' },
       {
-        accessorKey: 'amount',
-        header: ui('المبلغ'),
-        cell: ({ row }) => {
-          const r = row.original;
-          const amt = r.nesba != null && r.mainValue != null
-            ? `${toArabicDigits(r.amount.toFixed(2))} (${toArabicDigits(String(r.nesba))}%)`
-            : toArabicDigits(r.amount.toFixed(2));
-          return <span className="nums">{amt}</span>;
-        },
+        accessorKey: 'createdByName',
+        header: ui('من قام بالصرف'),
+        cell: ({ row }) => row.original.createdByName ?? '—',
       },
       {
-        id: 'genderScope',
-        header: ui('النطاق'),
-        cell: ({ row }) => genderLabel(row.original.genderScope),
+        accessorKey: 'amount',
+        header: ui('المبلغ'),
+        cell: ({ getValue }) => <span className="nums">{formatMoneyNumber((getValue() as number))}</span>,
       },
-      { accessorKey: 'paymentMethod', header: ui('طريقة الدفع') },
+      { accessorKey: 'paymentMethod', header: ui('طريقة الدفع'), cell: ({ row }) => clubPaymentMethodsLabel(ct, row.original.payments, row.original.paymentMethod) },
+      { accessorKey: 'paidAmount', header: ui('المدفوع'), cell: ({ row }) => row.original.paymentNeedsReview ? ui('راجع المدفوع') : formatMoneyNumber(row.original.paidAmount ?? 0) },
+      { accessorKey: 'remainingAmount', header: ui('المتبقي'), cell: ({ row }) => row.original.paymentNeedsReview ? '—' : formatMoneyNumber(row.original.remainingAmount ?? 0) },
       { accessorKey: 'paymentStatus', header: ui('حالة الدفع') },
       { accessorKey: 'approvalStatus', header: ui('الموافقة') },
       {
@@ -220,9 +255,30 @@ export function FinanceExpensesPage() {
         header: ui('الإجراءات'),
         cell: ({ row }) => (
           <div className="flex gap-1">
-            {row.original.approvalStatus === 'معلق' && (
+            <Button
+              variant="ghost"
+              size="icon"
+              permissionAction={null}
+              title={ui('سند صرف')}
+              aria-label={ui('سند صرف')}
+              onClick={() => printHtmlDocument(buildExpenseVoucherHtml(row.original, {
+                brandName: 'ONE80',
+                branchName: (branches ?? []).find((b) => b.id === row.original.branchId)?.name ?? null,
+                printedBy: user?.name ?? null,
+                ui,
+                dir,
+              }))}
+            >
+              <FileText className="size-4" />
+            </Button>
+            {row.original.approvalStatus === 'موافق عليه' && row.original.paymentStatus === 'مدفوع' ? (
+              <Button variant="ghost" size="icon" permissionAction={null} aria-label={ui('طباعة سند الصرف')} title={ui('طباعة سند الصرف')} onClick={() => printExpense(row.original)}>
+                <Printer className="size-4" />
+              </Button>
+            ) : null}
+            {row.original.approvalStatus === 'معلق' && (canApprove || canReject) && (
               <>
-                <Button
+                {canApprove && <Button
                   variant="ghost"
                   size="icon"
                   title={ui('اعتماد')}
@@ -242,8 +298,8 @@ export function FinanceExpensesPage() {
                   }}
                 >
                   <Check className="h-4 w-4 text-green-600" />
-                </Button>
-                <Button
+                </Button>}
+                {canReject && <Button
                   variant="ghost"
                   size="icon"
                   title={ui('رفض')}
@@ -255,29 +311,25 @@ export function FinanceExpensesPage() {
                   }}
                 >
                   <X className="h-4 w-4 text-red-600" />
-                </Button>
+                </Button>}
               </>
             )}
-            <Button
+            {canUpdate && !row.original.systemManaged && <Button
               variant="ghost"
               size="icon"
+              permissionResource="financial-reports.expenses"
+              permissionAction="update"
+              aria-label={ui('تعديل مصروف')}
               onClick={() => {
                 setEditId(row.original.id);
-                const isSplit = row.original.nesba != null && row.original.mainValue != null;
-                // nesba = نسبة هذا الصف نفسه؛ اشتقاق نسبة الرجالي دائماً بشكل صحيح
-                // سواء تم الضغط على تعديل من صف الرجالي أو صف الحريمي
-                const malePct = isSplit
-                  ? (row.original.genderScope === 'female'
-                      ? 100 - (row.original.nesba ?? 0)
-                      : (row.original.nesba ?? 60))
-                  : 60;
+                setPayRows(paymentRows(row.original));
                 setForm({
-                  expenseDate: row.original.expenseDate?.slice(0, 10) ?? '',
+                  expenseDate: row.original.expenseDate.length > 10 ? row.original.expenseDate.slice(0, 16) : `${row.original.expenseDate}T${dateTimeInput(row.original.createdAt).slice(11)}`,
+                  businessUnit: row.original.businessUnit ?? businessUnit,
+                  paidAmount: String(row.original.paidAmount ?? 0),
                   category: row.original.category,
                   subCategory: row.original.subCategory ?? '',
-                  amount: row.original.mainValue != null
-                    ? String(row.original.mainValue)
-                    : String(row.original.amount),
+                  amount: String(row.original.amount),
                   paymentMethod: row.original.paymentMethod,
                   paymentStatus: row.original.paymentStatus,
                   description: row.original.description ?? '',
@@ -287,19 +339,19 @@ export function FinanceExpensesPage() {
                   taxAmount: row.original.taxAmount != null ? String(row.original.taxAmount) : '',
                   notes: row.original.notes ?? '',
                   branchId: row.original.branchId != null ? String(row.original.branchId) : '',
-                  genderScope: isSplit ? '' : (row.original.genderScope ?? ''),
-                  hasPercentage: isSplit,
-                  malePercentage: isSplit ? String(malePct) : '60',
-                  femalePercentage: isSplit ? String(100 - malePct) : '40',
+                  deductFromDrawer: false,
                 });
                 setOpen(true);
               }}
             >
               <Pencil className="h-4 w-4" />
-            </Button>
-            <Button
+            </Button>}
+            {canDelete && !row.original.systemManaged && <Button
               variant="ghost"
               size="icon"
+              permissionResource="financial-reports.expenses"
+              permissionAction="delete"
+              aria-label={ui('حذف')}
               onClick={async () => {
                 if (!(await confirm({ title: ui('حذف هذا المصروف؟') }))) return;
                 try {
@@ -312,15 +364,16 @@ export function FinanceExpensesPage() {
               }}
             >
               <Trash2 className="h-4 w-4" />
-            </Button>
+            </Button>}
           </div>
         ),
       },
     ],
-    [params.page, params.pageSize, refetch, ui, actingId],
+    [params.page, params.pageSize, refetch, ui, ct, locale, businessUnit, dir, branches, user?.name, actingId, canApprove, canReject, canUpdate, canDelete],
   );
 
   const submitReject = async () => {
+    if (!canReject) return;
     if (rejectId == null) return;
     if (!rejectNotes.trim()) {
       toast.error(ui('يرجى إدخال سبب الرفض'));
@@ -341,11 +394,13 @@ export function FinanceExpensesPage() {
 
   const openCreate = () => {
     setEditId(null);
-    setForm({ ...EMPTY_FORM, expenseDate: localToday(), branchId: String(receptionOnly ? user?.branch ?? '' : branches?.[0]?.id ?? '') });
+    setForm({ ...EMPTY_FORM, businessUnit, expenseDate: dateTimeInput(), branchId: String(user?.branch ?? branches?.[0]?.id ?? '') });
+    setPayRows(singlePaymentRow());
     setOpen(true);
   };
 
   const save = async () => {
+    if (editId != null ? !canUpdate : !canCreate) return;
     if (!form.category || !form.amount) {
       toast.error(ui('يرجى تعبئة الفئة والمبلغ'));
       return;
@@ -359,46 +414,30 @@ export function FinanceExpensesPage() {
       toast.error(ui('المبلغ يجب أن يكون رقماً موجباً'));
       return;
     }
-    if (form.hasPercentage && !percentageValid) {
-      toast.error(ui('مجموع نسبة الرجال والحريم يجب أن يساوي 100'));
+    if (paidTotal < 0 || payRows.some((row) => !Number.isFinite(Number(row.amount)) || Number(row.amount) < 0) || remainingTotal < 0) {
+      toast.error(ui('المدفوع يجب ألا يتجاوز إجمالي المصروف'));
       return;
     }
-
-    const payload: ExpenseFormPayload = {
-      expenseDate: form.expenseDate,
-      category: form.category,
-      subCategory: form.subCategory || undefined,
-      amount: Number(form.amount),
-      paymentMethod: form.paymentMethod,
-      paymentStatus: form.paymentStatus,
-      description: form.description || undefined,
-      vendor: form.vendor || undefined,
-      invoiceNumber: form.invoiceNumber || undefined,
-      receiptNumber: form.receiptNumber || undefined,
-      taxAmount: form.taxAmount ? Number(form.taxAmount) : undefined,
-      notes: form.notes || undefined,
-      branchId: form.branchId ? Number(form.branchId) : undefined,
-      ...(form.hasPercentage
-        ? {
-            hasPercentage: true,
-            malePercentage: Number(form.malePercentage),
-            femalePercentage: Number(form.femalePercentage),
-          }
-        : {
-            genderScope: form.genderScope || undefined,
-          }),
-    };
+    const payload = buildExpensePayload({
+      ...form,
+      paidAmount: String(paidTotal),
+      payments: payRows.filter((row) => Number(row.amount) > 0).map((row) => ({ method: row.method, amount: Number(row.amount) })),
+      paymentMethod: payRows[0]?.method === 'cash' ? 'نقدي' : payRows[0]?.method ?? 'cash',
+      paymentStatus: paidTotal === 0 ? 'معلق' : remainingTotal > 0 ? 'جزئي' : 'مدفوع',
+    }, editId == null);
     setSaving(true);
     try {
       if (editId != null) {
         await api.put(`/expenses/${editId}`, payload);
-        toast.success(ui(form.hasPercentage ? 'تم تحديث الصفين (رجالي وحريمي)' : 'تم تحديث المصروف'));
+        toast.success(ui('تم تحديث المصروف'));
       } else {
-        await api.post('/expenses', payload);
-        toast.success(ui(form.hasPercentage ? 'تم إنشاء صفين: رجالي وحريمي حسب النسبة' : 'تم إنشاء المصروف'));
+        const { data: created } = await api.post<ExpenseRow>('/expenses', payload);
+        if (created.approvalStatus === 'موافق عليه' && created.paymentStatus === 'مدفوع') printExpense(created);
+        toast.success(ui('تم إنشاء المصروف'));
       }
       setOpen(false);
       void refetch();
+      if (canFilterUsers) void expenseUsers.refetch();
     } catch (e) {
       toast.error(apiError(e));
     } finally {
@@ -407,19 +446,42 @@ export function FinanceExpensesPage() {
   };
 
   return (
-    <FinancePageShell title={ui('إدارة المصروفات')} description={receptionOnly ? `مصروفات اليوم ${localToday()} — ${user?.branch_name ?? 'فرعك'}` : ui('تسجيل ومتابعة واعتماد المصروفات')}>
+    <FinancePageShell title={ui('إدارة المصروفات')} description={ui('تسجيل ومتابعة واعتماد المصروفات')}>
+      <div className="flex gap-2" role="group" aria-label={ui('مصروفات')}>
+        <Button permissionAction={null} variant={businessUnit === 'gym' ? 'default' : 'outline'} onClick={() => setParams({ filters: { businessUnit: 'gym' }, page: 1 })}>{ui('مصروفات الجيم')}</Button>
+        <Button permissionAction={null} variant={businessUnit === 'cafe' ? 'default' : 'outline'} onClick={() => setParams({ filters: { businessUnit: 'cafe' }, page: 1 })}>{ui('مصروفات الكافيه')}</Button>
+      </div>
+      {ownExpensesOnly ? (
+        <div className="mb-4 flex min-h-11 max-w-md flex-wrap items-center gap-3 rounded-xl border bg-muted/45 px-4 py-2">
+          <LockKeyhole className="size-4 shrink-0 text-primary" />
+          <span className="min-w-0 font-semibold">{user?.name ?? ui('المستخدم')}</span>
+          <Badge variant="secondary" className="ms-auto shrink-0">{ui('مصروفاتي فقط')}</Badge>
+        </div>
+      ) : null}
       <div className="mb-4 flex justify-end gap-2">
-        <Button variant="outline" onClick={() => setCatOpen(true)}>
+        {(canCreate || canUpdate || canDelete) && <Button variant="outline" onClick={() => setCatOpen(true)}>
           <Tag className="ms-1 h-4 w-4" />
           {ui('إدارة الأنواع')}
-        </Button>
-        <Button onClick={openCreate}>
+        </Button>}
+        {canCreate && <Button onClick={openCreate}>
           <Plus className="ms-1 h-4 w-4" />
           {ui('مصروف جديد')}
-        </Button>
+        </Button>}
       </div>
-      <FilterBar fields={receptionOnly ? filters.filter((field) => field.key !== 'branchId') : filters} searchPlaceholder={ui('بحث في المصروفات…')} />
+      <FilterBar fields={filters} searchPlaceholder={ui('بحث في المصروفات…')} preserveParams={['businessUnit']} />
+      {canFilterUsers && expenseUsers.isError && <div role="alert" className="mb-3 flex flex-wrap items-center gap-3 text-sm">
+        <span className="text-destructive">{ui('تعذر تحميل المستخدمين')}</span>
+        <Button permissionAction={null} variant="outline" onClick={() => void expenseUsers.refetch()}>{ui('إعادة المحاولة')}</Button>
+      </div>}
       <DataTable
+        exportSource={{ resource: 'expenses', params: listParams }}
+        rowClassName={(expense) => expense.paymentNeedsReview
+          ? 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-950/50'
+          : (expense.paidAmount ?? 0) <= 0
+          ? 'bg-red-50 hover:bg-red-100 dark:bg-red-950/30 dark:hover:bg-red-950/50'
+          : (expense.remainingAmount ?? 0) > 0
+            ? 'bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-950/50'
+            : undefined}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -440,20 +502,21 @@ export function FinanceExpensesPage() {
             <DialogTitle>{editId != null ? ui('تعديل مصروف') : ui('مصروف جديد')}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-3 py-2">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1">
-                <Label>{ui('التاريخ')}</Label>
+                <Label htmlFor="expense-date">{ui('التاريخ والوقت')}</Label>
                 <Input
+                  id="expense-date"
                   className="nums"
-                  type="date"
-                  readOnly={receptionOnly}
+                  type="datetime-local"
                   value={form.expenseDate}
                   onChange={(e) => setForm((f) => ({ ...f, expenseDate: e.target.value }))}
                 />
               </div>
               <div className="grid gap-1">
-                <Label>{ui('الفرع')}</Label>
+                <Label htmlFor="expense-branch">{ui('الفرع')}</Label>
                 <select
+                  id="expense-branch"
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.branchId}
                   onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}
@@ -467,10 +530,11 @@ export function FinanceExpensesPage() {
                 </select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1">
-                <Label>{ui('الفئة')}</Label>
+                <Label htmlFor="expense-category">{ui('الفئة')}</Label>
                 <select
+                  id="expense-category"
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.category}
                   onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
@@ -484,169 +548,68 @@ export function FinanceExpensesPage() {
                 </select>
               </div>
               <div className="grid gap-1">
-                <Label>{ui('الفئة الفرعية')}</Label>
-                <Input value={form.subCategory} onChange={(e) => setForm((f) => ({ ...f, subCategory: e.target.value }))} />
+                <Label htmlFor="expense-subcategory">{ui('الفئة الفرعية')}</Label>
+                <Input id="expense-subcategory" value={form.subCategory} onChange={(e) => setForm((f) => ({ ...f, subCategory: e.target.value }))} />
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
-              <div className="grid gap-1">
-                <Label>{ui('المبلغ')}</Label>
-                <Input
-                  className="nums"
-                  type="number"
-                  min={0}
-                  step="0.01"
-                  value={form.amount}
-                  onChange={(e) => setForm((f) => ({ ...f, amount: e.target.value }))}
-                />
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-1.5">
+                <Label htmlFor="expense-amount">{ui('قيمة المصروف قبل الضريبة')}</Label>
+                <Input id="expense-amount" className="nums" type="number" min={0} step="0.01"
+                  value={form.amount} onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))} />
               </div>
-              <div className="grid gap-1">
-                <Label>{ui('طريقة الدفع')}</Label>
-                <select
-                  className="rounded-md border bg-background px-3 py-2 text-sm"
-                  value={form.paymentMethod}
-                  onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value }))}
-                >
-                  {paymentMethodOptions.map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="grid gap-1">
-                <Label>{ui('حالة الدفع')}</Label>
-                <select
-                  className="rounded-md border bg-background px-3 py-2 text-sm"
-                  value={form.paymentStatus}
-                  onChange={(e) => setForm((f) => ({ ...f, paymentStatus: e.target.value }))}
-                >
-                  {paymentStatusOptions.map((s) => (
-                    <option key={s.value} value={s.value}>
-                      {s.label}
-                    </option>
-                  ))}
-                </select>
+              <div className="grid gap-1.5">
+                <Label htmlFor="expense-tax">{ui('الضريبة')}</Label>
+                <Input id="expense-tax" className="nums" type="number" min={0} step="0.01"
+                  value={form.taxAmount} onChange={(event) => setForm((current) => ({ ...current, taxAmount: event.target.value }))} />
               </div>
             </div>
-
-            {/* ── Gender Scope ── */}
-            <div className="grid grid-cols-2 gap-3 items-end">
-              <div className="grid gap-1">
-                <Label>{ui('نطاق الجنس')}</Label>
-                <select
-                  className="rounded-md border bg-background px-3 py-2 text-sm"
-                  value={form.hasPercentage ? '' : form.genderScope}
-                  disabled={form.hasPercentage}
-                  onChange={(e) =>
-                    setForm((f) => ({ ...f, genderScope: e.target.value as '' | 'male' | 'female' }))
-                  }
-                >
-                  {GENDER_OPTIONS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {ui(o.label)}
-                    </option>
-                  ))}
-                </select>
+            <section className="space-y-3 border-t pt-4">
+              <h3 className="font-semibold">{ui('الدفع')}</h3>
+              <ClubPaymentSplitFields total={expenseTotal} rows={payRows} disabled={saving}
+                onChange={(rows) => {
+                  setPayRows(rows);
+                  setForm((current) => ({ ...current, deductFromDrawer: rows.length === 1 && rows[0].method === 'cash' ? current.deductFromDrawer : false }));
+                }} />
+              <div className="flex flex-wrap justify-between gap-3 rounded-lg bg-muted/40 px-3 py-2 text-sm">
+                <span>{ui('الإجمالي شامل الضريبة')}: <b className="nums">{formatMoneyNumber(expenseTotal)}</b></span>
+                <span>{ui('المدفوع')}: <b className="nums">{formatMoneyNumber(paidTotal)}</b></span>
+                <span className={paidTotal === 0 ? 'text-red-700 dark:text-red-300' : remainingTotal > 0 ? 'text-amber-700 dark:text-amber-300' : 'text-emerald-700 dark:text-emerald-300'}>
+                  {ui('المتبقي')}: <b className="nums">{formatMoneyNumber(remainingTotal)}</b>
+                </span>
               </div>
-              <div className="flex items-center gap-2 pb-1">
-                <input
-                  id="has-percentage"
-                  type="checkbox"
-                  className="h-4 w-4 cursor-pointer"
-                  checked={form.hasPercentage}
-                  onChange={(e) =>
-                    setForm((f) => ({
-                      ...f,
-                      hasPercentage: e.target.checked,
-                      genderScope: '',
-                    }))
-                  }
-                />
-                <Label htmlFor="has-percentage" className="cursor-pointer font-normal">
-                  {ui('توزيع بالنسب (رجالي / حريمي)')}
-                </Label>
-              </div>
-            </div>
-
-            {/* ── Percentage Split ── */}
-            {form.hasPercentage && (
-              <div className="rounded-lg border p-3 bg-muted/30">
-                <p className="mb-2 text-xs text-muted-foreground">
-                  {ui('يتم إنشاء سجلين منفصلين: واحد للرجالي وآخر للحريمي حسب النسبة المحددة')}
-                </p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-1">
-                    <Label className="text-sm">{ui('نسبة الرجالي')} (%)</Label>
-                    <Input
-                      className="nums"
-                      type="number"
-                      min={1}
-                      max={99}
-                      step={1}
-                      value={form.malePercentage}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        const n = Number(v);
-                        setForm((f) => ({
-                          ...f,
-                          malePercentage: v,
-                          femalePercentage: Number.isFinite(n) && n > 0 && n < 100
-                            ? String(100 - n)
-                            : f.femalePercentage,
-                        }));
-                      }}
-                    />
-                  </div>
-                  <div className="grid gap-1">
-                    <Label className="text-sm">{ui('نسبة الحريمي')} (%)</Label>
-                    <Input
-                      className="nums"
-                      type="number"
-                      min={1}
-                      max={99}
-                      step={1}
-                      value={form.femalePercentage}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        const n = Number(v);
-                        setForm((f) => ({
-                          ...f,
-                          femalePercentage: v,
-                          malePercentage: Number.isFinite(n) && n > 0 && n < 100
-                            ? String(100 - n)
-                            : f.malePercentage,
-                        }));
-                      }}
-                    />
+            </section>
+            {editId == null ? (
+              <div className="flex min-h-16 items-center justify-between gap-4 rounded-xl border bg-muted/35 px-4 py-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <WalletCards className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" />
+                  <div className="min-w-0">
+                    <Label htmlFor="deduct-from-drawer" className="cursor-pointer font-bold">
+                      {ui('خصم المبلغ من نقدية الدرج')}
+                    </Label>
+                    <p id="deduct-from-drawer-help" className="mt-1 text-sm leading-6 text-muted-foreground">
+                      {ui('يُخصم المدفوع نقدًا من وردية الفرع المفتوحة.')}
+                    </p>
                   </div>
                 </div>
-                {form.amount && (
-                  <div className="mt-2 flex gap-4 text-xs text-muted-foreground">
-                    <span>
-                      {ui('الرجالي')}: {((Number(form.amount) * malePct) / 100).toFixed(2)}
-                    </span>
-                    <span>
-                      {ui('الحريمي')}: {((Number(form.amount) * femalePct) / 100).toFixed(2)}
-                    </span>
-                    {!percentageValid && (
-                      <span className="text-destructive font-medium">
-                        {ui('المجموع يجب أن يساوي 100%')}
-                      </span>
-                    )}
-                  </div>
-                )}
+                <Switch
+                  id="deduct-from-drawer"
+                  checked={form.deductFromDrawer}
+                  aria-describedby="deduct-from-drawer-help"
+                  disabled={saving || payRows.length !== 1 || payRows[0]?.method !== 'cash' || paidTotal <= 0}
+                  onCheckedChange={(checked) => setForm((current) => ({ ...current, deductFromDrawer: checked }))}
+                />
               </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
+            ) : null}
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1">
-                <Label>{ui('المورد')}</Label>
-                <Input value={form.vendor} onChange={(e) => setForm((f) => ({ ...f, vendor: e.target.value }))} />
+                <Label htmlFor="expense-vendor">{ui('المورد')}</Label>
+                <Input id="expense-vendor" value={form.vendor} onChange={(e) => setForm((f) => ({ ...f, vendor: e.target.value }))} />
               </div>
               <div className="grid gap-1">
-                <Label>{ui('رقم الفاتورة')}</Label>
+                <Label htmlFor="expense-invoice">{ui('رقم الفاتورة')}</Label>
                 <Input
+                  id="expense-invoice"
                   className="nums"
                   value={form.invoiceNumber}
                   onChange={(e) => setForm((f) => ({ ...f, invoiceNumber: e.target.value }))}
@@ -654,21 +617,17 @@ export function FinanceExpensesPage() {
               </div>
             </div>
             <div className="grid gap-1">
-              <Label>{ui('الوصف')}</Label>
-              <Textarea value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} />
-            </div>
-            <div className="grid gap-1">
-              <Label>{ui('ملاحظات')}</Label>
-              <Textarea value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
+              <Label htmlFor="expense-notes">{ui('ملاحظات')}</Label>
+              <Textarea id="expense-notes" value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()} disabled={saving || (form.hasPercentage && !percentageValid)}>
+            {(editId != null ? canUpdate : canCreate) && <Button permissionAction={editId != null ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>
               {ui('حفظ')}
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -691,9 +650,9 @@ export function FinanceExpensesPage() {
             <Button variant="outline" onClick={() => setRejectOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button variant="destructive" disabled={actingId != null} onClick={() => void submitReject()}>
+            {canReject && <Button variant="destructive" disabled={actingId != null} onClick={() => void submitReject()}>
               {ui('رفض')}
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -713,10 +672,10 @@ export function FinanceExpensesPage() {
                   if (e.key === 'Enter') void addCategory();
                 }}
               />
-              <Button onClick={() => void addCategory()} disabled={catBusy || !newCat.trim()}>
+              {canCreate && <Button onClick={() => void addCategory()} disabled={catBusy || !newCat.trim()}>
                 <Plus className="h-4 w-4" />
                 {ui('إضافة')}
-              </Button>
+              </Button>}
             </div>
             <div className="divide-y rounded-lg border">
               {(categories ?? []).length === 0 ? (

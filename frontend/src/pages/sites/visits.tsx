@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useQuery } from '@tanstack/react-query';
 import { Eye, MapPin, Pencil, Plus, Trash2 } from 'lucide-react';
@@ -26,10 +27,11 @@ import {
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api, apiError } from '@/lib/api';
+import { usePermission } from '@/hooks/use-permission';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 interface VisitRow {
@@ -44,6 +46,11 @@ interface VisitRow {
 
 export function SiteVisitsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('affairs.site_visits:create');
+  const canUpdate = can('affairs.site_visits:update');
+  const canDelete = can('affairs.site_visits:delete');
+  const canAudit = can('affairs.site_visits:audit');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<VisitRow>('sites/visits', params);
 
@@ -93,6 +100,7 @@ export function SiteVisitsPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.name.trim() || !form.lat || !form.lng) {
       toast.error(ui('الاسم والإحداثيات مطلوبة'));
       return;
@@ -130,7 +138,7 @@ export function SiteVisitsPage() {
         row.original.lat != null ? (
           <Button variant="link" size="sm" className="h-auto p-0 nums" onClick={() => setMapRow(row.original)}>
             <MapPin className="size-3.5" />
-            {toArabicDigits(String(row.original.lat))}, {toArabicDigits(String(row.original.long))}
+            {formatDigits(String(row.original.lat))}, {toArabicDigits(String(row.original.long))}
           </Button>
         ) : (
           '—'
@@ -144,15 +152,15 @@ export function SiteVisitsPage() {
     {
       id: 'actions',
       header: ui('الإجراءات'),
-      cell: ({ row }) => (
+      cell: ({ row }) => (canAudit || canUpdate || canDelete) ? (
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" aria-label={ui('السجلات')} onClick={() => setRecordsId(row.original.id)}>
+          {canAudit && <Button variant="ghost" size="icon" aria-label={ui('السجلات')} onClick={() => setRecordsId(row.original.id)}>
             <Eye className="size-4" />
-          </Button>
-          <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+          </Button>}
+          {canUpdate && <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
             <Pencil className="size-4" />
-          </Button>
-          <Button
+          </Button>}
+          {canDelete && <Button
             variant="ghost"
             size="icon"
             aria-label={ui('حذف')}
@@ -167,9 +175,9 @@ export function SiteVisitsPage() {
             }}
           >
             <Trash2 className="size-4 text-destructive" />
-          </Button>
+          </Button>}
         </div>
-      ),
+      ) : null,
     },
   ];
 
@@ -184,12 +192,13 @@ export function SiteVisitsPage() {
         isError={isError}
         error={error}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
+          canCreate ? <Button variant="brand" size="sm" onClick={openCreate}>
             <Plus className="size-4" /> {ui('موقع جديد')}
-          </Button>
+          </Button> : undefined
         }
       >
         <DataTable
+          exportSource={{ resource: 'sites/visits', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -233,7 +242,7 @@ export function SiteVisitsPage() {
               ) : (
                 records!.map((r, i) => (
                   <div key={i} className="rounded-lg border px-3 py-2 text-sm">
-                    <p className="font-medium">{(r.emp_name as string) ?? (r.name as string) ?? `${ui('سجل')} #${i + 1}`}</p>
+                    <p className="font-medium">{(r.emp_name as string) ?? (r.name as string) ?? `${ui('سجل')} #${formatDisplayNumber(i + 1)}`}</p>
                     {r.date_ar != null && (
                       <p className="mt-1 text-xs text-muted-foreground">
                         <DateText value={r.date_ar as string} />
@@ -285,7 +294,7 @@ export function SiteVisitsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
-            <Button onClick={() => void save()}>{ui('حفظ')}</Button>
+            {(editId ? canUpdate : canCreate) && <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()}>{ui('حفظ')}</Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

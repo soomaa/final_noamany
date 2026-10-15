@@ -50,6 +50,7 @@ export class LegalFilesController {
   }
 
   @Post(':id/seen')
+  @RequiresPermission('affairs.legal_files:update')
   ack(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AckLegalFileDto,
@@ -60,8 +61,8 @@ export class LegalFilesController {
 
   @Patch(':id')
   @RequiresPermission('affairs.legal_files:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateLegalFileDto) {
-    return this.legalFiles.update(id, dto);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateLegalFileDto, @CurrentUser() user: JwtUser) {
+    return this.legalFiles.update(id, dto, user);
   }
 
   @Delete(':id')

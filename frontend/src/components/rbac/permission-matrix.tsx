@@ -30,7 +30,6 @@ import {
   flattenForDisplay,
   resolveCell,
 } from '@/lib/rbac-resolve';
-import { orderRbacCatalogForSidebar } from '@/lib/rbac-nav-order';
 import type { Effect, RbacCatalog, RbacNode, TriState } from '@/types/rbac';
 import { TriStateCell } from './tri-state-cell';
 import { useLocale } from '@/store/locale';
@@ -78,6 +77,7 @@ const ACTION_EMOJI: Record<string, string> = {
   execute: '▶️',
   manage: '🛠️',
   use: '🧩',
+  override: '🔓',
 };
 
 export interface PermissionMatrixProps {
@@ -93,26 +93,31 @@ export interface PermissionMatrixProps {
 
 export function PermissionMatrix({ catalog, mode, draft, onChange, baseline, editable }: PermissionMatrixProps) {
   const { ui } = useLocale();
-  const orderedCatalog = useMemo(() => orderRbacCatalogForSidebar(catalog), [catalog]);
-  const modules = orderedCatalog.tree;
+  const modules = catalog.tree;
   const [activeKey, setActiveKey] = useState<string>(modules[0]?.key ?? '');
   useEffect(() => {
     if (!modules.some((m) => m.key === activeKey) && modules[0]) setActiveKey(modules[0].key);
   }, [modules, activeKey]);
 
-  // Keep the real catalog ancestry for resolution. The displayed tree has
-  // presentation-only sidebar groups, which must not change inherited grants.
   const ancestry = useMemo(() => buildAncestry(catalog.tree), [catalog.tree]);
   const nameMap = useMemo(() => {
     const m = new Map<string, string>();
     const walk = (nodes: RbacNode[]) => nodes.forEach((n) => { m.set(n.key, n.nameAr); if (n.children) walk(n.children); });
     walk(catalog.tree);
     return m;
-  }, [orderedCatalog.tree]);
+  }, [catalog.tree]);
 
-  // Show the full sidebar tree when selecting a department; groups can still be folded manually.
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
-  useEffect(() => setCollapsed(new Set()), [activeKey]);
+  // Sub-groups (e.g. HR sections) collapsed by default.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    const s = new Set<string>();
+    const walk = (nodes: RbacNode[]) =>
+      nodes.forEach((n) => {
+        if (n.type === 'group') s.add(n.key);
+        if (n.children) walk(n.children);
+      });
+    walk(catalog.tree);
+    return s;
+  });
 
   const actionOrder = useMemo(() => new Map(catalog.actions.map((a, i) => [a.key, i])), [catalog.actions]);
   const actionByKey = useMemo(() => new Map(catalog.actions.map((a) => [a.key, a])), [catalog.actions]);
@@ -188,6 +193,18 @@ export function PermissionMatrix({ catalog, mode, draft, onChange, baseline, edi
     return out;
   };
 
+  const clearExplicit = (nodes: RbacNode[]) => {
+    if (!editable) return;
+    const map = new Map(draft);
+    for (const target of nodes) {
+      for (const action of target.actions) map.delete(cellId(target.key, action));
+    }
+    onChange(map);
+  };
+
+  const hasExplicit = (nodes: RbacNode[]) =>
+    nodes.some((target) => target.actions.some((action) => draft.has(cellId(target.key, action))));
+
   /**
    * Row "All": if every applicable cell is effectively allowed, explicitly deny it;
    * otherwise explicitly allow it. Clearing to inheritance can leave access enabled
@@ -200,11 +217,7 @@ export function PermissionMatrix({ catalog, mode, draft, onChange, baseline, edi
   const toggleRowAll = (node: RbacNode) => {
     if (!editable) return;
     const map = new Map(draft);
-    const targets = node.actions.length === 0
-      ? collectSubtree(node).filter((item) => item.actions.length > 0)
-      : mode === 'exception'
-        ? collectSubtree(node)
-        : [node];
+    const targets = mode === 'exception' ? collectSubtree(node) : [node];
     const allAllowed = targets.every((n) =>
       n.actions.every((a) => effectiveOf(n.key, a).effective === 'allow'),
     );
@@ -306,11 +319,15 @@ export function PermissionMatrix({ catalog, mode, draft, onChange, baseline, edi
               {rows.map(({ node, depth, hasChildren }) => {
                 const RowIcon = TYPE_ICON[node.type];
                 const applicable = new Set(node.actions);
-                const bulkTargets = node.actions.length === 0
-                  ? collectSubtree(node).filter((item) => item.actions.length > 0)
-                  : [node];
-                const rowAllAllowed = bulkTargets.length > 0
-                  && bulkTargets.every((item) => item.actions.every((a) => effectiveOf(item.key, a).effective === 'allow'));
+                const subtree = collectSubtree(node);
+                const rowTargets = mode === 'exception' ? subtree : [node];
+                const rowAllAllowed = rowTargets.some((target) => target.actions.length > 0)
+                  && rowTargets.every((target) =>
+                    target.actions.every((action) => effectiveOf(target.key, action).effective === 'allow'),
+                  );
+                const descendants = subtree.slice(1);
+                const nodeHasExplicit = hasExplicit([node]);
+                const descendantsHaveExplicit = hasExplicit(descendants);
                 return (
                   <tr key={node.key} className={cn('border-b border-border/60 hover:bg-accent/40', DEPTH_BG[Math.min(depth, 2)])}>
                     <td className="sticky start-0 z-[1] px-3 py-1.5" style={{ paddingInlineStart: 12 + depth * 18 }}>
@@ -330,17 +347,39 @@ export function PermissionMatrix({ catalog, mode, draft, onChange, baseline, edi
                       </div>
                     </td>
                     <td className="px-2 py-1.5 text-center">
-                      <button
-                        type="button"
-                        disabled={!editable}
-                        onClick={() => toggleRowAll(node)}
-                        className={cn(
-                          'rounded border border-border px-2 py-0.5 text-[11px] transition-colors',
-                          editable ? 'hover:bg-primary hover:text-primary-foreground' : 'opacity-50',
-                        )}
-                      >
-                        {rowAllAllowed ? ui('إلغاء') : ui('تحديد')}
-                      </button>
+                      <div className="flex min-w-28 flex-col items-center gap-1">
+                        <button
+                          type="button"
+                          disabled={!editable}
+                          onClick={() => toggleRowAll(node)}
+                          className={cn(
+                            'rounded border border-border px-2 py-0.5 text-[11px] transition-colors',
+                            editable ? 'hover:bg-primary hover:text-primary-foreground' : 'opacity-50',
+                          )}
+                        >
+                          {rowAllAllowed ? ui('إلغاء') : ui('تحديد')}
+                        </button>
+                        {nodeHasExplicit ? (
+                          <button
+                            type="button"
+                            disabled={!editable}
+                            onClick={() => clearExplicit([node])}
+                            className="text-[10px] text-primary underline-offset-2 hover:underline disabled:opacity-50"
+                          >
+                            {ui('اتباع المستوى الأعلى')}
+                          </button>
+                        ) : null}
+                        {hasChildren && descendantsHaveExplicit ? (
+                          <button
+                            type="button"
+                            disabled={!editable}
+                            onClick={() => clearExplicit(descendants)}
+                            className="text-[10px] text-amber-700 underline-offset-2 hover:underline disabled:opacity-50"
+                          >
+                            {ui('إعادة الفروع للتوريث')}
+                          </button>
+                        ) : null}
+                      </div>
                     </td>
                     {columns.map((a) => {
                       const isApplicable = applicable.has(a);

@@ -17,9 +17,14 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import type { MemberProgressRow } from '@/types/fitness';
 import { RowActions, memberColumnDef } from './shared';
+import { usePermission } from '@/hooks/use-permission';
 
 export function FitnessProgressPage() {
   const ft = useFitnessT();
+  const { can } = usePermission();
+  const canCreate = can('club.fitness.progress:create');
+  const canUpdate = can('club.fitness.progress:update');
+  const canDelete = can('club.fitness.progress:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<MemberProgressRow>(
     'club-member-progress',
@@ -44,6 +49,7 @@ export function FitnessProgressPage() {
   );
 
   const openCreate = () => {
+    if (!canCreate) return;
     setEditId(null);
     setForm({
       memberId: '',
@@ -58,6 +64,7 @@ export function FitnessProgressPage() {
   };
 
   const openEdit = (row: MemberProgressRow) => {
+    if (!canUpdate) return;
     setEditId(row.id);
     setForm({
       memberId: String(row.memberId),
@@ -72,6 +79,7 @@ export function FitnessProgressPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.memberId || !form.recordDate) {
       toast.error(ft('common.member'));
       return;
@@ -130,17 +138,17 @@ export function FitnessProgressPage() {
           <RowActions
             editLabel={ft('common.edit')}
             deleteLabel={ft('common.delete')}
-            onEdit={() => openEdit(row.original)}
-            onDelete={() =>
+            onEdit={canUpdate ? () => openEdit(row.original) : undefined}
+            onDelete={canDelete ? () =>
               void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
                 if (ok) deleteMutation.mutate(row.original.id);
               })
-            }
+            : undefined}
           />
         ),
       },
     ],
-    [ft],
+    [canDelete, canUpdate, ft],
   );
 
   return (
@@ -148,12 +156,13 @@ export function FitnessProgressPage() {
       <PageHeader
         title={ft('progress.title')}
         actions={
-          <Button variant="brand" onClick={openCreate}>
+          canCreate ? <Button variant="brand" onClick={openCreate}>
             <Plus className="size-4" /> {ft('common.add')}
-          </Button>
+          </Button> : null
         }
       />
       <DataTable
+        exportSource={{ resource: 'club-member-progress', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -168,7 +177,7 @@ export function FitnessProgressPage() {
         onRetry={() => void refetch()}
         emptyTitle={ft('common.noData')}
       />
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open && (editId ? canUpdate : canCreate)} onOpenChange={setOpen}>
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editId ? ft('common.edit') : ft('common.add')}</DialogTitle>
@@ -207,7 +216,7 @@ export function FitnessProgressPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

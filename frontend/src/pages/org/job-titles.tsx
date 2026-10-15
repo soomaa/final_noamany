@@ -15,6 +15,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { isNotImplemented, useMutationWithToast } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
@@ -25,6 +26,10 @@ import { uiStatic } from '@/lib/ui-static';
 
 export function OrgJobTitlesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('org.departments:create');
+  const canUpdate = can('org.departments:update');
+  const canDelete = can('org.departments:delete');
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['departments', 'job-titles'],
     queryFn: async () => {
@@ -103,9 +108,11 @@ export function OrgJobTitlesPage() {
         isError={isError}
         error={error}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('إضافة مسمى وظيفي')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCreate}>
+              <Plus className="size-4" /> {ui('إضافة مسمى وظيفي')}
+            </Button>
+          ) : undefined
         }
       >
         <Card className="p-4">
@@ -142,14 +149,20 @@ export function OrgJobTitlesPage() {
                         )}
                       </td>
                       <td className="p-3">
-                        <div className="flex justify-end gap-1">
-                          <Button variant="ghost" size="icon" className="size-8" aria-label={ui('تعديل')} onClick={() => openEdit(job)}>
-                            <Pencil className="size-3.5" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="size-8" aria-label={ui('حذف')} onClick={() => void handleDelete(job)}>
-                            <Trash2 className="size-3.5 text-destructive" />
-                          </Button>
-                        </div>
+                        {!canUpdate && !canDelete ? null : (
+                          <div className="flex justify-end gap-1">
+                            {canUpdate ? (
+                              <Button variant="ghost" size="icon" className="size-8" aria-label={ui('تعديل')} onClick={() => openEdit(job)}>
+                                <Pencil className="size-3.5" />
+                              </Button>
+                            ) : null}
+                            {canDelete ? (
+                              <Button variant="ghost" size="icon" className="size-8" aria-label={ui('حذف')} onClick={() => void handleDelete(job)}>
+                                <Trash2 className="size-3.5 text-destructive" />
+                              </Button>
+                            ) : null}
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -196,7 +209,7 @@ export function OrgJobTitlesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
-            <Button onClick={() => void save()}>{ui('حفظ')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()}>{ui('حفظ')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -21,6 +21,18 @@ import {
   ClubReceiptPaymentDto,
 } from './club-receipts.dto';
 
+export class PrivatePackageSessionPriceDto {
+  @Transform(({ value }) => Number(value))
+  @IsInt()
+  @Min(1)
+  sessionsCount!: number;
+
+  @Transform(({ value }) => Number(value))
+  @IsNumber()
+  @Min(0)
+  price!: number;
+}
+
 export class UpsertPrivatePackageDto {
   @IsIn(['subscription', 'sessions'])
   kind!: 'subscription' | 'sessions';
@@ -53,9 +65,23 @@ export class UpsertPrivatePackageDto {
   @IsInt({ each: true })
   @Min(1, { each: true })
   branchIds!: number[];
+
+  /** Per-session-count overrides for a session package; gaps fall back to price ÷ N × k. */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(365)
+  @ValidateNested({ each: true })
+  @Type(() => PrivatePackageSessionPriceDto)
+  sessionPrices?: PrivatePackageSessionPriceDto[];
 }
 
 export class CreatePrivateEnrollmentDto {
+  /** Member-visible note for this subscription. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
+
   @Transform(({ value }) => Number(value))
   @IsInt()
   @Min(1)
@@ -76,6 +102,13 @@ export class CreatePrivateEnrollmentDto {
   @IsInt()
   @Min(1)
   branchId?: number;
+
+  /** Sell fewer sessions than the package maximum; priced from the package matrix. */
+  @IsOptional()
+  @Transform(({ value }) => (value == null || value === '' ? undefined : Number(value)))
+  @IsInt()
+  @Min(1)
+  sessionsCount?: number;
 
   @IsOptional()
   @IsString()
@@ -102,10 +135,6 @@ export class CreatePrivateEnrollmentDto {
   @IsNumber()
   @Min(0)
   paidAmount!: number;
-
-  @IsOptional()
-  @IsString()
-  receiptNumber?: string;
 
   @IsOptional()
   @IsIn(['male', 'female'])

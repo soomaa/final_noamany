@@ -1,19 +1,19 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 import { isDryRun } from '../../common/preview/dry-run.util';
 import { previewResponse } from '../../common/preview/preview.types';
 import { assertValidWeekday } from '../../common/validators/validation.util';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { ListWeeklyLeavesDto } from './dto/list-weekly-leaves.dto';
+import { cairoDateString } from '../../common/utils/cairo-date';
 
 @Injectable()
 export class WeeklyLeavesService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(q: ListWeeklyLeavesDto) {
+  async list(q: PaginationDto) {
     const where: Prisma.hr_emp_agazat_dayesWhereInput = {};
-    if (q.empId) where.emp_id_fk = q.empId;
     if (q.search?.trim()) {
       const s = q.search.trim();
       where.OR = [{ emp_name: { contains: s } }, { off_day: { contains: s } }];
@@ -78,7 +78,7 @@ export class WeeklyLeavesService {
         emp_code_fk: emp.emp_code ?? 0,
         emp_name: emp.employee ?? '',
         off_day: body.offDay,
-        date_ar: new Date().toISOString().slice(0, 10),
+        date_ar: cairoDateString(),
         publisher: publisherId ?? 0,
       },
     });
@@ -121,7 +121,7 @@ export class WeeklyLeavesService {
       data: {
         ...empData,
         ...(body.offDay != null ? { off_day: body.offDay } : {}),
-        date_ar: new Date().toISOString().slice(0, 10),
+        date_ar: cairoDateString(),
         ...(publisherId != null ? { publisher: publisherId } : {}),
       },
     });

@@ -1,248 +1,100 @@
-import { useQuery } from '@tanstack/react-query';
-import {
-  CalendarDays,
-  CheckCircle2,
-  Clock3,
-  LogOut,
-  TrendingUp,
-  UserCheck,
-  Users,
-  Wallet,
-} from 'lucide-react';
-import { useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
-import { ClubStatCard } from '@/components/club/stat-card';
-import { LOGO_SRC } from '@/components/brand/logo';
-import { PageSkeleton } from '@/components/common/page-skeleton';
-import { TrainerScheduleCalendar, type TrainerScheduleItem } from '@/components/trainer/trainer-schedule-calendar';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { api, apiError } from '@/lib/api';
-import { localDateStr } from '@/lib/formatters';
-import { toArabicDigits } from '@/lib/utils';
-import { useAuth } from '@/store/auth';
-
-interface TrainerPortalData {
-  trainer: { id: number; name: string; specialization: string | null; imageUrl: string | null };
-  statistics: {
-    scheduledClasses: number;
-    completedClasses: number;
-    totalTrainees: number;
-    totalAttendance: number;
-    averageAttendance: number;
-    adherenceRate: number;
-    totalEarnings: number;
-  };
-  attendance: Array<{
-    classId: number;
-    className: string;
-    classDate: string;
-    attended: number;
-    absent: number;
-    registered: number;
-    attendanceRate: number;
-  }>;
-  earnings: {
-    total: number;
-    paid: number;
-    remaining: number;
-    items: Array<{
-      classId: number;
-      className: string;
-      classDate: string;
-      attended: number;
-      unitPrice: number;
-      commissionPercentage: number;
-      revenue: number;
-      amount: number;
-    }>;
-    payments: Array<{ id: number; amount: number; paymentDate: string; notes: string | null }>;
-  };
-}
-
-const money = (value: number) => `${toArabicDigits(value.toFixed(2))} ج.م`;
+import { LogOut, Dumbbell, CalendarDays, Languages } from "lucide-react";
+import { Navigate, NavLink, useLocation, useNavigate } from "react-router-dom";
+import { BrandLogo } from "@/components/brand/logo";
+import { TrainingPortalContext } from "@/pages/club/fitness/training/access";
+import { TrainingJourneyPage } from "@/pages/club/fitness/training/journey";
+import { TrainerPortalWorkspace } from "@/components/trainer/trainer-portal-workspace";
+import { Button } from "@/components/ui/button";
+import { useAuth } from "@/store/auth";
+import { useLocale } from "@/store/locale";
 
 export function TrainerPortalPage() {
   const { user, logout } = useAuth();
+  const { ui, locale, dir, toggleLocale } = useLocale();
+  const training = useLocation().pathname === "/trainer/training";
+  const tr = (a: string, e: string) => (locale === "ar" ? a : e);
   const navigate = useNavigate();
-  const [dateFrom, setDateFrom] = useState(() => {
-    const today = new Date();
-    return localDateStr(new Date(today.getFullYear(), today.getMonth(), 1));
-  });
-  const [dateTo, setDateTo] = useState(() => {
-    return localDateStr(new Date());
-  });
-  const [calendarDateFrom, setCalendarDateFrom] = useState(() => {
-    const today = new Date();
-    return localDateStr(new Date(today.getFullYear(), today.getMonth(), 1));
-  });
-  const [calendarDateTo, setCalendarDateTo] = useState(() => {
-    const today = new Date();
-    return localDateStr(new Date(today.getFullYear(), today.getMonth() + 1, 0));
-  });
-  const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['trainer-portal', dateFrom, dateTo],
-    queryFn: async () =>
-      (await api.get<TrainerPortalData>('/trainer-portal/dashboard', { params: { dateFrom, dateTo } })).data,
-    enabled: !!user?.is_trainer,
-  });
-  const {
-    data: calendarSchedule,
-    isLoading: isCalendarLoading,
-    isError: isCalendarError,
-    error: calendarError,
-    refetch: refetchCalendar,
-  } = useQuery({
-    queryKey: ['trainer-portal-schedule', calendarDateFrom, calendarDateTo],
-    queryFn: async () =>
-      (await api.get<TrainerScheduleItem[]>('/trainer-portal/schedule', {
-        params: { dateFrom: calendarDateFrom, dateTo: calendarDateTo },
-      })).data,
-    enabled: !!user?.is_trainer,
-  });
 
   if (!user?.is_trainer) return <Navigate to="/" replace />;
 
   const signOut = async () => {
     await logout();
-    navigate('/login', { replace: true });
+    navigate("/login", { replace: true });
   };
 
   return (
-    <div className="min-h-screen bg-muted/30" dir="rtl">
+    <div className="min-h-screen bg-muted/30" dir={dir}>
       <header className="sticky top-0 z-20 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3 sm:px-6">
-          <img src={LOGO_SRC} alt="Noamany Fitness Center" className="h-16 w-auto max-w-[14rem] object-contain drop-shadow-[0_8px_20px_rgba(237,28,36,0.3)]" />
-          <div className="min-w-0">
-            <p className="font-bold">بوابة المدرب</p>
-            <p className="truncate text-xs text-muted-foreground">{data?.trainer.name ?? user.name}</p>
+          <BrandLogo size="sm" />
+          <div className="min-w-0 flex-1">
+            <p className="hidden font-bold sm:block">{ui("بوابة المدرب")}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {user.name}
+            </p>
           </div>
-          <Button variant="outline" className="ms-auto" onClick={() => void signOut()}>
-            <LogOut className="size-4" /> تسجيل الخروج
+          <Button
+            permissionAction={null}
+            variant="ghost"
+            size="icon"
+            className="ms-auto min-h-11 min-w-11 shrink-0"
+            aria-label={tr("Switch to English", "التحويل للعربية")}
+            onClick={toggleLocale}
+          >
+            <Languages className="size-4" />
+          </Button>
+          <Button
+            permissionAction={null}
+            variant="outline"
+            className="min-h-11 min-w-11 shrink-0 px-3"
+            aria-label={ui("تسجيل الخروج")}
+            onClick={() => void signOut()}
+          >
+            <LogOut className="size-4" /> <span className="hidden sm:inline">{ui("تسجيل الخروج")}</span>
           </Button>
         </div>
       </header>
+      <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6">
+        <nav
+          aria-label={tr("بوابة المدرب", "Trainer portal")}
+          className="mx-auto mb-6 flex w-fit max-w-full flex-wrap justify-center gap-1 rounded-xl bg-muted p-1.5"
+        >
+          {[
+            [
+              "/trainer",
+              tr("الجدول والمتابعة", "Schedule & attendance"),
+              CalendarDays,
+            ],
+            [
+              "/trainer/training",
+              tr("إدارة التمارين", "Exercise management"),
+              Dumbbell,
+            ],
 
-      <main className="mx-auto max-w-7xl space-y-6 px-4 py-6 sm:px-6">
-        <section className="overflow-hidden rounded-2xl border bg-gradient-to-l from-primary/15 via-card to-card p-5 shadow-sm sm:p-7">
-          <div className="flex flex-wrap items-end gap-4">
-            <div className="me-auto">
-              <p className="text-sm text-muted-foreground">مرحبًا بك</p>
-              <h1 className="mt-1 text-2xl font-bold">{data?.trainer.name ?? user.name}</h1>
-              {data?.trainer.specialization ? <p className="mt-1 text-sm text-muted-foreground">{data.trainer.specialization}</p> : null}
-            </div>
-            <div className="grid gap-2">
-              <Label>من</Label>
-              <Input type="date" className="nums" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-            </div>
-            <div className="grid gap-2">
-              <Label>إلى</Label>
-              <Input type="date" className="nums" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
-            </div>
-            <Button variant="brand" onClick={() => void refetch()}>تحديث</Button>
-          </div>
-        </section>
-
-        {isLoading ? <PageSkeleton /> : null}
-        {isError ? (
-          <Card className="border-destructive/30"><CardContent className="flex flex-wrap items-center gap-3 p-5"><p className="text-sm text-destructive">{apiError(error)}</p><Button variant="outline" onClick={() => void refetch()}>إعادة المحاولة</Button></CardContent></Card>
-        ) : null}
-
-        {data ? (
-          <>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-              <ClubStatCard label="الحصص المجدولة" value={data.statistics.scheduledClasses} icon={CalendarDays} />
-              <ClubStatCard label="الحصص المنفذة" value={data.statistics.completedClasses} icon={CheckCircle2} />
-              <ClubStatCard label="إجمالي المتدربين" value={data.statistics.totalTrainees} icon={Users} />
-              <ClubStatCard label="متوسط الحضور" value={data.statistics.averageAttendance.toFixed(1)} icon={UserCheck} />
-              <ClubStatCard label="نسبة الالتزام" value={data.statistics.adherenceRate.toFixed(0)} suffix="%" icon={TrendingUp} />
-              <ClubStatCard label="إجمالي المستحقات" value={money(data.statistics.totalEarnings)} icon={Wallet} />
-            </div>
-
-            <Tabs defaultValue="schedule">
-              <TabsList className="h-auto flex-wrap">
-                <TabsTrigger value="schedule"><CalendarDays className="me-2 size-4" /> جدولي</TabsTrigger>
-                <TabsTrigger value="attendance"><UserCheck className="me-2 size-4" /> الحضور</TabsTrigger>
-                <TabsTrigger value="earnings"><Wallet className="me-2 size-4" /> مستحقاتي</TabsTrigger>
-                <TabsTrigger value="statistics"><TrendingUp className="me-2 size-4" /> الإحصائيات</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="schedule" className="pt-2">
-                {isCalendarLoading ? <PageSkeleton /> : null}
-                {isCalendarError ? (
-                  <Card className="border-destructive/30">
-                    <CardContent className="flex flex-wrap items-center gap-3 p-5">
-                      <p className="text-sm text-destructive">{apiError(calendarError)}</p>
-                      <Button variant="outline" onClick={() => void refetchCalendar()}>إعادة المحاولة</Button>
-                    </CardContent>
-                  </Card>
-                ) : null}
-                {calendarSchedule ? (
-                  <TrainerScheduleCalendar
-                    schedule={calendarSchedule}
-                    dateFrom={calendarDateFrom}
-                    dateTo={calendarDateTo}
-                    onRangeChange={(nextFrom, nextTo) => {
-                      setCalendarDateFrom(nextFrom);
-                      setCalendarDateTo(nextTo);
-                    }}
-                  />
-                ) : null}
-              </TabsContent>
-
-              <TabsContent value="attendance">
-                <Card><CardContent className="overflow-x-auto p-0"><table className="w-full text-sm"><thead className="bg-muted/50"><tr><th className="p-3 text-start">الحصة</th><th className="p-3 text-start">التاريخ</th><th className="p-3 text-start">الحضور</th><th className="p-3 text-start">الغياب</th><th className="p-3 text-start">النسبة</th></tr></thead><tbody>{data.attendance.map((row) => <tr key={row.classId} className="border-t"><td className="p-3 font-medium">{row.className}</td><td className="p-3 nums">{toArabicDigits(row.classDate)}</td><td className="p-3 nums">{toArabicDigits(row.attended)}</td><td className="p-3 nums">{toArabicDigits(row.absent)}</td><td className="p-3 nums">{toArabicDigits(row.attendanceRate.toFixed(0))}%</td></tr>)}</tbody></table>{!data.attendance.length ? <p className="py-10 text-center text-sm text-muted-foreground">لا توجد بيانات حضور.</p> : null}</CardContent></Card>
-              </TabsContent>
-
-              <TabsContent value="earnings" className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-3"><ClubStatCard label="إجمالي المستحقات" value={money(data.earnings.total)} /><ClubStatCard label="تم صرفه" value={money(data.earnings.paid)} /><ClubStatCard label="المتبقي المستحق" value={money(data.earnings.remaining)} /></div>
-                <Card>
-                  <CardHeader>
-                    <CardTitle>تفاصيل احتساب المستحقات</CardTitle>
-                    <p className="text-sm text-muted-foreground">تُحتسب العمولة من الحضور الفعلي: عدد الحضور × سعر الحصة × نسبة عمولة المدرب.</p>
-                  </CardHeader>
-                  <CardContent className="overflow-x-auto p-0">
-                    <table className="w-full min-w-[720px] text-sm">
-                      <thead className="bg-muted/50">
-                        <tr>
-                          <th className="p-3 text-start">الحصة</th>
-                          <th className="p-3 text-start">التاريخ</th>
-                          <th className="p-3 text-start">الحضور</th>
-                          <th className="p-3 text-start">سعر الحصة</th>
-                          <th className="p-3 text-start">إجمالي الحضور</th>
-                          <th className="p-3 text-start">العمولة</th>
-                          <th className="p-3 text-start">المستحق</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.earnings.items.map((row) => (
-                          <tr key={row.classId} className="border-t">
-                            <td className="p-3 font-medium">{row.className}</td>
-                            <td className="p-3 nums">{toArabicDigits(row.classDate)}</td>
-                            <td className="p-3 nums">{toArabicDigits(row.attended)}</td>
-                            <td className="p-3 nums">{money(row.unitPrice)}</td>
-                            <td className="p-3 nums">{money(row.revenue)}</td>
-                            <td className="p-3 nums">{toArabicDigits(row.commissionPercentage.toFixed(2))}%</td>
-                            <td className="p-3 font-bold text-primary nums">{money(row.amount)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {!data.earnings.items.length ? <p className="py-10 text-center text-sm text-muted-foreground">لا توجد حصص منفذة أو حضور مسجل في الفترة.</p> : null}
-                  </CardContent>
-                </Card>
-                <Card><CardHeader><CardTitle>سجل المبالغ المصروفة</CardTitle></CardHeader><CardContent className="space-y-2">{data.earnings.payments.map((row) => <div key={row.id} className="flex items-center gap-3 rounded-xl border p-3"><Wallet className="size-4 text-primary" /><div><b className="nums">{money(row.amount)}</b><p className="text-xs text-muted-foreground nums">{toArabicDigits(row.paymentDate)}</p></div>{row.notes ? <span className="ms-auto text-sm text-muted-foreground">{row.notes}</span> : null}</div>)}{!data.earnings.payments.length ? <p className="py-8 text-center text-sm text-muted-foreground">لم يتم تسجيل مبالغ مصروفة في الفترة.</p> : null}</CardContent></Card>
-              </TabsContent>
-
-              <TabsContent value="statistics">
-                <Card><CardHeader><CardTitle>ملخص الأداء</CardTitle></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><div className="rounded-xl border p-4"><Clock3 className="mb-3 size-5 text-primary" /><p className="text-sm text-muted-foreground">الحصص المنفذة</p><b className="mt-1 block text-2xl nums">{toArabicDigits(data.statistics.completedClasses)}</b></div><div className="rounded-xl border p-4"><UserCheck className="mb-3 size-5 text-primary" /><p className="text-sm text-muted-foreground">إجمالي الحضور</p><b className="mt-1 block text-2xl nums">{toArabicDigits(data.statistics.totalAttendance)}</b></div><div className="rounded-xl border p-4"><TrendingUp className="mb-3 size-5 text-primary" /><p className="text-sm text-muted-foreground">نسبة الالتزام</p><b className="mt-1 block text-2xl nums">{toArabicDigits(data.statistics.adherenceRate.toFixed(0))}%</b></div></CardContent></Card>
-              </TabsContent>
-            </Tabs>
-          </>
-        ) : null}
+          ].map(([to, label, Icon]) => {
+            const I = Icon as typeof Dumbbell;
+            return (
+              <NavLink
+                end
+                key={String(to)}
+                to={String(to)}
+                className={({ isActive }) =>
+                  `flex min-h-12 items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${isActive ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`
+                }
+              >
+                <I className="size-4" />
+                {String(label)}
+              </NavLink>
+            );
+          })}
+        </nav>
+        {training ? (
+          <TrainingPortalContext.Provider value={true}>
+            <TrainingJourneyPage />
+          </TrainingPortalContext.Provider>
+        ) : (
+          <TrainerPortalWorkspace />
+        )}
       </main>
     </div>
   );

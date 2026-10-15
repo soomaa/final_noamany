@@ -53,10 +53,6 @@ interface DualDateFieldProps {
   error?: string;
   required?: boolean;
   disabled?: boolean;
-  /** Keep legacy Hijri display only where it is explicitly needed. */
-  showHijri?: boolean;
-  /** Hide the redundant Gregorian sub-label when the field already has a clear title. */
-  showGregorianLabel?: boolean;
 }
 
 /** Paired Hijri+Gregorian — stores Gregorian; displays both per legacy dual-date convention */
@@ -68,17 +64,13 @@ export function DualDateField({
   error,
   required,
   disabled,
-  showHijri = true,
-  showGregorianLabel = true,
 }: DualDateFieldProps) {
   const { ui } = useLocale();
   return (
     <FieldWrapper label={label} error={error} required={required}>
-      <div className={cn('grid grid-cols-1 gap-2', showHijri && 'sm:grid-cols-2')}>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <div>
-          {showGregorianLabel && (
-            <Label className="mb-1 block text-xs text-muted-foreground">{ui('ميلادي')}</Label>
-          )}
+          <Label className="mb-1 block text-xs text-muted-foreground">{ui('ميلادي')}</Label>
           <Input
             type="date"
             value={gregorianValue ?? ''}
@@ -86,7 +78,7 @@ export function DualDateField({
             disabled={disabled}
           />
         </div>
-        {showHijri && <div>
+        <div>
           <Label className="mb-1 block text-xs text-muted-foreground">{ui('هجري (عرض)')}</Label>
           <Input
             readOnly
@@ -94,7 +86,7 @@ export function DualDateField({
             className="bg-muted"
             tabIndex={-1}
           />
-        </div>}
+        </div>
       </div>
     </FieldWrapper>
   );
@@ -107,9 +99,10 @@ interface RHFSelectProps<T extends FieldValues> {
   options: { value: string; label: string }[];
   required?: boolean;
   placeholder?: string;
+  disabled?: boolean;
 }
 
-export function RHFSelect<T extends FieldValues>({ control, name, label, options, required, placeholder }: RHFSelectProps<T>) {
+export function RHFSelect<T extends FieldValues>({ control, name, label, options, required, placeholder, disabled }: RHFSelectProps<T>) {
   const { ui } = useLocale();
   const useCombobox = options.length > 8;
   return (
@@ -124,10 +117,11 @@ export function RHFSelect<T extends FieldValues>({ control, name, label, options
               onValueChange={field.onChange}
               options={options}
               placeholder={placeholder ?? label}
-              searchPlaceholder={ui(`بحث في ${label}…`)}
+              searchPlaceholder={`${ui('بحث في ')}${label}…`}
+              disabled={disabled}
             />
           ) : (
-            <Select value={field.value ?? ''} onValueChange={field.onChange}>
+            <Select value={field.value ?? ''} onValueChange={field.onChange} disabled={disabled}>
               <SelectTrigger>
                 <SelectValue placeholder={placeholder ?? label} />
               </SelectTrigger>
@@ -166,7 +160,7 @@ export function RHFCombobox<T extends FieldValues>({
             onValueChange={field.onChange}
             options={options}
             placeholder={placeholder ?? label}
-            searchPlaceholder={ui(`بحث في ${label}…`)}
+            searchPlaceholder={`${ui('بحث في ')}${label}…`}
           />
         </FieldWrapper>
       )}

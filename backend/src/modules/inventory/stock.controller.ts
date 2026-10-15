@@ -9,7 +9,7 @@ import { StockService } from './stock.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('stock')
-@RequiresPermission('gym-sales.inventory:view')
+@RequiresPermission('gym-sales.inventory.raw_materials:view')
 export class StockController {
   constructor(private readonly service: StockService) {}
 
@@ -37,7 +37,7 @@ export class StockController {
   }
 
   @Put('product/:productId/warehouse/:warehouseId')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   updateProductWarehouse(
     @Param('productId', ParseIntPipe) productId: number,
     @Param('warehouseId', ParseIntPipe) warehouseId: number,
@@ -48,7 +48,7 @@ export class StockController {
   }
 
   @Put('product/:productId/warehouse/:warehouseId/settings')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   updateSettings(
     @Param('productId', ParseIntPipe) productId: number,
     @Param('warehouseId', ParseIntPipe) warehouseId: number,

@@ -1,3 +1,5 @@
+import { formatDisplayNumber } from '@/lib/number-display';
+import { formatMoney, formatNum } from '@/lib/formatters';
 import { useQuery } from '@tanstack/react-query';
 import {
   Area,
@@ -26,6 +28,7 @@ import {
   CalendarClock,
   CalendarDays,
   CheckCircle2,
+  CircleDollarSign,
   ChevronDown,
   ClipboardPlus,
   Clock3,
@@ -48,21 +51,22 @@ import {
   WalletCards,
   type LucideIcon,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ErrorState } from '@/components/common/states';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { DashboardShortcuts } from '@/components/dashboard/dashboard-shortcuts';
+import { usePermission } from '@/hooks/use-permission';
 import { useBranches } from '@/hooks/use-branches';
 import { api, apiError } from '@/lib/api';
-import { localDateStr, localToday } from '@/lib/formatters';
+import {  localDateStr, localToday } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import type { ExecutiveDashboardSummary } from '@/types/club';
 
 const CHART_COLORS = ['#D4A72C', '#8b5cf6', '#0ea5e9', '#f97316', '#f43f5e', '#64748b'];
-const IS_LOCAL_PREVIEW = ['localhost', '127.0.0.1'].includes(window.location.hostname);
 
 type PeriodPreset = 'today' | '7d' | '30d' | 'month' | 'custom';
 
@@ -77,17 +81,75 @@ function startOfMonth() {
   return localDateStr(new Date(value.getFullYear(), value.getMonth(), 1));
 }
 
-function money(value: number, compact = false) {
-  return new Intl.NumberFormat('ar-EG', {
-    style: 'currency',
-    currency: 'EGP',
-    maximumFractionDigits: compact ? 0 : 2,
-    notation: compact ? 'compact' : 'standard',
-  }).format(Number.isFinite(value) ? value : 0);
+function money(value: number, axis = false) { return formatMoney(Number.isFinite(value) ? value : 0, axis ? '' : undefined).trim(); }
+
+function number(value: number) { return formatNum(Number.isFinite(value) ? value : 0); }
+
+function useAnimatedNumber(target: number, duration = 650) {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    let frame = 0;
+    const start = performance.now();
+    const from = 0;
+    const animate = (now: number) => {
+      const progress = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setValue(from + (target - from) * eased);
+      if (progress < 1) frame = requestAnimationFrame(animate);
+    };
+    frame = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(frame);
+  }, [duration, target]);
+  return value;
 }
 
-function number(value: number) {
-  return new Intl.NumberFormat('ar-EG').format(Number.isFinite(value) ? value : 0);
+function MetricCard({
+  title,
+  value,
+  subtitle,
+  icon: Icon,
+  tone,
+  currency,
+  loading,
+}: {
+  title: string;
+  value: number;
+  subtitle: string;
+  icon: LucideIcon;
+  tone: 'emerald' | 'rose' | 'sky' | 'amber' | 'violet' | 'slate';
+  currency?: boolean;
+  loading?: boolean;
+}) {
+  const animated = useAnimatedNumber(value);
+  const tones = {
+    emerald: 'from-emerald-500/20 to-emerald-500/5 text-emerald-600 dark:text-emerald-300 ring-emerald-500/20',
+    rose: 'from-rose-500/20 to-rose-500/5 text-rose-600 dark:text-rose-300 ring-rose-500/20',
+    sky: 'from-sky-500/20 to-sky-500/5 text-sky-600 dark:text-sky-300 ring-sky-500/20',
+    amber: 'from-amber-500/20 to-amber-500/5 text-amber-600 dark:text-amber-300 ring-amber-500/20',
+    violet: 'from-violet-500/20 to-violet-500/5 text-violet-600 dark:text-violet-300 ring-violet-500/20',
+    slate: 'from-slate-500/20 to-slate-500/5 text-slate-600 dark:text-slate-300 ring-slate-500/20',
+  };
+  return (
+    <Card className="group relative overflow-hidden border-border/70 p-4 transition-all duration-300 hover:-translate-y-1 hover:shadow-xl">
+      <div className={cn('absolute inset-x-0 top-0 h-1 bg-gradient-to-l', tones[tone])} />
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-medium text-muted-foreground">{title}</p>
+          {loading ? (
+            <Skeleton className="mt-3 h-8 w-28" />
+          ) : (
+            <p className="nums mt-2 truncate text-2xl font-black tracking-tight sm:text-[1.7rem]">
+              {currency ? money(animated, true) : number(Math.round(animated))}
+            </p>
+          )}
+          <p className="mt-2 truncate text-[11px] text-muted-foreground">{subtitle}</p>
+        </div>
+        <div className={cn('flex size-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br ring-1 transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3', tones[tone])}>
+          <Icon className="size-5" />
+        </div>
+      </div>
+    </Card>
+  );
 }
 
 function SectionTitle({ icon: Icon, title, subtitle, action }: { icon: LucideIcon; title: string; subtitle?: string; action?: React.ReactNode }) {
@@ -111,117 +173,6 @@ function EmptyChart({ label }: { label: string }) {
   return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">{label}</div>;
 }
 
-type BranchMetricKey = keyof Pick<
-  ExecutiveDashboardSummary['branchBreakdown'][number],
-  | 'totalRevenue'
-  | 'subscriptionRevenue'
-  | 'barRevenue'
-  | 'productRevenue'
-  | 'expenses'
-  | 'subscriptionsCount'
-  | 'newMembers'
-  | 'inbodyCount'
-  | 'blockedMembers'
->;
-
-const DEMO_BRANCH_BREAKDOWN: ExecutiveDashboardSummary['branchBreakdown'] = [
-  { branchId: 1, branchName: 'طنطا', totalRevenue: 92400, subscriptionRevenue: 78100, barRevenue: 7200, productRevenue: 7100, expenses: 28400, subscriptionsCount: 15, newMembers: 7, inbodyCount: 12, inbodyRevenue: 2400, blockedMembers: 2 },
-  { branchId: 2, branchName: 'البراشري', totalRevenue: 79600, subscriptionRevenue: 66400, barRevenue: 8400, productRevenue: 4800, expenses: 26300, subscriptionsCount: 13, newMembers: 5, inbodyCount: 8, inbodyRevenue: 1600, blockedMembers: 1 },
-  { branchId: 3, branchName: 'الجلاء', totalRevenue: 96500, subscriptionRevenue: 76500, barRevenue: 11200, productRevenue: 8800, expenses: 32600, subscriptionsCount: 14, newMembers: 6, inbodyCount: 7, inbodyRevenue: 1400, blockedMembers: 3 },
-];
-
-function BranchComparison({
-  rows,
-  ui,
-  demo,
-}: {
-  rows: ExecutiveDashboardSummary['branchBreakdown'];
-  ui: (value: string) => string;
-  demo?: boolean;
-}) {
-  const metrics: Array<{ key: BranchMetricKey; label: string; currency: boolean; tone: 'emerald' | 'amber' | 'cyan' | 'violet' | 'rose' | 'blue' | 'fuchsia' | 'teal' | 'slate'; icon: LucideIcon }> = [
-    { key: 'totalRevenue', label: ui('إجمالي الإيرادات'), currency: true, tone: 'emerald', icon: TrendingUp },
-    { key: 'subscriptionRevenue', label: ui('إيرادات الاشتراكات'), currency: true, tone: 'amber', icon: ReceiptText },
-    { key: 'barRevenue', label: ui('إيرادات البار والكافيه'), currency: true, tone: 'cyan', icon: ShoppingBag },
-    { key: 'productRevenue', label: ui('إيرادات البروتين والمنتجات'), currency: true, tone: 'violet', icon: Dumbbell },
-    { key: 'expenses', label: ui('إجمالي المصروفات'), currency: true, tone: 'rose', icon: TrendingDown },
-    { key: 'subscriptionsCount', label: ui('عدد الاشتراكات'), currency: false, tone: 'blue', icon: PackageCheck },
-    { key: 'newMembers', label: ui('الأعضاء الجدد'), currency: false, tone: 'fuchsia', icon: UserPlus },
-    { key: 'inbodyCount', label: ui('جلسات InBody'), currency: false, tone: 'teal', icon: HeartPulse },
-    { key: 'blockedMembers', label: ui('الأعضاء المحظورون'), currency: false, tone: 'slate', icon: AlertTriangle },
-  ];
-
-  const tones = {
-    emerald: { line: 'bg-emerald-500', icon: 'bg-emerald-500/12 text-emerald-600 ring-emerald-500/20', wash: 'from-emerald-500/[0.09]', total: 'text-emerald-700 dark:text-emerald-300' },
-    amber: { line: 'bg-amber-500', icon: 'bg-amber-500/12 text-amber-600 ring-amber-500/20', wash: 'from-amber-500/[0.09]', total: 'text-amber-700 dark:text-amber-300' },
-    cyan: { line: 'bg-cyan-500', icon: 'bg-cyan-500/12 text-cyan-600 ring-cyan-500/20', wash: 'from-cyan-500/[0.09]', total: 'text-cyan-700 dark:text-cyan-300' },
-    violet: { line: 'bg-violet-500', icon: 'bg-violet-500/12 text-violet-600 ring-violet-500/20', wash: 'from-violet-500/[0.09]', total: 'text-violet-700 dark:text-violet-300' },
-    rose: { line: 'bg-rose-500', icon: 'bg-rose-500/12 text-rose-600 ring-rose-500/20', wash: 'from-rose-500/[0.09]', total: 'text-rose-700 dark:text-rose-300' },
-    blue: { line: 'bg-blue-500', icon: 'bg-blue-500/12 text-blue-600 ring-blue-500/20', wash: 'from-blue-500/[0.09]', total: 'text-blue-700 dark:text-blue-300' },
-    fuchsia: { line: 'bg-fuchsia-500', icon: 'bg-fuchsia-500/12 text-fuchsia-600 ring-fuchsia-500/20', wash: 'from-fuchsia-500/[0.09]', total: 'text-fuchsia-700 dark:text-fuchsia-300' },
-    teal: { line: 'bg-teal-500', icon: 'bg-teal-500/12 text-teal-600 ring-teal-500/20', wash: 'from-teal-500/[0.09]', total: 'text-teal-700 dark:text-teal-300' },
-    slate: { line: 'bg-slate-500', icon: 'bg-slate-500/12 text-slate-600 ring-slate-500/20', wash: 'from-slate-500/[0.09]', total: 'text-slate-700 dark:text-slate-300' },
-  };
-
-  if (!rows.length) return null;
-
-  return (
-    <section className="rounded-[24px] border border-border/60 bg-gradient-to-b from-card/70 to-background/30 p-4 shadow-sm sm:p-5">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span className="flex size-10 items-center justify-center rounded-xl bg-primary/10 text-primary"><Building2 className="size-5" /></span>
-          <div>
-            <h2 className="font-bold">{ui('ملخص الفروع')}</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">{ui('كل مؤشرات اللوحة القديمة بتصميم أوضح وأسرع في القراءة')}</p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {demo && <span className="rounded-full bg-amber-500/10 px-3 py-1.5 text-[11px] font-bold text-amber-700 ring-1 ring-amber-500/20 dark:text-amber-300">{ui('بيانات تجريبية للمعاينة')}</span>}
-          <span className="rounded-full bg-muted px-3 py-1.5 text-[11px] font-semibold text-muted-foreground">{number(rows.length)} {ui('فروع')}</span>
-        </div>
-      </div>
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {metrics.map((metric) => {
-          const values = rows.map((row) => Number(row[metric.key] ?? 0));
-          const max = Math.max(...values);
-          const total = values.reduce((sum, value) => sum + value, 0);
-          const tone = tones[metric.tone];
-          const Icon = metric.icon;
-          return (
-            <Card key={metric.key} className="group relative overflow-hidden border-border/70 p-0 shadow-sm transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg">
-              <div className={cn('absolute inset-x-0 top-0 h-1', tone.line)} />
-              <div className={cn('pointer-events-none absolute inset-0 bg-gradient-to-bl to-transparent opacity-80', tone.wash)} />
-              <div className="relative p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-bold">{metric.label}</p>
-                    <p className="mt-1 text-[10px] text-muted-foreground">{ui('إجمالي كل الفروع')}</p>
-                    <p className={cn('nums mt-1.5 text-2xl font-black tracking-tight', tone.total)}>{metric.currency ? money(total, true) : number(total)}</p>
-                  </div>
-                  <span className={cn('flex size-12 shrink-0 items-center justify-center rounded-2xl ring-1 transition-transform group-hover:scale-105', tone.icon)}><Icon className="size-6" /></span>
-                </div>
-                <div className="mt-4 grid grid-cols-3 gap-2 border-t border-border/60 pt-3">
-                  {rows.map((branch, index) => {
-                    const value = values[index];
-                    const best = max > 0 && value === max;
-                    return (
-                      <div key={branch.branchId} className={cn('min-w-0 rounded-xl bg-background/55 px-2 py-2.5 text-center ring-1 ring-border/60', best && 'bg-emerald-500/[0.08] ring-emerald-500/25')}>
-                        <p className="truncate text-[10px] font-medium text-muted-foreground">{branch.branchName}</p>
-                        <p className={cn('nums mt-1 truncate text-xs font-black sm:text-sm', best && 'text-emerald-700 dark:text-emerald-300')}>{metric.currency ? money(value, true) : number(value)}</p>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </Card>
-          );
-        })}
-      </div>
-      <p className="mt-3 text-[11px] text-muted-foreground">{ui('الفرع المميز باللون الأخضر هو الأعلى في المؤشر خلال الفترة المحددة.')}</p>
-    </section>
-  );
-}
-
 function DashboardSkeleton() {
   return (
     <div className="space-y-5">
@@ -239,6 +190,7 @@ function DashboardSkeleton() {
 
 export function DashboardPage() {
   const { ui } = useLocale();
+  const { canNavRoute } = usePermission();
   const { data: branches = [] } = useBranches();
   const [preset, setPreset] = useState<PeriodPreset>('month');
   const [startDate, setStartDate] = useState(startOfMonth);
@@ -268,31 +220,12 @@ export function DashboardPage() {
       return data;
     },
     enabled: Boolean(startDate && endDate && startDate <= endDate),
-    staleTime: 60_000,
-    refetchOnMount: false,
-    refetchOnWindowFocus: false,
+    staleTime: 0,
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   });
 
   const data = query.data;
-  const hasRealBranchData = Boolean(data?.branchBreakdown?.length);
-  const configuredBranchNames = new Map(branches.map((branch) => [branch.id, branch.name]));
-  const realBranchRows = (data?.branchBreakdown ?? []).map((row) => ({
-    ...row,
-    branchName: configuredBranchNames.get(row.branchId) || row.branchName,
-  }));
-  const demoBranchRows = branches.map((branch, index) => {
-    const sample = DEMO_BRANCH_BREAKDOWN[index % DEMO_BRANCH_BREAKDOWN.length];
-    return {
-      ...sample,
-      branchId: branch.id,
-      branchName: branch.name || `${ui('فرع')} ${number(index + 1)}`,
-    };
-  });
-  const branchComparisonRows = hasRealBranchData
-    ? realBranchRows
-    : IS_LOCAL_PREVIEW
-      ? demoBranchRows
-      : [];
   const financialTrend = useMemo(() => {
     const rows = data?.trends ?? [];
     if (rows.length <= 45) return rows;
@@ -329,22 +262,23 @@ export function DashboardPage() {
     { label: ui('التقارير الشاملة'), icon: FileBarChart, href: '/reports', tone: 'bg-rose-500/10 text-rose-600' },
   ];
 
-  if (query.isLoading) return <DashboardSkeleton />;
+  if (query.isLoading) return <div className="space-y-5"><DashboardShortcuts /><DashboardSkeleton /></div>;
   if (query.isError) {
-    return <ErrorState message={apiError(query.error, ui('تعذر تحميل لوحة تحكم الجيم'))} onRetry={() => void query.refetch()} />;
+    return <div className="space-y-5"><DashboardShortcuts /><ErrorState message={apiError(query.error, ui('تعذر تحميل لوحة تحكم الجيم'))} onRetry={() => void query.refetch()} /></div>;
   }
 
   return (
     <div className="space-y-5 pb-8" dir="rtl">
-      <section className="relative isolate -mx-3 w-[calc(100%+1.5rem)] overflow-hidden rounded-[28px] bg-brand-gradient px-5 py-6 text-white shadow-xl ring-1 ring-white/10 sm:-mx-4 sm:w-[calc(100%+2rem)] sm:px-7 lg:-mx-5 lg:w-[calc(100%+2.5rem)] lg:px-8 lg:py-7 xl:-mx-6 xl:w-[calc(100%+3rem)]">
+      <DashboardShortcuts />
+      <section className="relative isolate -mx-3 w-[calc(100%+1.5rem)] overflow-hidden rounded-[32px] bg-brand-gradient px-6 py-8 text-white shadow-xl ring-1 ring-white/10 sm:-mx-4 sm:w-[calc(100%+2rem)] sm:px-9 lg:-mx-5 lg:w-[calc(100%+2.5rem)] lg:px-10 lg:py-11 xl:-mx-6 xl:w-[calc(100%+3rem)] 2xl:py-12">
         <div className="pointer-events-none absolute inset-0 opacity-[0.07] [background-image:radial-gradient(circle_at_1px_1px,white_1px,transparent_0)] [background-size:28px_28px]" />
         <div className="pointer-events-none absolute -end-16 -top-16 size-72 animate-banner-drift rounded-full bg-white/12 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-24 start-1/4 size-64 animate-banner-drift-reverse rounded-full bg-brand-300/30 blur-3xl" />
         <div className="pointer-events-none absolute start-1/2 top-1/2 size-48 -translate-x-1/2 -translate-y-1/2 animate-banner-drift rounded-full bg-brand-400/15 blur-3xl [animation-delay:3s]" />
         <div className="pointer-events-none absolute inset-0 overflow-hidden"><div className="absolute inset-y-0 w-1/3 animate-banner-shine bg-gradient-to-r from-transparent via-white/10 to-transparent" /></div>
-        <div className="relative flex flex-col">
+        <div className="relative flex min-h-[30rem] flex-col">
           <div className="grid gap-5 lg:grid-cols-[minmax(0,1.25fr)_minmax(21rem,.75fr)] lg:items-stretch">
-            <div className="flex flex-col justify-center lg:pe-4">
+            <div className="flex flex-col justify-center py-2 lg:pe-4">
               <div className="mb-3 flex items-center gap-2 text-xs text-emerald-300 lg:text-sm">
                 <span className="relative flex size-2.5"><span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex size-2.5 rounded-full bg-emerald-400" /></span>
                 {ui('بيانات تشغيلية ومحاسبية مباشرة')}
@@ -352,12 +286,12 @@ export function DashboardPage() {
               <div className="flex items-center gap-4">
                 <div className="hidden size-14 items-center justify-center rounded-2xl bg-white/10 ring-1 ring-white/15 sm:flex"><LayoutDashboard className="size-7 text-amber-300" /></div>
                 <div>
-                  <h1 className="text-2xl font-black tracking-tight lg:text-3xl">{ui('لوحة الإدارة الرئيسية')}</h1>
+                  <h1 className="text-3xl font-black tracking-tight lg:text-4xl">{ui('مركز قيادة الجيم')}</h1>
                   <p className="mt-2 max-w-2xl text-sm leading-relaxed text-white/65 lg:text-base">{ui('صورة واحدة واضحة للأعضاء، الاشتراكات، الحضور، المبيعات والربحية')}</p>
                 </div>
               </div>
 
-              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+              <div className="mt-7 grid gap-3 sm:grid-cols-3">
                 <div className="rounded-2xl bg-white/[0.07] p-4 ring-1 ring-white/10">
                   <p className="text-[11px] text-white/55">{ui('صافي الربح للفترة')}</p>
                   <p className={cn('nums mt-1 text-xl font-black', (data?.financials.profit ?? 0) >= 0 ? 'text-amber-200' : 'text-rose-300')}>{money(data?.financials.profit ?? 0)}</p>
@@ -373,7 +307,7 @@ export function DashboardPage() {
               </div>
             </div>
 
-            <div className="rounded-[22px] bg-black/30 p-4 shadow-xl ring-1 ring-white/15">
+            <div className="rounded-[26px] bg-black/30 p-4 shadow-xl ring-1 ring-white/15 sm:p-5">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2.5">
                   <span className="flex size-10 items-center justify-center rounded-xl bg-amber-300/10 text-amber-300 ring-1 ring-amber-300/20"><SlidersHorizontal className="size-5" /></span>
@@ -384,7 +318,7 @@ export function DashboardPage() {
                 </Button>
               </div>
 
-              <p className="mb-2 mt-3 text-[10px] font-semibold text-white/45">{ui('الفترة الزمنية')}</p>
+              <p className="mb-2 mt-5 text-[10px] font-semibold text-white/45">{ui('الفترة الزمنية')}</p>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
                 {([
                   ['today', ui('اليوم')],
@@ -418,7 +352,7 @@ export function DashboardPage() {
             </div>
           </div>
 
-          <div className="hidden">
+          <div className="mt-auto border-t border-white/10 pt-5">
             <div className="mb-3 flex items-center gap-2 text-xs font-semibold text-white/55"><Activity className="size-4 text-amber-300" />{ui('نبض التشغيل الآن')}</div>
             <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
               {[
@@ -437,7 +371,16 @@ export function DashboardPage() {
         </div>
       </section>
 
-      <BranchComparison rows={branchComparisonRows} ui={ui} demo={!hasRealBranchData && IS_LOCAL_PREVIEW} />
+      <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard title={ui('إجمالي المدفوع')} value={data?.financials.paid ?? 0} subtitle={ui('من إدارة اشتراكات الأعضاء')} icon={TrendingUp} tone="amber" currency />
+        <MetricCard title={ui('إجمالي إيرادات الكافيه')} value={data?.financials.cafeRevenue ?? 0} subtitle={ui('مبيعات الكافيه المكتملة للفترة')} icon={ShoppingBag} tone="emerald" currency />
+        <MetricCard title={ui('إجمالي المصروفات')} value={data?.financials.expenses ?? 0} subtitle={ui('كل المصروفات المسجلة للفترة')} icon={TrendingDown} tone="rose" currency />
+        <MetricCard title={ui('صافي الربح')} value={data?.financials.profit ?? 0} subtitle={`${number(data?.financials.margin ?? 0)}% ${ui('هامش ربح')}`} icon={CircleDollarSign} tone="violet" currency />
+        <MetricCard title={ui('اشتراكات جديدة')} value={data?.operations.newSubscriptions ?? 0} subtitle={`${money(data?.avgMonthlyMembership ?? 0, true)} ${ui('متوسط قيمة الاشتراك')}`} icon={PackageCheck} tone="violet" />
+        <MetricCard title={ui('إجمالي الأعضاء')} value={data?.totalMembers.total ?? 0} subtitle={`${number(activeRate)}% ${ui('أعضاء نشطون')}`} icon={Users} tone="sky" />
+        <MetricCard title={ui('زيارات الفترة')} value={data?.operations.checkinsInRange ?? 0} subtitle={`${number(data?.operations.uniqueVisitors ?? 0)} ${ui('عضو مختلف')}`} icon={Activity} tone="sky" />
+        <MetricCard title={ui('المتبقي')} value={data?.financials.remaining ?? 0} subtitle={`${number(data?.operations.outstandingCount ?? 0)} ${ui('اشتراك عليه متبقي')}`} icon={WalletCards} tone="rose" currency />
+      </section>
 
       <section className="grid gap-5 xl:grid-cols-3">
         <Card className="overflow-hidden p-5 xl:col-span-2">
@@ -498,8 +441,8 @@ export function DashboardPage() {
                 <BarChart data={financialTrend} margin={{ top: 12, right: 4, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="4 5" vertical={false} stroke="hsl(var(--border))" />
                   <XAxis dataKey="label" tick={{ fontSize: 10 }} tickLine={false} axisLine={false} minTickGap={20} />
-                  <YAxis tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={36} allowDecimals={false} />
-                  <Tooltip contentStyle={{ borderRadius: 14, border: '1px solid hsl(var(--border))', background: 'hsl(var(--card))' }} />
+                  <YAxis tickFormatter={formatDisplayNumber} tick={{ fontSize: 10 }} tickLine={false} axisLine={false} width={36} allowDecimals={false} />
+                  <Tooltip formatter={(value) => Array.isArray(value) ? value.map(formatDisplayNumber).join(' — ') : formatDisplayNumber(value)} contentStyle={{ borderRadius: 14, border: '1px solid hsl(var(--border))', background: 'hsl(var(--card))' }} />
                   <Legend iconType="circle" />
                   <Bar dataKey="checkins" name={ui('الزيارات')} fill="#0ea5e9" radius={[5, 5, 0, 0]} animationDuration={850} />
                   <Bar dataKey="newSubscriptions" name={ui('اشتراكات جديدة')} fill="#8b5cf6" radius={[5, 5, 0, 0]} animationDuration={1000} />
@@ -577,7 +520,7 @@ export function DashboardPage() {
         <Card className="p-5">
           <SectionTitle icon={ClipboardPlus} title={ui('إجراءات سريعة')} subtitle={ui('أكثر العمليات استخدامًا')} />
           <div className="grid grid-cols-2 gap-3">
-            {quickActions.map((action) => (
+            {quickActions.filter((action) => canNavRoute(action.href)).map((action) => (
               <Link key={action.href} to={action.href} className="group rounded-2xl border border-border/70 p-3 text-center transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-md">
                 <span className={cn('mx-auto flex size-10 items-center justify-center rounded-xl transition-transform group-hover:scale-110', action.tone)}><action.icon className="size-5" /></span>
                 <p className="mt-2 text-[11px] font-medium">{action.label}</p>
@@ -591,9 +534,9 @@ export function DashboardPage() {
           <div className="space-y-2.5">
             {(data?.recentActivities.members ?? []).length ? data?.recentActivities.members.map((member, index) => (
               <Link key={`${member.code}-${index}`} to="/club/members" className="flex items-center gap-3 rounded-xl p-2 transition-colors hover:bg-muted/50">
-                <span className="flex size-9 items-center justify-center rounded-full bg-sky-500/10 text-xs font-black text-sky-600">{member.label?.slice(0, 1) || 'ع'}</span>
+                <span className="flex size-9 items-center justify-center rounded-full bg-sky-500/10 text-xs font-black text-sky-600">{member.label?.slice(0, 1) || ui('ع')}</span>
                 <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold">{member.label}</span><span className="nums mt-0.5 block text-[10px] text-muted-foreground">{member.code}</span></span>
-                <span className="text-[9px] text-muted-foreground">{new Date(member.date).toLocaleDateString('ar-EG')}</span>
+                <span className="text-[9px] text-muted-foreground">{new Date(member.date).toLocaleDateString('ar-EG-u-nu-latn')}</span>
               </Link>
             )) : <EmptyChart label={ui('لا يوجد أعضاء جدد')} />}
           </div>

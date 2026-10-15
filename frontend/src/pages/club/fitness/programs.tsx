@@ -1,3 +1,5 @@
+import { useLocation } from 'react-router-dom';
+import { TrainingJourneyPage } from './training/journey';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -16,9 +18,18 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import type { WorkoutProgramRow } from '@/types/fitness';
 import { RowActions, SELECT_CLS, memberColumnDef } from './shared';
+import { usePermission } from '@/hooks/use-permission';
 
 export function FitnessProgramsPage() {
+  return new URLSearchParams(useLocation().search).has("legacy") ? <LegacyFitnessProgramsPage /> : <TrainingJourneyPage />;
+}
+
+function LegacyFitnessProgramsPage() {
   const ft = useFitnessT();
+  const { can } = usePermission();
+  const canCreate = can('club.fitness.programs:create');
+  const canUpdate = can('club.fitness.programs:update');
+  const canDelete = can('club.fitness.programs:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<WorkoutProgramRow>(
     'club-workout-programs',
@@ -42,12 +53,14 @@ export function FitnessProgramsPage() {
   );
 
   const openCreate = () => {
+    if (!canCreate) return;
     setEditId(null);
     setForm({ name: '', goal: '', difficulty: 'medium', durationWeeks: '', description: '', memberId: '' });
     setOpen(true);
   };
 
   const openEdit = (row: WorkoutProgramRow) => {
+    if (!canUpdate) return;
     setEditId(row.id);
     setForm({
       name: row.name,
@@ -61,6 +74,7 @@ export function FitnessProgramsPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.name.trim()) {
       toast.error(ft('common.name'));
       return;
@@ -108,17 +122,17 @@ export function FitnessProgramsPage() {
           <RowActions
             editLabel={ft('common.edit')}
             deleteLabel={ft('common.delete')}
-            onEdit={() => openEdit(row.original)}
-            onDelete={() =>
+            onEdit={canUpdate ? () => openEdit(row.original) : undefined}
+            onDelete={canDelete ? () =>
               void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
                 if (ok) deleteMutation.mutate(row.original.id);
               })
-            }
+            : undefined}
           />
         ),
       },
     ],
-    [ft],
+    [canDelete, canUpdate, ft],
   );
 
   return (
@@ -126,12 +140,13 @@ export function FitnessProgramsPage() {
       <PageHeader
         title={ft('programs.title')}
         actions={
-          <Button variant="brand" onClick={openCreate}>
+          canCreate ? <Button variant="brand" onClick={openCreate}>
             <Plus className="size-4" /> {ft('common.add')}
-          </Button>
+          </Button> : null
         }
       />
       <DataTable
+        exportSource={{ resource: 'club-workout-programs', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -146,7 +161,7 @@ export function FitnessProgramsPage() {
         onRetry={() => void refetch()}
         emptyTitle={ft('common.noData')}
       />
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open && (editId ? canUpdate : canCreate)} onOpenChange={setOpen}>
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editId ? ft('common.edit') : ft('common.add')}</DialogTitle>
@@ -195,7 +210,7 @@ export function FitnessProgramsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

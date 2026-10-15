@@ -12,6 +12,8 @@ import { InventoryDashboardService } from './inventory-dashboard.service';
 import { InventoryLowStockCron } from './inventory-low-stock.cron';
 import { InventoryLocationService } from './inventory-location.service';
 import { InventoryMovementsController } from './inventory-movements.controller';
+import { InventoryAuditController } from './inventory-audit.controller';
+import { InventoryAuditService } from './inventory-audit.service';
 import { InventoryMovementsService } from './inventory-movements.service';
 import { InventoryStockService } from './inventory-stock.service';
 import { InventoryTransactionsController } from './inventory-transactions.controller';
@@ -62,6 +64,7 @@ import { AccountingModule } from '../accounting/accounting.module';
     ProductBranchesController,
     InventoryTransactionsController,
     InventoryMovementsController,
+    InventoryAuditController,
     OpeningStocksController,
     StockTakingController,
     SparePartsController,
@@ -73,6 +76,7 @@ import { AccountingModule } from '../accounting/accounting.module';
   ],
   providers: [
     InventoryStockService,
+    InventoryAuditService,
     InventoryLocationService,
     ProductsService,
     CategoriesService,

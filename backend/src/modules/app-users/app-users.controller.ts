@@ -22,6 +22,7 @@ import {
 
 @UseGuards(JwtAuthGuard)
 @Controller('app-users')
+@RequiresPermission('admin.app-users:view')
 export class AppUsersController {
   constructor(private readonly appUsers: AppUsersService) {}
 
@@ -36,13 +37,13 @@ export class AppUsersController {
   }
 
   @Post()
-  @RequiresPermission('app-management:create')
+  @RequiresPermission('admin.app-users:create')
   create(@Body() dto: CreateAppUserDto) {
     return this.appUsers.create(dto);
   }
 
   @Patch(':id/status')
-  @RequiresPermission('app-management:update')
+  @RequiresPermission('admin.app-users:update')
   setStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateAppUserStatusDto,
@@ -51,13 +52,13 @@ export class AppUsersController {
   }
 
   @Patch(':id')
-  @RequiresPermission('app-management:update')
+  @RequiresPermission('admin.app-users:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateAppUserDto) {
     return this.appUsers.update(id, dto);
   }
 
   @Delete(':id')
-  @RequiresPermission('app-management:delete')
+  @RequiresPermission('admin.app-users:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.appUsers.remove(id);
   }

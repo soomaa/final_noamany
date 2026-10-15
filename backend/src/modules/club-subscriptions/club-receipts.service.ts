@@ -1,4 +1,4 @@
-import { ConflictException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
@@ -21,20 +21,16 @@ export class ClubReceiptsService {
 
   async nextReceiptNumber(tx?: Tx): Promise<string> {
     const client = (tx ?? this.prisma) as Tx;
+    const year = new Date().getFullYear();
+    const prefix = `R-${year}-`;
     await client.$queryRaw`SELECT GET_LOCK('seq:club_receipts:receipt_number', 10)`;
     try {
       const rows = await client.$queryRaw<{ maxNum: number | null }[]>`
-        SELECT MAX(
-          CASE
-            WHEN receipt_number REGEXP '^[0-9]+$' THEN CAST(receipt_number AS UNSIGNED)
-            WHEN receipt_number REGEXP '^R-[0-9]{4}-[0-9]+$' THEN CAST(SUBSTRING_INDEX(receipt_number, '-', -1) AS UNSIGNED)
-            ELSE 0
-          END
-        ) AS maxNum
-        FROM club_receipts
+        SELECT MAX(CAST(SUBSTRING(receipt_number, ${prefix.length + 1}) AS UNSIGNED)) AS maxNum
+        FROM club_receipts WHERE receipt_number LIKE ${prefix + '%'}
       `;
       const seq = nextSeqFromMax(rows[0]?.maxNum);
-      return String(seq);
+      return `${prefix}${String(seq).padStart(7, '0')}`;
     } finally {
       await client.$queryRaw`SELECT RELEASE_LOCK('seq:club_receipts:receipt_number')`;
     }
@@ -74,8 +70,6 @@ export class ClubReceiptsService {
       paymentMethod?: string | null;
       /** Split tender. Omit for a single-method receipt — one row is still written. */
       payments?: ClubPaymentSplit[];
-      /** A cashier-entered number for the initial receipt. Other flows still auto-generate one. */
-      receiptNumber?: string;
       createdBy?: number | null;
     },
     tx?: Tx,
@@ -90,18 +84,10 @@ export class ClubReceiptsService {
       opts.paymentMethod ?? sub.payment_method,
       opts.payments,
     );
-    const manualReceiptNumber = opts.receiptNumber?.trim();
-    if (manualReceiptNumber) {
-      const existing = await client.club_receipts.findUnique({
-        where: { receipt_number: manualReceiptNumber },
-        select: { id: true },
-      });
-      if (existing) throw new ConflictException('رقم الإيصال مستخدم بالفعل');
-    }
 
     // Race-safe RCP-###### number: recompute + insert together, retrying if a concurrent receipt took it.
-    const createReceipt = async () => {
-      const receiptNumber = manualReceiptNumber ?? await this.nextReceiptNumber(tx);
+    const receipt = await retryOnUniqueViolation(async () => {
+      const receiptNumber = await this.nextReceiptNumber(tx);
       return client.club_receipts.create({
         data: {
           receipt_number: receiptNumber,
@@ -123,8 +109,7 @@ export class ClubReceiptsService {
           payments: { create: splits.map((p) => ({ method: p.method, amount: p.amount })) },
         },
       });
-    };
-    const receipt = manualReceiptNumber ? await createReceipt() : await retryOnUniqueViolation(createReceipt);
+    });
 
     await client.club_subscriptions.update({
       where: { id: subscriptionId },

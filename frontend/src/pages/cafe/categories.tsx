@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useEffect, useMemo, useState } from 'react';
 import { Archive, Edit2, GripVertical, ListOrdered, PackageCheck, Plus, Trash2 } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
@@ -75,11 +76,11 @@ function SortableCategory({ category, index, disabled }: { category: CafeCategor
       } ${disabled ? 'cursor-not-allowed opacity-60' : 'cursor-grab active:cursor-grabbing'}`}
       {...attributes}
       {...listeners}
-      aria-label={`${category.nameAr} — ${index + 1}`}
+      aria-label={`${category.nameAr} — ${formatDisplayNumber(index + 1)}`}
     >
       <GripVertical className="size-4 shrink-0 text-muted-foreground" />
       <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-        {index + 1}
+        {formatDisplayNumber(index + 1)}
       </span>
       <span className="grid size-8 shrink-0 place-items-center rounded-full bg-sky-100 text-sky-700" aria-hidden="true">
         <CafeCategoryIcon value={category.emoji} className="size-4.5" />
@@ -319,6 +320,7 @@ export function CafeCategoriesPage() {
 
   const categoriesTable = (
     <DataTable
+      exportSource={{ resource: 'categories', params }}
       columns={columns}
       data={data?.data ?? []}
       total={data?.total ?? 0}

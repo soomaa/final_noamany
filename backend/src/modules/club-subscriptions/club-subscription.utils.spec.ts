@@ -1,6 +1,7 @@
 import {
   primaryClubPaymentMethod,
   resolveClubPayments,
+  selectCurrentSubscriptionsForMemberDisplay,
   toClubPaymentMethod,
 } from './club-subscription.utils';
 
@@ -91,5 +92,135 @@ describe('primaryClubPaymentMethod', () => {
 
   it('is null when nothing was collected', () => {
     expect(primaryClubPaymentMethod([])).toBeNull();
+  });
+});
+
+describe('selectCurrentSubscriptionsForMemberDisplay', () => {
+  it('keeps only the active period and hides expired/frozen renewals of the same plan', () => {
+    const rows = [
+      {
+        id: 40,
+        status: 'active',
+        subscriptionTypeId: 7,
+        subscriptionType: 'one year family rate',
+        subscriptionEndDate: '2027-08-20',
+      },
+      {
+        id: 30,
+        status: 'expired',
+        subscriptionTypeId: 7,
+        subscriptionType: 'one year family rate',
+        subscriptionEndDate: '2026-08-20',
+      },
+      {
+        id: 20,
+        status: 'frozen',
+        subscriptionTypeId: 7,
+        subscriptionType: 'one year family rate',
+        subscriptionEndDate: '2025-08-20',
+      },
+      {
+        id: 10,
+        status: 'expired',
+        subscriptionTypeId: 7,
+        subscriptionType: 'one year family rate',
+        subscriptionEndDate: '2024-08-20',
+      },
+    ];
+
+    expect(selectCurrentSubscriptionsForMemberDisplay(rows).map((r) => r.id)).toEqual([40]);
+  });
+
+  it('keeps a frozen current subscription when it is the only working period', () => {
+    const rows = [
+      {
+        id: 2,
+        status: 'frozen',
+        subscriptionTypeId: 3,
+        subscriptionType: 'monthly',
+        subscriptionEndDate: '2026-09-01',
+      },
+      {
+        id: 1,
+        status: 'expired',
+        subscriptionTypeId: 3,
+        subscriptionType: 'monthly',
+        subscriptionEndDate: '2026-06-01',
+      },
+    ];
+
+    expect(selectCurrentSubscriptionsForMemberDisplay(rows).map((r) => r.id)).toEqual([2]);
+  });
+
+  it('keeps independent concurrent plans of different types', () => {
+    const rows = [
+      {
+        id: 5,
+        status: 'active',
+        subscriptionTypeId: 1,
+        subscriptionType: 'gym',
+        subscriptionEndDate: '2026-12-01',
+      },
+      {
+        id: 6,
+        status: 'active',
+        subscriptionTypeId: 2,
+        subscriptionType: 'spa',
+        subscriptionEndDate: '2026-10-01',
+      },
+      {
+        id: 4,
+        status: 'expired',
+        subscriptionTypeId: 1,
+        subscriptionType: 'gym',
+        subscriptionEndDate: '2026-01-01',
+      },
+    ];
+
+    expect(selectCurrentSubscriptionsForMemberDisplay(rows).map((r) => r.id)).toEqual([5, 6]);
+  });
+
+  it('keeps the newest expired period when nothing is live', () => {
+    const rows = [
+      {
+        id: 8,
+        status: 'expired',
+        subscriptionTypeId: 9,
+        subscriptionType: 'family',
+        subscriptionEndDate: '2025-01-01',
+      },
+      {
+        id: 9,
+        status: 'expired',
+        subscriptionTypeId: 9,
+        subscriptionType: 'family',
+        subscriptionEndDate: '2026-01-01',
+      },
+    ];
+
+    expect(selectCurrentSubscriptionsForMemberDisplay(rows).map((r) => r.id)).toEqual([9]);
+  });
+
+  it('keeps active and upcoming together when a renewal has not started yet', () => {
+    const rows = [
+      {
+        id: 11,
+        status: 'active',
+        subscriptionTypeId: 4,
+        subscriptionType: 'annual',
+        subscriptionEndDate: '2026-12-31',
+      },
+      {
+        id: 12,
+        status: 'upcoming',
+        subscriptionTypeId: 4,
+        subscriptionType: 'annual',
+        subscriptionEndDate: '2027-12-31',
+      },
+    ];
+
+    expect(selectCurrentSubscriptionsForMemberDisplay(rows).map((r) => r.id)).toEqual([
+      11, 12,
+    ]);
   });
 });

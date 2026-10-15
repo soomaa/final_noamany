@@ -9,6 +9,7 @@ import { api, apiError } from '@/lib/api';
 import { ErrorState } from '@/components/common/states';
 import { DEFAULT_ACCOUNT_KEYS, type AccountingSettings } from '@/types/accounting';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 import { AccountingPageShell } from './accounting-shell';
 
 type PeriodRow = {
@@ -21,6 +22,10 @@ type PeriodRow = {
 
 export function AccountingSettingsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canUpdate = can('accounting.settings:update');
+  const canCreate = can('accounting.settings:create');
+  const canExecute = can('accounting.settings:execute');
   const queryClient = useQueryClient();
   const { data, refetch, isLoading, isError } = useQuery({
     queryKey: ['accounting', 'settings'],
@@ -60,6 +65,7 @@ export function AccountingSettingsPage() {
   };
 
   const createPeriod = async () => {
+    if (!canCreate) return;
     const year = Number(newYear);
     if (!Number.isFinite(year) || year < 2000) {
       toast.error(ui('سنة غير صالحة'));
@@ -75,6 +81,7 @@ export function AccountingSettingsPage() {
   };
 
   const closePeriod = async (id: number) => {
+    if (!canExecute) return;
     setPeriodBusy(id);
     try {
       await api.post(`/accounting/periods/${id}/close`);
@@ -88,6 +95,7 @@ export function AccountingSettingsPage() {
   };
 
   const reopenPeriod = async (id: number) => {
+    if (!canExecute) return;
     setPeriodBusy(id);
     try {
       await api.post(`/accounting/periods/${id}/reopen`);
@@ -120,12 +128,12 @@ export function AccountingSettingsPage() {
     <AccountingPageShell
       title={ui('إعدادات المحاسبة')}
       description={ui('العملة، السنة المالية، وربط الحسابات الافتراضية')}
-      actions={
-        <Button variant="brand" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate(form)}>
+      actions={canUpdate ? (
+        <Button permissionAction="update" variant="brand" disabled={saveMutation.isPending} onClick={() => saveMutation.mutate(form)}>
           <Save className="h-4 w-4" />
           {ui('حفظ')}
         </Button>
-      }
+      ) : undefined}
     >
       <div className="grid gap-6 md:grid-cols-2">
         <div className="space-y-4 rounded-xl border bg-card p-4">
@@ -171,7 +179,7 @@ export function AccountingSettingsPage() {
       <div className="rounded-xl border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
           <span className="font-medium">{ui('الفترات المحاسبية')}</span>
-          <div className="flex items-end gap-2">
+          {canCreate ? <div className="flex items-end gap-2">
             <Input
               className="nums w-24"
               type="number"
@@ -179,11 +187,11 @@ export function AccountingSettingsPage() {
               onChange={(e) => setNewYear(e.target.value)}
               placeholder={ui('السنة')}
             />
-            <Button variant="outline" size="sm" onClick={() => void createPeriod()}>
+            <Button permissionAction="create" variant="outline" size="sm" onClick={() => void createPeriod()}>
               <Plus className="h-4 w-4" />
               {ui('فترة جديدة')}
             </Button>
-          </div>
+          </div> : null}
         </div>
         <table className="w-full text-sm">
           <thead>
@@ -203,8 +211,9 @@ export function AccountingSettingsPage() {
                 <td className="p-3 nums">{p.endDate}</td>
                 <td className="p-3">{p.status}</td>
                 <td className="p-3">
-                  {p.status === 'open' ? (
+                  {canExecute && p.status === 'open' ? (
                     <Button
+                      permissionAction="execute"
                       variant="outline"
                       size="sm"
                       disabled={periodBusy === p.id}
@@ -213,8 +222,9 @@ export function AccountingSettingsPage() {
                       <Lock className="h-3.5 w-3.5" />
                       {ui('إقفال')}
                     </Button>
-                  ) : (
+                  ) : canExecute ? (
                     <Button
+                      permissionAction="execute"
                       variant="outline"
                       size="sm"
                       disabled={periodBusy === p.id}
@@ -223,7 +233,7 @@ export function AccountingSettingsPage() {
                       <LockOpen className="h-3.5 w-3.5" />
                       {ui('إعادة فتح')}
                     </Button>
-                  )}
+                  ) : null}
                 </td>
               </tr>
             ))}

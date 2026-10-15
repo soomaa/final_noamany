@@ -1,8 +1,11 @@
+import { TrainingJourneyModule } from './modules/training-journey/training.module';
+import { CafeDashboardModule } from './modules/cafe-dashboard/cafe-dashboard.module';
+import { FinancePayrollModule } from './modules/finance-payroll/finance-payroll.module';
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import configuration from './common/config/configuration';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -10,9 +13,11 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { PermissionsGuard } from './common/guards/permissions.guard';
 import { BranchScopeGuard } from './common/guards/branch-scope.guard';
 import { BranchScopeModule } from './common/branch-scope/branch-scope.module';
-import { ClubBranchGroupModule } from './common/branch-groups/club-branch-group.module';
+import { HrDataScopeModule } from './common/hr-scope/hr-data-scope.module';
+import { HrDataScopeEnforcementGuard } from './common/hr-scope/hr-data-scope-enforcement.guard';
 import { PrismaModule } from './common/prisma/prisma.module';
 import { ExportModule } from './common/export/export.module';
+import { RequestContextModule } from './common/http/request-context.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { BranchesModule } from './modules/branches/branches.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
@@ -25,7 +30,6 @@ import { PayrollModule } from './modules/payroll/payroll.module';
 import { RbacModule } from './modules/rbac/rbac.module';
 import { RbacAdminModule } from './modules/rbac/admin/rbac-admin.module';
 import { SettingsModule } from './modules/settings/settings.module';
-import { CustomerServiceModule } from './modules/customer-service/customer-service.module';
 import { UsersModule } from './modules/users/users.module';
 // Wave 2 — HR operations
 import { LoansModule } from './modules/loans/loans.module';
@@ -50,7 +54,6 @@ import { HrWarningsModule } from './modules/hr-warnings/hr-warnings.module';
 import { CircularsModule } from './modules/circulars/circulars.module';
 import { TerminationModule } from './modules/termination/termination.module';
 import { EvaluationsModule } from './modules/evaluations/evaluations.module';
-import { EvaluationManagementModule } from './modules/evaluation-management/evaluation-management.module';
 import { CustodyModule } from './modules/custody/custody.module';
 import { JobRequestsModule } from './modules/job-requests/job-requests.module';
 import { InsuranceSettingsModule } from './modules/insurance-settings/insurance-settings.module';
@@ -76,36 +79,42 @@ import { ClubCustomerSourcesModule } from './modules/club-customer-sources/club-
 import { ClubLockersModule } from './modules/club-lockers/club-lockers.module';
 import { ClubFitnessModule } from './modules/club-fitness/club-fitness.module';
 import { ClubDashboardModule } from './modules/club-dashboard/club-dashboard.module';
+import { ClubSalesModule } from './modules/club-sales/club-sales.module';
 import { ClubEventsModule } from './modules/club-events/club-events.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { CafeProductsModule } from './modules/cafe/cafe-products.module';
+import { CafeBundlesModule } from './modules/cafe/cafe-bundles.module';
+import { CafeWasteModule } from './modules/cafe-waste/cafe-waste.module';
 import { ProcurementModule } from './modules/procurement/procurement.module';
 import { SalesModule } from './modules/sales/sales.module';
 import { FinanceModule } from './modules/finance/finance.module';
 import { AccountingModule } from './modules/accounting/accounting.module';
 import { AppManagementModule } from './modules/app-management/app-management.module';
-import { CommunityModule } from './modules/community/community.module';
-import { PortalManagementModule } from './modules/portal-management/portal-management.module';
-import { PublicPortalModule } from './modules/public-portal/public-portal.module';
+import { ClubBranchesModule } from './modules/club-branches/club-branches.module';
 import { GymOpsModule } from './modules/gym-ops/gym-ops.module';
 import { WebhooksModule } from './modules/webhooks/webhooks.module';
 import { JobsModule } from './modules/jobs/jobs.module';
-import { AdministrativeDecisionsModule } from './modules/administrative-decisions/administrative-decisions.module';
-import { HrMobileContentModule } from './modules/hr-mobile-content/hr-mobile-content.module';
-import { PaymentMethodsModule } from './modules/payment-methods/payment-methods.module';
-import { OnlineSubscriptionsModule } from './modules/online-subscriptions/online-subscriptions.module';
-import { ClubPointsModule } from './modules/club-points/club-points.module';
+import { GateAccessModule } from './modules/gate-access/gate-access.module';
+import { HealthService } from './common/health/health.service';
+import { HrMutationAuditInterceptor } from './common/audit/hr-mutation-audit.interceptor';
+import { BusinessAuditModule } from './common/audit/business-audit.module';
+import { RequestMetricsService } from './common/metrics/request-metrics.service';
+import { One80AdaptersModule } from './adapters/one80/one80-adapters.module';
 
 @Module({
   imports: [
+    TrainingJourneyModule,
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
     ScheduleModule.forRoot(),
     // Default throttle config; enforced only where ThrottlerGuard is applied (login routes).
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 10 }]),
     ExportModule,
+    RequestContextModule,
     PrismaModule,
+    BusinessAuditModule,
+    One80AdaptersModule,
     BranchScopeModule,
-    ClubBranchGroupModule,
+    HrDataScopeModule,
     AuthModule,
     RbacModule,
     RbacAdminModule,
@@ -115,7 +124,6 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     OrgModule,
     LookupsModule,
     SettingsModule,
-    CustomerServiceModule,
     NotificationsModule,
     EmployeesModule,
     PartnersModule,
@@ -144,7 +152,6 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     CircularsModule,
     TerminationModule,
     EvaluationsModule,
-    EvaluationManagementModule,
     CustodyModule,
     JobRequestsModule,
     InsuranceSettingsModule,
@@ -164,36 +171,38 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     MobileModule,
     MemberModule,
     ClubMembersModule,
-    ClubPointsModule,
     ClubSubscriptionsModule,
     ClubQuickServicesModule,
     ClubCustomerSourcesModule,
     ClubLockersModule,
     ClubFitnessModule,
     ClubDashboardModule,
+    ClubSalesModule,
     ClubEventsModule,
     // --- Wave 5 — gym-sales retail ---
     InventoryModule,
     CafeProductsModule,
+    CafeBundlesModule,
+    CafeWasteModule,
     // --- Wave 5 — gym-sales: procurement ---
     ProcurementModule,
     SalesModule,
     FinanceModule,
+    CafeDashboardModule,
+    FinancePayrollModule,
     AccountingModule,
     AppManagementModule,
-    CommunityModule,
-    PortalManagementModule,
-    PublicPortalModule,
+    ClubBranchesModule,
     GymOpsModule,
     WebhooksModule,
     JobsModule,
-    AdministrativeDecisionsModule,
-    HrMobileContentModule,
-    PaymentMethodsModule,
-    OnlineSubscriptionsModule,
+    GateAccessModule,
   ],
   controllers: [AppController],
   providers: [
+    HealthService,
+    RequestMetricsService,
+    { provide: APP_INTERCEPTOR, useClass: HrMutationAuditInterceptor },
     { provide: APP_FILTER, useClass: AllExceptionsFilter },
     // Global auth: every route requires a valid JWT unless marked @Public().
     { provide: APP_GUARD, useClass: JwtAuthGuard },
@@ -201,6 +210,7 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     { provide: APP_GUARD, useClass: PermissionsGuard },
     // Global branch isolation: reject explicit access to a branch outside the user's scope.
     { provide: APP_GUARD, useClass: BranchScopeGuard },
+    { provide: APP_GUARD, useClass: HrDataScopeEnforcementGuard },
   ],
 })
 export class AppModule {}

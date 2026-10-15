@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,6 +11,8 @@ import { paginated } from '../../common/dto/list-result';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
 import { ClubCalendarService } from '../gym-ops/club-calendar.service';
 import { ListClubEventSessionsDto } from './dto/list-club-event-sessions.dto';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 type SessionRow = {
   id: number;
@@ -34,7 +37,14 @@ export class ClubEventSessionsService {
     private readonly prisma: PrismaService,
     private readonly calendar: ClubCalendarService,
     private readonly audit: BusinessAuditService,
+    private readonly branchScope: BranchScopeService,
   ) {}
+
+  private assertBranchAccess(user: JwtUser | undefined, branchId: number) {
+    if (!this.branchScope.isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
+  }
 
   private mapSession(row: SessionRow) {
     return {
@@ -55,16 +65,17 @@ export class ClubEventSessionsService {
     };
   }
 
-  private async getEventOrThrow(eventId: number) {
+  private async getEventOrThrow(eventId: number, user?: JwtUser) {
     const event = await this.prisma.club_events.findFirst({
       where: { id: eventId, is_deleted: false },
     });
     if (!event) throw new NotFoundException('الفعالية غير موجودة');
+    this.assertBranchAccess(user, event.branch_id);
     return event;
   }
 
-  async list(eventId: number, q: ListClubEventSessionsDto) {
-    await this.getEventOrThrow(eventId);
+  async list(eventId: number, q: ListClubEventSessionsDto, user?: JwtUser) {
+    await this.getEventOrThrow(eventId, user);
 
     const and: Prisma.club_event_sessionsWhereInput[] = [{ event_id: eventId }];
     if (q.status && q.status !== 'all') {
@@ -85,7 +96,8 @@ export class ClubEventSessionsService {
     return paginated(rows.map((r) => this.mapSession(r)), total, q.page, q.pageSize);
   }
 
-  async findOne(eventId: number, id: number) {
+  async findOne(eventId: number, id: number, user?: JwtUser) {
+    await this.getEventOrThrow(eventId, user);
     const row = await this.prisma.club_event_sessions.findFirst({
       where: { id, event_id: eventId },
     });
@@ -93,8 +105,8 @@ export class ClubEventSessionsService {
     return this.mapSession(row);
   }
 
-  async create(eventId: number, body: Record<string, unknown>, userId?: number) {
-    const event = await this.getEventOrThrow(eventId);
+  async create(eventId: number, body: Record<string, unknown>, userId?: number, user?: JwtUser) {
+    const event = await this.getEventOrThrow(eventId, user);
 
     if (!body.sessionDate || !body.startTime || !body.endTime) {
       throw new BadRequestException('يرجى إدخال تاريخ الجلسة ووقت البداية والنهاية');
@@ -178,9 +190,15 @@ export class ClubEventSessionsService {
     }
   }
 
-  async update(eventId: number, id: number, body: Record<string, unknown>, userId?: number) {
-    const event = await this.getEventOrThrow(eventId);
-    const existing = await this.findOne(eventId, id);
+  async update(
+    eventId: number,
+    id: number,
+    body: Record<string, unknown>,
+    userId?: number,
+    user?: JwtUser,
+  ) {
+    const event = await this.getEventOrThrow(eventId, user);
+    const existing = await this.findOne(eventId, id, user);
 
     const sessionDate = body.sessionDate != null ? String(body.sessionDate) : existing.sessionDate;
     const startTime = body.startTime != null ? String(body.startTime) : existing.startTime;
@@ -265,9 +283,9 @@ export class ClubEventSessionsService {
     }
   }
 
-  async remove(eventId: number, id: number, userId?: number) {
-    const event = await this.getEventOrThrow(eventId);
-    const existing = await this.findOne(eventId, id);
+  async remove(eventId: number, id: number, userId?: number, user?: JwtUser) {
+    const event = await this.getEventOrThrow(eventId, user);
+    const existing = await this.findOne(eventId, id, user);
 
     const checkinCount = await this.prisma.club_event_checkins.count({
       where: { session_id: id },
@@ -302,3 +320,4 @@ export class ClubEventSessionsService {
     }
   }
 }
+

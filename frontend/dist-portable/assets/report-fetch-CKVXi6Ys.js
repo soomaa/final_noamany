@@ -1,0 +1,1 @@
+import{b as c}from"./portable-index-BjYQo9_9.js";async function p(n,r={},a=200){const t=[];let o=1;for(;;){const{data:e}=await c.get(n,{params:{...r,page:o,pageSize:a}}),l=e.data??[];t.push(...l);const s=e.total??t.length;if(t.length>=s||l.length<a)break;o+=1}return t}export{p as f};

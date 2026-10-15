@@ -1,3 +1,5 @@
+import { reconcileCafeFinance } from './reconcile-cafe-finance';
+import { syncCafeSaleFinance } from './cafe-finance.util';
 import {
   BadRequestException,
   ForbiddenException,
@@ -10,6 +12,7 @@ import { paginated } from "../../common/dto/list-result";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { JwtUser } from "../../common/types/jwt-user";
 import { ModuleLedgerService } from "../accounting/module-ledger.service";
+import { PermissionEngineService } from "../rbac/engine/permission-engine.service";
 import {
   ListRevenuesDto,
   RevenueStatisticsQueryDto,
@@ -17,6 +20,10 @@ import {
   TopCustomersQueryDto,
   UpsertRevenueDto,
 } from "./dto/finance.dto";
+import {
+  createdByFilter,
+  resolveFinanceCreatorScope,
+} from "./finance-user-scope";
 import {
   computeRevenueAmounts,
   mapPaymentMethodToArabic,
@@ -32,6 +39,7 @@ export class RevenuesService {
     private readonly prisma: PrismaService,
     private readonly moduleLedger: ModuleLedgerService,
     private readonly branchScope: BranchScopeService,
+    private readonly permissions: PermissionEngineService,
   ) {}
 
   private assertBranchAccess(
@@ -40,6 +48,17 @@ export class RevenuesService {
   ) {
     if (branchId == null || !this.branchScope.isBranchAllowed(user, branchId)) {
       throw new ForbiddenException("لا تملك صلاحية الوصول لبيانات هذا الفرع");
+    }
+  }
+
+  private async assertCreatorAccess(
+    user: JwtUser | undefined,
+    createdBy: number | null | undefined,
+  ) {
+    if (!user) return;
+    const scope = await resolveFinanceCreatorScope(this.permissions, user, null, 'financial-reports.revenues');
+    if (scope.selectedUserId != null && createdBy !== scope.selectedUserId) {
+      throw new ForbiddenException("لا تملك صلاحية الوصول لإيرادات مستخدم آخر");
     }
   }
 
@@ -56,7 +75,10 @@ export class RevenuesService {
     return scope === null ? {} : { branch_id: { in: scope } };
   }
 
-  private map(row: Prisma.fin_revenuesGetPayload<object>) {
+  private map(
+    row: Prisma.fin_revenuesGetPayload<object>,
+    extras?: { createdByName?: string | null },
+  ) {
     return {
       id: row.id,
       revenueNumber: row.revenue_number,
@@ -80,6 +102,7 @@ export class RevenuesService {
       attachments: row.attachments,
       notes: row.notes,
       createdBy: row.created_by,
+      createdByName: extras?.createdByName ?? null,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       isRecurring: row.is_recurring,
@@ -88,10 +111,29 @@ export class RevenuesService {
     };
   }
 
-  private buildListWhere(
+  private async enrichCreatorNames(
+    rows: Prisma.fin_revenuesGetPayload<object>[],
+  ) {
+    const userIds = [
+      ...new Set(rows.map((r) => r.created_by).filter((id): id is number => id != null)),
+    ];
+    if (!userIds.length) return rows.map((r) => this.map(r));
+    const users = await this.prisma.users.findMany({
+      where: { user_id: { in: userIds } },
+      select: { user_id: true, name: true },
+    });
+    const nameById = new Map(users.map((u) => [u.user_id, u.name]));
+    return rows.map((r) =>
+      this.map(r, {
+        createdByName: r.created_by != null ? nameById.get(r.created_by) ?? null : null,
+      }),
+    );
+  }
+
+  private async buildListWhere(
     q: ListRevenuesDto,
     user?: JwtUser,
-  ): Prisma.fin_revenuesWhereInput {
+  ): Promise<Prisma.fin_revenuesWhereInput> {
     const and: Prisma.fin_revenuesWhereInput[] = [notDeletedFilter()];
     if (q.search?.trim()) {
       const s = q.search.trim();
@@ -119,11 +161,14 @@ export class RevenuesService {
         },
       });
     }
+    const creator = await resolveFinanceCreatorScope(this.permissions, user, q.userId, 'financial-reports.revenues');
+    const creatorFilter = createdByFilter(creator.selectedUserId);
+    if ("created_by" in creatorFilter) and.push(creatorFilter);
     return { AND: and };
   }
 
   async list(q: ListRevenuesDto, user?: JwtUser) {
-    const where = this.buildListWhere(q, user);
+    const where = await this.buildListWhere(q, user);
     const [rows, total] = await Promise.all([
       this.prisma.fin_revenues.findMany({
         where,
@@ -133,12 +178,8 @@ export class RevenuesService {
       }),
       this.prisma.fin_revenues.count({ where }),
     ]);
-    return paginated(
-      rows.map((r) => this.map(r)),
-      total,
-      q.page,
-      q.pageSize,
-    );
+    const mapped = await this.enrichCreatorNames(rows);
+    return paginated(mapped, total, q.page, q.pageSize);
   }
 
   async findOne(id: number, user?: JwtUser) {
@@ -147,7 +188,9 @@ export class RevenuesService {
     });
     if (!row) throw new NotFoundException("الإيراد غير موجود");
     this.assertBranchAccess(user, row.branch_id);
-    return this.map(row);
+    await this.assertCreatorAccess(user, row.created_by);
+    const [mapped] = await this.enrichCreatorNames([row]);
+    return mapped;
   }
 
   async statistics(q: RevenueStatisticsQueryDto, user?: JwtUser) {
@@ -164,6 +207,9 @@ export class RevenuesService {
         },
       });
     }
+    const creator = await resolveFinanceCreatorScope(this.permissions, user, q.userId, 'financial-reports.revenues');
+    const creatorFilter = createdByFilter(creator.selectedUserId);
+    if ("created_by" in creatorFilter) and.push(creatorFilter);
     const where = { AND: and };
     const [total, aggregate, bySource, byPayment] = await Promise.all([
       this.prisma.fin_revenues.count({ where }),
@@ -219,6 +265,9 @@ export class RevenuesService {
         },
       });
     }
+    const creator = await resolveFinanceCreatorScope(this.permissions, user, q.userId, 'financial-reports.revenues');
+    const creatorFilter = createdByFilter(creator.selectedUserId);
+    if ("created_by" in creatorFilter) and.push(creatorFilter);
     const where = { AND: and };
     const grouped = await this.prisma.fin_revenues.groupBy({
       by: ["customer_name"],
@@ -321,6 +370,10 @@ export class RevenuesService {
     });
     if (!existing) throw new NotFoundException("الإيراد غير موجود");
     this.assertBranchAccess(user, existing.branch_id);
+    await this.assertCreatorAccess(user, existing.created_by);
+    if (['quick_sale', 'quick_sale_reversal', 'hospitality_settlement'].includes(existing.source_module ?? '')) {
+      throw new BadRequestException('الإيراد مرتبط بفاتورة؛ عدّل أو ألغِ العملية من مصدرها');
+    }
     if (dto.branchId != null) this.assertBranchAccess(user, dto.branchId);
     const amount = dto.amount ?? toNumber(existing.amount);
     const taxAmount = dto.taxAmount ?? toNumber(existing.tax_amount);
@@ -403,6 +456,7 @@ export class RevenuesService {
     });
     if (!existing) throw new NotFoundException("الإيراد غير موجود");
     this.assertBranchAccess(user, existing.branch_id);
+    await this.assertCreatorAccess(user, existing.created_by);
     if (existing.source_module) {
       throw new BadRequestException(
         "لا يمكن حذف إيراد متزامن من المالية؛ يجب إلغاء العملية من مصدرها",
@@ -546,44 +600,7 @@ export class RevenuesService {
 
     await this.prisma.$transaction(async (tx) => {
       for (const sale of quickSales) {
-        const exists = await tx.fin_revenues.findFirst({
-          where: { source_module: "quick_sale", source_ref: sale.sale_number },
-        });
-        if (exists) {
-          skipped++;
-          continue;
-        }
-        const subtotal = toNumber(sale.subtotal);
-        const tax = toNumber(sale.tax_amount);
-        const discount = toNumber(sale.discount_amount);
-        const totals = computeRevenueAmounts(subtotal, tax, discount);
-        const revenueNumber = await nextFinDocNumber(
-          tx,
-          "fin_revenues",
-          "revenue_number",
-          "REV",
-        );
-        await tx.fin_revenues.create({
-          data: {
-            revenue_number: revenueNumber,
-            revenue_date: sale.sale_date,
-            source: "مبيعات سريعة",
-            sub_source: "نقطة البيع",
-            amount: totals.amount,
-            tax_amount: totals.taxAmount,
-            discount_amount: totals.discountAmount,
-            total_amount: totals.totalAmount,
-            net_amount: totals.netAmount,
-            payment_method: mapPaymentMethodToArabic(sale.payment_method),
-            payment_status: REVENUE_PAID,
-            description: sale.notes,
-            customer_name: sale.customer_name,
-            source_module: "quick_sale",
-            source_ref: sale.sale_number,
-            branch_id: sale.branch_id,
-            created_by: userId,
-          },
-        });
+        await syncCafeSaleFinance(tx, sale);
         created++;
       }
 
@@ -834,6 +851,9 @@ export class RevenuesService {
       }
     });
 
+    // Include historical refunds and reconcile the same POS projection without
+    // dropping the existing subscription, booking, spa, locker or InBody sync.
+    await reconcileCafeFinance(this.prisma, { from: dto.startDate, to: dto.endDate, branches: allowedBranches });
     return { created, skipped, total: created + skipped };
   }
 }

@@ -8,7 +8,7 @@ import { ConsumablesService } from './consumables.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('consumables')
-@RequiresPermission('gym-sales.inventory:view')
+@RequiresPermission('gym-sales.inventory.raw_materials:view')
 export class ConsumablesController {
   constructor(private readonly service: ConsumablesService) {}
 
@@ -23,25 +23,25 @@ export class ConsumablesController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.inventory:create')
+  @RequiresPermission('gym-sales.inventory.raw_materials:create')
   create(@Body() body: UpsertConsumableDto) {
     return this.service.create(body);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertConsumableDto>) {
     return this.service.update(id, body);
   }
 
   @Put(':id/set-stock')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   setStock(@Param('id', ParseIntPipe) id: number, @Body() body: SetConsumableStockDto) {
     return this.service.setStock(id, body);
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.inventory:delete')
+  @RequiresPermission('gym-sales.inventory.raw_materials:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

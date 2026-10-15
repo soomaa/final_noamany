@@ -1,101 +1,54 @@
+import { UnauthorizedException } from '@nestjs/common';
 import { JwtStrategy } from './jwt.strategy';
 
-describe('JwtStrategy', () => {
-  it('marks an active RBAC super-admin as unrestricted for branch scope', async () => {
-    const findFirst = jest.fn().mockResolvedValue({ id: 9 });
-    const findMany = jest.fn();
-    const findUnique = jest.fn().mockResolvedValue({ approved: 1, level: 2 });
-    const strategy = new JwtStrategy(
-      { get: jest.fn().mockReturnValue('test-access-secret') } as never,
-      {
-        users: { findUnique },
-        rbac_user_roles: { findFirst },
-        rbac_user_section_exceptions: { findMany },
-        employees: { findUnique: jest.fn().mockResolvedValue({ emp_type: 3 }) },
-      } as never,
-    );
+describe('JwtStrategy live session claims', () => {
+  const config = { get: jest.fn().mockReturnValue('test-secret') };
+  const current = {
+    sub: 7,
+    sessionId: 'session-7',
+    level: 2,
+    employeeId: 10,
+    employeeCode: 1010,
+    emp_code: 10,
+    branch: 4,
+    branch_name: 'الفرع الحالي',
+    man_women_type: 0,
+    name: 'موظف',
+    image: null,
+    job_title: null,
+    is_trainer: false,
+    trainer_id: null,
+  };
 
-    const user = await strategy.validate({
-      sub: 42,
-      level: 2,
-      emp_code: 14,
-      branch: 3,
-      branch_name: 'طنطا',
-      man_women_type: 0,
-      name: 'Admin',
-      image: null,
-      job_title: 'مدير على النظام',
-      is_trainer: false,
-      trainer_id: null,
-    });
+  it('replaces stale token scope with the current active account claims', async () => {
+    const authService = { getSessionUser: jest.fn().mockResolvedValue(current) };
+    const strategy = new JwtStrategy(config as never, authService as never);
 
-    expect(user.is_super_admin).toBe(true);
-    expect(findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ user_id: 42, role: { is_super_admin: true } }),
-      }),
-    );
-    expect(findMany).not.toHaveBeenCalled();
+    await expect(strategy.validate({ ...current, level: 1, branch: 0 })).resolves.toEqual(current);
+    expect(authService.getSessionUser).toHaveBeenCalledWith(7, 'session-7');
   });
 
-  it('uses the account\'s current level when a user is promoted after signing in', async () => {
-    const findUnique = jest.fn().mockResolvedValue({ approved: 1, level: 1 });
-    const findFirst = jest.fn();
-    const strategy = new JwtStrategy(
-      { get: jest.fn().mockReturnValue('test-access-secret') } as never,
-      {
-        users: { findUnique },
-        rbac_user_roles: { findFirst },
-        rbac_user_section_exceptions: { findMany: jest.fn() },
-      } as never,
-    );
+  it('rejects member tokens before looking up a staff session', async () => {
+    const authService = { getSessionUser: jest.fn() };
+    const strategy = new JwtStrategy(config as never, authService as never);
 
-    const user = await strategy.validate({
-      sub: 42,
-      level: 2,
-      emp_code: 14,
-      branch: 3,
-      branch_name: 'طنطا',
-      man_women_type: 0,
-      name: 'Admin',
-      image: null,
-      job_title: 'مدير على النظام',
-      is_trainer: false,
-      trainer_id: null,
-    });
-
-    expect(user.level).toBe(1);
-    expect(user.is_super_admin).toBe(true);
+    await expect(strategy.validate({ ...current, type: 'member' })).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(authService.getSessionUser).not.toHaveBeenCalled();
   });
 
-  it('allows an all-sections employee to access both men and women sections', async () => {
-    const findUnique = jest.fn().mockResolvedValue({ approved: 1, level: 2 });
-    const findFirst = jest.fn().mockResolvedValue(null);
-    const findMany = jest.fn().mockResolvedValue([]);
-    const strategy = new JwtStrategy(
-      { get: jest.fn().mockReturnValue('test-access-secret') } as never,
-      {
-        users: { findUnique },
-        rbac_user_roles: { findFirst },
-        rbac_user_section_exceptions: { findMany },
-        employees: { findUnique: jest.fn().mockResolvedValue({ emp_type: 3 }) },
-      } as never,
-    );
+  it('propagates immediate suspension from the current account lookup', async () => {
+    const authService = { getSessionUser: jest.fn().mockRejectedValue(new UnauthorizedException('انتهت الجلسة')) };
+    const strategy = new JwtStrategy(config as never, authService as never);
 
-    const user = await strategy.validate({
-      sub: 42,
-      level: 2,
-      emp_code: 14,
-      branch: 3,
-      branch_name: 'طنطا',
-      man_women_type: 3,
-      name: 'All sections',
-      image: null,
-      job_title: 'موظف',
-      is_trainer: false,
-      trainer_id: null,
-    });
+    await expect(strategy.validate(current)).rejects.toBeInstanceOf(UnauthorizedException);
+  });
 
-    expect(user.member_sections).toEqual(['male', 'female']);
+  it('rejects legacy staff access tokens that have no server-side session id', async () => {
+    const authService = { getSessionUser: jest.fn() };
+    const strategy = new JwtStrategy(config as never, authService as never);
+
+    const { sessionId: _sessionId, ...legacy } = current;
+    await expect(strategy.validate(legacy)).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(authService.getSessionUser).not.toHaveBeenCalled();
   });
 });

@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { runWithMysqlLock } from '../../common/automation/cron-dedup.util';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { LeavesService } from '../leaves/leaves.service';
+import { cairoDateParts } from '../../common/utils/cairo-date';
 
 @Injectable()
 export class LeavesCron {
@@ -23,7 +24,7 @@ export class LeavesCron {
   }
 
   private async yearEndCarryOverLocked() {
-    const year = new Date().getFullYear();
+    const year = cairoDateParts().year;
     const result = await this.leaves.carryOver(year);
     this.log.log(`Leave carry-over ${year}: processed=${result.processed}`);
   }

@@ -28,20 +28,16 @@ export async function findMemberDuplicates(
 ): Promise<DuplicateHit[]> {
   const hits: DuplicateHit[] = [];
   const exclude = opts.excludeMemberId;
-  const globalMemberWhere: Prisma.club_membersWhereInput = { is_deleted: false };
-  const branchMemberWhere: Prisma.club_membersWhereInput = {
-    ...globalMemberWhere,
+  const baseWhere: Prisma.club_membersWhereInput = {
+    is_deleted: false,
     branch_id: opts.branchId,
   };
-  if (exclude) {
-    globalMemberWhere.id = { not: exclude };
-    branchMemberWhere.id = { not: exclude };
-  }
+  if (exclude) baseWhere.id = { not: exclude };
 
   if (opts.phone && isValidPhoneFormat(opts.phone)) {
     const stored = normalizePhoneForStorage(opts.phone);
     const row = await prisma.club_members.findFirst({
-      where: { ...globalMemberWhere, phone: stored },
+      where: { ...baseWhere, phone: stored },
       select: { id: true, member_code: true, name: true, phone: true, card_number: true },
     });
     if (row) {
@@ -60,7 +56,7 @@ export async function findMemberDuplicates(
   if (opts.cardNumber && isValidNationalIdFormat(opts.cardNumber)) {
     const stored = normalizeCardNumber(opts.cardNumber);
     const row = await prisma.club_members.findFirst({
-      where: { ...branchMemberWhere, card_number: stored },
+      where: { ...baseWhere, card_number: stored },
       select: { id: true, member_code: true, name: true, phone: true, card_number: true },
     });
     if (row) {
@@ -80,9 +76,6 @@ export async function findMemberDuplicates(
 }
 
 export function buildDuplicateMessage(duplicates: DuplicateHit[], isUpdate = false): string {
-  if (duplicates.some((duplicate) => duplicate.field === 'phone')) {
-    return 'الرقم مسجل من قبل';
-  }
   const action = isUpdate ? 'تحديث العضو' : 'إضافة العضو';
   const parts = duplicates.map((d) => {
     const label = d.fieldLabel;

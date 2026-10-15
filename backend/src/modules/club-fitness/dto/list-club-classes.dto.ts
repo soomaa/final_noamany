@@ -16,16 +16,16 @@ export class ListClubClassesDto extends PaginationDto {
   status?: string;
 
   @IsOptional()
+  @IsIn(['men', 'women', 'kids', 'mixed', 'all'])
+  audience?: string;
+
+  @IsOptional()
   @IsString()
   dateFrom?: string;
 
   @IsOptional()
   @IsString()
   dateTo?: string;
-
-  @IsOptional()
-  @IsString()
-  classTypeId?: string;
 
   @IsOptional()
   @Transform(({ value }) => value === 'true' || value === true)

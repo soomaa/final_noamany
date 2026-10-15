@@ -17,6 +17,7 @@ import { isDryRun, previewResponse, PreviewRow } from '../../common/preview';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
 import { assertPositive } from '../../common/validators';
 import { convertToBaseUnit, type RecipeUnit } from '../../common/utils/units';
+import { cairoDateBounds } from '../../common/utils/cairo-date';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
 import { InventoryStockService } from '../inventory/inventory-stock.service';
 import { InventoryLocationService } from '../inventory/inventory-location.service';
@@ -33,9 +34,19 @@ import {
 import { UpsertCafeProductDto } from './dto/upsert-cafe-product.dto';
 import { SellCafeProductDto } from './dto/sell-cafe-product.dto';
 import { SellCafeCartDto } from './dto/sell-cafe-cart.dto';
+import { assertCafeInvoiceClassification, assertCafeInvoiceProducts } from './cafe-invoice-classification';
 import { UpsertCafePartnerDto } from './dto/upsert-cafe-partner.dto';
 import { ProduceCafeProductDto } from './dto/produce-cafe-product.dto';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { savedSalePaymentInvoice, shiftPaymentSummary } from '../sales/sale-payment-summary.util';
+import { IngredientSwapDto, RemoveIngredientUsageDto } from './dto/ingredient-swap.dto';
+import {
+  buildCafeCategoryFilter,
+  mapCafeCategories,
+  normalizeCafeCategoryIds,
+  type CafeCategoryAssignmentRow,
+} from './cafe-product-categories';
+import { CafeBundlesService, type ResolvedBundleSale } from './cafe-bundles.service';
 
 type IngredientStockSelect = {
   id: true;
@@ -43,11 +54,13 @@ type IngredientStockSelect = {
   unit_of_measure: true;
   cost_price: true;
   inventory_kind: true;
+  is_deleted: true;
+  status: true;
 };
 
 type ProductWithRecipes = Prisma.cafe_productsGetPayload<{
   include: {
-    inventory_product: { select: { id: true; name_ar: true; unit_of_measure: true; cost_price: true } };
+    inventory_product: { select: { id: true; name_ar: true; unit_of_measure: true; cost_price: true; is_deleted: true; status: true } };
     recipes: {
       include: {
         ingredient: { select: IngredientStockSelect };
@@ -70,6 +83,9 @@ type ConsumptionLine = {
   needed: number;
   ingredientName: string;
   costAmount: number;
+  /** Inventory base unit of the ingredient — carried so callers (e.g. bundles) can
+   *  map into the quick-sales consumption shape without re-querying. */
+  unit: string;
 };
 
 const INGREDIENT_STOCK_SELECT = {
@@ -78,12 +94,52 @@ const INGREDIENT_STOCK_SELECT = {
   unit_of_measure: true,
   cost_price: true,
   inventory_kind: true,
+  is_deleted: true,
+  status: true,
 } as const;
 
 function reportHourLabel(hour: number) {
   const hour12 = hour % 12 || 12;
   const period = hour >= 12 ? 'م' : 'ص';
   return `${hour12}:00 ${period}`.replace(/\d/g, (digit) => '٠١٢٣٤٥٦٧٨٩'[Number(digit)]!);
+}
+
+type CafeWasteTransactionLike = {
+  id: number;
+  reference: string;
+  txn_date: Date;
+  total_amount: Prisma.Decimal | number;
+  reason: string | null;
+  items: Array<{
+    product_id: number | null;
+    item_name: string;
+    quantity: Prisma.Decimal | number;
+    total: Prisma.Decimal | number;
+    unit: string | null;
+  }>;
+};
+
+type ManualCafeWasteLike = {
+  status: string;
+  total_cost: Prisma.Decimal | number;
+  transaction: CafeWasteTransactionLike;
+};
+
+export function combineCafeWasteReport(
+  automaticTransactions: CafeWasteTransactionLike[],
+  manualRecords: ManualCafeWasteLike[],
+) {
+  const activeManual = manualRecords.filter((row) => row.status === 'active');
+  const automaticCost = roundMoney(automaticTransactions.reduce((sum, row) => sum + invToNumber(row.total_amount), 0));
+  const manualCost = roundMoney(activeManual.reduce((sum, row) => sum + invToNumber(row.total_cost), 0));
+  const transactions = [...automaticTransactions, ...activeManual.map((row) => row.transaction)]
+    .sort((a, b) => b.txn_date.getTime() - a.txn_date.getTime());
+  return {
+    automaticCost,
+    manualCost,
+    totalCost: roundMoney(automaticCost + manualCost),
+    transactions,
+  };
 }
 
 @Injectable()
@@ -95,7 +151,256 @@ export class CafeProductsService {
     private readonly moduleLedger: ModuleLedgerService,
     private readonly posSettings: PosSettingsService,
     private readonly branchScope: BranchScopeService,
+    private readonly bundles: CafeBundlesService,
   ) {}
+
+  /** Component resolver handed to the bundle service (bound to this service's masters). */
+  private readonly resolveBundleComponent = (
+    db: Prisma.TransactionClient | PrismaService,
+    cafeProductId: number,
+    variantId: number | null,
+    quantity: number,
+    warehouseId: number,
+  ) => this.resolveComponentSale(db, cafeProductId, variantId, quantity, warehouseId);
+
+  private async ingredientSwapPair(sourceIngredientId: number, targetIngredientId: number) {
+    if (sourceIngredientId === targetIngredientId) {
+      throw new BadRequestException('اختر خامة بديلة مختلفة عن الخامة الحالية');
+    }
+    const ingredients = await this.prisma.inv_products.findMany({
+      where: {
+        id: { in: [sourceIngredientId, targetIngredientId] },
+      },
+      select: {
+        id: true,
+        name_ar: true,
+        unit_of_measure: true,
+        cost_price: true,
+        is_deleted: true,
+        status: true,
+      },
+    });
+    const source = ingredients.find((row) => row.id === sourceIngredientId);
+    const target = ingredients.find((row) => row.id === targetIngredientId);
+    if (!source) {
+      throw new NotFoundException('الخامة الحالية غير موجودة');
+    }
+    if (!target || target.is_deleted || target.status !== 'active') {
+      throw new NotFoundException('الخامة البديلة غير موجودة أو غير نشطة');
+    }
+    return { source, target };
+  }
+
+  private assertIngredientAvailable(ingredient: {
+    name_ar: string;
+    is_deleted: boolean;
+    status: string;
+  }) {
+    if (ingredient.is_deleted || ingredient.status !== 'active') {
+      throw new BadRequestException(`الوصفة تستخدم خامة محذوفة أو غير نشطة: ${ingredient.name_ar}`);
+    }
+  }
+
+  async previewIngredientSwap(sourceIngredientId: number, targetIngredientId: number) {
+    const { source, target } = await this.ingredientSwapPair(sourceIngredientId, targetIngredientId);
+    const [productRecipes, variantRecipes] = await Promise.all([
+      this.prisma.cafe_product_recipes.findMany({
+        where: { ingredient_id: sourceIngredientId },
+        include: { product: { include: { category: { select: { name_ar: true } } } } },
+        orderBy: [{ product: { name: 'asc' } }, { sort_order: 'asc' }],
+      }),
+      this.prisma.cafe_variant_recipes.findMany({
+        where: { ingredient_id: sourceIngredientId },
+        include: {
+          variant: {
+            include: { product: { include: { category: { select: { name_ar: true } } } } },
+          },
+        },
+        orderBy: [{ variant: { product: { name: 'asc' } } }, { variant: { sort_order: 'asc' } }],
+      }),
+    ]);
+    const productIds = productRecipes.map((row) => row.product_id);
+    const variantIds = variantRecipes.map((row) => row.variant_id);
+    const [productTargetRows, variantTargetRows] = await Promise.all([
+      productIds.length
+        ? this.prisma.cafe_product_recipes.findMany({
+            where: { ingredient_id: targetIngredientId, product_id: { in: productIds } },
+            select: { product_id: true },
+          })
+        : Promise.resolve([]),
+      variantIds.length
+        ? this.prisma.cafe_variant_recipes.findMany({
+            where: { ingredient_id: targetIngredientId, variant_id: { in: variantIds } },
+            select: { variant_id: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const productConflicts = new Set(productTargetRows.map((row) => row.product_id));
+    const variantConflicts = new Set(variantTargetRows.map((row) => row.variant_id));
+    const costFor = (quantity: number, unit: string, baseUnit: string, cost: unknown) => {
+      const converted = convertToBaseUnit(quantity, unit as RecipeUnit, baseUnit);
+      return converted == null ? null : roundMoney(converted * invToNumber(cost as never));
+    };
+    const rows = [
+      ...productRecipes.map((row) => {
+        const quantity = invToNumber(row.quantity);
+        return {
+          recipeType: 'product' as const,
+          recipeId: row.id,
+          productId: row.product.id,
+          productName: row.product.name,
+          variantId: null,
+          variantName: null,
+          categoryName: row.product.category?.name_ar ?? null,
+          quantity,
+          unit: row.unit,
+          currentCost: costFor(quantity, row.unit, source.unit_of_measure, source.cost_price),
+          targetUnit: target.unit_of_measure,
+          targetUnitCost: invToNumber(target.cost_price),
+          targetCost: roundMoney(quantity * invToNumber(target.cost_price)),
+          conflict: productConflicts.has(row.product_id),
+        };
+      }),
+      ...variantRecipes.map((row) => {
+        const quantity = invToNumber(row.quantity);
+        return {
+          recipeType: 'variant' as const,
+          recipeId: row.id,
+          productId: row.variant.product.id,
+          productName: row.variant.product.name,
+          variantId: row.variant.id,
+          variantName: row.variant.name,
+          categoryName: row.variant.product.category?.name_ar ?? null,
+          quantity,
+          unit: row.unit,
+          currentCost: costFor(quantity, row.unit, source.unit_of_measure, source.cost_price),
+          targetUnit: target.unit_of_measure,
+          targetUnitCost: invToNumber(target.cost_price),
+          targetCost: roundMoney(quantity * invToNumber(target.cost_price)),
+          conflict: variantConflicts.has(row.variant_id),
+        };
+      }),
+    ];
+    return {
+      source: { id: source.id, name: source.name_ar, unit: source.unit_of_measure },
+      target: { id: target.id, name: target.name_ar, unit: target.unit_of_measure },
+      rows,
+      eligibleCount: rows.filter((row) => !row.conflict).length,
+    };
+  }
+
+  async applyIngredientSwap(body: IngredientSwapDto, user: Pick<JwtUser, 'sub' | 'name'>) {
+    const { source, target } = await this.ingredientSwapPair(body.sourceIngredientId, body.targetIngredientId);
+    const rowKeys = body.rows.map((row) => `${row.recipeType}:${row.recipeId}`);
+    if (new Set(rowKeys).size !== rowKeys.length) {
+      throw new BadRequestException('قائمة الوصفات تحتوي على صفوف مكررة');
+    }
+    const productContainers = new Set<string>();
+    await this.prisma.$transaction(async (tx) => {
+      for (const row of body.rows) {
+        if (row.recipeType === 'product') {
+          const current = await tx.cafe_product_recipes.findFirst({
+            where: { id: row.recipeId, ingredient_id: source.id },
+            select: { id: true, product_id: true, ingredient_id: true },
+          });
+          if (!current) throw new BadRequestException('إحدى الوصفات تغيرت؛ حدّث المعاينة وحاول مرة أخرى');
+          const conflict = await tx.cafe_product_recipes.count({
+            where: { product_id: current.product_id, ingredient_id: target.id },
+          });
+          if (conflict) throw new BadRequestException('الخامة البديلة موجودة بالفعل في إحدى الوصفات المحددة');
+          await tx.cafe_product_recipes.update({
+            where: { id: row.recipeId },
+            data: { ingredient_id: target.id, quantity: row.quantity, unit: target.unit_of_measure },
+          });
+          productContainers.add(`product:${current.product_id}`);
+        } else {
+          const current = await tx.cafe_variant_recipes.findFirst({
+            where: { id: row.recipeId, ingredient_id: source.id },
+            select: { id: true, variant_id: true, ingredient_id: true },
+          });
+          if (!current) throw new BadRequestException('إحدى الوصفات تغيرت؛ حدّث المعاينة وحاول مرة أخرى');
+          const conflict = await tx.cafe_variant_recipes.count({
+            where: { variant_id: current.variant_id, ingredient_id: target.id },
+          });
+          if (conflict) throw new BadRequestException('الخامة البديلة موجودة بالفعل في إحدى الوصفات المحددة');
+          await tx.cafe_variant_recipes.update({
+            where: { id: row.recipeId },
+            data: { ingredient_id: target.id, quantity: row.quantity, unit: target.unit_of_measure },
+          });
+          productContainers.add(`variant:${current.variant_id}`);
+        }
+      }
+      await tx.business_audit_log.create({
+        data: {
+          entity_type: 'cafe_ingredient_swap',
+          entity_id: `${source.id}->${target.id}`,
+          action: 'ingredients.bulk_swap',
+          actor_user_id: user.sub,
+          actor_name: user.name ?? null,
+          before_json: { ingredientId: source.id, ingredientName: source.name_ar },
+          after_json: { ingredientId: target.id, ingredientName: target.name_ar },
+          changed_fields: body.rows.map((row) => `${row.recipeType}:${row.recipeId}`),
+          reason: `تم تبديل ${body.rows.length} استخدام للخامة`,
+        },
+      });
+    });
+    return { updatedCount: body.rows.length, productCount: productContainers.size };
+  }
+
+  async removeIngredientUsage(
+    body: RemoveIngredientUsageDto,
+    user: Pick<JwtUser, 'sub' | 'name'>,
+  ) {
+    return this.prisma.$transaction(async (tx) => {
+      const source = await tx.inv_products.findUnique({
+        where: { id: body.sourceIngredientId },
+        select: { id: true, name_ar: true },
+      });
+      if (!source) throw new NotFoundException('الخامة غير موجودة');
+
+      let productId: number;
+      let removedFrom: { productId: number; variantId: number | null };
+      if (body.recipeType === 'product') {
+        const recipe = await tx.cafe_product_recipes.findFirst({
+          where: { id: body.recipeId, ingredient_id: source.id },
+          select: { id: true, product_id: true },
+        });
+        if (!recipe) throw new BadRequestException('الوصفة تغيرت؛ حدّث القائمة وحاول مرة أخرى');
+        await tx.cafe_product_recipes.delete({ where: { id: recipe.id } });
+        productId = recipe.product_id;
+        removedFrom = { productId, variantId: null };
+      } else {
+        const recipe = await tx.cafe_variant_recipes.findFirst({
+          where: { id: body.recipeId, ingredient_id: source.id },
+          select: { id: true, variant_id: true, variant: { select: { product_id: true } } },
+        });
+        if (!recipe) throw new BadRequestException('الوصفة تغيرت؛ حدّث القائمة وحاول مرة أخرى');
+        await tx.cafe_variant_recipes.delete({ where: { id: recipe.id } });
+        productId = recipe.variant.product_id;
+        removedFrom = { productId, variantId: recipe.variant_id };
+      }
+
+      await tx.business_audit_log.create({
+        data: {
+          entity_type: 'cafe_recipe_ingredient',
+          entity_id: `${body.recipeType}:${body.recipeId}`,
+          action: 'ingredient.remove',
+          actor_user_id: user.sub,
+          actor_name: user.name ?? null,
+          before_json: {
+            ingredientId: source.id,
+            ingredientName: source.name_ar,
+            ...removedFrom,
+          },
+          after_json: { removed: true },
+          changed_fields: ['ingredient_id'],
+          reason: 'إزالة الخامة من الوصفة قبل أرشفتها',
+        },
+      });
+
+      return { removed: true, productId };
+    });
+  }
 
   private resolveCafePaymentMethod(method?: SalesPaymentMethod): SalesPaymentMethod {
     const paymentMethod = method ?? SalesPaymentMethod.cash;
@@ -118,6 +423,7 @@ export class CafeProductsService {
     created_at: Date;
     updated_at: Date;
     category?: { name_ar: string } | null;
+    category_assignments?: CafeCategoryAssignmentRow[];
     _count?: { recipes: number };
     inventory_product?: { cost_price: Prisma.Decimal } | null;
     recipes?: Array<{
@@ -175,12 +481,20 @@ export class CafeProductsService {
         sortOrder: variant.sort_order,
       };
     });
+    const assignedCategories = mapCafeCategories(row.category_assignments);
+    const categories = assignedCategories.length
+      ? assignedCategories
+      : row.category_id && row.category
+        ? [{ id: row.category_id, name: row.category.name_ar }]
+        : [];
     return {
       id: row.id,
       productCode: row.product_code,
       name: row.name,
-      categoryId: row.category_id,
-      categoryName: row.category?.name_ar ?? null,
+      categoryId: categories[0]?.id ?? null,
+      categoryName: categories[0]?.name ?? null,
+      categoryIds: categories.map((category) => category.id),
+      categories,
       productType: row.product_type,
       inventoryProductId: row.inventory_product_id,
       sellPrice: Number(row.sell_price),
@@ -249,50 +563,98 @@ export class CafeProductsService {
     });
   }
 
-  async reports(dateFrom?: string, dateTo?: string, branchId?: string, user?: JwtUser) {
+  async reports(dateFrom?: string, dateTo?: string, branchId?: string, user?: JwtUser, shiftSessionId?: string) {
     const scopedBranches = this.branchScope.resolveListFilter(user, branchId ?? null);
     const branchWhere = scopedBranches ? { branch_id: { in: scopedBranches } } : {};
+    // Filter on the operating day, not the calendar day: a shift running past
+    // midnight belongs to the day it opened, so these totals line up with shift
+    // close. Sales written before `business_date` existed fall back to sale_date.
+    const dateRange = { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) };
     const dateFilter = dateFrom || dateTo
-      ? { sale_date: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
+      ? {
+          OR: [
+            { business_date: dateRange },
+            { business_date: null, sale_date: dateRange },
+          ],
+        }
       : {};
+    const wasteBounds = cairoDateBounds(dateFrom, dateTo);
     const wasteDateFilter = dateFrom || dateTo
       ? {
           txn_date: {
-            ...(dateFrom ? { gte: new Date(`${dateFrom}T00:00:00`) } : {}),
-            ...(dateTo ? { lte: new Date(`${dateTo}T23:59:59.999`) } : {}),
+            ...(wasteBounds.start ? { gte: wasteBounds.start } : {}),
+            ...(wasteBounds.endExclusive ? { lt: wasteBounds.endExclusive } : {}),
+          },
+        }
+      : {};
+    const manualWasteDateFilter = dateFrom || dateTo
+      ? {
+          created_at: {
+            ...(wasteBounds.start ? { gte: wasteBounds.start } : {}),
+            ...(wasteBounds.endExclusive ? { lt: wasteBounds.endExclusive } : {}),
           },
         }
       : {};
     const allSales = await this.prisma.sales_quick_sales.findMany({
       where: { ...dateFilter, ...branchWhere },
-      include: { items: true, feedback: true },
+      include: { items: true, feedback: true, payments: true },
     });
     const sales = allSales.filter((sale) => sale.status === QuickSaleStatus.completed);
-    const revenueSales = sales.filter((sale) => sale.sale_type !== 'partner');
+    // Partner orders are sales like any other; they only become *revenue* once the
+    // partner settles, which `collected_amount` already reflects (0 until settled).
+    const revenueSales = sales;
     const refunded = allSales.filter((sale) => sale.status === QuickSaleStatus.refunded);
-    const products = new Map<number, { productId: number; name: string; quantity: number; revenue: number; cost: number; profit: number }>();
-    for (const sale of revenueSales) {
-      for (const item of sale.items) {
-        const key = item.cafe_product_id ?? item.product_id;
-        const current = products.get(key) ?? {
-          productId: key,
-          name: item.name,
-          quantity: 0,
-          revenue: 0,
-          cost: 0,
-          profit: 0,
-        };
-        current.quantity += invToNumber(item.quantity);
-        const subtotal = invToNumber(sale.subtotal);
-        const discountRatio = subtotal > 0 ? invToNumber(sale.discount_amount) / subtotal : 0;
-        current.revenue += invToNumber(item.line_total) * Math.max(0, 1 - discountRatio);
-        current.cost += invToNumber(item.line_cost);
-        current.profit = current.revenue - current.cost;
-        products.set(key, current);
+    // Shared by the period-wide product lists and by the shift-scoped sold summary, so
+    // Free units keep their discount on the original line; any remaining invoice
+    // discount is allocated only to paid amounts in both summaries.
+    const aggregateProductRows = (rows: typeof revenueSales) => {
+      const map = new Map<number, { productId: number; name: string; quantity: number; revenue: number; cost: number; profit: number }>();
+      for (const sale of rows) {
+        const pricedLines = sale.items.map((item) => {
+          const quantity = invToNumber(item.quantity);
+          const freeQuantity = Math.min(quantity, Math.max(0, item.free_quantity ?? 0));
+          const gross = invToNumber(item.line_total);
+          const freeAmount = Math.min(gross, freeQuantity * invToNumber(item.unit_price));
+          return { item, freeAmount, paidAmount: Math.max(0, gross - freeAmount) };
+        });
+        const freeAmount = roundMoney(pricedLines.reduce((sum, line) => sum + line.freeAmount, 0));
+        const paidSubtotal = Math.max(0, roundMoney(invToNumber(sale.subtotal) - freeAmount));
+        const remainingDiscount = Math.max(0, invToNumber(sale.discount_amount) - freeAmount);
+        const paidRatio = paidSubtotal > 0 ? Math.max(0, 1 - remainingDiscount / paidSubtotal) : 0;
+        let cumulativeRevenue = 0;
+        let allocatedRevenue = 0;
+        for (const { item, paidAmount } of pricedLines) {
+          const key = item.cafe_product_id ?? item.product_id;
+          const current = map.get(key) ?? {
+            productId: key,
+            name: item.name,
+            quantity: 0,
+            revenue: 0,
+            cost: 0,
+            profit: 0,
+          };
+          current.quantity += invToNumber(item.quantity);
+          // Cumulative rounding keeps line revenues equal to the saved invoice net.
+          cumulativeRevenue += paidAmount * paidRatio;
+          const roundedRevenue = roundMoney(cumulativeRevenue);
+          current.revenue += roundedRevenue - allocatedRevenue;
+          allocatedRevenue = roundedRevenue;
+          current.cost += invToNumber(item.line_cost);
+          current.profit = current.revenue - current.cost;
+          map.set(key, current);
+        }
       }
-    }
+      return [...map.values()].map((row) => ({
+        ...row,
+        quantity: Math.round(row.quantity * 1000) / 1000,
+        profit: roundMoney(row.profit),
+        revenue: roundMoney(row.revenue),
+        cost: roundMoney(row.cost),
+      }));
+    };
+    const products = aggregateProductRows(revenueSales);
 
-    const [catalog, stockRows, purchases, debts, users, expiring, wasteTransactions] = await Promise.all([
+    const [catalog, stockRows, purchases, debts, users, expiring, automaticWasteTransactions, manualWasteRecords] = await Promise.all([
       this.prisma.cafe_products.findMany({ where: { is_active: true, product_type: { not: 'internal' } }, select: { id: true, name: true, sell_price: true } }),
       this.prisma.inv_products.findMany({
         where: { is_deleted: false, status: 'active' },
@@ -325,13 +687,65 @@ export class CafeProductsService {
           status: 'approved',
           txn_type: InventoryTxnType.damage,
           reference: { startsWith: 'WASTE-' },
+          cafe_waste_record: { is: null },
           ...wasteDateFilter,
           ...(scopedBranches ? { branch_id: { in: scopedBranches } } : {}),
         },
         include: { items: true },
         orderBy: { txn_date: 'desc' },
       }),
+      this.prisma.cafe_waste_records.findMany({
+        where: {
+          status: 'active',
+          ...manualWasteDateFilter,
+          ...(scopedBranches ? { branch_id: { in: scopedBranches } } : {}),
+        },
+        include: { transaction: { include: { items: true } } },
+        orderBy: { created_at: 'desc' },
+      }),
     ]);
+    // Employee/partner invoices are rung up with collected_amount = 0 and only turn
+    // into revenue when their statement is settled. Recognise that revenue on the
+    // settlement date so previously issued reports never change retroactively.
+    // Attributed by the collecting shift's operating day so a 02:00 settlement lands
+    // on the same day as the drawer movement it created, not on the next calendar day.
+    const settledAccountsRevenueBetween = async (from?: string, to?: string) => {
+      const bounds = cairoDateBounds(from, to);
+      const periodFilter = from || to
+        ? {
+            OR: [
+              { session: { session_date: { ...(from ? { gte: from } : {}), ...(to ? { lte: to } : {}) } } },
+              {
+                shift_session_id: null,
+                settled_at: {
+                  ...(bounds.start ? { gte: bounds.start } : {}),
+                  ...(bounds.endExclusive ? { lt: bounds.endExclusive } : {}),
+                },
+              },
+            ],
+          }
+        : {};
+      const statements = await this.prisma.sales_billing_statements.findMany({
+        where: {
+          status: 'settled',
+          ...periodFilter,
+          ...branchWhere,
+        },
+        include: { items: { include: { sale: { select: { total_amount: true, tax_amount: true } } } } },
+      });
+      return statements.reduce(
+        (sum, statement) =>
+          sum
+          + statement.items.reduce(
+            (itemSum, item) =>
+              itemSum + invToNumber(item.sale.total_amount) - invToNumber(item.sale.tax_amount),
+            0,
+          ),
+        0,
+      );
+    };
+    const settledAccountsRevenue = await settledAccountsRevenueBetween(dateFrom, dateTo);
+
     const partnerSales = sales.filter((sale) => sale.sale_type === 'partner');
     const totalCollected = revenueSales.reduce((sum, sale) => sum + invToNumber(sale.collected_amount), 0);
     const totalSales = revenueSales.reduce((sum, sale) => sum + invToNumber(sale.subtotal), 0);
@@ -340,7 +754,9 @@ export class CafeProductsService {
     const totalTaxes = revenueSales.reduce((sum, sale) => sum + invToNumber(sale.tax_amount), 0);
     const totalRefunds = refunded.reduce((sum, sale) => sum + invToNumber(sale.collected_amount), 0);
     const partnerConsumptionCost = partnerSales.reduce((sum, sale) => sum + invToNumber(sale.cost_total), 0);
-    const wasteCost = roundMoney(wasteTransactions.reduce((sum, row) => sum + invToNumber(row.total_amount), 0));
+    const wasteBreakdown = combineCafeWasteReport(automaticWasteTransactions, manualWasteRecords);
+    const wasteTransactions = wasteBreakdown.transactions;
+    const wasteCost = wasteBreakdown.totalCost;
     const wasteItemMap = new Map<number | string, { productId: number | null; name: string; quantity: number; cost: number; unit: string | null }>();
     for (const transaction of wasteTransactions) {
       for (const item of transaction.items) {
@@ -368,28 +784,72 @@ export class CafeProductsService {
       const previousTo = new Date(fromDate); previousTo.setDate(previousTo.getDate() - 1);
       const previousFrom = new Date(previousTo); previousFrom.setDate(previousFrom.getDate() - periodDays + 1);
       const previous = await this.prisma.sales_quick_sales.findMany({
-        where: { status: QuickSaleStatus.completed, sale_type: { not: 'partner' }, sale_date: { gte: localDateString(previousFrom), lte: localDateString(previousTo) }, ...branchWhere },
+        where: {
+          status: QuickSaleStatus.completed,
+          OR: [
+            { business_date: { gte: localDateString(previousFrom), lte: localDateString(previousTo) } },
+            { business_date: null, sale_date: { gte: localDateString(previousFrom), lte: localDateString(previousTo) } },
+          ],
+          ...branchWhere,
+        },
         select: { collected_amount: true, tax_amount: true },
       });
-      previousRevenue = previous.reduce((sum, sale) => sum + invToNumber(sale.collected_amount) - invToNumber(sale.tax_amount), 0);
+      // Same formula as netRevenue below, otherwise growth % compares two different
+      // measures and reads negative whenever account settlements carry the period.
+      previousRevenue = previous.reduce((sum, sale) => sum + invToNumber(sale.collected_amount) - invToNumber(sale.tax_amount), 0)
+        + await settledAccountsRevenueBetween(localDateString(previousFrom), localDateString(previousTo));
     }
-    const netRevenue = totalCollected - totalTaxes;
+    const netRevenue = totalCollected - totalTaxes + settledAccountsRevenue;
+    const uncollectedAccountsValue = roundMoney(
+      revenueSales
+        .filter((sale) => sale.sale_type !== 'customer' && sale.billing_status !== 'settled')
+        .reduce((sum, sale) => sum + invToNumber(sale.total_amount) - invToNumber(sale.collected_amount), 0),
+    );
     const revenueGrowth = previousRevenue > 0 ? roundMoney(((netRevenue - previousRevenue) / previousRevenue) * 100) : netRevenue > 0 ? 100 : 0;
 
-    const productRows = [...products.values()].map((row) => ({ ...row, profit: roundMoney(row.profit), revenue: roundMoney(row.revenue), cost: roundMoney(row.cost) }));
-    const neverSold = catalog.filter((product) => !products.has(product.id)).map((product) => ({ productId: product.id, name: product.name, sellPrice: invToNumber(product.sell_price) }));
+    const productRows = products;
+
+    // Shift picker for the sold-products summary, so the list can be lined up against a
+    // single shift-close receipt instead of the whole period.
+    const sessionIdsInPeriod = [...new Set(
+      revenueSales.map((sale) => sale.shift_session_id).filter((id): id is number => id != null),
+    )];
+    const sessionRows = sessionIdsInPeriod.length
+      ? await this.prisma.sales_shift_sessions.findMany({
+          where: { id: { in: sessionIdsInPeriod } },
+          select: { id: true, session_date: true, session_sequence: true, shift: { select: { shift_name: true } } },
+          orderBy: [{ session_date: 'desc' }, { id: 'desc' }],
+        })
+      : [];
+    const shiftOptions = sessionRows.map((row) => ({
+      sessionId: row.id,
+      label: `${row.shift.shift_name} — ${row.session_date}${row.session_sequence > 1 ? ` (${row.session_sequence})` : ''}`,
+    }));
+
+    const selectedSessionId = Number(shiftSessionId);
+    const soldSales = Number.isInteger(selectedSessionId) && selectedSessionId > 0
+      ? revenueSales.filter((sale) => sale.shift_session_id === selectedSessionId)
+      : revenueSales;
+    const soldOrderCount = soldSales.length;
+    const soldRows = (soldSales === revenueSales ? [...productRows] : aggregateProductRows(soldSales))
+      .sort((a, b) => b.quantity - a.quantity);
+    const soldProductIds = new Set(products.map((row) => row.productId));
+    const neverSold = catalog.filter((product) => !soldProductIds.has(product.id)).map((product) => ({ productId: product.id, name: product.name, sellPrice: invToNumber(product.sell_price) }));
     const byHour = Array.from({ length: 24 }, (_, hour) => ({
       hour,
       label: reportHourLabel(hour),
       orders: revenueSales.filter((sale) => Number(sale.sale_time.slice(0, 2)) === hour).length,
       sales: roundMoney(revenueSales.filter((sale) => Number(sale.sale_time.slice(0, 2)) === hour).reduce((sum, sale) => sum + invToNumber(sale.collected_amount), 0)),
     }));
+    const businessDateOf = (sale: { business_date: string | null; sale_date: string }) =>
+      sale.business_date ?? sale.sale_date;
     const dailyMap = new Map<string, { date: string; orders: number; sales: number }>();
     for (const sale of revenueSales) {
-      const row = dailyMap.get(sale.sale_date) ?? { date: sale.sale_date, orders: 0, sales: 0 };
+      const date = businessDateOf(sale);
+      const row = dailyMap.get(date) ?? { date, orders: 0, sales: 0 };
       row.orders += 1;
       row.sales += invToNumber(sale.collected_amount);
-      dailyMap.set(sale.sale_date, row);
+      dailyMap.set(date, row);
     }
     const byDay = [...dailyMap.values()].sort((a, b) => a.date.localeCompare(b.date)).map((row) => ({ ...row, sales: roundMoney(row.sales) }));
     const aggregatePeriods = (keyOf: (date: string) => string) => {
@@ -411,7 +871,7 @@ export class CafeProductsService {
     const byMonth = aggregatePeriods((date) => date.slice(0, 7));
     const weekdayNames = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
     const weekday = weekdayNames.map((name, day) => {
-      const matching = revenueSales.filter((sale) => new Date(`${sale.sale_date}T12:00:00`).getDay() === day);
+      const matching = revenueSales.filter((sale) => new Date(`${businessDateOf(sale)}T12:00:00`).getDay() === day);
       return { day, name, orders: matching.length, sales: roundMoney(matching.reduce((sum, sale) => sum + invToNumber(sale.collected_amount), 0)) };
     });
     const customerGroups = new Map<string, { name: string; phone: string | null; orders: number; spend: number }>();
@@ -470,12 +930,13 @@ export class CafeProductsService {
       worstDay ? `أهدأ يوم مبيعات هو ${worstDay.name}؛ يمكن تجربة عرض ترويجي مخصص له.` : null,
       neverSold.length ? `${neverSold.length} منتج لم يُبع خلال الفترة ويحتاج مراجعة الظهور أو التسعير.` : null,
       productRows.length ? `المنتج الأقل مبيعًا هو ${[...productRows].sort((a, b) => a.quantity - b.quantity)[0].name}؛ راجع مكانه أو العرض الخاص به.` : null,
-      wasteCost > 0 ? `تكلفة هالك التحضير خلال الفترة ${wasteCost.toFixed(2)} ج.م؛ راجع أعلى الخامات هالكًا لتقليل الفاقد.` : null,
+      wasteCost > 0 ? `تكلفة الهالك والفاقد خلال الفترة ${wasteCost.toFixed(2)} ج.م؛ راجع الأسباب والأصناف الأعلى لتقليل الفاقد.` : null,
       `نمو الإيراد مقارنة بالفترة السابقة ${revenueGrowth >= 0 ? 'ارتفع' : 'انخفض'} بنسبة ${Math.abs(revenueGrowth).toFixed(1)}%.`,
     ].filter((row): row is string => Boolean(row));
 
     return {
       range: { dateFrom: dateFrom ?? null, dateTo: dateTo ?? null },
+      paymentSummary: shiftPaymentSummary(allSales.map(savedSalePaymentInvoice)),
       salesCount: revenueSales.length,
       totalOrders: revenueSales.length,
       totalSales: roundMoney(totalSales),
@@ -483,18 +944,39 @@ export class CafeProductsService {
       netRevenue: roundMoney(netRevenue),
       previousRevenue: roundMoney(previousRevenue),
       revenueGrowth,
-      averageOrderValue: revenueSales.length ? roundMoney(totalCollected / revenueSales.length) : 0,
+      // Average *order* value, so it is comparable with totalSales on the same tile
+      // row. It used to divide collected cash by order count, which read ~10% low
+      // whenever there were discounts or unsettled account orders.
+      averageOrderValue: revenueSales.length ? roundMoney(totalSales / revenueSales.length) : 0,
       totalDiscounts: roundMoney(totalDiscounts),
       totalTaxes: roundMoney(totalTaxes),
       totalRefunds: roundMoney(totalRefunds),
       totalCost: roundMoney(totalCost),
+      materialsCost: roundMoney(totalCost),
+      materialsCostPercentage: netRevenue > 0 ? roundMoney((totalCost / netRevenue) * 100) : 0,
+      settledAccountsRevenue: roundMoney(settledAccountsRevenue),
+      uncollectedAccountsValue,
       wasteCost,
       grossProfit: roundMoney(netRevenue - totalCost - wasteCost),
       marginPercentage: netRevenue > 0
-        ? roundMoney(((netRevenue - totalCost) / netRevenue) * 100)
+        ? roundMoney(((netRevenue - totalCost - wasteCost) / netRevenue) * 100)
         : 0,
       partnerConsumptionCost: roundMoney(partnerConsumptionCost),
       products: {
+        // Full list, not a top-10 slice: the owner reconciles the period against the
+        // shift-close product summary, which lists every line that was rung up.
+        // Only this block honours `shiftSessionId` — the rest of the report stays
+        // period-wide so picking a shift never silently changes the headline figures.
+        soldSummary: soldRows,
+        soldTotals: {
+          items: soldRows.length,
+          quantity: Math.round(soldRows.reduce((sum, row) => sum + row.quantity, 0) * 1000) / 1000,
+          revenue: roundMoney(soldRows.reduce((sum, row) => sum + row.revenue, 0)),
+          cost: roundMoney(soldRows.reduce((sum, row) => sum + row.cost, 0)),
+          profit: roundMoney(soldRows.reduce((sum, row) => sum + row.profit, 0)),
+          orders: soldOrderCount,
+        },
+        shifts: shiftOptions,
         bestSelling: [...productRows].sort((a, b) => b.quantity - a.quantity).slice(0, 10),
         worstSelling: [...productRows].sort((a, b) => a.quantity - b.quantity).slice(0, 10),
         highestRevenue: [...productRows].sort((a, b) => b.revenue - a.revenue).slice(0, 10),
@@ -525,6 +1007,8 @@ export class CafeProductsService {
         nearExpiration: expiring.map((row) => ({ productId: row.id, name: row.name_ar, expiryDate: row.expiry_date })),
         waste: {
           totalCost: wasteCost,
+          manualCost: wasteBreakdown.manualCost,
+          automaticCost: wasteBreakdown.automaticCost,
           transactionCount: wasteTransactions.length,
           topItems: wasteItems.slice(0, 10),
           recent: wasteTransactions.slice(0, 10).map((row) => ({
@@ -727,16 +1211,17 @@ export class CafeProductsService {
   }, user?: JwtUser) {
     const scopedBranches = this.branchScope.resolveListFilter(user, q.branchId ?? null);
     const where: Prisma.cafe_productsWhereInput = {};
+    const and: Prisma.cafe_productsWhereInput[] = [];
     if (q.search?.trim()) {
       const s = q.search.trim();
-      where.OR = [{ name: { contains: s } }, { product_code: { contains: s } }];
+      and.push({ OR: [{ name: { contains: s } }, { product_code: { contains: s } }] });
     }
-    if (q.categoryId) where.category_id = q.categoryId;
+    if (q.categoryId) and.push(buildCafeCategoryFilter(q.categoryId));
     if (q.isActive !== undefined) where.is_active = q.isActive;
     if (q.sellableOnly) {
       where.product_type = { not: 'internal' };
       where.is_active = true;
-      where.AND = [{
+      and.push({
         OR: [
           { product_type: { not: 'ready' } },
           {
@@ -744,14 +1229,19 @@ export class CafeProductsService {
             inventory_product: { is_deleted: false, status: 'active' },
           },
         ],
-      }];
+      });
     }
+    if (and.length) where.AND = and;
 
     const [rows, total] = await Promise.all([
       this.prisma.cafe_products.findMany({
         where,
         include: {
           category: { select: { name_ar: true } },
+          category_assignments: {
+            orderBy: [{ sort_order: 'asc' }, { category_id: 'asc' }],
+            include: { category: { select: { id: true, name_ar: true } } },
+          },
           inventory_product: { select: { cost_price: true } },
           recipes: {
             select: {
@@ -816,6 +1306,10 @@ export class CafeProductsService {
       where: { id },
       include: {
         category: { select: { name_ar: true } },
+        category_assignments: {
+          orderBy: [{ sort_order: 'asc' }, { category_id: 'asc' }],
+          include: { category: { select: { id: true, name_ar: true } } },
+        },
         inventory_product: {
           select: { id: true, name_ar: true, unit_of_measure: true, min_stock: true, cost_price: true },
         },
@@ -823,7 +1317,16 @@ export class CafeProductsService {
           orderBy: { sort_order: 'asc' },
           include: {
             ingredient: {
-              select: { id: true, name_ar: true, name_en: true, unit_of_measure: true, cost_price: true },
+              select: {
+                id: true,
+                name_ar: true,
+                name_en: true,
+                size: true,
+                unit_of_measure: true,
+                cost_price: true,
+                inventory_section: true,
+                inventory_kind: true,
+              },
             },
           },
         },
@@ -834,7 +1337,16 @@ export class CafeProductsService {
               orderBy: { sort_order: 'asc' },
               include: {
                 ingredient: {
-                  select: { id: true, name_ar: true, name_en: true, unit_of_measure: true, cost_price: true },
+                  select: {
+                    id: true,
+                    name_ar: true,
+                    name_en: true,
+                    size: true,
+                    unit_of_measure: true,
+                    cost_price: true,
+                    inventory_section: true,
+                    inventory_kind: true,
+                  },
                 },
               },
             },
@@ -865,7 +1377,12 @@ export class CafeProductsService {
         id: r.id,
         ingredientId: r.ingredient_id,
         ingredientName: r.ingredient.name_ar || r.ingredient.name_en || '—',
+        ingredientNameEn: r.ingredient.name_en,
+        ingredientSize: r.ingredient.size,
         ingredientBaseUnit: r.ingredient.unit_of_measure,
+        ingredientCostPrice: invToNumber(r.ingredient.cost_price),
+        ingredientInventorySection: r.ingredient.inventory_section,
+        ingredientInventoryKind: r.ingredient.inventory_kind,
         quantity: Number(r.quantity),
         unit: r.unit as RecipeUnit,
         sortOrder: r.sort_order,
@@ -882,7 +1399,12 @@ export class CafeProductsService {
           id: recipe.id,
           ingredientId: recipe.ingredient_id,
           ingredientName: recipe.ingredient.name_ar || recipe.ingredient.name_en || '—',
+          ingredientNameEn: recipe.ingredient.name_en,
+          ingredientSize: recipe.ingredient.size,
           ingredientBaseUnit: recipe.ingredient.unit_of_measure,
+          ingredientCostPrice: invToNumber(recipe.ingredient.cost_price),
+          ingredientInventorySection: recipe.ingredient.inventory_section,
+          ingredientInventoryKind: recipe.ingredient.inventory_kind,
           quantity: invToNumber(recipe.quantity),
           unit: recipe.unit as RecipeUnit,
           sortOrder: recipe.sort_order,
@@ -947,31 +1469,26 @@ export class CafeProductsService {
 
   private async estimateRecipeCost(
     recipes: { ingredientId: number; quantity: number; unit: RecipeUnit }[],
-    legacyIngredientIds: Iterable<number> = [],
+    _legacyIngredientIds: Iterable<number> = [],
   ): Promise<number> {
     if (!recipes.length) return 0;
     const ids = recipes.map((r) => r.ingredientId);
-    const legacyIds = [...new Set(legacyIngredientIds)];
     const products = await this.prisma.inv_products.findMany({
       where: {
         id: { in: ids },
         OR: [
+          { inventory_kind: 'manufactured_internal' },
           {
-            OR: [
-              { inventory_kind: 'manufactured_internal' },
-              {
-                inventory_kind: 'raw_material',
-                inventory_section: { in: ['preparation_ingredients', 'serving_packaging'] },
-              },
-              {
-                inventory_kind: 'ready_product',
-                inventory_section: 'ready_products',
-              },
-            ],
-            ...notDeletedFilter(),
+            inventory_kind: 'raw_material',
+            inventory_section: { in: ['preparation_ingredients', 'serving_packaging'] },
           },
-          ...(legacyIds.length ? [{ id: { in: legacyIds } }] : []),
+          {
+            inventory_kind: 'ready_product',
+            inventory_section: 'ready_products',
+          },
         ],
+        ...notDeletedFilter(),
+        status: 'active',
       },
       select: { id: true, name_ar: true, cost_price: true, unit_of_measure: true },
     });
@@ -1119,7 +1636,8 @@ export class CafeProductsService {
     const initialUnitCost = dto.initialTotalCost != null && initialStock > 0
       ? Number(dto.initialTotalCost) / initialStock
       : Number(dto.initialCost ?? 0);
-    const normalizedDto = { ...dto, initialCost: initialUnitCost };
+    const categoryIds = await this.resolveCafeCategoryIds(dto);
+    const normalizedDto = { ...dto, categoryId: categoryIds[0], initialCost: initialUnitCost };
     if (productType !== 'internal') {
       assertPositive(effectiveSellPrice, 'سعر البيع');
       await this.assertSellPriceAboveCost(effectiveSellPrice, effectiveRecipes);
@@ -1196,10 +1714,13 @@ export class CafeProductsService {
           name: dto.name.trim(),
           product_type: productType,
           inventory_product_id: inventoryProductId,
-          category_id: dto.categoryId ?? null,
+          category_id: categoryIds[0] ?? null,
           sell_price: productType === 'internal' ? 0 : effectiveSellPrice,
           image_url: dto.imageUrl ?? null,
           is_active: dto.isActive ?? true,
+          category_assignments: categoryIds.length ? {
+            create: categoryIds.map((categoryId, sortOrder) => ({ category_id: categoryId, sort_order: sortOrder })),
+          } : undefined,
           recipes: {
             create: productType !== 'ready'
               ? effectiveRecipes.map((r, i) => ({
@@ -1231,6 +1752,10 @@ export class CafeProductsService {
         },
         include: {
           category: { select: { name_ar: true } },
+          category_assignments: {
+            orderBy: [{ sort_order: 'asc' }, { category_id: 'asc' }],
+            include: { category: { select: { id: true, name_ar: true } } },
+          },
           inventory_product: { select: { cost_price: true } },
           recipes: {
             select: {
@@ -1290,11 +1815,14 @@ export class CafeProductsService {
       throw new BadRequestException('لا يمكن تغيير نوع المنتج بعد إنشائه حفاظًا على حركات المخزون؛ أنشئ منتجًا جديدًا بالنوع المطلوب');
     }
 
+    const categoryIds = await this.resolveCafeCategoryIds(dto);
+    const normalizedDto = { ...dto, categoryId: categoryIds[0] };
+
     await this.prisma.$transaction(async (tx) => {
       const inventoryProductId = productType === 'ready' || productType === 'internal'
         ? await this.ensureStockInventoryProduct(
             tx,
-            dto,
+            normalizedDto,
             existing.product_code,
             productType === 'ready' ? 'ready_product' : 'manufactured_internal',
             recipeCost,
@@ -1307,10 +1835,14 @@ export class CafeProductsService {
           name: dto.name.trim(),
           product_type: productType,
           inventory_product_id: inventoryProductId,
-          category_id: dto.categoryId ?? null,
+          category_id: categoryIds[0] ?? null,
           sell_price: productType === 'internal' ? 0 : effectiveSellPrice,
           image_url: dto.imageUrl ?? null,
           is_active: dto.isActive ?? true,
+          category_assignments: {
+            deleteMany: {},
+            create: categoryIds.map((categoryId, sortOrder) => ({ category_id: categoryId, sort_order: sortOrder })),
+          },
         },
       });
       if (dto.recipes || defaultVariant || productType === 'ready') {
@@ -1362,6 +1894,19 @@ export class CafeProductsService {
       });
     });
     return this.findOne(id);
+  }
+
+  private async resolveCafeCategoryIds(dto: UpsertCafeProductDto): Promise<number[]> {
+    const ids = normalizeCafeCategoryIds(dto.categoryIds, dto.categoryId);
+    if (dto.categoryIds === undefined || !ids.length) return ids;
+    const categories = await this.prisma.inv_categories.findMany({
+      where: { id: { in: ids }, is_active: true, is_deleted: false },
+      select: { id: true },
+    });
+    if (categories.length !== ids.length) {
+      throw new BadRequestException('توجد فئة غير متاحة ضمن الفئات المختارة');
+    }
+    return ids;
   }
 
   async updatePrice(id: number, sellPrice: number) {
@@ -1515,14 +2060,17 @@ export class CafeProductsService {
       if (!product.inventory_product) {
         throw new BadRequestException(`المنتج الجاهز ${product.name} غير مربوط بالمخزون`);
       }
+      this.assertIngredientAvailable(product.inventory_product);
       return [{
         ingredientId: product.inventory_product.id,
         needed: quantity,
         ingredientName: product.inventory_product.name_ar,
         costAmount: invToNumber(product.inventory_product.cost_price) * quantity,
+        unit: product.inventory_product.unit_of_measure,
       }];
     }
     for (const recipe of variant?.recipes ?? product.recipes) {
+      this.assertIngredientAvailable(recipe.ingredient);
       const needed = Number(recipe.quantity) * quantity;
       const converted = convertToBaseUnit(needed, recipe.unit as RecipeUnit, recipe.ingredient.unit_of_measure);
       if (converted == null) {
@@ -1535,6 +2083,7 @@ export class CafeProductsService {
         needed: converted,
         ingredientName: recipe.ingredient.name_ar,
         costAmount: invToNumber(recipe.ingredient.cost_price) * converted,
+        unit: recipe.ingredient.unit_of_measure,
       });
     }
     return consumption;
@@ -1569,6 +2118,7 @@ export class CafeProductsService {
 
     const lines: ConsumptionLine[] = [];
     for (const bom of cafe.recipes) {
+      this.assertIngredientAvailable(bom.ingredient);
       const scaledQty = Number(bom.quantity) * neededInBase;
       const converted = convertToBaseUnit(scaledQty, bom.unit as RecipeUnit, bom.ingredient.unit_of_measure);
       if (converted == null) {
@@ -1592,6 +2142,7 @@ export class CafeProductsService {
           needed: converted,
           ingredientName: bom.ingredient.name_ar,
           costAmount: invToNumber(bom.ingredient.cost_price) * converted,
+          unit: bom.ingredient.unit_of_measure,
         });
       }
     }
@@ -1615,6 +2166,7 @@ export class CafeProductsService {
 
     const lines: ConsumptionLine[] = [];
     for (const recipe of variant?.recipes ?? product.recipes) {
+      this.assertIngredientAvailable(recipe.ingredient);
       const needed = Number(recipe.quantity) * quantity;
       const converted = convertToBaseUnit(needed, recipe.unit as RecipeUnit, recipe.ingredient.unit_of_measure);
       if (converted == null) {
@@ -1629,6 +2181,7 @@ export class CafeProductsService {
           needed: converted,
           ingredientName: recipe.ingredient.name_ar,
           costAmount: invToNumber(recipe.ingredient.cost_price) * converted,
+          unit: recipe.ingredient.unit_of_measure,
         });
         continue;
       }
@@ -1648,7 +2201,7 @@ export class CafeProductsService {
   }
 
   private mergeConsumption(lines: ConsumptionLine[]) {
-    const map = new Map<number, { needed: number; ingredientName: string; costAmount: number }>();
+    const map = new Map<number, { needed: number; ingredientName: string; costAmount: number; unit: string }>();
     for (const c of lines) {
       const prev = map.get(c.ingredientId);
       if (prev) {
@@ -1659,6 +2212,7 @@ export class CafeProductsService {
           needed: c.needed,
           ingredientName: c.ingredientName,
           costAmount: c.costAmount,
+          unit: c.unit,
         });
       }
     }
@@ -1667,7 +2221,59 @@ export class CafeProductsService {
       needed: v.needed,
       ingredientName: v.ingredientName,
       costAmount: roundMoney(v.costAmount),
+      unit: v.unit,
     }));
+  }
+
+  /**
+   * Resolve one café product (used as a bundle component) into its menu price and
+   * inventory consumption. Reuses the exact recipe / manufactured-BOM explosion of a
+   * normal café sale, and returns consumption in the quick-sales line shape
+   * (`{ productId, quantity, unitCost, ingredientName, unit }`) so either POS path can
+   * post the stock movements. Validation (inactive product, missing recipe, unlinked
+   * ready product) is inherited from `loadProductsForCart`.
+   */
+  async resolveComponentSale(
+    db: Prisma.TransactionClient | PrismaService,
+    cafeProductId: number,
+    variantId: number | null,
+    quantity: number,
+    warehouseId: number,
+    invoiceCategoryId?: number,
+  ): Promise<{
+    cafeProductId: number;
+    productName: string;
+    variantId: number | null;
+    variantName: string | null;
+    unitPrice: number;
+    unitCost: number;
+    inventoryProductId: number | null;
+    consumption: { productId: number; quantity: number; unitCost: number; ingredientName: string; unit: string }[];
+  }> {
+    const [line] = await this.loadProductsForCart([
+      { productId: cafeProductId, variantId: variantId ?? undefined, quantity },
+    ]);
+    const { product, variant } = line;
+    if (invoiceCategoryId !== undefined) assertCafeInvoiceProducts(invoiceCategoryId, [product]);
+    const rawConsumption = await this.resolveSaleConsumption(db, product, quantity, warehouseId, variant);
+    const consumption = rawConsumption.map((c) => ({
+      productId: c.ingredientId,
+      quantity: c.needed,
+      unitCost: c.needed > 0 ? roundMoney(c.costAmount / c.needed) : 0,
+      ingredientName: c.ingredientName,
+      unit: c.unit,
+    }));
+    const lineCost = roundMoney(rawConsumption.reduce((sum, c) => sum + c.costAmount, 0));
+    return {
+      cafeProductId: product.id,
+      productName: product.name,
+      variantId: variant?.id ?? null,
+      variantName: variant?.name ?? null,
+      unitPrice: toNumber(variant?.sell_price ?? product.sell_price),
+      unitCost: quantity > 0 ? roundMoney(lineCost / quantity) : 0,
+      inventoryProductId: product.inventory_product_id,
+      consumption,
+    };
   }
 
   private async loadProductsForCart(items: { productId: number; variantId?: number; quantity: number }[]) {
@@ -1675,8 +2281,9 @@ export class CafeProductsService {
     const products = await this.prisma.cafe_products.findMany({
       where: { id: { in: ids } },
       include: {
+        category_assignments: { select: { category_id: true } },
         inventory_product: {
-          select: { id: true, name_ar: true, unit_of_measure: true, cost_price: true },
+          select: { id: true, name_ar: true, unit_of_measure: true, cost_price: true, is_deleted: true, status: true },
         },
         recipes: {
           include: {
@@ -1736,48 +2343,57 @@ export class CafeProductsService {
     }
   }
 
-  private async assertInvoiceCategory(
-    cafeCategoryId: number,
-    lines: Array<{ product: { name: string; category_id: number | null } }>,
-  ) {
-    const category = await this.prisma.inv_categories.findFirst({
-      where: { id: cafeCategoryId, is_active: true, is_deleted: false },
-      select: { id: true },
-    });
-    if (!category) {
-      throw new BadRequestException('فئة فاتورة الكافيه المختارة غير متاحة');
-    }
-    const mismatched = lines.find(
-      ({ product }) => product.category_id !== cafeCategoryId,
-    );
-    if (mismatched) {
-      throw new BadRequestException(
-        `المنتج ${mismatched.product.name} لا ينتمي إلى فئة الفاتورة المختارة`,
-      );
-    }
+  /** Map a resolved bundle's consumption into the café ConsumptionLine shape. */
+  private bundleConsumptionToLines(bundle: ResolvedBundleSale): ConsumptionLine[] {
+    return bundle.consumption.map((c) => ({
+      ingredientId: c.productId,
+      needed: c.quantity,
+      ingredientName: c.ingredientName,
+      costAmount: roundMoney(c.unitCost * c.quantity),
+      unit: c.unit,
+    }));
   }
 
   async sellCart(dto: SellCafeCartDto, userId: number, dryRun = false) {
-    if (!dto.items?.length) throw new BadRequestException('السلة فارغة');
+    const cartItems = dto.items ?? [];
+    const cartBundles = dto.bundles ?? [];
+    if (!cartItems.length && !cartBundles.length) throw new BadRequestException('السلة فارغة');
 
     const branch = await this.prisma.tbl_branches.findUnique({ where: { branch_id: dto.branchId } });
     if (!branch) throw new BadRequestException('الفرع غير موجود');
+    const inventoryTrackingEnabled = await this.posSettings.isInventoryTrackingEnabled(dto.branchId);
 
-    const lines = await this.loadProductsForCart(dto.items);
-    await this.assertInvoiceCategory(dto.cafeCategoryId, lines);
-    const warehouseId = await this.resolveWarehouse(this.prisma, dto.branchId, dto.warehouseId);
+    const lines = await this.loadProductsForCart(cartItems);
+    await assertCafeInvoiceClassification(this.prisma, dto);
+    assertCafeInvoiceProducts(dto.cafeCategoryId, lines.map(line => line.product));
+    const resolveInvoiceComponent: typeof this.resolveBundleComponent = (db, productId, variantId, quantity, warehouseId) =>
+      this.resolveComponentSale(db, productId, variantId, quantity, warehouseId, dto.cafeCategoryId);
+    const warehouseId = inventoryTrackingEnabled
+      ? await this.resolveWarehouse(this.prisma, dto.branchId, dto.warehouseId)
+      : null;
     const consumptionParts = await Promise.all(
       lines.map(({ product, variant, quantity }) =>
-        this.resolveSaleConsumption(this.prisma, product, quantity, warehouseId, variant),
+        this.resolveSaleConsumption(this.prisma, product, quantity, warehouseId ?? 0, variant),
       ),
     );
-    const allConsumption = this.mergeConsumption(consumptionParts.flat());
+    const bundleLines = await Promise.all(
+      cartBundles.map((bundle) =>
+        this.bundles.resolveBundleSale(this.prisma, bundle, warehouseId ?? 0, resolveInvoiceComponent),
+      ),
+    );
+    const allConsumption = this.mergeConsumption([
+      ...consumptionParts.flat(),
+      ...bundleLines.flatMap((bundle) => this.bundleConsumptionToLines(bundle)),
+    ]);
     const cogsAmount = roundMoney(allConsumption.reduce((sum, c) => sum + c.costAmount, 0));
 
-    const pricedItems = lines.map(({ product, variant, quantity }) => ({
-      unitPrice: toNumber(variant?.sell_price ?? product.sell_price),
-      quantity,
-    }));
+    const pricedItems = [
+      ...lines.map(({ product, variant, quantity }) => ({
+        unitPrice: toNumber(variant?.sell_price ?? product.sell_price),
+        quantity,
+      })),
+      ...bundleLines.map((bundle) => ({ unitPrice: bundle.unitPrice, quantity: bundle.quantity })),
+    ];
     const costedItems = lines.map(({ quantity }, idx) => {
       const lineCost = roundMoney(consumptionParts[idx].reduce((sum, row) => sum + row.costAmount, 0));
       return {
@@ -1796,7 +2412,7 @@ export class CafeProductsService {
     );
 
     const previewRows: PreviewRow[] = [
-      { label: 'عدد الأصناف', after: String(lines.length) },
+      { label: 'عدد الأصناف', after: String(lines.length + bundleLines.length) },
       { label: 'الإجمالي', after: `${totalAmount.toFixed(2)} ج.م` },
       ...allConsumption.map((c) => ({
         label: `خصم: ${c.ingredientName}`,
@@ -1807,19 +2423,36 @@ export class CafeProductsService {
     if (isDryRun(dryRun)) {
       return previewResponse(
         { subtotal, taxAmount, totalAmount, consumption: allConsumption },
-        { rows: previewRows, warning: 'سيتم خصم المخزون وإنشاء فاتورة بيع' },
+        {
+          rows: inventoryTrackingEnabled
+            ? previewRows
+            : previewRows.filter((row) => !row.label.startsWith('خصم:')),
+          warning: inventoryTrackingEnabled
+            ? 'سيتم خصم المخزون وإنشاء فاتورة بيع'
+            : 'سيتم إنشاء فاتورة البيع وحساب التكلفة دون إنشاء حركة مخزون',
+        },
       );
     }
 
     return retryOnUniqueViolation(() => this.prisma.$transaction(async (tx) => {
       // Re-resolve inside the transaction so stock checks/movements stay consistent.
-      const txWarehouseId = await this.resolveWarehouse(tx, dto.branchId, dto.warehouseId);
+      const txWarehouseId = inventoryTrackingEnabled
+        ? await this.resolveWarehouse(tx, dto.branchId, dto.warehouseId)
+        : null;
       const txConsumptionParts = await Promise.all(
         lines.map(({ product, variant, quantity }) =>
-          this.resolveSaleConsumption(tx, product, quantity, txWarehouseId, variant),
+          this.resolveSaleConsumption(tx, product, quantity, txWarehouseId ?? 0, variant),
         ),
       );
-      const txConsumption = this.mergeConsumption(txConsumptionParts.flat());
+      const txBundleLines = await Promise.all(
+        cartBundles.map((bundle) =>
+          this.bundles.resolveBundleSale(tx, bundle, txWarehouseId ?? 0, resolveInvoiceComponent),
+        ),
+      );
+      const txConsumption = this.mergeConsumption([
+        ...txConsumptionParts.flat(),
+        ...txBundleLines.flatMap((bundle) => this.bundleConsumptionToLines(bundle)),
+      ]);
       const txCogs = roundMoney(txConsumption.reduce((sum, c) => sum + c.costAmount, 0));
       const now = new Date();
       const saleDate = localDateString(now);
@@ -1846,24 +2479,46 @@ export class CafeProductsService {
           payment_method: paymentMethod,
           status: QuickSaleStatus.completed,
           warehouse_id: txWarehouseId,
+          inventory_posted: inventoryTrackingEnabled,
           created_by: userId,
           items: {
-            create: lines.map(({ product, variant, quantity }, idx) => ({
-              item_type: 'cafe',
-              product_id: product.id,
-              cafe_product_id: product.id,
-              cafe_variant_id: variant?.id ?? null,
-              variant_name: variant?.name ?? null,
-              inventory_product_id: product.inventory_product_id,
-              ref_id: product.id,
-              name: product.name,
-              product_code: product.product_code,
-              unit_price: toDecimal(pricedItems[idx].unitPrice),
-              quantity: toDecimal(quantity),
-              line_total: toDecimal(lineItems[idx].lineTotal),
-              unit_cost: toDecimal(costedItems[idx].unitCost),
-              line_cost: toDecimal(costedItems[idx].lineCost),
-            })),
+            create: [
+              ...lines.map(({ product, variant, quantity }, idx) => ({
+                item_type: 'cafe',
+                product_id: product.id,
+                cafe_product_id: product.id,
+                cafe_variant_id: variant?.id ?? null,
+                variant_name: variant?.name ?? null,
+                inventory_product_id: product.inventory_product_id,
+                ref_id: product.id,
+                name: product.name,
+                product_code: product.product_code,
+                unit_price: toDecimal(pricedItems[idx].unitPrice),
+                quantity: toDecimal(quantity),
+                line_total: toDecimal(lineItems[idx].lineTotal),
+                unit_cost: toDecimal(costedItems[idx].unitCost),
+                line_cost: toDecimal(costedItems[idx].lineCost),
+              })),
+              ...txBundleLines.map((bundle) => ({
+                item_type: 'bundle',
+                product_id: 0,
+                cafe_product_id: null,
+                cafe_variant_id: null,
+                variant_name: null,
+                inventory_product_id: null,
+                bundle_id: bundle.bundleId,
+                bundle_selection: bundle.selection as unknown as Prisma.InputJsonValue,
+                ref_id: bundle.bundleId,
+                name: bundle.name,
+                product_code: bundle.bundleCode,
+                item_note: bundle.label ? bundle.label.slice(0, 300) : null,
+                unit_price: toDecimal(bundle.unitPrice),
+                quantity: toDecimal(bundle.quantity),
+                line_total: toDecimal(roundMoney(bundle.unitPrice * bundle.quantity)),
+                unit_cost: toDecimal(bundle.unitCost),
+                line_cost: toDecimal(roundMoney(bundle.unitCost * bundle.quantity)),
+              })),
+            ],
           },
           payments: {
             create: [{ method: paymentMethod, amount: toDecimal(totalAmount) }],
@@ -1872,11 +2527,13 @@ export class CafeProductsService {
         include: { items: true },
       });
 
-      for (const c of txConsumption) {
-        await this.stock.applyMovement(
+      if (inventoryTrackingEnabled) {
+        await this.assertStockInWarehouse(tx, txWarehouseId!, txConsumption);
+        for (const c of txConsumption) {
+          await this.stock.applyMovement(
           {
             productId: c.ingredientId,
-            warehouseId: txWarehouseId,
+            warehouseId: txWarehouseId!,
             direction: MovementDirection.out,
             quantity: c.needed,
             txnType: InventoryTxnType.issue,
@@ -1888,6 +2545,7 @@ export class CafeProductsService {
           },
           tx,
         );
+        }
       }
 
       await this.moduleLedger.postQuickSale(
@@ -1901,7 +2559,7 @@ export class CafeProductsService {
           totalAmount,
           paymentMethod,
           payments: [{ method: paymentMethod, amount: totalAmount }],
-          cogsAmount: txCogs,
+          cogsAmount: inventoryTrackingEnabled ? txCogs : 0,
           createdBy: userId,
         },
         tx,
@@ -1910,18 +2568,31 @@ export class CafeProductsService {
       return {
         saleId: created.id,
         saleNumber,
+        gender: dto.gender,
+        cafeCategoryId: dto.cafeCategoryId,
         subtotal,
         taxAmount,
         totalAmount,
-        items: lines.map(({ product, variant, quantity }) => ({
-          productId: product.id,
-          productName: variant ? `${product.name} · ${variant.name}` : product.name,
-          variantId: variant?.id ?? null,
-          variantName: variant?.name ?? null,
-          quantity,
-          unitPrice: toNumber(variant?.sell_price ?? product.sell_price),
-          lineTotal: roundMoney(toNumber(variant?.sell_price ?? product.sell_price) * quantity),
-        })),
+        items: [
+          ...lines.map(({ product, variant, quantity }) => ({
+            productId: product.id,
+            productName: variant ? `${product.name} · ${variant.name}` : product.name,
+            variantId: variant?.id ?? null,
+            variantName: variant?.name ?? null,
+            quantity,
+            unitPrice: toNumber(variant?.sell_price ?? product.sell_price),
+            lineTotal: roundMoney(toNumber(variant?.sell_price ?? product.sell_price) * quantity),
+          })),
+          ...txBundleLines.map((bundle) => ({
+            bundleId: bundle.bundleId,
+            productName: bundle.name,
+            variantId: null,
+            variantName: bundle.label,
+            quantity: bundle.quantity,
+            unitPrice: bundle.unitPrice,
+            lineTotal: roundMoney(bundle.unitPrice * bundle.quantity),
+          })),
+        ],
         soldBy: userId,
       };
     }, { maxWait: 10000, timeout: 20000 }));
@@ -1965,7 +2636,7 @@ export class CafeProductsService {
       where: { id },
       include: {
         inventory_product: {
-          select: { id: true, name_ar: true, unit_of_measure: true, cost_price: true },
+          select: { id: true, name_ar: true, unit_of_measure: true, cost_price: true, is_deleted: true, status: true },
         },
         recipes: {
           include: {
@@ -1988,6 +2659,7 @@ export class CafeProductsService {
       throw new BadRequestException('التصنيع متاح فقط للمنتجات المخصصة للاستخدام الداخلي');
     }
     const outputInventoryProduct = product.inventory_product;
+    this.assertIngredientAvailable(outputInventoryProduct);
     if (!product.recipes.length) throw new BadRequestException('أضف مكونات التصنيع أولًا');
 
     const consumption = this.mergeConsumption(this.buildConsumption(product, dto.quantity));

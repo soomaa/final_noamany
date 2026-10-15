@@ -5,6 +5,7 @@ import { useClubT } from '@/hooks/use-club-t';
 import { formatMoney } from '@/lib/formatters';
 import { cn, toArabicDigits } from '@/lib/utils';
 import type { ClubSubscriptionType } from '@/types/club';
+import { useLocale } from '@/store/locale';
 
 export type TransferTargetKind = 'package' | 'sessions';
 
@@ -39,6 +40,7 @@ export function SubscriptionTypeSelect({
   placeholder = '—',
   className,
 }: SubscriptionTypeSelectProps) {
+  const { ui } = useLocale();
   const ct = useClubT();
 
   const options = useMemo(() => {
@@ -85,17 +87,17 @@ export function SubscriptionTypeSelect({
         onValueChange={onChange}
         options={searchableOptions}
         placeholder={placeholder}
-        searchPlaceholder="ابحث باسم الاشتراك أو السعر…"
+        searchPlaceholder={ui('ابحث باسم الاشتراك أو السعر…')}
         emptyText={
           mode === 'by-kind'
             ? ct('subscriptions.transferNoTargetPlans')
             : mode === 'same-kind'
               ? ct('subscriptions.transferNoSameKindPlans')
-              : 'لا توجد اشتراكات مطابقة'
+              : ui('لا توجد اشتراكات مطابقة')
         }
         disabled={options.length === 0}
         className="h-11"
-        aria-label="نوع الاشتراك"
+        aria-label={ui('نوع الاشتراك')}
       />
     </div>
   );

@@ -1,24 +1,42 @@
 import { api } from '@/lib/api';
-import type { ClubMemberLookupItem } from '@/types/club';
+import type { ClubSearchHit } from '@/types/gym-ops';
+import { isMemberSearchReady } from './member-search-query';
+export { isMemberSearchReady } from './member-search-query';
 
-export const MEMBER_SEARCH_MIN_CHARS = 2;
-export const MEMBER_SEARCH_MAX_RESULTS = 20;
+export const MEMBER_SEARCH_MAX_RESULTS = 5;
 
 export interface ClubSearchResult {
-  hits: ClubMemberLookupItem[];
-  topMatch: ClubMemberLookupItem | null;
+  hits: ClubSearchHit[];
+  topMatch: ClubSearchHit | null;
 }
 
-/** Search members by code, name, or phone within the selected operation branch group. */
-export async function searchClubMembers(q: string, branchId?: number, exactBranch = false, forMembershipOperation = false, forRefundTransfer = false, forMeasurementOperation = false): Promise<ClubSearchResult> {
+export function normalizeClubSearchResponse(
+  data: ClubSearchHit[] | { hits: ClubSearchHit[]; topMatch?: ClubSearchHit | null },
+  maxResults = MEMBER_SEARCH_MAX_RESULTS,
+): ClubSearchResult {
+  const hits = (Array.isArray(data) ? data : data.hits ?? []).slice(0, maxResults);
+  return {
+    hits,
+    topMatch: Array.isArray(data) ? hits[0] ?? null : data.topMatch ?? hits[0] ?? null,
+  };
+}
+
+/** Search members by code, name, phone, or card — returns at most 5 hits. */
+export async function searchClubMembers(
+  q: string,
+  options: { branchId?: number; signal?: AbortSignal } = {},
+): Promise<ClubSearchResult> {
   const trimmed = q.trim();
-  if (trimmed.length < MEMBER_SEARCH_MIN_CHARS) {
+  if (!isMemberSearchReady(trimmed)) {
     return { hits: [], topMatch: null };
   }
 
-  const { data } = await api.get<ClubMemberLookupItem[]>(forMeasurementOperation ? '/club-members/measurement-operation-lookup' : forRefundTransfer ? '/club-members/refund-transfer-lookup' : forMembershipOperation ? '/club-members/membership-operation-lookup' : '/club-members/lookup', {
-    params: { q: trimmed, ...(branchId && branchId > 0 ? { branch: branchId, ...(exactBranch ? { exactBranch: true } : {}) } : {}) },
+  const { data } = await api.get<
+    ClubSearchHit[] | { hits: ClubSearchHit[]; topMatch?: ClubSearchHit | null }
+  >('/club/search', {
+    params: { q: trimmed, branchId: options.branchId || undefined, brief: true, limit: MEMBER_SEARCH_MAX_RESULTS },
+    signal: options.signal,
   });
-  const hits = data.slice(0, MEMBER_SEARCH_MAX_RESULTS);
-  return { hits, topMatch: hits[0] ?? null };
+
+  return normalizeClubSearchResponse(data);
 }

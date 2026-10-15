@@ -1,4 +1,4 @@
-import { IsIn, IsInt, IsOptional, IsString, Matches } from 'class-validator';
+import { IsInt, IsOptional, IsString, Matches } from 'class-validator';
 
 /**
  * Penalty amount (geza_value) is stored as a STRING in hr_gezaat and summed by the
@@ -14,21 +14,21 @@ export class CreatePenaltyDto {
   @IsInt()
   empId!: number;
 
+  @IsString()
+  title!: string;
+
   @IsOptional()
   @IsString()
-  title?: string;
-
-  @IsString()
   @Matches(NON_NEGATIVE_MONEY, { message: NON_NEGATIVE_MONEY_MSG })
-  amount!: string;
+  amount?: string;
 
   @IsOptional()
   @IsString()
   date?: string;
 
+  @IsOptional()
   @IsInt()
-  @IsIn([1, 2])
-  gezaType!: number;
+  gezaType?: number;
 
   /** penalty_bylaws.id — when set, amount is pulled from the bylaw. */
   @IsOptional()
@@ -37,10 +37,6 @@ export class CreatePenaltyDto {
 }
 
 export class UpdatePenaltyDto {
-  @IsOptional()
-  @IsInt()
-  empId?: number;
-
   @IsOptional()
   @IsString()
   title?: string;
@@ -56,7 +52,6 @@ export class UpdatePenaltyDto {
 
   @IsOptional()
   @IsInt()
-  @IsIn([1, 2])
   gezaType?: number;
 }
 

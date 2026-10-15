@@ -19,7 +19,6 @@ export function FinancePageShell({
       <PageHeader
         title={ui(title)}
         description={description ? ui(description) : undefined}
-        eyebrow={ui('التقارير المالية')}
         actions={actions}
       />
       {children}

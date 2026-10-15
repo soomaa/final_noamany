@@ -1,0 +1,1 @@
+import{e as o}from"./portable-index-BjYQo9_9.js";import{f as s}from"./report-fetch-CKVXi6Ys.js";function u(t=!0){return o({queryKey:["employees","select-options"],queryFn:async()=>(await s("/employees",{status:"1"},200)).map(e=>({value:String(e.id),label:`${e.employee??"—"} (${e.emp_code??"—"})`})),enabled:t,staleTime:6e4})}export{u};

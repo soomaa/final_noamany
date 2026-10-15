@@ -1,0 +1,1 @@
+import{b as a,d as t}from"./index-BaoRHNB2.js";async function n(){try{const{data:r}=await t.get("/branches");if(Array.isArray(r)&&r.length>=0)return r}catch{}try{const{data:r}=await t.get("/club/branch-options");if(Array.isArray(r))return r}catch{}return[]}function s(){return a({queryKey:["branches","options"],queryFn:n,retry:!1})}export{s as u};

@@ -36,18 +36,16 @@ function normalizeJobTitle(value: string): string {
  */
 export function defaultPermissionCellsForJobTitle(name: string): JobTitlePermissionCell[] {
   const title = normalizeJobTitle(name);
+  const isEnglishSalesSpecialist = /^(sales|sales specialist|sales representative)$/.test(title);
+  const isPersonalSalesSpecialist = !/(مدير|رئيس|مشرف)/.test(title)
+    && !/\b(manager|head|supervisor)\b/.test(title)
+    && (/(مبيعات|تسويق|سيلز)/.test(title) || isEnglishSalesSpecialist);
 
   if (/(مدرب|مدربه)/.test(title)) {
     return grant(['trainer.portal'], ['view']);
   }
-  if (/(مبيعات|تسويق)/.test(title)) {
-    return grant(['club.members', 'club.subscriptions'], [
-      'view',
-      'create',
-      'update',
-      'export',
-      'print',
-    ]);
+  if (isPersonalSalesSpecialist) {
+    return grant(['sales.portal'], ['view', 'update']);
   }
   if (/(استقبال|ريسبشن)/.test(title)) {
     // Note: no `approve` — allowing an expired member in stays a manager decision.
@@ -95,17 +93,21 @@ export function defaultPermissionCellsForJobTitle(name: string): JobTitlePermiss
   if (/امين صندوق/.test(title)) {
     return grant(['club.subscriptions', 'gym-sales.sales'], VIEW_OPERATE);
   }
-  if (/(موارد بشريه|شؤون موظفين)/.test(title)) {
-    return grant(['hr'], [
-      'view',
-      'create',
-      'update',
-      'approve',
-      'reject',
-      'export',
-      'print',
-      'audit',
-    ]);
+  if (/(موارد بشريه|شون موظفين)/.test(title)) {
+    return [
+      ...grant(['hr'], [
+        'view',
+        'create',
+        'update',
+        'approve',
+        'reject',
+        'export',
+        'print',
+        'audit',
+      ]),
+      ...grant(['org.edarat'], ['view', 'create', 'update', 'delete', 'export', 'print', 'audit']),
+      ...grant(['admin.insurance'], ['view', 'update', 'configure', 'audit']),
+    ];
   }
   if (/كافيه|cafe/.test(title)) {
     return grant(['gym-sales'], [

@@ -35,10 +35,10 @@ export const GRAD_PRESETS: {
   accent_gold: string;
   accent_ink: string;
 }[] = [
-  // ===== Noamany default =====
-  { id: "one80",     label: "Noamany Fitness Center",            category: "masculine", bg_from: APP_LIVE_THEME.bgFrom, bg_via: APP_LIVE_THEME.bgVia, bg_to: APP_LIVE_THEME.bgTo, accent_primary: APP_LIVE_THEME.accentPrimary, accent_gold: APP_LIVE_THEME.accentGold, accent_ink: APP_LIVE_THEME.accentInk },
+  // ===== ONE80 default =====
+  { id: "one80",     label: "ONE80",            category: "masculine", bg_from: APP_LIVE_THEME.bgFrom, bg_via: APP_LIVE_THEME.bgVia, bg_to: APP_LIVE_THEME.bgTo, accent_primary: APP_LIVE_THEME.accentPrimary, accent_gold: APP_LIVE_THEME.accentGold, accent_ink: APP_LIVE_THEME.accentInk },
   // ===== Masculine =====
-  { id: "navy",      label: uiStatic("نيفي أزرق"),        category: "masculine", bg_from: "#0B2545", bg_via: "#0A1F38", bg_to: "#061528", accent_primary: "#2E8BC7", accent_gold: "#E8973A", accent_ink: "#F8FAFC" },
+  { id: "navy",      label: uiStatic("نيفي أزرق"),        category: "masculine", bg_from: APP_LIVE_THEME.bgFrom, bg_via: APP_LIVE_THEME.bgVia, bg_to: APP_LIVE_THEME.bgTo, accent_primary: APP_LIVE_THEME.accentPrimary, accent_gold: APP_LIVE_THEME.accentGold, accent_ink: APP_LIVE_THEME.accentInk },
   { id: "emerald",   label: uiStatic("زمردي فاخر"),      category: "masculine", bg_from: "#0F3D2E", bg_via: "#08291E", bg_to: "#031712", accent_primary: "#7CB342", accent_gold: "#E0B548", accent_ink: "#FFFDF5" },
   { id: "midnight",  label: uiStatic("أسود فاخر"),        category: "masculine", bg_from: "#1F1F1F", bg_via: "#0F0F0F", bg_to: "#050505", accent_primary: "#D4A229", accent_gold: "#F2C66B", accent_ink: "#FFFDF5" },
   { id: "steel",     label: uiStatic("رمادي فولاذي"),     category: "masculine", bg_from: "#2D3748", bg_via: "#1A202C", bg_to: "#0E141C", accent_primary: "#7CB342", accent_gold: "#D4A229", accent_ink: "#F7FAFC" },
@@ -80,12 +80,12 @@ const ensureBaseTokens = () => {
   tag.id = BASE_STYLE_ID;
   tag.textContent = `
     :root {
-      --grad-green: 357 85% 52%;
-      --grad-green-dark: 45 96% 42%;
-      --grad-green-ink: 45 40% 10%;
-      --grad-gold: 45 100% 55%;
-      --grad-gold-dark: 42 95% 45%;
-      --grad-cream: 45 40% 98%;
+      --grad-green: 205 64% 45%;
+      --grad-green-dark: 205 64% 38%;
+      --grad-green-ink: 213 74% 14%;
+      --grad-gold: 35 92% 42%;
+      --grad-gold-dark: 35 92% 35%;
+      --grad-cream: 210 40% 98%;
       --gradient-grad-primary: linear-gradient(135deg, hsl(var(--grad-green)), hsl(var(--grad-green-dark)));
       --gradient-grad-gold: linear-gradient(135deg, hsl(var(--grad-gold)), hsl(var(--grad-gold-dark)));
       --gradient-grad-rtl-primary: linear-gradient(to left, hsl(var(--grad-green)), hsl(var(--grad-green-dark)));
@@ -136,6 +136,6 @@ export const EventLiveTheme = () => {
 /** Returns the radial gradient string used for the body background of all graduation pages. */
 export const gradBgStyle = (): React.CSSProperties => ({
   background:
-    "radial-gradient(ellipse at top, var(--grad-bg-from, #1A1608) 0%, var(--grad-bg-via, #121008) 55%, var(--grad-bg-to, #050505) 100%)",
+    "radial-gradient(ellipse at top, var(--grad-bg-from, #14305A) 0%, var(--grad-bg-via, #0A1F3D) 55%, var(--grad-bg-to, #061330) 100%)",
   fontFamily: "var(--grad-font, 'Cairo', system-ui, sans-serif)",
 });

@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { api, apiError } from '@/lib/api';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 import {
   PosPrintTemplatePreview,
   PosPrinterDestination,
@@ -43,11 +44,13 @@ function TemplateEditorCard({
   onChange,
   onSave,
   saving,
+  editable,
 }: {
   template: PosPrintTemplate;
   onChange: (template: PosPrintTemplate) => void;
   onSave: () => void;
   saving: boolean;
+  editable: boolean;
 }) {
   const { ui } = useLocale();
   const kitchen = template.layoutConfig.documentType === 'kitchen_ticket';
@@ -70,7 +73,7 @@ function TemplateEditorCard({
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <PosPrinterDestination template={template} />
-          <label className="flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs font-bold"><span>{template.isActive ? ui('مفعّل') : ui('معطل')}</span><Switch checked={template.isActive} onCheckedChange={(checked) => onChange({ ...template, isActive: checked })} /></label>
+          <label className="flex items-center gap-2 rounded-full border bg-background px-3 py-1.5 text-xs font-bold"><span>{template.isActive ? ui('مفعّل') : ui('معطل')}</span>{editable ? <Switch checked={template.isActive} onCheckedChange={(checked) => onChange({ ...template, isActive: checked })} /> : null}</label>
         </div>
       </div>
 
@@ -96,13 +99,15 @@ function TemplateEditorCard({
               <ToggleSetting label={ui('طباعة تلقائية')} description={ui('يرسل القالب فور تأكيد الطلب عند توصيل جهاز الطباعة')} checked={template.layoutConfig.autoPrint} onCheckedChange={(checked) => updateLayout({ autoPrint: checked })} />
               <ToggleSetting label={ui('إظهار الشعار')} description={ui('يظهر أعلى الورقة عند التفعيل')} checked={template.includeLogo} onCheckedChange={(checked) => onChange({ ...template, includeLogo: checked })} />
               <ToggleSetting label={ui('إظهار الأسعار')} description={kitchen ? ui('يفضل إيقافه لفريق التحضير') : ui('السعر والإجماليات للعميل')} checked={template.layoutConfig.showPrices} onCheckedChange={(checked) => updateLayout({ showPrices: checked })} />
-              <div className="flex min-h-16 items-center rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-100">{ui('اسم العميل ورقم التليفون بيانات داخلية مؤرشفة ولا تُطبع على إيصال العميل أو تذكرة التحضير.')}</div>
+              <div className="flex min-h-16 items-center rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 py-2.5 text-sm text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-100">
+                {ui('اسم العميل ورقم التليفون بيانات داخلية مؤرشفة ولا تُطبع على إيصال العميل أو تذكرة التحضير.')}
+              </div>
               <ToggleSetting label={ui('إظهار طريقة الدفع')} description={ui('مناسب لإيصال العميل فقط')} checked={template.layoutConfig.showPaymentMethod} onCheckedChange={(checked) => updateLayout({ showPaymentMethod: checked })} />
               <ToggleSetting label={ui('إظهار ملاحظات الطلب')} description={ui('مثل بدون سكر أو ثلج إضافي')} checked={template.layoutConfig.showReceiptComment} onCheckedChange={(checked) => updateLayout({ showReceiptComment: checked })} />
             </div>
           </section>
 
-          <Button type="button" size="lg" className="w-full sm:w-auto" disabled={saving || !template.name.trim() || !template.layoutConfig.printerName.trim()} onClick={onSave}><Save className="me-2 size-4" />{saving ? ui('جاري الحفظ…') : ui('حفظ هذا القالب')}</Button>
+          {editable ? <Button permissionAction={template.id ? 'update' : 'create'} type="button" size="lg" className="w-full sm:w-auto" disabled={saving || !template.name.trim() || !template.layoutConfig.printerName.trim()} onClick={onSave}><Save className="me-2 size-4" />{saving ? ui('جاري الحفظ…') : ui('حفظ هذا القالب')}</Button> : null}
         </div>
 
         <aside className="rounded-2xl border bg-slate-100/80 p-4 dark:bg-slate-950/25">
@@ -116,6 +121,9 @@ function TemplateEditorCard({
 
 export function PosInvoiceTemplatesEditor() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('gym-sales.sales.pos_admin:create');
+  const canUpdate = can('gym-sales.sales.pos_admin:update');
   const queryClient = useQueryClient();
   const { data, isLoading } = useQuery({
     queryKey: ['pos-invoice-templates'],
@@ -127,9 +135,12 @@ export function PosInvoiceTemplatesEditor() {
   useEffect(() => setTemplates(resolved), [resolved]);
 
   const save = useMutation({
-    mutationFn: async (template: PosPrintTemplate) => template.id
-      ? (await api.put<PosPrintTemplate>(`/pos-invoice-templates/${template.id}`, toPosPrintTemplatePayload(template))).data
-      : (await api.post<PosPrintTemplate>('/pos-invoice-templates', toPosPrintTemplatePayload(template))).data,
+    mutationFn: async (template: PosPrintTemplate) => {
+      if (template.id ? !canUpdate : !canCreate) throw new Error(ui('غير مصرح'));
+      return template.id
+        ? (await api.put<PosPrintTemplate>(`/pos-invoice-templates/${template.id}`, toPosPrintTemplatePayload(template))).data
+        : (await api.post<PosPrintTemplate>('/pos-invoice-templates', toPosPrintTemplatePayload(template))).data;
+    },
     onSuccess: async (saved) => {
       setTemplates((current) => current.map((template) => template.layoutConfig.documentType === saved.layoutConfig.documentType ? saved : template) as [PosPrintTemplate, PosPrintTemplate]);
       toast.success(ui('تم حفظ قالب الطباعة'));
@@ -154,7 +165,7 @@ export function PosInvoiceTemplatesEditor() {
       </section>
 
       {isLoading ? <Card><CardContent className="p-8 text-center text-muted-foreground">{ui('جاري تحميل قوالب الطباعة…')}</CardContent></Card> : templates.map((template, index) => (
-        <TemplateEditorCard key={template.layoutConfig.documentType} template={template} onChange={(next) => replaceTemplate(index, next)} onSave={() => save.mutate(template)} saving={save.isPending && save.variables?.layoutConfig.documentType === template.layoutConfig.documentType} />
+        <TemplateEditorCard key={template.layoutConfig.documentType} template={template} editable={template.id ? canUpdate : canCreate} onChange={(next) => replaceTemplate(index, next)} onSave={() => save.mutate(template)} saving={save.isPending && save.variables?.layoutConfig.documentType === template.layoutConfig.documentType} />
       ))}
     </div>
   );

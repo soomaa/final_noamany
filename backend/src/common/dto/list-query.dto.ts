@@ -19,5 +19,4 @@ export class ListQueryDto extends PaginationDto {
   @IsOptional() @IsString() dateTo?: string;
   @IsOptional() @IsString() source?: string;
   @IsOptional() @IsString() expiry?: string;
-  @IsOptional() @IsString() branchId?: string;
 }

@@ -18,17 +18,33 @@ import { SubscriptionReportsService } from './subscription-reports.service';
 import { PrivateSubscriptionsController } from './private-subscriptions.controller';
 import { PrivateSubscriptionsService } from './private-subscriptions.service';
 import { ClubDiscountCodesModule } from './club-discount-codes.module';
-import { ClubPointsModule } from '../club-points/club-points.module';
+import { ClubSubscriptionLifecycleService } from './club-subscription-lifecycle.service';
+import { ClubSubscriptionRenewalService } from './club-subscription-renewal.service';
+import { ClubPackageCategoriesController } from './club-package-categories.controller';
+import { ClubPackageCategoriesService } from './club-package-categories.service';
+import {
+  GuestPackageCategoriesController,
+  MemberPackageCategoriesController,
+} from './member-package-categories.controller';
+import { RenewalFollowUpService } from './renewal-follow-up.service';
+import { OfferNotificationsService } from './offer-notifications.service';
+import { FreezeRequestsController, MemberFreezeRequestsController } from './freeze-requests.controller';
+import { FreezeRequestsService } from './freeze-requests.service';
 
 @Module({
-  imports: [AccountingModule, GymOpsModule, ClubDiscountCodesModule, ClubPointsModule],
+  imports: [AccountingModule, GymOpsModule, ClubDiscountCodesModule],
   controllers: [
     ClubSubscriptionsController,
+    FreezeRequestsController,
+    MemberFreezeRequestsController,
     ClubSubscriptionTypesController,
     ClubSubscriptionRefundsController,
     ClubSubscriptionTransfersController,
     ClubReceiptsController,
     PrivateSubscriptionsController,
+    ClubPackageCategoriesController,
+    MemberPackageCategoriesController,
+    GuestPackageCategoriesController,
   ],
   providers: [
     ClubSubscriptionsService,
@@ -41,12 +57,21 @@ import { ClubPointsModule } from '../club-points/club-points.module';
     ClubSubscriptionAccountingService,
     ClubSubscriptionStatusCron,
     PrivateSubscriptionsService,
+    ClubSubscriptionLifecycleService,
+    ClubSubscriptionRenewalService,
+    ClubPackageCategoriesService,
+    RenewalFollowUpService,
+    OfferNotificationsService,
+    FreezeRequestsService,
   ],
-  exports: [
+  exports: [ClubSubscriptionTypesService, 
     ClubSubscriptionsService,
     ClubReceiptsService,
     ClubReceiptsCrudService,
     ClubSubscriptionRefundsService,
+    ClubSubscriptionLifecycleService,
+    ClubSubscriptionRenewalService,
+    ClubPackageCategoriesService,
   ],
 })
 export class ClubSubscriptionsModule {}

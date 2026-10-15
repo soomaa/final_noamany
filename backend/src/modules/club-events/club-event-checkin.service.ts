@@ -1,10 +1,12 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
 import { ClubMembersService } from '../club-members/club-members.service';
 import { ScanClubEventCheckinDto, MemberClubEventCheckinDto } from './dto/scan-club-event-checkin.dto';
 import { toNum } from './club-events.utils';
 import { attachMemberBrief, loadMemberBriefMap } from '../club-members/club-member-brief.utils';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 /**
  * Check-in time-window tolerance: from 2 hours before the session/event start until 2 hours after
@@ -21,7 +23,14 @@ export class ClubEventCheckinService {
     private readonly prisma: PrismaService,
     private readonly members: ClubMembersService,
     private readonly audit: BusinessAuditService,
+    private readonly branchScope: BranchScopeService,
   ) {}
+
+  private assertBranchAccess(user: JwtUser | undefined, branchId: number) {
+    if (!this.branchScope.isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
+  }
 
   private mapCheckin(c: {
     id: number;
@@ -89,12 +98,14 @@ export class ClubEventCheckinService {
     method: 'qr' | 'member_code' | 'manual',
     checkedBy?: number,
     options?: { liveSelfCheckin?: boolean },
+    user?: JwtUser,
   ) {
     const liveSelfCheckin = options?.liveSelfCheckin ?? false;
     const registration = await this.prisma.club_event_registrations.findFirst({
       where: { id: registrationId, is_deleted: false },
     });
     if (!registration) throw new NotFoundException('التسجيل غير موجود');
+    this.assertBranchAccess(user, registration.branch_id);
     if (registration.event_id !== eventId) {
       throw new BadRequestException('التسجيل لا يخص هذه الفعالية');
     }
@@ -107,6 +118,10 @@ export class ClubEventCheckinService {
 
     const event = await this.prisma.club_events.findFirst({ where: { id: eventId, is_deleted: false } });
     if (!event) throw new NotFoundException('الفعالية غير موجودة');
+    this.assertBranchAccess(user, event.branch_id);
+    if (registration.branch_id !== event.branch_id) {
+      throw new ForbiddenException('التسجيل لا يتبع فرع الفعالية');
+    }
     const allowedStatuses: readonly string[] = liveSelfCheckin
       ? ['approved', 'published', 'ongoing']
       : ['published', 'ongoing'];
@@ -177,13 +192,22 @@ export class ClubEventCheckinService {
     return this.mapCheckin(checkin);
   }
 
-  async scan(dto: ScanClubEventCheckinDto, checkedBy?: number) {
+  async scan(dto: ScanClubEventCheckinDto, user?: JwtUser) {
     const registration = await this.prisma.club_event_registrations.findFirst({
       where: { checkin_code: dto.code, is_deleted: false },
     });
     if (!registration) throw new NotFoundException('كود الدخول غير صالح');
+    this.assertBranchAccess(user, registration.branch_id);
 
-    const checkin = await this.resolveAndValidate(registration.id, dto.eventId, dto.sessionId, 'qr', checkedBy);
+    const checkin = await this.resolveAndValidate(
+      registration.id,
+      dto.eventId,
+      dto.sessionId,
+      'qr',
+      user?.sub,
+      undefined,
+      user,
+    );
 
     const memberMap = await loadMemberBriefMap(this.prisma, [registration.member_id]);
     const brief = attachMemberBrief(registration.member_id, memberMap);
@@ -200,8 +224,9 @@ export class ClubEventCheckinService {
     };
   }
 
-  async byMember(dto: MemberClubEventCheckinDto, checkedBy?: number) {
+  async byMember(dto: MemberClubEventCheckinDto, user?: JwtUser) {
     const member = await this.members.resolveByIdOrCode(undefined, dto.memberCode);
+    this.assertBranchAccess(user, member.branch_id);
 
     const registration = await this.prisma.club_event_registrations.findFirst({
       where: { event_id: dto.eventId, member_id: member.id, is_deleted: false, status: 'confirmed' },
@@ -209,11 +234,24 @@ export class ClubEventCheckinService {
     });
     if (!registration) throw new NotFoundException('لا يوجد تسجيل مؤكد لهذا العضو في هذه الفعالية');
 
-    return this.resolveAndValidate(registration.id, dto.eventId, dto.sessionId, 'member_code', checkedBy);
+    return this.resolveAndValidate(
+      registration.id,
+      dto.eventId,
+      dto.sessionId,
+      'member_code',
+      user?.sub,
+      undefined,
+      user,
+    );
   }
 
-  async manual(registrationId: number, eventId: number, sessionId: number | undefined, checkedBy?: number) {
-    return this.resolveAndValidate(registrationId, eventId, sessionId, 'manual', checkedBy);
+  async manual(
+    registrationId: number,
+    eventId: number,
+    sessionId: number | undefined,
+    user?: JwtUser,
+  ) {
+    return this.resolveAndValidate(registrationId, eventId, sessionId, 'manual', user?.sub, undefined, user);
   }
 
   async liveGuest(
@@ -221,15 +259,17 @@ export class ClubEventCheckinService {
     eventId: number,
     method: 'qr' | 'manual',
     checkedBy?: number,
+    user?: JwtUser,
   ) {
     return this.resolveAndValidate(registrationId, eventId, undefined, method, checkedBy, {
       liveSelfCheckin: true,
-    });
+    }, user);
   }
 
-  async roster(eventId: number) {
+  async roster(eventId: number, user?: JwtUser) {
     const event = await this.prisma.club_events.findFirst({ where: { id: eventId, is_deleted: false } });
     if (!event) throw new NotFoundException('الفعالية غير موجودة');
+    this.assertBranchAccess(user, event.branch_id);
 
     const [registrations, sessions] = await Promise.all([
       this.prisma.club_event_registrations.findMany({
@@ -275,9 +315,10 @@ export class ClubEventCheckinService {
     };
   }
 
-  async statistics(eventId: number) {
+  async statistics(eventId: number, user?: JwtUser) {
     const event = await this.prisma.club_events.findFirst({ where: { id: eventId, is_deleted: false } });
     if (!event) throw new NotFoundException('الفعالية غير موجودة');
+    this.assertBranchAccess(user, event.branch_id);
 
     const registrations = await this.prisma.club_event_registrations.findMany({
       where: { event_id: eventId, is_deleted: false, status: { not: 'cancelled' } },
@@ -309,3 +350,4 @@ export class ClubEventCheckinService {
     };
   }
 }
+

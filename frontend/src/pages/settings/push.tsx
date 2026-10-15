@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, Send } from 'lucide-react';
 import { useState } from 'react';
@@ -14,6 +15,7 @@ import { confirm } from '@/lib/confirm';
 import { api, apiError } from '@/lib/api';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 interface BranchOption {
   id: number;
@@ -27,6 +29,8 @@ interface BroadcastResult {
 
 export function PushBroadcastPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canConfigure = can('admin.push:configure');
   // Branch list reuses the shared GET /branches endpoint when available.
   const { data: branches = [], isLoading: branchesLoading } = useQuery({
     queryKey: ['branches'],
@@ -48,6 +52,7 @@ export function PushBroadcastPage() {
   const [sending, setSending] = useState(false);
 
   const send = async () => {
+    if (!canConfigure) return;
     if (!title.trim() || !body.trim()) {
       toast.error(ui('العنوان والنص مطلوبان'));
       return;
@@ -70,7 +75,7 @@ export function PushBroadcastPage() {
         branchId: target === 'branch' ? parseInt(branchId, 10) : undefined,
       });
       toast.success(
-        ui(`تم إنشاء الإشعار — مُرسل: ${data.sent} · بدون جهاز: ${data.skipped}`),
+        `${ui('تم إنشاء الإشعار — مُرسل: ')}${formatDisplayNumber(data.sent)}${ui(' · بدون جهاز: ')}${formatDisplayNumber(data.skipped)}`,
       );
       setTitle('');
       setBody('');
@@ -152,12 +157,12 @@ export function PushBroadcastPage() {
             </div>
           )}
 
-          <div className="flex justify-end pt-2">
+          {canConfigure ? <div className="flex justify-end pt-2">
             <Button variant="brand" size="sm" disabled={sending} onClick={() => void send()}>
               {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
               {ui('إرسال')}
             </Button>
-          </div>
+          </div> : null}
         </CardContent>
       </Card>
     </div>

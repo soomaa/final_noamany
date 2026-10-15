@@ -4,6 +4,7 @@ import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { PushService } from '../push/push.service';
+import { cairoDateString } from '../../common/utils/cairo-date';
 import {
   CreateTaskDto,
   ListTasksDto,
@@ -63,53 +64,6 @@ export class TasksService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  /** Employee-app view: only tasks addressed to the employee or published by this account. */
-  async listForUser(q: ListTasksDto, user: JwtUser) {
-    const account = await this.prisma.users.findUnique({
-      where: { user_id: user.sub },
-      select: { emp_code: true },
-    });
-    const link = account?.emp_code ?? user.emp_code;
-    const emp = link == null
-      ? null
-      : await this.prisma.employees.findFirst({
-          where: { OR: [{ id: link }, { emp_code: link }] },
-          select: { id: true },
-        });
-
-    const and: Prisma.hr_mosalatWhereInput[] = [
-      { OR: [{ publisher: user.sub }, ...(emp ? [{ emp_name_id: emp.id }] : [])] },
-    ];
-    if (q.search?.trim()) {
-      const s = q.search.trim();
-      and.push({ OR: [{ details: { contains: s } }, { emp_name: { contains: s } }] });
-    }
-    if (q.status && (DECISIONS as readonly string[]).includes(q.status)) {
-      and.push({ action_moder_rad: q.status });
-    }
-
-    const where: Prisma.hr_mosalatWhereInput = { AND: and };
-    const [rows, total] = await Promise.all([
-      this.prisma.hr_mosalat.findMany({ where, orderBy: { id: 'desc' }, skip: q.skip, take: q.take }),
-      this.prisma.hr_mosalat.count({ where }),
-    ]);
-    const data = rows.map((row) => ({
-      id: row.id,
-      rkm: row.mosala_rkm,
-      date: row.mosala_date_ar,
-      time: row.mosala_time,
-      empName: row.emp_name ?? '',
-      empId: row.emp_name_id,
-      edara: row.emp_edara ?? '',
-      qesm: row.emp_qesm ?? '',
-      details: row.details ?? '',
-      publisherName: row.publisher_name ?? '',
-      decision: (row.action_moder_rad ?? 'wait') as Decision,
-      decisionNotes: row.action_moder_notes,
-    }));
-    return paginated(data, total, q.page, q.pageSize);
-  }
-
   async get(id: number) {
     const task = await this.findOrThrow(id);
     const mokalfat = await this.prisma.hr_mosalat_mokalfat.findMany({
@@ -149,7 +103,7 @@ export class TasksService {
    */
   async create(dto: CreateTaskDto, user: JwtUser) {
     const now = new Date();
-    const dateAr = now.toISOString().slice(0, 10); // 'YYYY-MM-DD'
+    const dateAr = cairoDateString(now);
     const time = now.toTimeString().slice(0, 5); // 'HH:MM'
 
     const agg = await this.prisma.hr_mosalat.aggregate({ _max: { mosala_rkm: true } });
@@ -216,7 +170,7 @@ export class TasksService {
       where: { id },
       data: {
         action_moder_rad: dto.decision,
-        action_moder_date: now.toISOString().slice(0, 10),
+        action_moder_date: cairoDateString(now),
         action_moder_time: now.toTimeString().slice(0, 5),
         action_moder_notes: dto.notes ?? null,
       },

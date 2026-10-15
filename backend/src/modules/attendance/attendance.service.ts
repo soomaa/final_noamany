@@ -1,39 +1,57 @@
-import { SUSPEND_APPROVED } from '../../common/utils/suspend-status.util';
-import { parseStrictNumeric, assertTimeOrder, parseEmployeeCode } from '../../common/validators/validation.util';
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
-import { createHash, randomUUID } from 'crypto';
-import { Prisma } from '@prisma/client';
-import { PaginationDto } from '../../common/dto/pagination.dto';
-import { paginated } from '../../common/dto/list-result';
-import { PrismaService } from '../../common/prisma/prisma.service';
-import { legacyDateMatchValues, todayIso } from '../../common/utils/legacy-date.util';
-import { UpsertShiftDto } from './dto/shift.dto';
-import { CheckPunchDto } from './dto/check.dto';
+import { SUSPEND_APPROVED } from "../../common/utils/suspend-status.util";
+import {
+  parseStrictNumeric,
+  assertTimeOrder,
+  parseEmployeeCode,
+} from "../../common/validators/validation.util";
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { Prisma } from "@prisma/client";
+import { createHash } from "node:crypto";
+import { PaginationDto } from "../../common/dto/pagination.dto";
+import { paginated } from "../../common/dto/list-result";
+import { PrismaService } from "../../common/prisma/prisma.service";
+import {
+  cairoDateString,
+  cairoTimeParts,
+  cairoTimeString,
+  dateOnlyEpochSeconds,
+  dateOnlyParts,
+} from "../../common/utils/cairo-date";
+import { legacyDateMatchValues } from "../../common/utils/legacy-date.util";
+import { UpsertShiftDto } from "./dto/shift.dto";
+import { CheckPunchDto } from "./dto/check.dto";
 import {
   CreateExtraHoursDto,
   CreateShiftSwapDto,
   ListEdafiDto,
-} from './dto/edafi.dto';
-import { AttendanceReportDto } from './dto/report.dto';
-import { JwtUser } from '../../common/types/jwt-user';
-import { Workbook } from 'exceljs';
-import { resolveOfflinePunchClock } from './offline-attendance.util';
+} from "./dto/edafi.dto";
+import { AttendanceReportDto } from "./dto/report.dto";
+import { CreateAttendanceDeviceDto } from "./dto/device.dto";
+import { assertAllowedAttendanceDeviceAddress } from "./device-network.util";
+import { AttendanceDeviceEventBatchDto } from "./dto/device-ingest.dto";
+import {
+  createAttendanceDeviceKey,
+  hashAttendanceDeviceKey,
+  verifyAttendanceDeviceKey,
+} from "./attendance-device-ingest.util";
+import { aggregateLateRows } from "./late-report.util";
 
-interface CapturedAttendanceClock {
-  actionDate: string;
-  time: string;
-}
-
-const DEFAULT_ATTENDANCE_PHOTO = '/asisst/admin_asset/img/avatar5.png';
+type AttendanceDb = PrismaService | Prisma.TransactionClient;
 
 /** Minutes-since-midnight from a "h:i A" or "HH:mm" time-string. */
 function parseTimeToMinutes(time: string): number {
-  const t = (time ?? '').trim();
+  const t = (time ?? "").trim();
   const ampm = t.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
   if (ampm) {
     let h = parseInt(ampm[1], 10);
     const m = parseInt(ampm[2], 10);
-    const pm = ampm[3].toUpperCase() === 'PM';
+    const pm = ampm[3].toUpperCase() === "PM";
     if (pm && h < 12) h += 12;
     if (!pm && h === 12) h = 0;
     return h * 60 + m;
@@ -48,32 +66,14 @@ function formatMinutesAsTime(totalMin: number): string {
   const wrapped = ((totalMin % 1440) + 1440) % 1440;
   const h = Math.floor(wrapped / 60);
   const m = wrapped % 60;
-  const period = h >= 12 ? 'PM' : 'AM';
+  const period = h >= 12 ? "PM" : "AM";
   const h12 = h % 12 || 12;
-  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
 }
 
 function nowMinutes(): number {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes();
-}
-
-function pairDurationSeconds(checkIn?: string | null, checkOut?: string | null): number {
-  if (!checkIn || !checkOut) return 0;
-  const start = parseTimeToMinutes(checkIn);
-  let end = parseTimeToMinutes(checkOut);
-  if (end < start) end += 24 * 60;
-  return Math.max(0, (end - start) * 60);
-}
-
-function activeDurationSeconds(actionDate: string, checkIn?: string | null): number {
-  if (!checkIn) return 0;
-  const date = actionDate.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
-  if (!date) return 0;
-  const [year, month, day] = date.split('-').map(Number);
-  const minutes = parseTimeToMinutes(checkIn);
-  const startedAt = new Date(year, month - 1, day, Math.floor(minutes / 60), minutes % 60).getTime();
-  return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const { hour, minute } = cairoTimeParts();
+  return hour * 60 + minute;
 }
 
 /**
@@ -122,20 +122,23 @@ function buildShiftWindow(s: {
   ensraf_khasm_from?: string | null;
 }): ShiftWindow {
   const DAY = 24 * 60;
-  const hdoorFromRaw = parseTimeToMinutes(s.hdoor_from_time ?? '');
-  const hdoorToRaw = parseTimeToMinutes(s.hdoor_to_time ?? '');
-  const hdoorKhasmRaw = parseTimeToMinutes(s.hdoor_khasm_from ?? '');
-  const ensrafFromRaw = parseTimeToMinutes(s.ensraf_from_time ?? '');
-  const ensrafToRaw = parseTimeToMinutes(s.ensraf_to_time ?? '');
-  const ensrafKhasmRaw = parseTimeToMinutes(s.ensraf_khasm_from ?? '');
+  const hdoorFromRaw = parseTimeToMinutes(s.hdoor_from_time ?? "");
+  const hdoorToRaw = parseTimeToMinutes(s.hdoor_to_time ?? "");
+  const hdoorKhasmRaw = parseTimeToMinutes(s.hdoor_khasm_from ?? "");
+  const ensrafFromRaw = parseTimeToMinutes(s.ensraf_from_time ?? "");
+  const ensrafToRaw = parseTimeToMinutes(s.ensraf_to_time ?? "");
+  const ensrafKhasmRaw = parseTimeToMinutes(s.ensraf_khasm_from ?? "");
 
   const hdoorFrom = hdoorFromRaw;
   const hdoorTo = hdoorToRaw < hdoorFromRaw ? hdoorToRaw + DAY : hdoorToRaw;
-  const hdoorKhasm = hdoorKhasmRaw < hdoorFromRaw ? hdoorKhasmRaw + DAY : hdoorKhasmRaw;
+  const hdoorKhasm =
+    hdoorKhasmRaw < hdoorFromRaw ? hdoorKhasmRaw + DAY : hdoorKhasmRaw;
 
   // All ensraf times compare against hdoor_from; if earlier ⇒ next day.
-  const ensrafFrom = ensrafFromRaw < hdoorFromRaw ? ensrafFromRaw + DAY : ensrafFromRaw;
-  const ensrafKhasm = ensrafKhasmRaw < hdoorFromRaw ? ensrafKhasmRaw + DAY : ensrafKhasmRaw;
+  const ensrafFrom =
+    ensrafFromRaw < hdoorFromRaw ? ensrafFromRaw + DAY : ensrafFromRaw;
+  const ensrafKhasm =
+    ensrafKhasmRaw < hdoorFromRaw ? ensrafKhasmRaw + DAY : ensrafKhasmRaw;
   // ensraf_to compares against ensraf_from's day.
   const ensrafFromDayOffset = ensrafFrom - ensrafFromRaw; // 0 or DAY
   const ensrafTo =
@@ -146,77 +149,36 @@ function buildShiftWindow(s: {
   return { hdoorFrom, hdoorTo, hdoorKhasm, ensrafFrom, ensrafTo, ensrafKhasm };
 }
 
-function isValidShiftTime(value: string | null | undefined): value is string {
-  const time = value?.trim() ?? '';
-  const ampm = time.match(/^(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-  if (ampm) {
-    const hour = Number(ampm[1]);
-    const minute = Number(ampm[2]);
-    return hour >= 1 && hour <= 12 && minute >= 0 && minute < 60;
-  }
-  const twentyFourHour = time.match(/^(\d{1,2}):(\d{2})$/);
-  if (!twentyFourHour) return false;
-  const hour = Number(twentyFourHour[1]);
-  const minute = Number(twentyFourHour[2]);
-  return hour >= 0 && hour < 24 && minute >= 0 && minute < 60;
-}
-
-function assertShiftTimingIsComplete(shift: {
-  hdoor_from_time?: string | null;
-  hdoor_to_time?: string | null;
-  hdoor_khasm_from?: string | null;
-  ensraf_from_time?: string | null;
-  ensraf_to_time?: string | null;
-  ensraf_khasm_from?: string | null;
-}) {
-  const values = [
-    shift.hdoor_from_time,
-    shift.hdoor_to_time,
-    shift.hdoor_khasm_from,
-    shift.ensraf_from_time,
-    shift.ensraf_to_time,
-    shift.ensraf_khasm_from,
-  ];
-  if (!values.every(isValidShiftTime)) {
-    throw new BadRequestException('بيانات الوردية غير مكتملة، راجع الإدارة لتصحيح إعداد الوردية');
-  }
-}
-
 @Injectable()
 export class AttendanceService {
-  private readonly punchLocks = new Set<number>();
-  private readonly logger = new Logger(AttendanceService.name);
-  private readonly edafiForbiddenMessage =
-    'غير مسموح: أنت لست المدير المباشر لهذا الموظف ولا مسؤول الموارد البشرية المعيّن';
-
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
+  ) {}
 
   // -------------------------------------------------------------------------
   // BOARD
   // -------------------------------------------------------------------------
-  async board(q: PaginationDto & { date?: string; source?: string; status?: string; branchId?: string }) {
-    const date = q.date?.slice(0, 10) ?? todayIso();
+  async board(
+    q: PaginationDto & { date?: string; source?: string; status?: string },
+  ) {
+    const date = q.date?.slice(0, 10) ?? cairoDateString();
     const matches = legacyDateMatchValues(date);
-    const where: Prisma.tbl_hdoor_empsWhereInput = { action_date_s: { in: matches } };
-    if (q.branchId && q.branchId !== 'all') {
-      where.branch_id_fk = parseInt(q.branchId, 10) || 0;
-    }
+    const where: Prisma.tbl_hdoor_empsWhereInput = {
+      action_date_s: { in: matches },
+    };
 
     const rows = await this.prisma.tbl_hdoor_emps.findMany({
       where,
-      orderBy: { hodoor_id: 'desc' },
+      orderBy: { hodoor_id: "desc" },
     });
 
-    const empCodes = [...new Set(rows.map((r) => r.member_code).filter(Boolean))] as number[];
+    const empCodes = [
+      ...new Set(rows.map((r) => r.employee_code).filter(Boolean)),
+    ] as number[];
     const emps = await this.prisma.employees.findMany({
       where: { emp_code: { in: empCodes } },
-      select: {
-        id: true,
-        emp_code: true,
-        employee: true,
-        edara_n: true,
-        mosma_wazefy_n: true,
-      },
+      select: { id: true, emp_code: true, employee: true, edara_n: true },
     });
     const empByCode = new Map(emps.map((e) => [e.emp_code, e]));
 
@@ -227,65 +189,63 @@ export class AttendanceService {
 
     const empIds = emps.map((e) => e.id);
     const weeklyOffs = empIds.length
-      ? await this.prisma.hr_emp_agazat_dayes.findMany({ where: { emp_id_fk: { in: empIds } } })
+      ? await this.prisma.hr_emp_agazat_dayes.findMany({
+          where: { emp_id_fk: { in: empIds } },
+        })
       : [];
     const offByEmp = new Map(weeklyOffs.map((o) => [o.emp_id_fk, o.off_day]));
-    const weekdayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const arWeekdays = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
-
-    const branchIds = [...new Set(rows.map((r) => r.branch_id_fk))];
-    const branches = await this.prisma.tbl_branches.findMany({
-      where: { branch_id: { in: branchIds } },
-      select: { branch_id: true, branch_name: true },
-    });
-    const branchById = new Map(branches.map((branch) => [branch.branch_id, branch.branch_name]));
+    const weekdayNames = [
+      "Sunday",
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+    ];
+    const arWeekdays = [
+      "الأحد",
+      "الإثنين",
+      "الثلاثاء",
+      "الأربعاء",
+      "الخميس",
+      "الجمعة",
+      "السبت",
+    ];
 
     let mapped = rows.map((r) => {
-      const emp = empByCode.get(r.member_code ?? 0);
+      const emp = empByCode.get(r.employee_code ?? 0);
       const dwam = emp ? dwamByEmp.get(emp.id) : undefined;
       const scheduledIn = dwam?.attend_time ?? r.dwam_hdoor_time ?? undefined;
       const scheduledOut = dwam?.leave_time ?? r.dwam_ensraf_time ?? undefined;
       const lateMin = r.late_min != null ? Math.round(r.late_min) : undefined;
-      const earlyLeaveMin = r.mobaker_min != null ? Math.round(r.mobaker_min) : undefined;
+      const earlyLeaveMin =
+        r.mobaker_min != null ? Math.round(r.mobaker_min) : undefined;
       const overtimeMin = r.num_min != null ? Math.round(r.num_min) : undefined;
-      const source = r.tasgel_type === 'manual' ? 'app' : 'device';
-      let status = 'present';
+      const source = r.tasgel_type === "manual" ? "app" : "device";
+      let status = "present";
       if (!r.hdoor_time) {
         const offDay = emp ? offByEmp.get(emp.id) : undefined;
-        const rowDate = r.action_date_s?.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? todayIso();
-        const dow = new Date(rowDate + 'T12:00:00').getDay();
-        if (offDay && (offDay === weekdayNames[dow] || offDay === arWeekdays[dow])) {
-          status = 'off';
+        const rowDate =
+          r.action_date_s?.match(/^\d{4}-\d{2}-\d{2}/)?.[0] ??
+          cairoDateString();
+        const { year, month, day } = dateOnlyParts(rowDate);
+        const dow = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+        if (
+          offDay &&
+          (offDay === weekdayNames[dow] || offDay === arWeekdays[dow])
+        ) {
+          status = "off";
         } else {
-          status = 'absent';
+          status = "absent";
         }
-      } else if (lateMin && lateMin > 0) status = 'late';
-
-      const actionDate = r.action_date_s?.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
-        ?? r.action_date?.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
-        ?? date;
-      const dayIndex = new Date(`${actionDate}T12:00:00`).getDay();
-      const firstCompleted = pairDurationSeconds(r.hdoor_time, r.ensraf_time);
-      const secondCompleted = pairDurationSeconds(r.second_hdoor_time, r.second_ensraf_time);
-      const isWorking = Boolean(
-        (r.hdoor_time && !r.ensraf_time) ||
-        (r.second_hdoor_time && !r.second_ensraf_time),
-      );
-      const activeSeconds = r.hdoor_time && !r.ensraf_time
-        ? activeDurationSeconds(actionDate, r.hdoor_time)
-        : r.second_hdoor_time && !r.second_ensraf_time
-          ? activeDurationSeconds(actionDate, r.second_hdoor_time)
-          : 0;
+      } else if (lateMin && lateMin > 0) status = "late";
 
       return {
         id: r.hodoor_id,
-        empCode: r.member_code != null ? String(r.member_code) : undefined,
+        empCode: r.employee_code != null ? String(r.employee_code) : undefined,
         employeeName: emp?.employee ?? undefined,
         department: emp?.edara_n ?? undefined,
-        jobTitle: emp?.mosma_wazefy_n ?? undefined,
-        branchName: branchById.get(r.branch_id_fk) ?? undefined,
-        weekday: arWeekdays[dayIndex],
-        actionDate,
         scheduledIn,
         scheduledOut,
         checkIn: r.hdoor_time ?? undefined,
@@ -299,31 +259,22 @@ export class AttendanceService {
         source,
         checkInLat: r.hdoor_lat ? parseFloat(r.hdoor_lat) : undefined,
         checkInLng: r.hdoor_long ? parseFloat(r.hdoor_long) : undefined,
-        checkOutLat: r.ensraf_lat ? parseFloat(r.ensraf_lat) : undefined,
-        checkOutLng: r.ensraf_long ? parseFloat(r.ensraf_long) : undefined,
         checkInPhoto: r.hdoor_img_path ?? undefined,
-        checkOutPhoto: r.ensraf_img_path ?? undefined,
-        secondCheckInLat: r.second_hdoor_lat ? parseFloat(r.second_hdoor_lat) : undefined,
-        secondCheckInLng: r.second_hdoor_long ? parseFloat(r.second_hdoor_long) : undefined,
-        secondCheckOutLat: r.second_ensraf_lat ? parseFloat(r.second_ensraf_lat) : undefined,
-        secondCheckOutLng: r.second_ensraf_long ? parseFloat(r.second_ensraf_long) : undefined,
         secondCheckInPhoto: r.second_hdoor_img_path ?? undefined,
-        secondCheckOutPhoto: r.second_ensraf_img_path ?? undefined,
-        workingSeconds: firstCompleted + secondCompleted + activeSeconds,
-        isWorking,
       };
     });
 
     if (q.search?.trim()) {
       const s = q.search.trim().toLowerCase();
       mapped = mapped.filter(
-        (r) => r.employeeName?.toLowerCase().includes(s) || r.empCode?.includes(s),
+        (r) =>
+          r.employeeName?.toLowerCase().includes(s) || r.empCode?.includes(s),
       );
     }
-    if (q.source && q.source !== 'all') {
+    if (q.source && q.source !== "all") {
       mapped = mapped.filter((r) => r.source === q.source);
     }
-    if (q.status && q.status !== 'all') {
+    if (q.status && q.status !== "all") {
       mapped = mapped.filter((r) => r.status === q.status);
     }
 
@@ -335,13 +286,28 @@ export class AttendanceService {
   // -------------------------------------------------------------------------
   // RULES (now actually consumed by the check calc)
   // -------------------------------------------------------------------------
-  private async getRulesMap(): Promise<
-    Map<string, { enabled: boolean; threshold: number; graceMin: number; multiplier: number }>
+  private async getRulesMap(
+    db: AttendanceDb = this.prisma,
+  ): Promise<
+    Map<
+      string,
+      {
+        enabled: boolean;
+        threshold: number;
+        graceMin: number;
+        multiplier: number;
+      }
+    >
   > {
-    const rows = await this.prisma.attendance_rules.findMany();
+    const rows = await db.attendance_rules.findMany();
     const map = new Map<
       string,
-      { enabled: boolean; threshold: number; graceMin: number; multiplier: number }
+      {
+        enabled: boolean;
+        threshold: number;
+        graceMin: number;
+        multiplier: number;
+      }
     >();
     for (const r of rows) {
       map.set(r.key, {
@@ -354,8 +320,10 @@ export class AttendanceService {
     return map;
   }
 
-  private async enabledChannels(): Promise<Set<string>> {
-    const rows = await this.prisma.attendance_channels.findMany();
+  private async enabledChannels(
+    db: AttendanceDb = this.prisma,
+  ): Promise<Set<string>> {
+    const rows = await db.attendance_channels.findMany();
     const set = new Set<string>();
     for (const r of rows) if (r.enabled === 1) set.add(r.key);
     return set;
@@ -371,7 +339,7 @@ export class AttendanceService {
     rawLate: number,
     rules: Map<string, { enabled: boolean; graceMin: number }>,
   ): number {
-    const rule = rules.get('late');
+    const rule = rules.get("late");
     if (!rule || !rule.enabled) return rawLate;
     const grace = rule.graceMin ?? 0;
     return rawLate > grace ? rawLate - grace : 0;
@@ -381,7 +349,7 @@ export class AttendanceService {
     rawEarly: number,
     rules: Map<string, { enabled: boolean; graceMin: number }>,
   ): number {
-    const rule = rules.get('early_leave');
+    const rule = rules.get("early_leave");
     if (!rule || !rule.enabled) return rawEarly;
     const grace = rule.graceMin ?? 0;
     return rawEarly > grace ? rawEarly - grace : 0;
@@ -395,11 +363,14 @@ export class AttendanceService {
   private computeOvertime(
     actualOutMin: number,
     ensrafKhasm: number,
-    rules: Map<string, { enabled: boolean; threshold: number; multiplier: number }>,
+    rules: Map<
+      string,
+      { enabled: boolean; threshold: number; multiplier: number }
+    >,
   ): number {
     let extra = actualOutMin - ensrafKhasm;
     if (extra <= 0) return 0;
-    const rule = rules.get('overtime');
+    const rule = rules.get("overtime");
     if (rule && rule.enabled) {
       if (extra < rule.threshold) return 0;
       extra = Math.floor(extra * (rule.multiplier || 1));
@@ -408,13 +379,15 @@ export class AttendanceService {
   }
 
   async getRules() {
-    const rows = await this.prisma.attendance_rules.findMany({ orderBy: { id: 'asc' } });
+    const rows = await this.prisma.attendance_rules.findMany({
+      orderBy: { id: "asc" },
+    });
     return rows.map((r) => ({
       key: r.key,
       enabled: r.enabled === 1,
-      threshold: r.threshold ?? '',
-      graceMin: r.grace_min ?? '',
-      multiplier: r.multiplier ?? '1',
+      threshold: r.threshold ?? "",
+      graceMin: r.grace_min ?? "",
+      multiplier: r.multiplier ?? "1",
     }));
   }
 
@@ -429,15 +402,18 @@ export class AttendanceService {
   }) {
     const rules = Array.isArray(body.rules) ? body.rules : [];
     for (const r of rules) {
-      const threshold = r.threshold != null && r.threshold !== ''
-        ? String(parseStrictNumeric(r.threshold, 'العتبة', { min: 0 }))
-        : '';
-      const graceMin = r.graceMin != null && r.graceMin !== ''
-        ? String(parseStrictNumeric(r.graceMin, 'فترة السماح', { min: 0 }))
-        : '';
-      const multiplier = r.multiplier != null && r.multiplier !== ''
-        ? String(parseStrictNumeric(r.multiplier, 'المعامل', { min: 0 }))
-        : '1';
+      const threshold =
+        r.threshold != null && r.threshold !== ""
+          ? String(parseStrictNumeric(r.threshold, "العتبة", { min: 0 }))
+          : "";
+      const graceMin =
+        r.graceMin != null && r.graceMin !== ""
+          ? String(parseStrictNumeric(r.graceMin, "فترة السماح", { min: 0 }))
+          : "";
+      const multiplier =
+        r.multiplier != null && r.multiplier !== ""
+          ? String(parseStrictNumeric(r.multiplier, "المعامل", { min: 0 }))
+          : "1";
       await this.prisma.attendance_rules.upsert({
         where: { key: r.key },
         create: {
@@ -461,387 +437,36 @@ export class AttendanceService {
   // -------------------------------------------------------------------------
   // CHECK (faithful add_hdor_ensraf: dwam-window gate + late/early/overtime)
   // -------------------------------------------------------------------------
-  async mobilePunch(
-    user: JwtUser,
-    body: { lat: string; long: string; photo?: string },
-    capturedClock?: CapturedAttendanceClock,
-  ) {
-    if (user.emp_code == null) throw new ForbiddenException('الحساب غير مرتبط بموظف');
-    const latitude = Number(body.lat);
-    const longitude = Number(body.long);
-    if (
-      !Number.isFinite(latitude) ||
-      !Number.isFinite(longitude) ||
-      latitude < -90 ||
-      latitude > 90 ||
-      longitude < -180 ||
-      longitude > 180
-    ) {
-      throw new BadRequestException('إحداثيات الموقع غير صحيحة');
-    }
-
-    // Legacy users.emp_code stores employees.id; attendance rows use the
-    // employee business code, so resolve the employee before punching.
-    const emp = await this.prisma.employees.findUnique({
-      where: { id: user.emp_code },
-      select: { id: true, emp_code: true, branch_id_fk: true, emp_sign: true },
-    });
-    if (!emp) throw new NotFoundException('الموظف غير موجود');
-
-    const distanceTo = (targetLatitude: number, targetLongitude: number) => {
-      const toRadians = (degrees: number) => (degrees * Math.PI) / 180;
-      const latitudeDelta = toRadians(targetLatitude - latitude);
-      const longitudeDelta = toRadians(targetLongitude - longitude);
-      const a =
-        Math.sin(latitudeDelta / 2) ** 2 +
-        Math.cos(toRadians(latitude)) * Math.cos(toRadians(targetLatitude)) * Math.sin(longitudeDelta / 2) ** 2;
-      return 6_371_000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    };
-
-    const fingerprintBranch = String(emp.emp_sign ?? '').trim().toLowerCase();
-    const isAdministration = !fingerprintBranch;
-    const isMultiLocation = isAdministration || fingerprintBranch === 'all';
-    let branchId = 0;
-    let branch: { branch_id: number; branch_name: string | null } | null = null;
-    let geofence: { id: number; title: string; lat_map: string | null; long_map: string | null; distance: number } | null = null;
-
-    if (isMultiLocation) {
-      const geofences = await this.prisma.branch_settings.findMany();
-      const valid = geofences
-        .map((candidate) => {
-          const candidateLatitude = Number(candidate.lat_map);
-          const candidateLongitude = Number(candidate.long_map);
-          const radius = Number(candidate.distance ?? 0);
-          if (!Number.isFinite(candidateLatitude) || !Number.isFinite(candidateLongitude) || radius <= 0) return null;
-          return {
-            geofence: candidate,
-            distanceMeters: distanceTo(candidateLatitude, candidateLongitude),
-            radius,
-          };
-        })
-        .filter((candidate): candidate is NonNullable<typeof candidate> => candidate != null)
-        .filter((candidate) => candidate.distanceMeters <= candidate.radius)
-        .sort((a, b) => a.distanceMeters - b.distanceMeters);
-      const nearest = valid[0];
-      if (!nearest) {
-        throw new BadRequestException('أنت خارج النطاق الجغرافي لفروع النعماني');
-      }
-      geofence = nearest.geofence;
-      // branch_settings.id is its own primary key; it is not the canonical
-      // tbl_branches.branch_id. The settings are linked to branches by title.
-      branch = await this.prisma.tbl_branches.findFirst({
-        where: { branch_name: nearest.geofence.title },
-      });
-      if (branch) branchId = branch.branch_id;
-    } else {
-      const selectedFingerprintBranch = Number(fingerprintBranch);
-      if (!Number.isInteger(selectedFingerprintBranch) || selectedFingerprintBranch <= 0) {
-        throw new BadRequestException('لا يوجد مكان بصمة مسجل لهذا الموظف، راجع الإدارة');
-      }
-      branchId = selectedFingerprintBranch;
-      branch = await this.prisma.tbl_branches.findUnique({ where: { branch_id: branchId } });
-      geofence = branch?.branch_name
-        ? await this.prisma.branch_settings.findFirst({ where: { title: branch.branch_name } })
-        : null;
-    }
-
-    if (!branch) throw new BadRequestException('مكان البصمة غير موجود في إعدادات الفروع');
-
-    const branchLatitude = Number(geofence?.lat_map);
-    const branchLongitude = Number(geofence?.long_map);
-    const radius = Number(geofence?.distance ?? 0);
-    if (!geofence || !Number.isFinite(branchLatitude) || !Number.isFinite(branchLongitude) || radius <= 0) {
-      throw new BadRequestException(`إحداثيات فرع "${branch.branch_name ?? geofence?.title ?? branchId}" غير مكتملة`);
-    }
-
-    const distanceMeters = distanceTo(branchLatitude, branchLongitude);
-    if (distanceMeters > radius) {
-      throw new BadRequestException(
-        `أنت خارج النطاق الجغرافي المسموح به لفرع "${branch.branch_name ?? geofence.title}"، المسافة الحالية: ${Math.round(distanceMeters)} متر`,
-      );
-    }
-
-    const result = await this.manualCheck(
-      {
-        empCode: String(emp.emp_code ?? emp.id),
-        lat: body.lat,
-        long: body.long,
-        photo: body.photo,
-        channel: 'app',
-      },
-      user.sub,
-      branchId,
-      capturedClock,
-      isAdministration ? 0 : branchId,
-    );
-    return {
-      ...result,
-      branchId,
-      branchName: branch.branch_name ?? geofence.title,
-      distanceMeters: Math.round(distanceMeters),
-    };
+  async manualCheck(body: CheckPunchDto, userId = 1) {
+    return this.recordPunch(body, userId, cairoDateString(), this.prisma);
   }
 
-  /**
-   * Safely replays one employee-app punch captured while the device was offline.
-   * The device clock is bounded and audited; the existing attendance engine still
-   * decides whether it is an arrival or departure and applies all shift rules.
-   */
-  async syncOfflinePunch(
-    user: JwtUser,
-    dto: {
-      offlineId: string;
-      capturedAtUtc: string;
-      timezone: string;
-      lat: string;
-      long: string;
-      photo?: string;
-    },
-    receivedAt = new Date(),
-  ) {
-    const clock = resolveOfflinePunchClock(dto.capturedAtUtc, dto.timezone, receivedAt);
-    const payloadHash = createHash('sha256').update(JSON.stringify({
-      capturedAtUtc: dto.capturedAtUtc,
-      timezone: dto.timezone,
-      lat: dto.lat,
-      long: dto.long,
-      photo: dto.photo ?? null,
-    })).digest('hex');
-    const where = {
-      user_id_offline_id: {
-        user_id: user.sub,
-        offline_id: dto.offlineId,
-      },
-    };
-    const existing = await this.prisma.mobile_offline_attendance_sync.findUnique({ where });
-    if (existing) {
-      if (existing.payload_hash !== payloadHash) {
-        throw new ConflictException('معرّف البصمة المؤجلة مستخدم مع بيانات مختلفة');
-      }
-      if (existing.state !== 'completed' || !existing.result_json || typeof existing.result_json !== 'object' || Array.isArray(existing.result_json)) {
-        throw new BadRequestException('مزامنة هذه البصمة ما زالت قيد التنفيذ، أعد المحاولة بعد لحظات');
-      }
-      return { ...(existing.result_json as Record<string, unknown>), replayed: true };
-    }
-
-    const reservation = await this.prisma.mobile_offline_attendance_sync.create({
-      data: {
-        user_id: user.sub,
-        offline_id: dto.offlineId,
-        payload_hash: payloadHash,
-        captured_at_device: clock.capturedAt,
-        captured_timezone: dto.timezone,
-        received_at_server: clock.receivedAt,
-        state: 'pending',
-      },
-    });
-
-    try {
-      const result = await this.mobilePunch(
-        user,
-        { lat: dto.lat, long: dto.long, photo: dto.photo },
-        { actionDate: clock.actionDate, time: clock.time },
-      );
-      const response = {
-        ...result,
-        offlineId: dto.offlineId,
-        capturedAtDevice: clock.capturedAt.toISOString(),
-        receivedAtServer: clock.receivedAt.toISOString(),
-        requiresReview: true,
-        replayed: false,
-      };
-      await this.prisma.mobile_offline_attendance_sync.update({
-        where: { id: reservation.id },
-        data: {
-          attendance_id: result.id,
-          result_json: response as Prisma.InputJsonValue,
-          state: 'completed',
-          completed_at: clock.receivedAt,
-        },
-      });
-      return response;
-    } catch (error) {
-      await this.prisma.mobile_offline_attendance_sync.delete({ where: { id: reservation.id } });
-      throw error;
-    }
-  }
-
-  private async manualEmployeeScope(user: JwtUser, requestedBranch?: string) {
-    const requested = requestedBranch && requestedBranch !== 'all' ? Number(requestedBranch) : undefined;
-    if (requestedBranch && requestedBranch !== 'all' && (!Number.isInteger(requested) || Number(requested) <= 0)) {
-      throw new BadRequestException('الفرع المحدد غير صحيح');
-    }
-
-    if (user.level === 1) {
-      return {
-        branchId: requested,
-        where: requested ? ({ branch_id_fk: requested } satisfies Prisma.employeesWhereInput) : {},
-      };
-    }
-
-    const branchId = Number(user.branch ?? 0);
-    if (!Number.isInteger(branchId) || branchId <= 0) {
-      throw new ForbiddenException('لا يوجد فرع مرتبط بحسابك');
-    }
-    if (requested && requested !== branchId) {
-      throw new ForbiddenException('لا يمكنك تسجيل حضور موظف من فرع آخر');
-    }
-
-    if (user.level === 2) {
-      if (!user.emp_code) throw new ForbiddenException('لا يوجد موظف مرتبط بحسابك');
-      return {
-        branchId,
-        where: {
-          branch_id_fk: branchId,
-          OR: [{ id: user.emp_code }, { manger: String(user.emp_code) }],
-        } satisfies Prisma.employeesWhereInput,
-      };
-    }
-
-    return {
-      branchId,
-      where: { branch_id_fk: branchId } satisfies Prisma.employeesWhereInput,
-    };
-  }
-
-  async manualOptions(user: JwtUser, requestedBranch?: string) {
-    const scope = await this.manualEmployeeScope(user, requestedBranch);
-    const employees = await this.prisma.employees.findMany({
-      where: {
-        ...scope.where,
-        employee_type: 1,
-        AND: [{ OR: [{ leave_emp: null }, { leave_emp: 0 }] }],
-      },
-      select: {
-        id: true,
-        emp_code: true,
-        employee: true,
-        branch_id_fk: true,
-        edara_n: true,
-        qsm_n: true,
-      },
-      orderBy: [{ employee: 'asc' }, { emp_code: 'asc' }],
-    });
-    return {
-      branchId: scope.branchId ?? null,
-      branchLocked: user.level !== 1,
-      employees: employees.map((employee) => ({
-        id: employee.id,
-        empCode: employee.emp_code,
-        name: employee.employee,
-        branchId: employee.branch_id_fk,
-        department: employee.edara_n,
-        section: employee.qsm_n,
-      })),
-    };
-  }
-
-  async manualCheckForUser(body: CheckPunchDto, user: JwtUser) {
-    const options = await this.manualOptions(user, body.branchId);
-    const code = parseEmployeeCode(body.empCode);
-    const employee = options.employees.find((item) => item.empCode === code);
-    if (!employee) throw new ForbiddenException('الموظف غير تابع للفرع أو خارج نطاق صلاحياتك');
-    return this.manualCheck(body, user.sub, options.branchId ?? employee.branchId ?? undefined);
-  }
-
-  async manualCheck(
+  async recordPunch(
     body: CheckPunchDto,
     userId = 1,
-    branchIdOverride?: number,
-    capturedClock?: CapturedAttendanceClock,
-    scheduleBranchScope?: number,
+    date = cairoDateString(),
+    db: AttendanceDb = this.prisma,
   ) {
     const code = parseEmployeeCode(body.empCode);
-    if (this.punchLocks.has(code)) {
-      throw new BadRequestException('يوجد طلب بصمة آخر قيد التنفيذ، حاول مرة أخرى بعد لحظات');
-    }
-    this.punchLocks.add(code);
-    const requestId = `basma_${randomUUID()}`;
-    try {
-      // Keep the legacy MySQL named lock and the main/history writes on one pinned
-      // Prisma connection. The in-process Set remains a cheap first line of defence.
-      return await this.prisma.$transaction(async (tx) => {
-        const lockName = `basma_${createHash('sha1').update(String(code)).digest('hex')}`;
-        const lockRows = await tx.$queryRaw<Array<{ acquired: number | bigint | null }>>(
-          Prisma.sql`SELECT GET_LOCK(${lockName}, 5) AS acquired`,
-        );
-        if (Number(lockRows[0]?.acquired ?? 0) !== 1) {
-          this.logPunchDecision(requestId, code, branchIdOverride, 'lock_timeout');
-          throw new BadRequestException('يوجد طلب بصمة آخر قيد التنفيذ، حاول مرة أخرى بعد لحظات');
-        }
-        try {
-          return await this.performCheck(
-            body,
-            userId,
-            branchIdOverride,
-            code,
-            tx,
-            requestId,
-            capturedClock,
-            scheduleBranchScope,
-          );
-        } finally {
-          await tx.$queryRaw(Prisma.sql`SELECT RELEASE_LOCK(${lockName})`);
-        }
-      }, { maxWait: 10_000, timeout: 20_000 });
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'تعذر تسجيل البصمة';
-      this.logPunchDecision(requestId, code, branchIdOverride, 'error', { errorMessage });
-      if (error instanceof HttpException) throw error;
-      this.logger.error(`BASMA_UNEXPECTED ${JSON.stringify({ request_id: requestId, member_code: String(code), branch_id: branchIdOverride ?? 0 })}`,
-        error instanceof Error ? error.stack : undefined);
-      throw new InternalServerErrorException('تعذر تسجيل البصمة الآن، حاول مرة أخرى');
-    } finally {
-      this.punchLocks.delete(code);
-    }
-  }
 
-  private logPunchDecision(
-    requestId: string,
-    code: number,
-    branchId: number | undefined,
-    status: string,
-    context: { detectedAction?: string; hodoorId?: number; errorMessage?: string } = {},
-  ) {
-    // Deliberately exclude coordinates and image paths from logs.
-    this.logger.log(`BASMA_DECISION ${JSON.stringify({
-      request_id: requestId,
-      member_code: String(code),
-      branch_id: branchId ?? 0,
-      status,
-      ...(context.detectedAction ? { detected_action: context.detectedAction } : {}),
-      ...(context.hodoorId ? { hodoor_id: context.hodoorId } : {}),
-      ...(context.errorMessage ? { error_message: context.errorMessage } : {}),
-    })}`);
-  }
-
-  private async performCheck(
-    body: CheckPunchDto,
-    userId: number,
-    branchIdOverride: number | undefined,
-    code: number,
-    db: Prisma.TransactionClient = this.prisma,
-    requestId = `basma_${randomUUID()}`,
-    capturedClock?: CapturedAttendanceClock,
-    scheduleBranchScope?: number,
-  ) {
-    const employeeSelect = { id: true, emp_code: true, branch_id_fk: true, emp_sign: true } as const;
-    let emp = await db.employees.findFirst({ where: { emp_code: code }, select: employeeSelect });
+    let emp = await db.employees.findFirst({ where: { emp_code: code } });
     if (!emp) {
-      emp = await db.employees.findFirst({ where: { id: code }, select: employeeSelect });
+      emp = await db.employees.findFirst({ where: { id: code } });
     }
-    if (!emp) throw new NotFoundException('الموظف غير موجود');
+    if (!emp) throw new NotFoundException("الموظف غير موجود");
 
     // --- channel gate (attendance_channels) ---
-    const channel = body.channel ?? 'app';
-    const channels = await this.enabledChannels();
+    const channel = body.channel ?? "app";
+    const channels = await this.enabledChannels(db);
     if (channels.size > 0 && !channels.has(channel)) {
-      throw new BadRequestException('قناة التسجيل غير مفعّلة');
+      throw new BadRequestException("قناة التسجيل غير مفعّلة");
     }
-    const tasgelType = channel === 'device' ? 'automatic' : 'manual';
-    const photoPath = body.photo?.trim() || DEFAULT_ATTENDANCE_PHOTO;
+    const tasgelType = channel === "device" ? "automatic" : "manual";
 
-    // Resolve the shift window only from the new employee-to-shift assignments.
+    const dwam = await db.hr_emp_dwam.findFirst({ where: { emp_id: emp.id } });
+
+    // Resolve the shift window. Prefer a tbl_hdodr_setting linked via the employee's
+    // dwam assignment; otherwise fall back to hr_emp_dwam attend/leave times.
     type ShiftRow = {
       id: number;
       title: string | null;
@@ -852,328 +477,85 @@ export class AttendanceService {
       ensraf_to_time: string | null;
       ensraf_khasm_from: string | null;
     };
-    const clockBranchId = branchIdOverride ?? emp.branch_id_fk ?? 0;
-    const assignmentBranchScope = scheduleBranchScope ?? clockBranchId;
-    const assignmentMatchesScheduleScope = (branchId: string | null, scope: number) => {
-      const assignedBranch = String(branchId ?? '').trim().toLowerCase();
-      if (scope === 0) return assignedBranch === 'all';
-      return assignedBranch === 'all' || Number(assignedBranch) === scope;
-    };
-    let mainShifts: ShiftRow[] = [];
+    let shift: ShiftRow | null = await db.tbl_hdodr_setting.findFirst({
+      where: dwam?.always_id_fk ? { id: dwam.always_id_fk } : { id: -1 },
+    });
+    if (!shift && dwam) {
+      // Synthesize a window from hr_emp_dwam so the gate still functions.
+      shift = {
+        id: 0,
+        title: null,
+        hdoor_from_time: dwam.start_enter || dwam.attend_time,
+        hdoor_to_time: dwam.end_enter || dwam.attend_time,
+        hdoor_khasm_from: dwam.attend_time,
+        ensraf_from_time: dwam.start_out || dwam.leave_time,
+        ensraf_to_time: dwam.end_out || dwam.leave_time,
+        ensraf_khasm_from: dwam.leave_time,
+      };
+    }
+    if (!shift) {
+      throw new BadRequestException("خارج إعدادات الدوام الأن");
+    }
 
-    const explicitTime = capturedClock?.time ?? (body.type === 'out' ? body.checkOut : body.checkIn);
-    const punchMin = explicitTime ? parseTimeToMinutes(explicitTime) : nowMinutes();
+    const win = buildShiftWindow(shift);
+
+    const explicitTime = body.type === "out" ? body.checkOut : body.checkIn;
+    const punchMin = explicitTime
+      ? parseTimeToMinutes(explicitTime)
+      : nowMinutes();
     const currentTimeStr = formatMinutesAsTime(punchMin);
 
-    if (!explicitTime) {
-      const last = await db.tbl_hdoor_emps_history.findFirst({
-        where: { member_code: code },
-        orderBy: { hodoor_id: 'desc' },
-      });
-      if (last?.action_date && last.action_time) {
-        const lastDate = last.action_date.slice(0, 10);
-        const now = new Date();
-        const lastAt = new Date(`${lastDate}T00:00:00`);
-        lastAt.setMinutes(parseTimeToMinutes(last.action_time));
-        const diffSeconds = Math.floor((now.getTime() - lastAt.getTime()) / 1000);
-        if (diffSeconds >= 0 && diffSeconds < 45) {
-          this.logPunchDecision(requestId, code, branchIdOverride, 'duplicate_45_seconds');
-          throw new BadRequestException('تم استلام بصمتك بالفعل، برجاء الانتظار قليلاً قبل إعادة المحاولة');
-        }
-      }
-    }
-
-    // --- auto-detect direction across main/replacement/extra shift windows ---
+    // --- auto-detect direction within the dwam window (port of add_hdor_ensraf step 2) ---
     const inWindow = (val: number, from: number, to: number) => {
       // window may straddle midnight (to > 1440); also test val+1440.
-      return (val >= from && val <= to) || (val + 1440 >= from && val + 1440 <= to);
+      return (
+        (val >= from && val <= to) || (val + 1440 >= from && val + 1440 <= to)
+      );
     };
-    type ShiftCandidate = {
-      shift: ShiftRow;
-      recordDwamId: number;
-      date: string;
-      source: 'main' | 'replacement' | 'extra';
-    };
+    const ensrafMaxLimit = win.ensrafFrom + 60; // legacy: +1 hour grace on ensraf detection
 
-    const today = capturedClock?.actionDate ?? todayIso();
-    // Optional chaining keeps older test fixtures and database clients compatible until
-    // the migration has been applied; production Prisma clients always expose this delegate.
-    const weeklySettings = await (db as any).attendance_weekly_schedule_settings?.findUnique({ where: { id: 1 } });
-    if (weeklySettings?.enabled) {
-      const weekday = (new Date(`${today}T12:00:00Z`).getUTCDay() + 1) % 7;
-      const weeklySchedule = await db.employee_weekly_schedules.findFirst({
-        where: {
-          employee_id: emp.id,
-          status: 'active',
-          effective_from: { lte: today },
-          OR: [{ effective_to: null }, { effective_to: { gte: today } }],
-        },
-        orderBy: { effective_from: 'desc' },
-        include: { slots: { where: { weekday } } },
-      });
-      if (!weeklySchedule) throw new BadRequestException('لا يوجد جدول أسبوعي فعال لهذا الموظف');
-      const slot = weeklySchedule.slots[0];
-      if (slot && slot.shift_id != null) {
-        if (slot.branch_id !== assignmentBranchScope) throw new BadRequestException('الدوام المحدد ليس في فرع البصمة');
-        const shift = await db.tbl_hdodr_setting.findUnique({ where: { id: slot.shift_id } });
-        if (!shift) throw new BadRequestException('الدوام المحدد غير موجود');
-        mainShifts = [shift];
-      } else {
-        mainShifts = [];
-      }
-    } else {
-      const assignments = await db.tbl_hdoor_dawms_emps.findMany({
-        where: { OR: [{ emp_code_fk: code }, { emp_id_fk: emp.id }] },
-        orderBy: { id: 'asc' },
-      });
-      const assignedIds = [...new Set(assignments
-        .filter((row) => assignmentMatchesScheduleScope(row.branch_id_fk, assignmentBranchScope))
-        .map((row) => row.dwam_id_fk)
-        .filter((id): id is number => Boolean(id)))];
-      mainShifts = assignedIds.length
-        ? await db.tbl_hdodr_setting.findMany({ where: { id: { in: assignedIds } } })
-        : [];
-    }
-    const yesterdayValue = new Date(today + 'T12:00:00');
-    yesterdayValue.setDate(yesterdayValue.getDate() - 1);
-    const yesterday = yesterdayValue.toISOString().slice(0, 10);
-    const toDmy = (iso: string) => {
-      const [year, month, day] = iso.split('-');
-      return `${day}/${month}/${year}`;
-    };
-
-    const buildCandidates = async (date: string): Promise<ShiftCandidate[]> => {
-      const special = await db.tbl_emps_shef_edafi.findMany({
-        where: { emp_code_fk: code, sheft_date: { in: [date, toDmy(date)] } },
-        orderBy: { id: 'desc' },
-      });
-      const filtered = special.filter((row) => {
-        if (!clockBranchId || !row.branch_id_fk || row.branch_id_fk === clockBranchId) return true;
-        return false;
-      });
-      const replacement = filtered.find((row) => row.ttype === 1);
-      const extras = filtered.filter((row) => row.ttype === 2);
-      const ids = [
-        ...(replacement ? [replacement.dwam_id_fk] : []),
-        ...extras.map((row) => row.dwam_id_fk),
-      ];
-      const specialShifts = ids.length
-        ? await db.tbl_hdodr_setting.findMany({ where: { id: { in: ids } } })
-        : [];
-      const byId = new Map(specialShifts.map((row) => [row.id, row]));
-      const candidates: ShiftCandidate[] = [];
-      if (replacement) {
-        const row = byId.get(replacement.dwam_id_fk);
-        if (row) candidates.push({ shift: row, recordDwamId: row.id, date, source: 'replacement' });
-      } else {
-        for (const normal of mainShifts) {
-          candidates.push({
-            shift: normal,
-            recordDwamId: normal.id,
-            date,
-            source: 'main',
-          });
-        }
-      }
-      for (const extra of extras) {
-        const row = byId.get(extra.dwam_id_fk);
-        if (row && !candidates.some((item) => item.recordDwamId === row.id)) {
-          candidates.push({ shift: row, recordDwamId: row.id, date, source: 'extra' });
-        }
-      }
-      return candidates;
-    };
-
-    const [todayCandidates, yesterdayCandidates] = await Promise.all([
-      buildCandidates(today),
-      buildCandidates(yesterday),
-    ]);
-    const allCandidates = [...todayCandidates, ...yesterdayCandidates];
-    if (!allCandidates.length) {
-      if (weeklySettings?.enabled) throw new BadRequestException('اليوم المحدد راحة أسبوعية ولا يوجد شيفت إضافي');
-      throw new BadRequestException('لا يوجد دوام مسجل لهذا الموظف في موقع البصمة');
-    }
-    for (const candidate of allCandidates) {
-      assertShiftTimingIsComplete(candidate.shift);
-    }
-    const recentRows = await db.tbl_hdoor_emps.findMany({
-      where: {
-        member_code: code,
-        action_date_s: {
-          in: [...legacyDateMatchValues(today), ...legacyDateMatchValues(yesterday)],
-        },
-      },
-      orderBy: { hodoor_id: 'desc' },
-    });
-    const openRow = recentRows.find((row) => row.hdoor_time && !row.ensraf_time);
-    let candidate: ShiftCandidate | undefined;
-    let detected: 'in' | 'out' | null = null;
-
-    // An open attendance row always takes priority. It is either closed against
-    // its own shift or blocks a new arrival; this prevents concurrent open rows.
-    if (openRow) {
-      const openCandidates: Array<{
-        candidate: ShiftCandidate;
-        window: ShiftWindow;
-        punchForShift: number;
-        elapsed: number;
-      }> = [];
-      for (const row of recentRows.filter((item) => item.hdoor_time && !item.ensraf_time)) {
-        let openCandidate = allCandidates.find(
-          (item) =>
-            item.recordDwamId === row.dwam_id_fk &&
-            legacyDateMatchValues(item.date).includes(row.action_date_s ?? ''),
-        );
-        if (!openCandidate) {
-          const savedShift = await db.tbl_hdodr_setting.findUnique({ where: { id: row.dwam_id_fk } });
-          if (savedShift) {
-            const savedDate = row.action_date_s;
-            openCandidate = {
-              shift: savedShift,
-              recordDwamId: savedShift.id,
-              date: savedDate && /^\d{4}-\d{2}-\d{2}/.test(savedDate)
-                ? savedDate.slice(0, 10)
-                : yesterday,
-              source: row.sheft_type === 2 ? 'extra' : row.sheft_type === 1 ? 'replacement' : 'main',
-            };
-          }
-        }
-        if (!openCandidate) continue;
-        assertShiftTimingIsComplete(openCandidate.shift);
-        const window = buildShiftWindow(openCandidate.shift);
-        let punchForShift = punchMin;
-        if (openCandidate.date === yesterday || punchForShift < window.hdoorFrom) punchForShift += 1440;
-        let elapsed = punchForShift - parseTimeToMinutes(row.hdoor_time ?? '');
-        if (elapsed < 0) elapsed += 1440;
-        openCandidates.push({ candidate: openCandidate, window, punchForShift, elapsed });
-      }
-
-      const hasNewArrivalWaiting = todayCandidates.some((item) => {
-        const window = buildShiftWindow(item.shift);
-        return inWindow(punchMin, window.hdoorFrom - 60, window.hdoorTo);
-      });
-      const closeable = openCandidates.filter(({ window, punchForShift, elapsed }) => {
-        const withinCheckoutAllowance = punchForShift >= window.hdoorFrom && punchForShift <= window.ensrafTo + 8 * 60;
-        const staleWithinOneDay =
-          elapsed >= 60 && elapsed <= 24 * 60 && punchForShift > window.ensrafTo + 8 * 60 && !hasNewArrivalWaiting;
-        return withinCheckoutAllowance || staleWithinOneDay;
-      });
-      if (closeable.length) {
-        const selected = closeable.sort(
-          (a, b) =>
-            Math.abs(a.punchForShift - a.window.ensrafKhasm) - Math.abs(b.punchForShift - b.window.ensrafKhasm),
-        )[0];
-        candidate = selected.candidate;
-        detected = 'out';
-      } else {
-        this.logPunchDecision(requestId, code, branchIdOverride, 'rejected', {
-          errorMessage: 'لديك حضور مفتوح يجب تسجيل انصرافه أو مراجعة الإدارة أولاً',
-        });
-        throw new BadRequestException('لديك حضور مفتوح يجب تسجيل انصرافه أو مراجعة الإدارة أولاً');
-      }
+    let detected: "in" | "out" | null = null;
+    if (body.type) {
+      detected = body.type;
+    } else if (inWindow(punchMin, win.hdoorFrom, win.hdoorTo)) {
+      detected = "in";
+    } else if (inWindow(punchMin, win.ensrafFrom, ensrafMaxLimit)) {
+      detected = "out";
     }
 
-    if (!detected) {
-      const pool = body.type === 'out' ? allCandidates : todayCandidates;
-      const options = pool
-        .map((item) => ({ item, window: buildShiftWindow(item.shift) }))
-        .filter(({ window }) => {
-          if (body.type === 'in') return true;
-          if (body.type === 'out') {
-            return inWindow(punchMin, window.ensrafFrom, window.ensrafTo + 8 * 60);
-          }
-          return inWindow(punchMin, window.hdoorFrom - 60, window.hdoorTo);
-        })
-        .sort((a, b) => {
-          const aRef = body.type === 'out' ? a.window.ensrafKhasm : a.window.hdoorKhasm;
-          const bRef = body.type === 'out' ? b.window.ensrafKhasm : b.window.hdoorKhasm;
-          return Math.abs(punchMin - aRef) - Math.abs(punchMin - bRef);
-        });
-      if (options.length) {
-        candidate = options[0].item;
-        detected = body.type ?? 'in';
-      }
-    }
-
-    // Legacy mobile allows a checkout-only row when the arrival punch was missed.
-    if (!detected && !body.type) {
-      const departure = allCandidates
-        .map((item) => ({ item, window: buildShiftWindow(item.shift) }))
-        .filter(({ window }) => inWindow(punchMin, window.hdoorFrom + 60, window.ensrafTo + 8 * 60))
-        .sort((a, b) => Math.abs(punchMin - a.window.ensrafKhasm) - Math.abs(punchMin - b.window.ensrafKhasm))[0];
-      if (departure) {
-        candidate = departure.item;
-        detected = 'out';
-      }
-    }
-
-    candidate ??= todayCandidates[0];
-    const shift = candidate.shift;
-    const win = buildShiftWindow(shift);
-    const date = candidate.date;
     const matches = legacyDateMatchValues(date);
     const existing = await db.tbl_hdoor_emps.findFirst({
-      where: {
-        member_code: code,
-        action_date_s: { in: matches },
-        dwam_id_fk: candidate.recordDwamId,
-      },
-      orderBy: { hodoor_id: 'desc' },
+      where: { employee_code: code, action_date_s: { in: matches } },
     });
 
-    if (!detected) {
-      this.logPunchDecision(requestId, code, branchIdOverride, 'rejected', {
-        errorMessage: 'خارج نطاق أي دوام متاح حالياً للموظف',
-      });
-      throw new BadRequestException('خارج نطاق أي دوام متاح حالياً للموظف');
+    // Late-departure rule: a punch ≥60 min after an open check-in counts as ensraf
+    // even outside the detected window (port of add_hdor_ensraf step 3).
+    if (!detected && existing?.hdoor_time && !existing.ensraf_time) {
+      const inMin = parseTimeToMinutes(existing.hdoor_time);
+      let delta = punchMin - inMin;
+      if (delta < 0) delta += 1440;
+      if (delta >= 60) detected = "out";
     }
 
-    if (detected === 'out') {
-      let punchForShift = punchMin;
-      if (punchForShift < win.hdoorFrom) punchForShift += 1440;
-      if (punchForShift < win.ensrafFrom) {
-        const permissionDates = [...new Set([date, today])];
-        const permissions = await db.hr_all_ozonat_orders.findMany({
-          where: { emp_code_fk: code, suspend: { in: [1, 4] } },
-          orderBy: { id: 'desc' },
-        });
-        const approved = permissions.some((permission) => {
-          const rawDate = permission.ezn_date_ar || permission.ezn_date || '';
-          let permissionDate = rawDate.slice(0, 10);
-          if (/^\d{8,10}$/.test(rawDate)) {
-            permissionDate = new Date(Number(rawDate) * 1000).toISOString().slice(0, 10);
-          } else if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(rawDate)) {
-            const [d, m, y] = rawDate.split('/');
-            permissionDate = `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
-          }
-          if (!permissionDates.includes(permissionDate) || !permission.from_hour || !permission.to_hour) return false;
-          const from = parseTimeToMinutes(permission.from_hour);
-          let to = parseTimeToMinutes(permission.to_hour);
-          let at = punchMin;
-          if (to < from) to += 1440;
-          if (at < from && to > 1440) at += 1440;
-          return at >= from && at <= to;
-        });
-        if (!approved) {
-          const remaining = Math.max(0, Math.ceil(win.ensrafFrom - punchForShift));
-          throw new BadRequestException(
-            `لا يمكن تسجيل الانصراف الآن بدون إذن معتمد؛ ما زال متبقيًا على موعد بداية الانصراف ${remaining} دقيقة`,
-          );
-        }
-      }
+    if (!detected) {
+      throw new BadRequestException("خارج نطاق أي دوام متاح حالياً للموظف");
     }
 
     // --- duplicate guards (step 4) ---
     if (existing) {
-      if (detected === 'in' && existing.hdoor_time) {
-        throw new BadRequestException('لقد سجلت حضورك بالفعل، انتظر ساعة على الأقل لتسجيل انصراف');
+      if (detected === "in" && existing.hdoor_time) {
+        throw new BadRequestException(
+          "لقد سجلت حضورك بالفعل، انتظر ساعة على الأقل لتسجيل انصراف",
+        );
       }
-      if (detected === 'out' && existing.ensraf_time) {
-        throw new BadRequestException('لقد قمت بتسجيل الانصراف مسبقاً لهذا اليوم');
+      if (detected === "out" && existing.ensraf_time) {
+        throw new BadRequestException(
+          "لقد قمت بتسجيل الانصراف مسبقاً لهذا اليوم",
+        );
       }
     }
 
-    const rules = await this.getRulesMap();
+    const rules = await this.getRulesMap(db);
     const expectedHdoor = formatMinutesAsTime(win.hdoorFrom);
     const expectedEnsraf = formatMinutesAsTime(win.ensrafKhasm % 1440);
 
@@ -1181,21 +563,21 @@ export class AttendanceService {
     if (!row) {
       row = await db.tbl_hdoor_emps.create({
         data: {
-          member_code: code,
-          member_id: emp.id,
+          employee_code: code,
+          employee_id: emp.id,
           action_date_s: date,
           action_date: date,
-          for_month: Number(date.slice(5, 7)),
-          for_year: Number(date.slice(0, 4)),
-          sheft_type: candidate.source === 'replacement' ? 1 : candidate.source === 'extra' ? 2 : 0,
-          branch_id_fk: branchIdOverride ?? emp.branch_id_fk ?? 0,
-          dwam_id_fk: candidate.recordDwamId,
+          for_month: dateOnlyParts(date).month,
+          for_year: dateOnlyParts(date).year,
+          sheft_type: dwam?.always_id_fk ?? 0,
+          branch_id_fk: emp.branch_id_fk ?? 0,
+          dwam_id_fk: shift.id || dwam?.id || 0,
           tasgel_type: tasgelType,
         },
       });
     }
 
-    if (detected === 'out') {
+    if (detected === "out") {
       // early-leave vs ensraf_khasm (calculate_early_minutes / sum_min_mobaker)
       const earlyRaw = sumMinMobaker(expectedEnsraf, currentTimeStr);
       const mobakerMin = this.applyEarlyRule(earlyRaw, rules);
@@ -1204,35 +586,34 @@ export class AttendanceService {
         win.ensrafKhasm,
         rules,
       );
-      const checkoutUpdate = await db.tbl_hdoor_emps.updateMany({
-        where: { hodoor_id: row.hodoor_id, ensraf_time: null },
+      await db.tbl_hdoor_emps.update({
+        where: { hodoor_id: row.hodoor_id },
         data: {
           ensraf_time: currentTimeStr,
           dwam_ensraf_time: expectedEnsraf,
           mobaker_min: mobakerMin,
           num_min: overtime,
           ensraf_user_id: userId,
-          ensraf_lat: body.lat ?? row.ensraf_lat,
+          ensraf_lat: body.long != null ? body.lat : row.ensraf_lat,
           ensraf_long: body.long ?? row.ensraf_long,
-          ensraf_img_path: photoPath,
-          ttype: 'ensraf',
+          ensraf_img_path: body.photo ?? row.ensraf_img_path,
+          ttype: "ensraf",
           tasgel_type: tasgelType,
         },
       });
-      if (checkoutUpdate.count !== 1) {
-        throw new BadRequestException('لقد قمت بتسجيل الانصراف مسبقاً لهذا اليوم');
-      }
-      await db.tbl_hdoor_emps_history.create({ data: {
-        member_code: code, member_id: emp.id, action_date: today, action_date_s: today,
-        action_time: currentTimeStr, hdoor_ensraf_time: currentTimeStr, ttype: 'ensraf',
-        setting_time: expectedEnsraf, img_path: photoPath, m_lat: body.lat, m_long: body.long,
-      } });
-      this.logPunchDecision(requestId, code, branchIdOverride, 'success', { detectedAction: 'ensraf', hodoorId: row.hodoor_id });
-      return { id: row.hodoor_id, type: 'out', mobakerMin, overtimeMin: overtime };
+      return {
+        id: row.hodoor_id,
+        type: "out",
+        mobakerMin,
+        overtimeMin: overtime,
+      };
     }
 
     // check-in: late vs khasm (calculate_late_minutes), then late-rule grace
-    const lateRaw = sumMinLate(formatMinutesAsTime(win.hdoorKhasm % 1440), currentTimeStr);
+    const lateRaw = sumMinLate(
+      formatMinutesAsTime(win.hdoorKhasm % 1440),
+      currentTimeStr,
+    );
     const lateMin = this.applyLateRule(lateRaw, rules);
     await db.tbl_hdoor_emps.update({
       where: { hodoor_id: row.hodoor_id },
@@ -1243,19 +624,12 @@ export class AttendanceService {
         hdoor_user_id: userId,
         hdoor_lat: body.lat ?? row.hdoor_lat,
         hdoor_long: body.long ?? row.hdoor_long,
-        hdoor_img_path: photoPath,
-        ttype: 'hdoor',
+        hdoor_img_path: body.photo ?? row.hdoor_img_path,
+        ttype: "hdoor",
         tasgel_type: tasgelType,
       },
     });
-    await db.tbl_hdoor_emps_history.create({ data: {
-      member_code: code, member_id: emp.id, action_date: today, action_date_s: today,
-      action_time: currentTimeStr, hdoor_ensraf_time: currentTimeStr, ttype: 'hdoor',
-      setting_time: formatMinutesAsTime(win.hdoorKhasm % 1440), img_path: photoPath,
-      m_lat: body.lat, m_long: body.long,
-    } });
-    this.logPunchDecision(requestId, code, branchIdOverride, 'success', { detectedAction: 'hdoor', hodoorId: row.hodoor_id });
-    return { id: row.hodoor_id, type: 'in', lateMin };
+    return { id: row.hodoor_id, type: "in", lateMin };
   }
 
   // -------------------------------------------------------------------------
@@ -1269,7 +643,7 @@ export class AttendanceService {
     const [rows, total] = await Promise.all([
       this.prisma.tbl_hdodr_setting.findMany({
         where,
-        orderBy: { id: 'desc' },
+        orderBy: { id: "desc" },
         skip: q.skip,
         take: q.take,
       }),
@@ -1307,37 +681,49 @@ export class AttendanceService {
 
   /** Normalise a free-form time to legacy "h:i A" (date("h:i A", strtotime(...))). */
   private toLegacyTime(raw: string, fallback: string): string {
-    const v = (raw ?? '').trim();
+    const v = (raw ?? "").trim();
     if (!v) return fallback;
     return formatMinutesAsTime(parseTimeToMinutes(v));
   }
 
   private shiftData(dto: UpsertShiftDto) {
     if (dto.hdoorFromTime && dto.hdoorToTime) {
-      assertTimeOrder(dto.hdoorFromTime, dto.hdoorToTime, 'نافذة الحضور: البداية يجب أن تسبق النهاية');
+      assertTimeOrder(
+        dto.hdoorFromTime,
+        dto.hdoorToTime,
+        "نافذة الحضور: البداية يجب أن تسبق النهاية",
+      );
     }
     if (dto.ensrafFromTime && dto.ensrafToTime) {
-      assertTimeOrder(dto.ensrafFromTime, dto.ensrafToTime, 'نافذة الانصراف: البداية يجب أن تسبق النهاية');
+      assertTimeOrder(
+        dto.ensrafFromTime,
+        dto.ensrafToTime,
+        "نافذة الانصراف: البداية يجب أن تسبق النهاية",
+      );
     }
     return {
-      title: dto.title?.trim() || 'الدوام الصباحي',
-      hdoor_from_time: this.toLegacyTime(dto.hdoorFromTime, '08:00 AM'),
-      hdoor_to_time: this.toLegacyTime(dto.hdoorToTime, '09:00 AM'),
-      hdoor_khasm_from: this.toLegacyTime(dto.hdoorKhasmFrom, '08:15 AM'),
-      ensraf_from_time: this.toLegacyTime(dto.ensrafFromTime, '11:00 AM'),
-      ensraf_to_time: this.toLegacyTime(dto.ensrafToTime, '06:00 PM'),
-      ensraf_khasm_from: this.toLegacyTime(dto.ensrafKhasmFrom, '12:40 PM'),
+      title: dto.title?.trim() || "الدوام الصباحي",
+      hdoor_from_time: this.toLegacyTime(dto.hdoorFromTime, "08:00 AM"),
+      hdoor_to_time: this.toLegacyTime(dto.hdoorToTime, "09:00 AM"),
+      hdoor_khasm_from: this.toLegacyTime(dto.hdoorKhasmFrom, "08:15 AM"),
+      ensraf_from_time: this.toLegacyTime(dto.ensrafFromTime, "11:00 AM"),
+      ensraf_to_time: this.toLegacyTime(dto.ensrafToTime, "06:00 PM"),
+      ensraf_khasm_from: this.toLegacyTime(dto.ensrafKhasmFrom, "12:40 PM"),
     };
   }
 
   async createShift(dto: UpsertShiftDto) {
-    const row = await this.prisma.tbl_hdodr_setting.create({ data: this.shiftData(dto) });
+    const row = await this.prisma.tbl_hdodr_setting.create({
+      data: this.shiftData(dto),
+    });
     return this.mapShift(row);
   }
 
   async updateShift(id: number, dto: UpsertShiftDto) {
-    const exist = await this.prisma.tbl_hdodr_setting.findUnique({ where: { id } });
-    if (!exist) throw new NotFoundException('الوردية غير موجودة');
+    const exist = await this.prisma.tbl_hdodr_setting.findUnique({
+      where: { id },
+    });
+    if (!exist) throw new NotFoundException("الوردية غير موجودة");
     const row = await this.prisma.tbl_hdodr_setting.update({
       where: { id },
       data: this.shiftData(dto),
@@ -1346,8 +732,10 @@ export class AttendanceService {
   }
 
   async removeShift(id: number) {
-    const row = await this.prisma.tbl_hdodr_setting.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('الوردية غير موجودة');
+    const row = await this.prisma.tbl_hdodr_setting.findUnique({
+      where: { id },
+    });
+    if (!row) throw new NotFoundException("الوردية غير موجودة");
     await this.prisma.tbl_hdodr_setting.delete({ where: { id } });
     return { id };
   }
@@ -1360,37 +748,6 @@ export class AttendanceService {
     const channels: Record<string, boolean> = {};
     for (const r of rows) channels[r.key] = r.enabled === 1;
     return { channels };
-  }
-
-  async getWeeklyScheduleRollout() {
-    const settings = await this.prisma.attendance_weekly_schedule_settings.findUnique({ where: { id: 1 } });
-    return { enabled: settings?.enabled ?? false };
-  }
-
-  async activateWeeklyScheduleRollout() {
-    const today = todayIso();
-    const employees = await this.prisma.employees.findMany({ where: { employee_type: 1 }, select: { id: true } });
-    const schedules = await this.prisma.employee_weekly_schedules.findMany({
-      where: {
-        employee_id: { in: employees.map((employee) => employee.id) },
-        status: 'active',
-        effective_from: { lte: today },
-        OR: [{ effective_to: null }, { effective_to: { gte: today } }],
-      },
-      include: { slots: true },
-    });
-    const complete = new Set(schedules
-      .filter((schedule) => {
-        const days = new Set(schedule.slots.map((slot) => slot.weekday));
-        return days.size === 7 && [0, 1, 2, 3, 4, 5, 6].every((day) => days.has(day));
-      })
-      .map((schedule) => schedule.employee_id));
-    const missingEmployeeIds = employees.filter((employee) => !complete.has(employee.id)).map((employee) => employee.id);
-    if (missingEmployeeIds.length) {
-      throw new BadRequestException('لا يمكن تفعيل الجدول الأسبوعي قبل اكتمال جداول جميع الموظفين');
-    }
-    await this.prisma.attendance_weekly_schedule_settings.upsert({ where: { id: 1 }, create: { id: 1, enabled: true }, update: { enabled: true } });
-    return { enabled: true, employeeCount: employees.length };
   }
 
   async patchSettings(body: { channels?: Record<string, boolean> }) {
@@ -1417,67 +774,251 @@ export class AttendanceService {
     const [rows, total] = await Promise.all([
       this.prisma.attendance_devices.findMany({
         where,
-        orderBy: { id: 'desc' },
+        orderBy: { id: "desc" },
         skip: q.skip,
         take: q.take,
       }),
       this.prisma.attendance_devices.count({ where }),
     ]);
-    const branchIds = [...new Set(rows.map((r) => r.branch_id_fk).filter(Boolean))] as number[];
+    const branchIds = [
+      ...new Set(rows.map((r) => r.branch_id_fk).filter(Boolean)),
+    ] as number[];
     const branches = await this.prisma.tbl_branches.findMany({
       where: { branch_id: { in: branchIds } },
     });
-    const branchMap = new Map(branches.map((b) => [b.branch_id, b.branch_name]));
+    const branchMap = new Map(
+      branches.map((b) => [b.branch_id, b.branch_name]),
+    );
     const data = rows.map((r) => ({
       id: r.id,
       title: r.title ?? undefined,
       ip: r.ip ?? undefined,
-      branchTitle: r.branch_id_fk ? (branchMap.get(r.branch_id_fk) ?? undefined) : undefined,
+      branchTitle: r.branch_id_fk
+        ? (branchMap.get(r.branch_id_fk) ?? undefined)
+        : undefined,
       lastSync: r.last_sync ?? undefined,
-      status: r.status ?? 'offline',
+      status: r.status ?? "offline",
+      ingestConfigured: !!r.credential_hash,
     }));
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async createDevice(body: { title?: string; ip?: string; branchId?: number }) {
+  async createDevice(body: CreateAttendanceDeviceDto) {
+    const ip = this.assertDeviceAddress(body.ip);
     const now = new Date().toISOString();
+    const ingestKey = createAttendanceDeviceKey();
     const row = await this.prisma.attendance_devices.create({
       data: {
-        title: body.title ?? '',
-        ip: body.ip ?? '',
+        title: body.title.trim(),
+        ip,
         branch_id_fk: body.branchId ?? null,
-        status: 'offline',
+        status: "offline",
         created_at: now,
         updated_at: now,
+        credential_hash: hashAttendanceDeviceKey(ingestKey),
+        credential_rotated_at: new Date(),
       },
     });
-    return { id: row.id };
+    return { id: row.id, ingestKey };
+  }
+
+  async rotateDeviceIngestKey(id: number) {
+    const row = await this.prisma.attendance_devices.findUnique({
+      where: { id },
+    });
+    if (!row) throw new NotFoundException("الجهاز غير موجود");
+    const ingestKey = createAttendanceDeviceKey();
+    await this.prisma.attendance_devices.update({
+      where: { id },
+      data: {
+        credential_hash: hashAttendanceDeviceKey(ingestKey),
+        credential_rotated_at: new Date(),
+        updated_at: new Date().toISOString(),
+      },
+    });
+    return { id, ingestKey };
+  }
+
+  async ingestDeviceEvents(
+    id: number,
+    suppliedKey: string | undefined,
+    payload: AttendanceDeviceEventBatchDto,
+  ) {
+    const device = await this.prisma.attendance_devices.findUnique({
+      where: { id },
+    });
+    if (
+      !device?.credential_hash ||
+      !suppliedKey ||
+      !verifyAttendanceDeviceKey(suppliedKey, device.credential_hash)
+    ) {
+      throw new UnauthorizedException("بيانات اعتماد جهاز الحضور غير صالحة");
+    }
+
+    let imported = 0;
+    let duplicates = 0;
+    let rejected = 0;
+    const importedInstants: Date[] = [];
+
+    for (const event of payload.events) {
+      const occurredAt = new Date(event.occurredAt);
+      const employeeCode = Number(event.empCode);
+      const payloadHash = createHash("sha256")
+        .update(
+          JSON.stringify({
+            eventId: event.eventId,
+            empCode: event.empCode,
+            occurredAt: occurredAt.toISOString(),
+            type: event.type,
+          }),
+        )
+        .digest("hex");
+
+      try {
+        const result = await this.prisma.$transaction(async (tx) => {
+          const existing = await tx.attendance_device_events.findUnique({
+            where: {
+              device_id_provider_event_id: {
+                device_id: id,
+                provider_event_id: event.eventId,
+              },
+            },
+          });
+          if (existing) return "duplicate" as const;
+
+          const ledger = await tx.attendance_device_events.create({
+            data: {
+              device_id: id,
+              provider_event_id: event.eventId,
+              employee_code: employeeCode,
+              occurred_at: occurredAt,
+              event_type: event.type,
+              payload_hash: payloadHash,
+            },
+          });
+          try {
+            if (employeeCode > 2_147_483_647) {
+              throw new BadRequestException("كود الموظف خارج النطاق");
+            }
+            if (occurredAt.getTime() > Date.now() + 5 * 60 * 1000) {
+              throw new BadRequestException("وقت حدث الجهاز في المستقبل");
+            }
+            const time = cairoTimeString(occurredAt);
+            const punch = await this.recordPunch(
+              {
+                empCode: event.empCode,
+                type: event.type,
+                checkIn: event.type === "in" ? time : undefined,
+                checkOut: event.type === "out" ? time : undefined,
+                channel: "device",
+              },
+              0,
+              cairoDateString(occurredAt),
+              tx,
+            );
+            await tx.attendance_device_events.update({
+              where: { id: ledger.id },
+              data: {
+                status: "processed",
+                attendance_record_id: punch.id,
+                processed_at: new Date(),
+              },
+            });
+            return "imported" as const;
+          } catch {
+            await tx.attendance_device_events.update({
+              where: { id: ledger.id },
+              data: {
+                status: "rejected",
+                error_code: "PUNCH_REJECTED",
+                processed_at: new Date(),
+              },
+            });
+            return "rejected" as const;
+          }
+        });
+        if (result === "duplicate") duplicates += 1;
+        if (result === "rejected") rejected += 1;
+        if (result === "imported") {
+          imported += 1;
+          importedInstants.push(occurredAt);
+        }
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === "P2002"
+        ) {
+          duplicates += 1;
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    if (importedInstants.length) {
+      const latestImported = importedInstants.reduce((latest, value) =>
+        value.getTime() > latest.getTime() ? value : latest,
+      );
+      const previous = device.last_sync ? new Date(device.last_sync) : null;
+      const lastSync =
+        previous &&
+        !Number.isNaN(previous.getTime()) &&
+        previous > latestImported
+          ? previous
+          : latestImported;
+      await this.prisma.attendance_devices.update({
+        where: { id },
+        data: {
+          last_sync: lastSync.toISOString(),
+          status: "online",
+          updated_at: new Date().toISOString(),
+        },
+      });
+    }
+
+    return { received: payload.events.length, imported, duplicates, rejected };
   }
 
   async removeDevice(id: number) {
-    const row = await this.prisma.attendance_devices.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('الجهاز غير موجود');
+    const row = await this.prisma.attendance_devices.findUnique({
+      where: { id },
+    });
+    if (!row) throw new NotFoundException("الجهاز غير موجود");
     await this.prisma.attendance_devices.delete({ where: { id } });
     return { id };
   }
 
-  async syncDevice(id: number) {
-    const row = await this.prisma.attendance_devices.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('الجهاز غير موجود');
+  private assertDeviceAddress(ip: string): string {
+    const allowed =
+      this.config.get<string[]>("attendance.deviceAllowedCidrs") ?? [];
+    return assertAllowedAttendanceDeviceAddress(ip.trim(), allowed);
+  }
+
+  async checkDeviceConnectivity(id: number) {
+    const row = await this.prisma.attendance_devices.findUnique({
+      where: { id },
+    });
+    if (!row) throw new NotFoundException("الجهاز غير موجود");
     if (!row.ip?.trim()) {
-      throw new BadRequestException('لا يمكن المزامنة — عنوان IP غير مُعرَّف');
+      throw new BadRequestException(
+        "لا يمكن فحص الاتصال — عنوان IP غير مُعرَّف",
+      );
     }
-    // Honest sync: attempt TCP reachability; only mark online when device responds.
+    const host = this.assertDeviceAddress(row.ip.trim());
+    // Connectivity only: this must never advance last_sync or a provider cursor.
     let reachable = false;
     try {
-      const net = await import('net');
+      const net = await import("net");
       reachable = await new Promise<boolean>((resolve) => {
-        const socket = net.createConnection({ host: row.ip!.trim(), port: 4370, timeout: 3000 }, () => {
-          socket.destroy();
-          resolve(true);
-        });
-        socket.on('error', () => resolve(false));
-        socket.on('timeout', () => {
+        const socket = net.createConnection(
+          { host, port: 4370, timeout: 3000 },
+          () => {
+            socket.destroy();
+            resolve(true);
+          },
+        );
+        socket.on("error", () => resolve(false));
+        socket.on("timeout", () => {
           socket.destroy();
           resolve(false);
         });
@@ -1486,135 +1027,123 @@ export class AttendanceService {
       reachable = false;
     }
     const now = new Date().toISOString();
-    const status = reachable ? 'online' : 'offline';
+    const status = reachable ? "online" : "offline";
     await this.prisma.attendance_devices.update({
       where: { id },
       data: {
-        last_sync: reachable ? now : row.last_sync,
         status,
         updated_at: now,
       },
     });
     if (!reachable) {
-      throw new BadRequestException('فشل الاتصال بجهاز البصمة — تحقق من IP والشبكة');
+      throw new BadRequestException(
+        "فشل اختبار الاتصال بجهاز البصمة — تحقق من IP والشبكة",
+      );
     }
-    return { id, lastSync: now, status };
+    return { id, checkedAt: now, status, importedEvents: 0 };
   }
 
-  async syncAllDevices() {
+  async checkAllDeviceConnectivity() {
     const devices = await this.prisma.attendance_devices.findMany();
-    let synced = 0;
+    let reachable = 0;
     let failed = 0;
     for (const d of devices) {
       try {
-        await this.syncDevice(d.id);
-        synced += 1;
+        await this.checkDeviceConnectivity(d.id);
+        reachable += 1;
       } catch {
         failed += 1;
       }
     }
-    return { synced, failed, total: devices.length };
+    return { reachable, failed, total: devices.length, importedEvents: 0 };
+  }
+
+  async syncDevice(id: number) {
+    const row = await this.prisma.attendance_devices.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!row) throw new NotFoundException("الجهاز غير موجود");
+    throw new BadRequestException(
+      "لم تتم تهيئة Attendance Provider Adapter؛ اختبار الاتصال لا يُعد مزامنة ولا يغيّر آخر مزامنة.",
+    );
   }
 
   // -------------------------------------------------------------------------
   // SHIFT SWAP / EXTRA SHIFT (tbl_emps_shef_edafi) — Api::add_sheft_edafi
   // -------------------------------------------------------------------------
-  private async assertCanManageEdafiEmployee(
-    targetEmployee: { manger: string | null },
-    userId: number,
-  ) {
-    const account = await this.prisma.users.findUnique({
-      where: { user_id: userId },
-      select: { emp_code: true },
-    });
-    if (account?.emp_code == null) throw new ForbiddenException(this.edafiForbiddenMessage);
-
-    // Legacy users.emp_code may point to employees.id or employees.emp_code.
-    const actorEmployee = await this.prisma.employees.findFirst({
-      where: { OR: [{ id: account.emp_code }, { emp_code: account.emp_code }] },
-      select: { id: true, emp_code: true },
-    });
-    if (!actorEmployee) throw new ForbiddenException(this.edafiForbiddenMessage);
-
-    const actorReferences = [actorEmployee.id, actorEmployee.emp_code]
-      .filter((value): value is number => value != null);
-    const managerReference = targetEmployee.manger?.trim();
-    const isDirectManager = managerReference != null
-      && actorReferences.some((reference) => String(reference) === managerReference);
-
-    if (!isDirectManager) {
-      const activeHrOfficer = await this.prisma.hr_egraat_emp_setting.findFirst({
-        where: {
-          job_title_code_fk: 44,
-          person_suspend: 1,
-          OR: [
-            { person_id: { in: actorReferences } },
-            { person_code: { in: actorReferences.map(String) } },
-          ],
-        },
-        select: { id: true },
-      });
-      if (!activeHrOfficer) throw new ForbiddenException(this.edafiForbiddenMessage);
-    }
-
-    return actorEmployee;
-  }
-
   async createShiftSwap(dto: CreateShiftSwapDto, userId: number) {
-    const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
-    if (!emp) throw new BadRequestException('الموظف غير موجود في النظام');
-    const publisherEmployee = await this.assertCanManageEdafiEmployee(emp, userId);
+    const emp = await this.prisma.employees.findUnique({
+      where: { id: dto.empId },
+    });
+    if (!emp) throw new BadRequestException("الموظف غير موجود في النظام");
 
-    const sheftDate = (dto.sheftDate ?? '').replace(/\//g, '-').slice(0, 10);
+    const sheftDate = (dto.sheftDate ?? "").replace(/\//g, "-").slice(0, 10);
 
     // dup-check: same emp + date + ttype (faithful)
     const dup = await this.prisma.tbl_emps_shef_edafi.findFirst({
-      where: { emp_code_fk: emp.emp_code ?? 0, sheft_date: sheftDate, ttype: dto.ttype },
+      where: {
+        emp_code_fk: emp.emp_code ?? 0,
+        sheft_date: sheftDate,
+        ttype: dto.ttype,
+      },
     });
     if (dup) {
-      throw new BadRequestException('تم تسجيل هذا الشيفت مسبقًا لنفس الموظف في نفس التاريخ');
+      throw new BadRequestException(
+        "تم تسجيل هذا الشيفت مسبقًا لنفس الموظف في نفس التاريخ",
+      );
     }
 
     if (dto.dwamIdFk != null) {
-      const shift = await this.prisma.tbl_hdodr_setting.findUnique({ where: { id: dto.dwamIdFk } });
-      if (!shift) throw new BadRequestException('الوردية المحددة غير موجودة');
+      const shift = await this.prisma.tbl_hdodr_setting.findUnique({
+        where: { id: dto.dwamIdFk },
+      });
+      if (!shift) throw new BadRequestException("الوردية المحددة غير موجودة");
     }
 
-    const today = todayIso();
+    const today = cairoDateString();
     const row = await this.prisma.tbl_emps_shef_edafi.create({
       data: {
         emp_id_fk: emp.id,
         emp_code_fk: emp.emp_code ?? 0,
-        emp_name: emp.employee ?? '',
+        emp_name: emp.employee ?? "",
         ttype: dto.ttype,
         dwam_id_fk: dto.dwamIdFk,
         sheft_date: sheftDate,
         branch_id_fk: emp.branch_id_fk ?? 0,
         date_ar: today,
-        date_s: String(Math.floor(new Date(today + 'T00:00:00').getTime() / 1000)),
+        date_s: String(dateOnlyEpochSeconds(today)),
         publisher: userId,
-        publisher_emp_id: publisherEmployee.id,
+        publisher_emp_id: 0,
       },
     });
     return {
       id: row.id,
-      message: dto.ttype === 1 ? 'تم تسجيل شيفت التبديل بنجاح' : 'تم تسجيل الشيفت الإضافي بنجاح',
+      message:
+        dto.ttype === 1
+          ? "تم تسجيل شيفت التبديل بنجاح"
+          : "تم تسجيل الشيفت الإضافي بنجاح",
     };
   }
 
   async listShiftSwaps(q: ListEdafiDto) {
     const where: Prisma.tbl_emps_shef_edafiWhereInput = {};
-    if (q.empCode && q.empCode !== 'all') where.emp_code_fk = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') where.branch_id_fk = parseInt(q.branchId, 10) || 0;
+    if (q.empCode && q.empCode !== "all")
+      where.emp_code_fk = parseInt(q.empCode, 10) || 0;
+    if (q.branchId && q.branchId !== "all")
+      where.branch_id_fk = parseInt(q.branchId, 10) || 0;
     if (q.dateFrom && q.dateTo) {
-      where.sheft_date = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
+      where.sheft_date = {
+        gte: q.dateFrom.slice(0, 10),
+        lte: q.dateTo.slice(0, 10),
+      };
     }
     if (q.search?.trim()) where.emp_name = { contains: q.search.trim() };
 
     const [rows, total] = await Promise.all([
       this.prisma.tbl_emps_shef_edafi.findMany({
         where,
-        orderBy: { id: 'asc' },
+        orderBy: { id: "asc" },
         skip: q.skip,
         take: q.take,
       }),
@@ -1625,31 +1154,44 @@ export class AttendanceService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  private async decorateSwaps(rows: Prisma.tbl_emps_shef_edafiGetPayload<object>[]) {
+  private async decorateSwaps(
+    rows: Prisma.tbl_emps_shef_edafiGetPayload<object>[],
+  ) {
     const dwamIds = [...new Set(rows.map((r) => r.dwam_id_fk))];
     const branchIds = [...new Set(rows.map((r) => r.branch_id_fk))];
     const [shifts, branches] = await Promise.all([
-      this.prisma.tbl_hdodr_setting.findMany({ where: { id: { in: dwamIds } } }),
-      this.prisma.tbl_branches.findMany({ where: { branch_id: { in: branchIds } } }),
+      this.prisma.tbl_hdodr_setting.findMany({
+        where: { id: { in: dwamIds } },
+      }),
+      this.prisma.tbl_branches.findMany({
+        where: { branch_id: { in: branchIds } },
+      }),
     ]);
     const shiftMap = new Map(shifts.map((s) => [s.id, s.title]));
-    const branchMap = new Map(branches.map((b) => [b.branch_id, b.branch_name]));
-    const types: Record<number, string> = { 1: 'تبديل شيفت', 2: 'إضافة شيفت' };
+    const branchMap = new Map(
+      branches.map((b) => [b.branch_id, b.branch_name]),
+    );
+    const types: Record<number, string> = { 1: "تبديل شيفت", 2: "إضافة شيفت" };
     return rows.map((r) => ({
       id: r.id,
       empCode: r.emp_code_fk,
       empName: r.emp_name,
-      branchTitle: r.branch_id_fk === 0 ? 'الادارة' : (branchMap.get(r.branch_id_fk) ?? undefined),
+      branchTitle:
+        r.branch_id_fk === 0
+          ? "الادارة"
+          : (branchMap.get(r.branch_id_fk) ?? undefined),
       sheftDate: r.sheft_date,
       ttype: r.ttype,
-      ttypeName: types[r.ttype] ?? '—',
+      ttypeName: types[r.ttype] ?? "—",
       dwamTitle: shiftMap.get(r.dwam_id_fk) ?? undefined,
     }));
   }
 
   async removeShiftSwap(id: number) {
-    const row = await this.prisma.tbl_emps_shef_edafi.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('الشيفت غير موجود');
+    const row = await this.prisma.tbl_emps_shef_edafi.findUnique({
+      where: { id },
+    });
+    if (!row) throw new NotFoundException("الشيفت غير موجود");
     await this.prisma.tbl_emps_shef_edafi.delete({ where: { id } });
     return { id };
   }
@@ -1658,50 +1200,58 @@ export class AttendanceService {
   // EXTRA HOURS (tbl_emps_hours_edafi) — Api::add_hours_edafi
   // -------------------------------------------------------------------------
   async createExtraHours(dto: CreateExtraHoursDto, userId: number) {
-    const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
-    if (!emp) throw new BadRequestException('الموظف غير موجود في النظام');
-    const publisherEmployee = await this.assertCanManageEdafiEmployee(emp, userId);
+    const emp = await this.prisma.employees.findUnique({
+      where: { id: dto.empId },
+    });
+    if (!emp) throw new BadRequestException("الموظف غير موجود في النظام");
 
-    const edafaDate = (dto.edafaDate ?? '').replace(/\//g, '-').slice(0, 10);
+    const edafaDate = (dto.edafaDate ?? "").replace(/\//g, "-").slice(0, 10);
 
     const dup = await this.prisma.tbl_emps_hours_edafi.findFirst({
       where: { emp_code_fk: emp.emp_code ?? 0, edafa_date: edafaDate },
     });
     if (dup) {
-      throw new BadRequestException('تم تسجيل الساعات الإضافية مسبقًا لنفس الموظف في نفس التاريخ');
+      throw new BadRequestException(
+        "تم تسجيل الساعات الإضافية مسبقًا لنفس الموظف في نفس التاريخ",
+      );
     }
 
-    const today = todayIso();
+    const today = cairoDateString();
     const row = await this.prisma.tbl_emps_hours_edafi.create({
       data: {
         emp_id_fk: emp.id,
         emp_code_fk: emp.emp_code ?? 0,
-        emp_name: emp.employee ?? '',
+        emp_name: emp.employee ?? "",
         branch_id_fk: emp.branch_id_fk ?? 0,
         num_hours: dto.numHours,
         edafa_date: edafaDate,
         date_ar: today,
-        date_s: String(Math.floor(new Date(today + 'T00:00:00').getTime() / 1000)),
+        date_s: String(dateOnlyEpochSeconds(today)),
         publisher: userId,
-        publisher_emp_id: publisherEmployee.id,
+        publisher_emp_id: 0,
       },
     });
-    return { id: row.id, message: 'تمت تسجيل الساعات الإضافية بنجاح' };
+    return { id: row.id, message: "تمت تسجيل الساعات الإضافية بنجاح" };
   }
 
   async listExtraHours(q: ListEdafiDto) {
     const where: Prisma.tbl_emps_hours_edafiWhereInput = {};
-    if (q.empCode && q.empCode !== 'all') where.emp_code_fk = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') where.branch_id_fk = parseInt(q.branchId, 10) || 0;
+    if (q.empCode && q.empCode !== "all")
+      where.emp_code_fk = parseInt(q.empCode, 10) || 0;
+    if (q.branchId && q.branchId !== "all")
+      where.branch_id_fk = parseInt(q.branchId, 10) || 0;
     if (q.dateFrom && q.dateTo) {
-      where.edafa_date = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
+      where.edafa_date = {
+        gte: q.dateFrom.slice(0, 10),
+        lte: q.dateTo.slice(0, 10),
+      };
     }
     if (q.search?.trim()) where.emp_name = { contains: q.search.trim() };
 
     const [rows, total] = await Promise.all([
       this.prisma.tbl_emps_hours_edafi.findMany({
         where,
-        orderBy: { id: 'desc' },
+        orderBy: { id: "desc" },
         skip: q.skip,
         take: q.take,
       }),
@@ -1719,8 +1269,10 @@ export class AttendanceService {
   }
 
   async removeExtraHours(id: number) {
-    const row = await this.prisma.tbl_emps_hours_edafi.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('السجل غير موجود');
+    const row = await this.prisma.tbl_emps_hours_edafi.findUnique({
+      where: { id },
+    });
+    if (!row) throw new NotFoundException("السجل غير موجود");
     await this.prisma.tbl_emps_hours_edafi.delete({ where: { id } });
     return { id };
   }
@@ -1733,52 +1285,44 @@ export class AttendanceService {
   async basmaReport(q: AttendanceReportDto) {
     const where: Prisma.tbl_hdoor_empsWhereInput = {};
     if (q.dateFrom && q.dateTo) {
-      where.action_date = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
+      where.action_date = {
+        gte: q.dateFrom.slice(0, 10),
+        lte: q.dateTo.slice(0, 10),
+      };
     } else {
-      where.action_date = todayIso();
+      where.action_date = cairoDateString();
     }
-    if (q.empCode && q.empCode !== 'all') where.member_code = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') where.branch_id_fk = parseInt(q.branchId, 10) || 0;
-    if (q.search?.trim()) {
-      const search = q.search.trim();
-      const code = Number(search);
-      where.OR = [
-        { action_date: { contains: search } }, { hdoor_time: { contains: search } },
-        { ensraf_time: { contains: search } },
-        ...(Number.isInteger(code) ? [{ member_code: code }] : []),
-      ];
-    }
+    if (q.empCode && q.empCode !== "all")
+      where.employee_code = parseInt(q.empCode, 10) || 0;
+    if (q.branchId && q.branchId !== "all")
+      where.branch_id_fk = parseInt(q.branchId, 10) || 0;
 
     const [rows, total] = await Promise.all([
       this.prisma.tbl_hdoor_emps.findMany({
         where,
-        orderBy: { hodoor_id: 'asc' },
+        orderBy: { hodoor_id: "asc" },
         skip: q.skip,
         take: q.take,
       }),
       this.prisma.tbl_hdoor_emps.count({ where }),
     ]);
-    const codes = [...new Set(rows.map((r) => r.member_code).filter(Boolean))] as number[];
+    const codes = [
+      ...new Set(rows.map((r) => r.employee_code).filter(Boolean)),
+    ] as number[];
     const emps = await this.prisma.employees.findMany({
       where: { emp_code: { in: codes } },
-      select: { emp_code: true, employee: true, edara_n: true, mosma_wazefy_n: true },
+      select: { emp_code: true, employee: true, edara_n: true },
     });
     const byCode = new Map(emps.map((e) => [e.emp_code, e]));
     const data = rows.map((r) => {
-      const e = byCode.get(r.member_code ?? 0);
+      const e = byCode.get(r.employee_code ?? 0);
       return {
         id: r.hodoor_id,
-        empCode: r.member_code,
-        empName: e?.employee ?? '—',
+        empCode: r.employee_code,
+        empName: e?.employee ?? "—",
         department: e?.edara_n ?? undefined,
-        jobTitle: e?.mosma_wazefy_n ?? undefined,
-        weekday: r.action_date
-          ? ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'][new Date(`${r.action_date.slice(0, 10)}T12:00:00`).getDay()]
-          : undefined,
         actionDate: r.action_date,
-        checkInPhoto: r.hdoor_img_path ?? undefined,
         checkIn: r.hdoor_time ?? undefined,
-        checkOutPhoto: r.ensraf_img_path ?? undefined,
         checkOut: r.ensraf_time ?? undefined,
         lateMin: r.late_min != null ? Math.round(r.late_min) : 0,
         earlyLeaveMin: r.mobaker_min != null ? Math.round(r.mobaker_min) : 0,
@@ -1789,229 +1333,16 @@ export class AttendanceService {
   }
 
   /**
-   * One row per employee per calendar day. The legacy rules are explicit:
-   * weekly off comes from hr_emp_agazat_dayes.off_day; an approved leave type 19
-   * on agaza_date is a swapped weekly leave; all other approved leave ranges are
-   * regular leave; a day with no punch or leave is absence.
-   */
-  async fullAttendanceSheet(q: AttendanceReportDto) {
-    const from = (q.dateFrom || todayIso()).slice(0, 10);
-    const to = (q.dateTo || from).slice(0, 10);
-    const start = new Date(`${from}T12:00:00`);
-    const end = new Date(`${to}T12:00:00`);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end < start) {
-      throw new BadRequestException('تاريخ النهاية يجب أن يساوي أو يلي تاريخ البداية');
-    }
-    const daysCount = Math.floor((end.getTime() - start.getTime()) / 86_400_000) + 1;
-    if (daysCount > 366) throw new BadRequestException('الحد الأقصى لفترة شيت البصمة سنة واحدة');
-
-    const employeeWhere: Prisma.employeesWhereInput = {
-      employee_type: 1,
-      OR: [{ leave_emp: null }, { leave_emp: 0 }],
-    };
-    if (q.empCode && q.empCode !== 'all') employeeWhere.emp_code = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') employeeWhere.branch_id_fk = parseInt(q.branchId, 10) || 0;
-    if (q.search?.trim()) {
-      const search = q.search.trim();
-      const code = Number(search);
-      employeeWhere.AND = [{
-        OR: [
-          { employee: { contains: search } },
-          { edara_n: { contains: search } },
-          { qsm_n: { contains: search } },
-          ...(Number.isInteger(code) ? [{ emp_code: code }] : []),
-        ],
-      }];
-    }
-
-    const employees = await this.prisma.employees.findMany({
-      where: employeeWhere,
-      select: {
-        id: true,
-        emp_code: true,
-        employee: true,
-        branch_id_fk: true,
-        edara_n: true,
-        qsm_n: true,
-      },
-      orderBy: [{ employee: 'asc' }, { emp_code: 'asc' }],
-    });
-    const codes = employees.map((employee) => employee.emp_code).filter((code): code is number => code != null);
-    const ids = employees.map((employee) => employee.id);
-    const branchIds = [...new Set(employees.map((employee) => employee.branch_id_fk).filter((id): id is number => id != null))];
-
-    const weeklyScheduleSettings = await (this.prisma as any).attendance_weekly_schedule_settings?.findUnique({ where: { id: 1 } });
-    const [attendance, weeklyOffs, leaveOrders, branches, weeklySchedules] = await Promise.all([
-      this.prisma.tbl_hdoor_emps.findMany({
-        where: {
-          member_code: { in: codes },
-          OR: [
-            { action_date_s: { gte: from, lte: to } },
-            { action_date: { gte: from, lte: to } },
-          ],
-        },
-        orderBy: { hodoor_id: 'asc' },
-      }),
-      weeklyScheduleSettings?.enabled
-        ? Promise.resolve([])
-        : this.prisma.hr_emp_agazat_dayes.findMany({
-          where: { OR: [{ emp_id_fk: { in: ids } }, { emp_code_fk: { in: codes } }] },
-          select: { emp_id_fk: true, emp_code_fk: true, off_day: true },
-        }),
-      this.prisma.hr_all_agzat_orders.findMany({
-        where: {
-          emp_code_fk: { in: codes.map(BigInt) },
-          suspend: { in: SUSPEND_APPROVED },
-          OR: [
-            { no3_agaza: 19, agaza_date: { gte: from, lte: to } },
-            { agaza_from_date_m: { lte: to }, agaza_to_date_m: { gte: from } },
-          ],
-        },
-        select: {
-          emp_code_fk: true,
-          no3_agaza: true,
-          agaza_date: true,
-          agaza_from_date_m: true,
-          agaza_to_date_m: true,
-        },
-      }),
-      this.prisma.tbl_branches.findMany({
-        where: { branch_id: { in: branchIds } },
-        select: { branch_id: true, branch_name: true },
-      }),
-      weeklyScheduleSettings?.enabled
-        ? (this.prisma as any).employee_weekly_schedules?.findMany({
-          where: { employee_id: { in: ids }, status: 'active', effective_from: { lte: to }, OR: [{ effective_to: null }, { effective_to: { gte: from } }] },
-          include: { slots: true },
-        }) ?? Promise.resolve([])
-        : Promise.resolve([]),
-    ]);
-
-    const branchMap = new Map(branches.map((branch) => [branch.branch_id, branch.branch_name]));
-    const offDayByCode = new Map<number, string>();
-    const weeklySchedulesByEmployee = new Map<number, Array<{ effective_from: string; effective_to: string | null; slots: Array<{ weekday: number; shift_id: number | null }> }>>();
-    for (const schedule of weeklySchedules as Array<{ employee_id: number; effective_from: string; effective_to: string | null; slots: Array<{ weekday: number; shift_id: number | null }> }>) {
-      const list = weeklySchedulesByEmployee.get(schedule.employee_id) ?? [];
-      list.push(schedule);
-      weeklySchedulesByEmployee.set(schedule.employee_id, list);
-    }
-    const codeById = new Map(employees.map((employee) => [employee.id, employee.emp_code]));
-    for (const off of weeklyOffs) {
-      const code = off.emp_code_fk || codeById.get(off.emp_id_fk);
-      if (code) offDayByCode.set(code, off.off_day.trim().toLowerCase());
-    }
-
-    const attendanceByDay = new Map<string, typeof attendance>();
-    for (const punch of attendance) {
-      if (punch.member_code == null) continue;
-      const date = punch.action_date_s?.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
-        ?? punch.action_date?.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
-      if (!date || date < from || date > to) continue;
-      const key = `${punch.member_code}|${date}`;
-      const list = attendanceByDay.get(key) ?? [];
-      list.push(punch);
-      attendanceByDay.set(key, list);
-    }
-
-    const swappedDays = new Set<string>();
-    const leaveDays = new Set<string>();
-    for (const leave of leaveOrders) {
-      const code = leave.emp_code_fk != null ? Number(leave.emp_code_fk) : 0;
-      if (!code) continue;
-      if (leave.no3_agaza === 19 && leave.agaza_date) {
-        swappedDays.add(`${code}|${leave.agaza_date.slice(0, 10)}`);
-        continue;
-      }
-      if (!leave.agaza_from_date_m || !leave.agaza_to_date_m) continue;
-      const leaveStart = new Date(`${leave.agaza_from_date_m.slice(0, 10)}T12:00:00`);
-      const leaveEnd = new Date(`${leave.agaza_to_date_m.slice(0, 10)}T12:00:00`);
-      for (const day = new Date(leaveStart); day <= leaveEnd; day.setDate(day.getDate() + 1)) {
-        const iso = day.toISOString().slice(0, 10);
-        if (iso >= from && iso <= to) leaveDays.add(`${code}|${iso}`);
-      }
-    }
-
-    const weeklyDayAliases = [
-      ['sunday', 'الأحد', 'الاحد'],
-      ['monday', 'الإثنين', 'الاثنين'],
-      ['tuesday', 'الثلاثاء'],
-      ['wednesday', 'الأربعاء', 'الاربعاء'],
-      ['thursday', 'الخميس'],
-      ['friday', 'الجمعة'],
-      ['saturday', 'السبت'],
-    ].map((aliases) => aliases.map((alias) => alias.trim().toLowerCase()));
-    const arabicDays = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
-    const allRows: Array<Record<string, unknown>> = [];
-    for (const employee of employees) {
-      if (employee.emp_code == null) continue;
-      for (const day = new Date(start); day <= end; day.setDate(day.getDate() + 1)) {
-        const date = day.toISOString().slice(0, 10);
-        const key = `${employee.emp_code}|${date}`;
-        const punches = attendanceByDay.get(key) ?? [];
-        const configuredOffDay = offDayByCode.get(employee.emp_code);
-        const weeklySchedule = weeklySchedulesByEmployee.get(employee.id)?.find((schedule) => schedule.effective_from <= date && (schedule.effective_to == null || schedule.effective_to >= date));
-        const weeklySlot = weeklySchedule?.slots.find((slot) => slot.weekday === (day.getDay() + 1) % 7);
-        const weeklyOff = weeklyScheduleSettings?.enabled
-          ? weeklySlot?.shift_id === null
-          : configuredOffDay != null && weeklyDayAliases[day.getDay()].includes(configuredOffDay);
-        const swappedLeave = swappedDays.has(key);
-        const approvedLeave = leaveDays.has(key);
-        const firstIn = punches.find((punch) => punch.hdoor_time || punch.second_hdoor_time);
-        const lastOut = [...punches].reverse().find((punch) => punch.second_ensraf_time || punch.ensraf_time);
-        const status = weeklyOff ? 'weekly_off'
-          : swappedLeave ? 'swapped_leave'
-            : approvedLeave ? 'approved_leave'
-              : punches.length ? 'present' : 'absent';
-        const statusLabel = status === 'weekly_off' ? 'إجازة أسبوعية'
-          : status === 'swapped_leave' ? 'تبديل إجازة أسبوعية'
-            : status === 'approved_leave' ? 'إجازة معتمدة'
-              : status === 'absent' ? 'غياب' : undefined;
-        const workingSeconds = punches.reduce((total, punch) => total
-          + pairDurationSeconds(punch.hdoor_time, punch.ensraf_time)
-          + pairDurationSeconds(punch.second_hdoor_time, punch.second_ensraf_time), 0);
-        allRows.push({
-          id: `${employee.emp_code}-${date}`,
-          empCode: employee.emp_code,
-          empName: employee.employee ?? '—',
-          branchTitle: employee.branch_id_fk ? branchMap.get(employee.branch_id_fk) : undefined,
-          department: employee.edara_n ?? undefined,
-          section: employee.qsm_n ?? undefined,
-          weekday: arabicDays[day.getDay()],
-          actionDate: date,
-          status,
-          statusLabel,
-          checkInPhoto: status === 'present' ? (firstIn?.hdoor_img_path ?? firstIn?.second_hdoor_img_path ?? undefined) : undefined,
-          checkIn: status === 'present' ? (firstIn?.hdoor_time ?? firstIn?.second_hdoor_time ?? undefined) : undefined,
-          checkOutPhoto: status === 'present' ? (lastOut?.second_ensraf_img_path ?? lastOut?.ensraf_img_path ?? undefined) : undefined,
-          checkOut: status === 'present' ? (lastOut?.second_ensraf_time ?? lastOut?.ensraf_time ?? undefined) : undefined,
-          lateMin: status === 'present' ? punches.reduce((total, punch) => total + Math.max(0, Math.round(punch.late_min ?? 0)) + Math.max(0, Math.round(punch.second_late_min ?? 0)), 0) : undefined,
-          workingSeconds: status === 'present' ? workingSeconds : undefined,
-          notes: undefined,
-        });
-      }
-    }
-
-    return paginated(allRows.slice(q.skip, q.skip + q.take), allRows.length, q.page, q.pageSize);
-  }
-
-  /**
    * R3 — Late report (Hdoor_m::get_datatables_late): per-employee with/without
    * permission split + total. Permission = an approved ozonat order (suspend ∈ {1,4})
    * whose ezn_date_ar equals the punch action_date.
    */
   async lateReport(q: AttendanceReportDto) {
     const empWhere: Prisma.employeesWhereInput = {};
-    if (q.empCode && q.empCode !== 'all') empWhere.emp_code = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') empWhere.branch_id_fk = parseInt(q.branchId, 10) || 0;
-    if (q.search?.trim()) {
-      const search = q.search.trim();
-      const code = Number(search);
-      empWhere.OR = [
-        { employee: { contains: search } }, { edara_n: { contains: search } },
-        { qsm_n: { contains: search } }, { phone: { contains: search } },
-        ...(Number.isInteger(code) ? [{ emp_code: code }] : []),
-      ];
-    }
+    if (q.empCode && q.empCode !== "all")
+      empWhere.emp_code = parseInt(q.empCode, 10) || 0;
+    if (q.branchId && q.branchId !== "all")
+      empWhere.branch_id_fk = parseInt(q.branchId, 10) || 0;
 
     const employees = await this.prisma.employees.findMany({
       where: empWhere,
@@ -2023,6 +1354,65 @@ export class AttendanceService {
         phone: true,
       },
     });
+
+    const empCodes = employees.flatMap((employee) =>
+      employee.emp_code == null ? [] : [employee.emp_code],
+    );
+    if (empCodes.length === 0) {
+      return {
+        ...paginated([], 0, q.page, q.pageSize),
+        totals: { withPermission: 0, withoutPermission: 0, total: 0 },
+      };
+    }
+
+    const permissionWhere: Prisma.hr_all_ozonat_ordersWhereInput = {
+      emp_code_fk: { in: empCodes },
+      suspend: { in: SUSPEND_APPROVED },
+    };
+    const lateWhere: Prisma.tbl_hdoor_empsWhereInput = {
+      employee_code: { in: empCodes },
+      late_min: { gt: 0 },
+    };
+    if (q.dateFrom && q.dateTo) {
+      const range = {
+        gte: q.dateFrom.slice(0, 10),
+        lte: q.dateTo.slice(0, 10),
+      };
+      permissionWhere.ezn_date_ar = range;
+      lateWhere.action_date = range;
+    }
+
+    const [permissions, lateRows] = await Promise.all([
+      this.prisma.hr_all_ozonat_orders.findMany({
+        where: permissionWhere,
+        select: { emp_code_fk: true, ezn_date_ar: true },
+      }),
+      this.prisma.tbl_hdoor_emps.findMany({
+        where: lateWhere,
+        select: { employee_code: true, late_min: true, action_date: true },
+      }),
+    ]);
+    const permissionKeys = new Set(
+      permissions.flatMap((permission) =>
+        permission.emp_code_fk == null || !permission.ezn_date_ar
+          ? []
+          : [`${permission.emp_code_fk}:${permission.ezn_date_ar}`],
+      ),
+    );
+    const lateByEmployee = aggregateLateRows(
+      lateRows.flatMap((row) =>
+        row.employee_code == null
+          ? []
+          : [
+              {
+                memberCode: row.employee_code,
+                actionDate: row.action_date,
+                lateMin: row.late_min,
+              },
+            ],
+      ),
+      permissionKeys,
+    );
 
     const results: Array<{
       empCode: number | null;
@@ -2037,51 +1427,18 @@ export class AttendanceService {
 
     for (const emp of employees) {
       if (emp.emp_code == null) continue;
-
-      // approved permissions (ozonat) on dates
-      const oznWhere: Prisma.hr_all_ozonat_ordersWhereInput = {
-        emp_code_fk: emp.emp_code,
-        suspend: { in: SUSPEND_APPROVED },
-      };
-      if (q.dateFrom && q.dateTo) {
-        oznWhere.ezn_date_ar = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
-      }
-      const ozonat = await this.prisma.hr_all_ozonat_orders.findMany({
-        where: oznWhere,
-        select: { ezn_date_ar: true },
-      });
-      const approvedDates = new Set(ozonat.map((o) => o.ezn_date_ar));
-
-      const lateWhere: Prisma.tbl_hdoor_empsWhereInput = {
-        member_code: emp.emp_code,
-        late_min: { gt: 0 },
-      };
-      if (q.dateFrom && q.dateTo) {
-        lateWhere.action_date = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
-      }
-      const lateRows = await this.prisma.tbl_hdoor_emps.findMany({
-        where: lateWhere,
-        select: { late_min: true, action_date: true },
-      });
-
-      let withPerm = 0;
-      let withoutPerm = 0;
-      for (const r of lateRows) {
-        const late = Math.trunc(r.late_min ?? 0);
-        if (r.action_date != null && approvedDates.has(r.action_date)) withPerm += late;
-        else withoutPerm += late;
-      }
-
-      if (withPerm > 0 || withoutPerm > 0) {
+      const employeeLate = lateByEmployee.get(emp.emp_code);
+      if (employeeLate) {
         results.push({
           empCode: emp.emp_code,
-          empName: emp.employee ?? '—',
+          empName: emp.employee ?? "—",
           department: emp.edara_n ?? undefined,
           section: emp.qsm_n ?? undefined,
           phone: emp.phone ?? undefined,
-          lateWithPermission: withPerm,
-          lateWithoutPermission: withoutPerm,
-          totalLate: withPerm + withoutPerm,
+          lateWithPermission: employeeLate.withPermission,
+          lateWithoutPermission: employeeLate.withoutPermission,
+          totalLate:
+            employeeLate.withPermission + employeeLate.withoutPermission,
         });
       }
     }
@@ -2106,39 +1463,33 @@ export class AttendanceService {
   async overtimeReport(q: AttendanceReportDto) {
     const where: Prisma.tbl_emps_hours_edafiWhereInput = {};
     if (q.dateFrom && q.dateTo) {
-      where.edafa_date = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
+      where.edafa_date = {
+        gte: q.dateFrom.slice(0, 10),
+        lte: q.dateTo.slice(0, 10),
+      };
     } else {
-      where.edafa_date = todayIso();
+      where.edafa_date = cairoDateString();
     }
-    if (q.empCode && q.empCode !== 'all') where.emp_code_fk = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') where.branch_id_fk = parseInt(q.branchId, 10) || 0;
+    if (q.empCode && q.empCode !== "all")
+      where.emp_code_fk = parseInt(q.empCode, 10) || 0;
+    if (q.branchId && q.branchId !== "all")
+      where.branch_id_fk = parseInt(q.branchId, 10) || 0;
 
     const [rows, total] = await Promise.all([
       this.prisma.tbl_emps_hours_edafi.findMany({
         where,
-        orderBy: { id: 'desc' },
+        orderBy: { id: "desc" },
         skip: q.skip,
         take: q.take,
       }),
       this.prisma.tbl_emps_hours_edafi.count({ where }),
     ]);
-    const branchIds = [...new Set(rows.map((r) => r.branch_id_fk))];
-    const publisherIds = [...new Set(rows.map((r) => r.publisher))];
-    const [branches, publishers] = await Promise.all([
-      this.prisma.tbl_branches.findMany({ where: { branch_id: { in: branchIds } }, select: { branch_id: true, branch_name: true } }),
-      this.prisma.users.findMany({ where: { user_id: { in: publisherIds } }, select: { user_id: true, name: true } }),
-    ]);
-    const branchMap = new Map(branches.map((branch) => [branch.branch_id, branch.branch_name]));
-    const publisherMap = new Map(publishers.map((publisher) => [publisher.user_id, publisher.name]));
     const data = rows.map((r) => ({
       id: r.id,
       empCode: r.emp_code_fk,
       empName: r.emp_name,
-      branchTitle: branchMap.get(r.branch_id_fk) ?? (r.branch_id_fk === 0 ? 'الادارة' : undefined),
-      weekday: ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'][new Date(`${r.edafa_date.slice(0, 10)}T12:00:00`).getDay()],
       numHours: r.num_hours,
       edafaDate: r.edafa_date,
-      publisherName: publisherMap.get(r.publisher) ?? undefined,
     }));
     return paginated(data, total, q.page, q.pageSize);
   }
@@ -2146,124 +1497,5 @@ export class AttendanceService {
   /** R5 — Shift-swap report from tbl_emps_shef_edafi (Hdoor_m::get_datatables_sheft). */
   async shiftSwapReport(q: AttendanceReportDto) {
     return this.listShiftSwaps(q as unknown as ListEdafiDto);
-  }
-
-  /**
-   * Active legacy absence formula: Friday is excluded, approved leave is counted
-   * separately, employee official/off dates are excluded, and any remaining day
-   * without a main attendance row is unexcused absence.
-   */
-  async absenceReport(q: AttendanceReportDto) {
-    const from = (q.dateFrom || todayIso()).slice(0, 10);
-    const to = (q.dateTo || from).slice(0, 10);
-    if (to < from) throw new BadRequestException('تاريخ النهاية يجب أن يساوي أو يلي تاريخ البداية');
-
-    const empWhere: Prisma.employeesWhereInput = { employee_type: 1 };
-    if (q.empCode && q.empCode !== 'all') empWhere.emp_code = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') empWhere.branch_id_fk = parseInt(q.branchId, 10) || 0;
-    if (q.search?.trim()) {
-      const search = q.search.trim();
-      const code = Number(search);
-      empWhere.OR = [
-        { employee: { contains: search } }, { edara_n: { contains: search } },
-        { qsm_n: { contains: search } }, { phone: { contains: search } },
-        ...(Number.isInteger(code) ? [{ emp_code: code }] : []),
-      ];
-    }
-    const employees = await this.prisma.employees.findMany({
-      where: empWhere,
-      select: { id: true, emp_code: true, employee: true, edara_n: true, qsm_n: true, phone: true },
-    });
-    const codes = employees.map((e) => e.emp_code).filter((v): v is number => v != null);
-    const ids = employees.map((e) => e.id);
-    const [attendance, leaves, officialDays] = await Promise.all([
-      this.prisma.tbl_hdoor_emps.findMany({
-        where: { member_code: { in: codes }, action_date: { gte: from, lte: to }, hdoor_time: { not: null } },
-        select: { member_code: true, action_date: true },
-      }),
-      this.prisma.hr_all_agzat_orders.findMany({
-        where: {
-          emp_code_fk: { in: codes.map(BigInt) }, suspend: { in: SUSPEND_APPROVED },
-          agaza_from_date_m: { lte: to }, agaza_to_date_m: { gte: from },
-        },
-        select: { emp_code_fk: true, agaza_from_date_m: true, agaza_to_date_m: true },
-      }),
-      this.prisma.hr_emp_agazat_dayes.findMany({
-        where: { OR: [{ emp_id_fk: { in: ids } }, { emp_code_fk: { in: codes } }] },
-        select: { emp_code_fk: true, off_day: true, date_ar: true },
-      }),
-    ]);
-    const present = new Set(attendance.map((r) => `${r.member_code}|${r.action_date?.slice(0, 10)}`));
-    const leaveDates = new Set<string>();
-    for (const leave of leaves) {
-      if (leave.emp_code_fk == null || !leave.agaza_from_date_m || !leave.agaza_to_date_m) continue;
-      for (const d = new Date(`${leave.agaza_from_date_m.slice(0, 10)}T12:00:00`);
-        d <= new Date(`${leave.agaza_to_date_m.slice(0, 10)}T12:00:00`); d.setDate(d.getDate() + 1)) {
-        leaveDates.add(`${leave.emp_code_fk}|${d.toISOString().slice(0, 10)}`);
-      }
-    }
-    const official = new Set(officialDays.filter((r) => /^\d{4}-\d{2}-\d{2}/.test(r.date_ar)).map((r) => `${r.emp_code_fk}|${r.date_ar.slice(0, 10)}`));
-    const weekly = new Map(officialDays.map((r) => [r.emp_code_fk, r.off_day.toLowerCase()]));
-    const weekday = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-
-    const rows = employees.flatMap((emp) => {
-      if (emp.emp_code == null) return [];
-      let excused = 0;
-      let unexcused = 0;
-      for (const d = new Date(`${from}T12:00:00`); d <= new Date(`${to}T12:00:00`); d.setDate(d.getDate() + 1)) {
-        const iso = d.toISOString().slice(0, 10);
-        if (d.getDay() === 5 || weekly.get(emp.emp_code) === weekday[d.getDay()]) continue;
-        const key = `${emp.emp_code}|${iso}`;
-        if (present.has(key) || official.has(key)) continue;
-        if (leaveDates.has(key)) excused += 1;
-        else unexcused += 1;
-      }
-      if (!unexcused) return [];
-      return [{ empCode: emp.emp_code, empName: emp.employee ?? '—', department: emp.edara_n,
-        section: emp.qsm_n, phone: emp.phone, absenceWithLeave: excused,
-        absenceWithoutLeave: unexcused, totalAbsence: excused + unexcused }];
-    });
-    return paginated(rows.slice(q.skip, q.skip + q.take), rows.length, q.page, q.pageSize);
-  }
-
-  /** Exact column mapping used by Hdoor_m::insert_hdoor; target accepts safe XLSX files. */
-  async importDeviceFile(file: Express.Multer.File, userId: number, userName?: string) {
-    if (!file) throw new BadRequestException('الرجاء اختيار ملف Excel لرفعه');
-    if (!file.originalname.toLowerCase().endsWith('.xlsx')) {
-      throw new BadRequestException('صيغة الملف المطلوبة XLSX؛ حوّل ملف XLS القديم إلى XLSX أولاً');
-    }
-    const workbook = new Workbook();
-    await workbook.xlsx.load(file.buffer as unknown as ArrayBuffer);
-    const sheet = workbook.worksheets[0];
-    if (!sheet || sheet.columnCount < 10) throw new BadRequestException('ملف الحضور فارغ أو لا يحتوي الأعمدة العشرة المطلوبة');
-    const value = (cell: unknown) => String(cell ?? '').trim();
-    const normalDate = (raw: string) => {
-      const dmY = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
-      if (dmY) return `${dmY[3]}-${dmY[2].padStart(2, '0')}-${dmY[1].padStart(2, '0')}`;
-      const parsed = new Date(raw);
-      return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
-    };
-    const rows: Prisma.tbl_emp_hdoorCreateManyInput[] = [];
-    sheet.eachRow((row, rowNumber) => {
-      if (rowNumber === 1) return;
-      const code = Number(row.getCell(1).value);
-      if (!Number.isInteger(code) || code <= 0) return;
-      const dateAr = value(row.getCell(3).text || row.getCell(3).value);
-      const date = normalDate(dateAr);
-      if (!date) return;
-      rows.push({ emp_code: code, emp_name: value(row.getCell(2).text), date_ar: dateAr, date,
-        hdoor_time: value(row.getCell(4).text), ensraf_time: value(row.getCell(5).text),
-        actual_hdoor_time: value(row.getCell(6).text), actual_ensraf_time: value(row.getCell(7).text),
-        absent: value(row.getCell(8).text) || null, hour_works: new Prisma.Decimal(Number(row.getCell(9).value) || 0),
-        edara_n: value(row.getCell(10).text), inserted_date: todayIso(), publisher: userId,
-        publisher_name: userName || 'system' });
-    });
-    if (!rows.length) throw new BadRequestException('لم يتم العثور على صفوف حضور صحيحة في الملف');
-    const dates = [...new Set(rows.map((r) => r.date_ar))];
-    await this.prisma.$transaction([
-      this.prisma.tbl_emp_hdoor.deleteMany({ where: { date_ar: { in: dates } } }),
-      this.prisma.tbl_emp_hdoor.createMany({ data: rows }),
-    ]);
-    return { imported: rows.length, replacedDates: dates.length };
   }
 }

@@ -1,0 +1,24 @@
+{
+  "common": {
+    "user": "User", "unknownInitial": "?", "close": "Close",
+    "searchPlaceholder": "Search employees, departments, reports…", "noNotifications": "No new notifications",
+    "viewAllNotifications": "View all notifications", "profile": "Profile", "logout": "Sign out",
+    "notifications": "Notifications", "menu": "Menu", "toggleTheme": "Toggle theme",
+    "toggleLanguage": "Toggle language", "lightMode": "Light mode", "darkMode": "Dark mode",
+    "arabic": "العربية", "english": "English", "morning": "AM", "evening": "PM"
+  },
+  "greeting": { "morning": "Good morning", "afternoon": "Good afternoon", "night": "Good evening" },
+  "levels": { "1": "System administrator", "2": "System employee", "3": "Branch or department manager" },
+  "login": {
+    "badge": "Human Resources Platform", "titlePrefix": "Complete management for", "rotate1": "Employees",
+    "rotate2": "Attendance", "rotate3": "Leave", "rotate4": "Payroll", "rotate5": "Requests", "rotate6": "Reports",
+    "subtitle": "A unified platform for employees, attendance, leave, payroll, and operations.",
+    "feature1": "Employees · Branches · Organisation", "feature2": "Attendance · Leave · Requests",
+    "feature3": "Payroll · Reports · Operations", "formTitle": "Sign in",
+    "formSubtitle": "Welcome back — enter your account details to continue", "username": "Username",
+    "password": "Password", "usernameRequired": "Username is required", "passwordRequired": "Password is required",
+    "showPassword": "Show password", "hidePassword": "Hide password", "submit": "Sign in",
+    "success": "Signed in successfully", "error": "Invalid credentials — please try again", "copyright": "© {{year}} Human Resources"
+  },
+  "app": { "title": "Human Resources Management" }
+}

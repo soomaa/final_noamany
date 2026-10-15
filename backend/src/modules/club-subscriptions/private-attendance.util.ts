@@ -21,15 +21,22 @@ export async function recordPrivateAttendanceCommission(
     : 1;
   if (sequence < 1) return null;
 
-  const salary = await tx.club_trainer_salaries.findFirst({
-    where: {
-      trainer_id: subscription.private_trainer.id,
-      effective_date: { lte: input.attendanceDate },
-      OR: [{ end_date: null }, { end_date: { gte: input.attendanceDate } }],
-    },
-    orderBy: { effective_date: 'desc' },
-  });
-  const percentage = toNum(salary?.subscription_commission_percentage);
+  const [salary, trainerSetting] = await Promise.all([
+    tx.club_trainer_salaries.findFirst({
+      where: {
+        trainer_id: subscription.private_trainer.id,
+        effective_date: { lte: input.attendanceDate },
+        OR: [{ end_date: null }, { end_date: { gte: input.attendanceDate } }],
+      },
+      orderBy: { effective_date: 'desc' },
+    }),
+    subscription.private_trainer.employee_id
+      ? tx.club_trainer_commission_settings.findUnique({ where: { employee_id: subscription.private_trainer.employee_id } })
+      : Promise.resolve(null),
+  ]);
+  const percentage = trainerSetting?.private_commission_mode === 'fixed'
+    ? toNum(trainerSetting.private_commission_percent)
+    : toNum(salary?.subscription_commission_percentage);
   const netValue = Math.max(0, toNum(subscription.subscription_value) - toNum(subscription.discount_value));
   const revenueBase = subscription.is_linked_to_sessions
     ? Math.round((netValue / Math.max(1, subscription.sessions_count ?? 1)) * 100) / 100

@@ -17,7 +17,7 @@ import { ListClubTrainerSalariesDto } from './dto/list-club-trainers.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-trainer-salaries')
-@RequiresPermission('club.fitness:view', 'club.subscriptions.special:view')
+@RequiresPermission('club.fitness.trainer_payments:view')
 export class ClubTrainerSalariesController {
   constructor(private readonly service: ClubTrainersService) {}
 
@@ -32,19 +32,19 @@ export class ClubTrainerSalariesController {
   }
 
   @Post()
-  @RequiresPermission('club.fitness:create', 'club.subscriptions.special:create')
+  @RequiresPermission('club.fitness.trainer_payments:create')
   create(@Body() body: Record<string, unknown>) {
     return this.service.createSalary(body);
   }
 
   @Put(':id')
-  @RequiresPermission('club.fitness:update', 'club.subscriptions.special:update')
+  @RequiresPermission('club.fitness.trainer_payments:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
     return this.service.updateSalary(id, body);
   }
 
   @Delete(':id')
-  @RequiresPermission('club.fitness:delete')
+  @RequiresPermission('club.fitness.trainer_payments:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.removeSalary(id);
   }

@@ -7,23 +7,21 @@ import {
   Building2,
   Calculator,
   CalendarDays,
-  ClipboardCheck,
   Coffee,
   CreditCard,
   Dumbbell,
   FileText,
   Fingerprint,
   HandCoins,
-  Headphones,
+  Handshake,
   Lock,
   Mail,
   type LucideIcon,
   Scale,
-  ScanLine,
   Settings,
   SlidersHorizontal,
   Smartphone,
-  Globe2,
+  UserRoundCheck,
   UserX,
   Users,
   Wrench,
@@ -34,11 +32,9 @@ import { CLUB_ROUTES as CR } from '@/lib/club-routes';
 import { FITNESS_ROUTES as FIT } from '@/lib/fitness-routes';
 import { FINANCE_ROUTES as FR } from '@/lib/finance-routes';
 import { GYM_SALES_ROUTES as GS } from '@/lib/gym-sales-routes';
-import { PORTAL_ROUTES as PR } from '@/lib/portal-routes';
 
 export interface NavItem {
   to: string;
-  label?: string;
 }
 
 /** A collapsible sub-group nested inside a top-level section (3rd level). */
@@ -108,15 +104,25 @@ export function navHubPath(id: string): string {
 
 /** Primary landing route when opening a section from the sidebar. */
 export function navSectionLandingPath(id: string): string {
+  if (id === 'personal-sales') return '/sales-portal';
   if (id === 'gym-sales') return GS.sales.newReceipt;
   return navHubPath(id);
 }
 
 /**
  * Curated application navigation. Top-level order is intentional:
- *   club (incl. financial-reports group) → gym-sales → accounting → app-management → hr → settings
+ *   personal sales → club (incl. financial-reports group) → gym-sales → accounting → app-management → hr → settings
  */
 export const NAV_SECTIONS: NavSection[] = [
+  {
+    id: 'personal-sales',
+    icon: UserRoundCheck,
+    items: [
+      { to: '/sales-portal' },
+      { to: '/sales-portal/leads' },
+      { to: '/sales-portal/results' },
+    ],
+  },
   {
     id: 'club',
     icon: Dumbbell,
@@ -128,22 +134,11 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: CR.members.reception },
           { to: CR.members.quickServices },
           { to: CR.members.management },
-          { to: CR.members.measurements, label: 'قياسات الأعضاء' },
-          { to: CR.members.attendance },
-        ],
-      },
-      {
-        id: 'club-barcode-management',
-        icon: ScanLine,
-        items: [
-          { to: CR.members.barcodeMemberCheckIn },
-          { to: CR.members.barcodeSpaCheckIn },
-          { to: CR.members.barcodeClassesCheckIn },
           { to: CR.members.barcodeManagement },
-          { to: CR.members.barcodePrintRange },
-          { to: CR.members.barcodeSpaAttendance },
-          { to: CR.members.barcodeClassesAttendance },
-          { to: CR.members.barcodeScanTimes },
+          { to: CR.members.attendance },
+          { to: '/club/gate-access' },
+          { to: CR.members.groups },
+          { to: CR.members.surveys },
         ],
       },
       {
@@ -151,45 +146,33 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: CreditCard,
         items: [
           { to: CR.packages.settings },
+          { to: '/club/membership-add' },
           { to: CR.subscriptions.list },
-          { to: CR.subscriptions.memberTransfer },
-          { to: CR.subscriptions.online, label: 'اشتراكات الأونلاين' },
           { to: CR.subscriptions.new },
-          { to: CR.subscriptions.special },
-          { to: CR.subscriptions.dailyCashier },
           { to: CR.subscriptions.reports },
-          { to: CR.subscriptions.receipts },
-          { to: FIT.facilities.spaInvoices },
-          { to: CR.subscriptions.inbodyInvoices },
+          { to: CR.subscriptions.dailyCashier },
           { to: CR.subscriptions.outstanding },
-          { to: CR.subscriptions.treasury },
           { to: CR.subscriptions.unifiedTreasury },
-          { to: CR.subscriptions.refunds },
+          { to: FIT.inbody },
+          { to: FIT.facilities.spaInvoices },
           { to: CR.subscriptions.customerSources },
         ],
       },
       {
-        id: 'club-points',
-        icon: HandCoins,
+        id: 'club-sales-management',
+        icon: Handshake,
         items: [
-          { to: CR.points.earnSettings },
-          { to: CR.points.conversionSettings },
-          { to: CR.points.memberHistory },
-          { to: CR.points.earnedReport },
-          { to: CR.points.activeMembersReport },
+          // Team + target/commission live as in-page sections of the sales overview.
+          { to: CR.sales.dashboard },
+          { to: CR.sales.leads },
         ],
       },
       {
-        id: 'club-discount-codes',
-        icon: HandCoins,
+        id: 'club-fitness-trainers',
+        icon: Users,
         items: [
-          { to: CR.discountCodes.create },
-          { to: CR.discountCodes.captainAllocations },
-          { to: CR.discountCodes.memberGrants },
-          { to: CR.discountCodes.memberSearch },
-          { to: CR.discountCodes.memberReport },
-          { to: CR.discountCodes.captainCodes },
-          { to: CR.discountCodes.usageReport },
+          { to: FIT.programs },
+          { to: FIT.trainers.list },
         ],
       },
       {
@@ -197,43 +180,6 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: Lock,
         items: [
           { to: CR.lockers.list },
-          { to: CR.lockers.new },
-          { to: CR.lockers.settings },
-          { to: CR.lockers.inventory },
-          { to: CR.lockers.inventoryReports },
-        ],
-      },
-      {
-        id: 'club-fitness-trainers',
-        icon: Users,
-        items: [
-          { to: FIT.trainers.list },
-          { to: FIT.trainers.payments },
-          { to: FIT.trainers.search },
-          { to: FIT.trainers.ratings },
-          { to: FIT.trainers.settings },
-          { to: FIT.trainers.targets },
-          { to: FIT.trainers.evaluations },
-          { to: FIT.trainers.evaluationCriteria },
-        ],
-      },
-      {
-        id: 'club-fitness-analysis',
-        icon: BarChart3,
-        items: [
-          { to: FIT.trainers.branchAnalysis },
-          { to: FIT.trainers.receptionAnalysis },
-          { to: FIT.trainers.shiftAnalysis },
-        ],
-      },
-      {
-        id: 'club-events',
-        icon: CalendarDays,
-        items: [
-          { to: '/club/events' },
-          { to: '/club/events/registrations' },
-          { to: '/club/events/checkin' },
-          { to: '/club/events/settings' },
         ],
       },
       {
@@ -241,14 +187,11 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: BarChart3,
         items: [
           { to: FR.dashboard },
+          { to: '/finance/payroll-preparation' },
+          { to: '/finance/payroll-approval' },
           { to: FR.expenses },
           { to: FR.revenues },
           { to: FR.expenseReports },
-          { to: FR.revenueReports },
-          { to: FR.analysis },
-          { to: FR.profitLoss },
-          { to: FR.dailyClosing },
-          { to: FR.targetReport },
         ],
       },
     ],
@@ -263,8 +206,6 @@ export const NAV_SECTIONS: NavSection[] = [
         items: [
           { to: CR.cafe.pos },
           { to: CR.cafe.drafts },
-          { to: GS.sales.invoices },
-          { to: GS.sales.revenue },
           { to: GS.sales.shifts },
           { to: GS.sales.treasury },
           { to: GS.sales.settlements },
@@ -275,10 +216,14 @@ export const NAV_SECTIONS: NavSection[] = [
         id: 'gym-sales-cafe',
         icon: Coffee,
         items: [
+          { to: '/club/cafe/dashboard' },
           { to: CR.cafe.categories },
           { to: CR.cafe.products },
+          { to: CR.cafe.bundles },
           { to: CR.cafe.priceList },
+          { to: CR.cafe.waste },
           { to: CR.cafe.reports },
+          { to: CR.cafe.customers },
           { to: CR.cafe.feedbackReports },
         ],
       },
@@ -291,19 +236,16 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: CR.cafe.gymIssue },
           { to: CR.cafe.stockTaking },
           { to: CR.cafe.movements },
+          { to: CR.cafe.stockHealth },
         ],
       },
       {
         id: 'gym-sales-procurement',
         icon: HandCoins,
         items: [
-          { to: GS.procurement.requisitions },
-          { to: GS.procurement.purchaseOrders },
-          { to: GS.procurement.goodsReceipts },
-          { to: GS.procurement.invoices },
-          { to: GS.procurement.returns },
-          { to: GS.procurement.dashboard },
-          { to: GS.procurement.settings },
+          { to: CR.cafe.suppliers },
+          { to: CR.cafe.purchases },
+          { to: CR.cafe.supplierPayments },
         ],
       },
     ],
@@ -343,7 +285,7 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     id: 'app-management',
     icon: Smartphone,
-    items: [{ to: AM.about }],
+    items: [{ to: AM.about }, { to: AM.paymentMethods }, { to: AM.branches }],
     groups: [
       {
         id: 'app-management-invitations',
@@ -364,8 +306,8 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: AM.exerciseCategories },
           { to: AM.exercises },
           { to: AM.news },
-          { to: AM.community },
           { to: AM.ads },
+          { to: AM.notifications },
         ],
       },
     ],
@@ -375,27 +317,35 @@ export const NAV_SECTIONS: NavSection[] = [
     icon: Briefcase,
     groups: [
       {
-        id: 'administrative-affairs-settings',
-        icon: Settings,
-        items: [
-          { to: '/org/departments' },
-          { to: '/org/job-titles' },
-          { to: '/attendance/settings' },
-          { to: '/attendance/rules' },
-          { to: '/leaves/types' },
-          { to: '/settings/pay-components' },
-          { to: '/hr/gym-rates' },
-          { to: '/hr/action-screen' },
-          { to: '/hr/warnings/templates' },
-        ],
-      },
-      {
         id: 'employees',
         icon: Users,
         items: [
-          { to: '/employees/new' },
           { to: '/employees' },
+          { to: '/employees/new' },
+          { to: '/documents' },
           { to: '/employees/weekly-leaves' },
+          { to: '/hr/partners' },
+        ],
+      },
+      {
+        id: 'attendance',
+        icon: Fingerprint,
+        items: [
+          { to: '/attendance' },
+          { to: '/attendance/devices' },
+          { to: '/attendance/settings' },
+          { to: '/attendance/rules' },
+        ],
+      },
+      {
+        id: 'payroll',
+        icon: Banknote,
+        items: [
+          { to: '/payroll/runs' },
+          { to: '/payroll/final-settlements' },
+          { to: '/payroll/setup' },
+          { to: '/settings/pay-components' },
+          { to: '/payroll/salary-scale' },
         ],
       },
       {
@@ -403,8 +353,10 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: CalendarDays,
         items: [
           { to: '/leaves' },
+          { to: '/leaves/types' },
           { to: '/leaves/balances' },
           { to: '/permissions' },
+          { to: '/requests' },
           { to: '/missions' },
         ],
       },
@@ -414,14 +366,9 @@ export const NAV_SECTIONS: NavSection[] = [
         items: [
           { to: '/loans' },
           { to: '/loans/settings' },
-        ],
-      },
-      {
-        id: 'administrative-decisions-actions',
-        icon: Scale,
-        items: [
-          { to: '/rewards' },
           { to: '/penalties' },
+          { to: '/penalties/bylaw' },
+          { to: '/rewards' },
         ],
       },
       {
@@ -430,29 +377,18 @@ export const NAV_SECTIONS: NavSection[] = [
         items: [
           { to: '/hr/circulars' },
           { to: '/hr/warnings' },
+          { to: '/hr/evaluations' },
+          { to: '/hr/custody' },
+          { to: '/hr/job-requests' },
           { to: '/hr/messages' },
+          { to: '/hr/tasks' },
+          { to: '/hr/daily-reports' },
+          { to: '/hr/initiatives' },
           { to: '/hr/activities' },
           { to: '/hr/legal-files' },
-          { to: '/hr/mobile-content' },
-        ],
-      },
-      {
-        id: 'attendance',
-        icon: Fingerprint,
-        items: [
-          { to: '/attendance' },
-          { to: '/attendance/reports' },
-          { to: '/attendance/adjustments' },
-          { to: '/attendance/import' },
-        ],
-      },
-      {
-        id: 'payroll',
-        icon: Banknote,
-        items: [
-          { to: '/payroll/runs' },
-          { to: '/payroll/increases' },
-          { to: '/payroll/increases/report' },
+          { to: '/sites/visits' },
+          { to: '/hr/action-screen' },
+          { to: '/hr/gym-rates' },
         ],
       },
       {
@@ -471,22 +407,13 @@ export const NAV_SECTIONS: NavSection[] = [
     ],
   },
   {
-    id: 'evaluation-management',
-    icon: ClipboardCheck,
-    items: [
-      { to: '/evaluation-management/categories' },
-      { to: '/evaluation-management/items' },
-      { to: '/evaluation-management/add' },
-      { to: '/evaluation-management/report' },
-    ],
-  },
-  {
     id: 'settings',
     icon: Settings,
     items: [
       { to: '/org/branches' },
-      { to: '/club/branch-groups' },
-      { to: '/settings/payment-methods' },
+      { to: '/org/departments' },
+      { to: '/org/job-titles' },
+      { to: '/settings/insurance' },
       { to: '/admin/roles' },
       { to: '/admin/exceptions' },
       { to: '/users' },
@@ -498,29 +425,6 @@ export const NAV_SECTIONS: NavSection[] = [
       { to: '/settings/webhooks' },
       { to: '/company' },
       { to: '/settings/forms' },
-    ],
-  },
-  {
-    id: 'customer-service',
-    icon: Headphones,
-    items: [
-      { to: '/customer-service/questions' },
-      { to: '/customer-service/add-feedback' },
-      { to: '/customer-service/reports' },
-    ],
-  },
-  {
-    id: 'portal-management',
-    icon: Globe2,
-    groups: [
-      { id: 'portal-management-basics', icon: Settings, items: [{ to: PR.company }, { to: PR.sliders }, { to: PR.partners }, { to: PR.policies }] },
-      { id: 'portal-management-subdata', icon: SlidersHorizontal, items: [{ to: PR.sectionSettings }, { to: PR.stats }, { to: PR.ticker }, { to: PR.services }, { to: PR.classShowcase }, { to: PR.aboutFeatures }, { to: PR.coachFeatures }, { to: PR.membershipPlans }] },
-      { id: 'portal-management-about', icon: FileText, items: [{ to: PR.about }] },
-      { id: 'portal-management-media', icon: FileText, items: [{ to: PR.photos }, { to: PR.videos }, { to: PR.heroVideos }] },
-      { id: 'portal-management-branches', icon: Building2, items: [{ to: PR.branches }, { to: PR.trainers }, { to: PR.classes }] },
-      { id: 'portal-management-requests', icon: Mail, items: [{ to: PR.messages }, { to: PR.messagesRead }] },
-      { id: 'portal-management-jobs', icon: Briefcase, items: [{ to: PR.jobs }, { to: PR.jobApplications }, { to: PR.jobApplicationsAccepted }, { to: PR.jobApplicationsRejected }] },
-      { id: 'portal-management-store', icon: Boxes, items: [{ to: PR.offers }, { to: PR.badges }, { to: PR.captainDiscounts }, { to: PR.categories }, { to: PR.products }, { to: PR.orders }, { to: PR.customers }, { to: PR.captainSalesReport }] },
     ],
   },
 ];
@@ -563,9 +467,6 @@ export function activeNavPath(pathname: string): string {
     if (pathname === item.to || pathname.startsWith(item.to + '/')) {
       if (item.to.length > best.length) best = item.to;
     }
-  }
-  if (!best && (pathname === '/employees' || /^\/employees\/\d+/.test(pathname))) {
-    return '/employees/active';
   }
   return best;
 }

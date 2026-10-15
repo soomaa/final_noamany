@@ -37,18 +37,44 @@ describe('critical mutation permission metadata', () => {
   it('separates subscription update and delete permissions', () => {
     expect(permissionsFor(ClubSubscriptionsController, 'update')).toEqual(
       expect.arrayContaining([
-        'club.subscriptions:update',
         'club.subscriptions.list:update',
         'club.reception:update',
       ]),
     );
     expect(permissionsFor(ClubSubscriptionsController, 'remove')).toEqual(
       expect.arrayContaining([
-        'club.subscriptions:delete',
         'club.subscriptions.list:delete',
         'club.reception:delete',
       ]),
     );
+  });
+
+  it('allows the outstanding page permission to view and collect outstanding balances', () => {
+    expect(
+      permissionsFor(ClubSubscriptionsController, 'outstandingReport'),
+    ).toEqual(
+      expect.arrayContaining([
+        'club.subscriptions.outstanding:view',
+        'club.subscriptions.list:view',
+        'club.reception:view',
+      ]),
+    );
+    expect(permissionsFor(ClubSubscriptionsController, 'payment')).toEqual(
+      expect.arrayContaining([
+        'club.subscriptions.outstanding:update',
+        'club.subscriptions.list:update',
+        'club.reception:update',
+      ]),
+    );
+  });
+
+  it('protects the cashier journal with its exact page permission', () => {
+    expect(
+      (ClubSubscriptionsController.prototype as unknown as Record<string, unknown>).dailyCashier,
+    ).toEqual(expect.any(Function));
+    expect(permissionsFor(ClubSubscriptionsController, 'dailyCashier')).toEqual([
+      'club.subscriptions.daily_cashier:view',
+    ]);
   });
 
   it.each([

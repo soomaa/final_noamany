@@ -1,7 +1,10 @@
+import { formatDisplayNumber } from '@/lib/number-display';
+import { formatMoneyNumber } from '@/lib/formatters';
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarRange,
+  Coffee,
   CheckCircle2,
   CircleDollarSign,
   FileStack,
@@ -26,6 +29,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useBranches } from "@/hooks/use-branches";
+import { usePermission } from "@/hooks/use-permission";
 import { usePosEmployeeOptions } from "@/hooks/use-pos-employee-options";
 import { api, apiError } from "@/lib/api";
 import { localToday } from "@/lib/formatters";
@@ -41,7 +45,7 @@ interface PreviewSale {
   saleTime: string;
   amount: number;
   billingCycle: string | null;
-  items: Array<{ name: string; quantity: number }>;
+  items: Array<{ id?: number; name: string; quantity: number; amount?: number }>;
 }
 
 interface Preview {
@@ -52,7 +56,7 @@ interface Preview {
 }
 
 interface AccountSale extends PreviewSale {
-  saleType: "employee" | "partner";
+  saleType: "employee" | "partner" | "hospitality";
   billingStatus: "unbilled" | "in_statement" | "settled" | "not_applicable";
   status: "draft" | "completed" | "refunded" | "cancelled";
   totalAmount: number;
@@ -62,7 +66,7 @@ interface AccountSale extends PreviewSale {
 interface Statement {
   id: number;
   statementNumber: string;
-  accountType: "employee" | "partner";
+  accountType: "employee" | "partner" | "hospitality";
   employeeId: number | null;
   partnerId: number | null;
   accountName: string | null;
@@ -78,6 +82,7 @@ interface Statement {
   settledBy: number | null;
   settledAt: string | null;
   createdAt: string;
+  sales: PreviewSale[];
 }
 
 function firstDayOfMonth(date: string) {
@@ -86,6 +91,9 @@ function firstDayOfMonth(date: string) {
 
 export function SalesSettlementsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('gym-sales.sales.settlements:create');
+  const canUpdate = can('gym-sales.sales.settlements:update');
   const qc = useQueryClient();
   const today = localToday();
   const { data: branches = [] } = useBranches();
@@ -106,25 +114,27 @@ export function SalesSettlementsPage() {
         >("/cafe-products/partners/list")
       ).data.filter((partner) => partner.isActive),
   });
-  const [accountType, setAccountType] = useState<"employee" | "partner">(
+  const [accountType, setAccountType] = useState<"employee" | "partner" | "hospitality">(
     "employee",
   );
   const [accountId, setAccountId] = useState("");
-  const [billingCycle, setBillingCycle] = useState<"daily" | "monthly">(
-    "daily",
-  );
-  const [periodStart, setPeriodStart] = useState(today);
+  // Collection is monthly only: one statement per account gathers every deferred invoice of the
+  // period (legacy "daily" invoices included), so nothing is left out of the statement.
+  const billingCycle = "monthly" as const;
+  const [periodStart, setPeriodStart] = useState(() => firstDayOfMonth(today));
   const [periodEnd, setPeriodEnd] = useState(today);
   const [branchId, setBranchId] = useState("");
   const [selected, setSelected] = useState<number[]>([]);
   const [creating, setCreating] = useState(false);
   const [settleTarget, setSettleTarget] = useState<Statement | null>(null);
   const [settlementMethod, setSettlementMethod] = useState<
-    "direct_payment" | "payroll_deduction" | "profit_share_deduction"
+    "direct_payment" | "payroll_deduction" | "profit_share_deduction" | "partner_account"
   >("direct_payment");
   const [paymentMethod, setPaymentMethod] = useState<
     "cash" | "card" | "wallet" | "transfer"
   >("cash");
+  const [targetPartnerId, setTargetPartnerId] = useState("");
+  const accountActive = accountType === "hospitality" || Boolean(accountId);
   const [settling, setSettling] = useState(false);
 
   const accountOptions =
@@ -167,7 +177,7 @@ export function SalesSettlementsPage() {
         await api.get<Preview>("/billing-statements/preview", {
           params: {
             accountType,
-            accountId,
+            accountId: accountType === "hospitality" ? undefined : accountId,
             billingCycle,
             periodStart,
             periodEnd,
@@ -175,7 +185,7 @@ export function SalesSettlementsPage() {
           },
         })
       ).data,
-    enabled: Boolean(accountId),
+    enabled: accountActive,
   });
   const preview = previewQuery.data;
 
@@ -203,7 +213,7 @@ export function SalesSettlementsPage() {
           },
         })
       ).data,
-    enabled: Boolean(accountId),
+    enabled: accountActive,
   });
 
   const statementsQuery = useQuery({
@@ -219,7 +229,7 @@ export function SalesSettlementsPage() {
           },
         })
       ).data,
-    enabled: Boolean(accountId),
+    enabled: accountActive,
   });
 
   useEffect(() => {
@@ -237,7 +247,7 @@ export function SalesSettlementsPage() {
       purchases: completedRows.reduce((sum, sale) => sum + sale.totalAmount, 0),
       outstanding: completedRows
         .filter((sale) =>
-          ["unbilled", "in_statement"].includes(sale.billingStatus),
+          ["unbilled", "in_statement", ...(sale.saleType === "hospitality" ? ["not_applicable"] : [])].includes(sale.billingStatus),
         )
         .reduce((sum, sale) => sum + sale.totalAmount, 0),
       settled: completedRows
@@ -254,25 +264,19 @@ export function SalesSettlementsPage() {
     [preview, selected],
   );
 
-  const changeAccountType = (type: "employee" | "partner") => {
+  const changeAccountType = (type: "employee" | "partner" | "hospitality") => {
     setAccountType(type);
     setAccountId("");
     setSelected([]);
-    setBillingCycle(type === "partner" ? "monthly" : "daily");
-  };
-
-  const changeCycle = (cycle: "daily" | "monthly") => {
-    setBillingCycle(cycle);
-    setPeriodStart(cycle === "daily" ? periodEnd : firstDayOfMonth(periodEnd));
   };
 
   const createStatement = async () => {
-    if (!preview?.sales.length || !selected.length || creating) return;
+    if (!canCreate || !preview?.sales.length || !selected.length || creating) return;
     setCreating(true);
     try {
       await api.post("/billing-statements", {
         accountType,
-        accountId: Number(accountId),
+        accountId: accountType === "hospitality" ? undefined : Number(accountId),
         billingCycle,
         periodStart,
         periodEnd,
@@ -292,19 +296,24 @@ export function SalesSettlementsPage() {
   };
 
   const settle = async () => {
-    if (!settleTarget || settling) return;
+    if (!canUpdate || !settleTarget || settling || (settlementMethod === "partner_account" && !targetPartnerId)) return;
     setSettling(true);
     try {
       await api.post(`/billing-statements/${settleTarget.id}/settle`, {
         settlementMethod,
+        partnerId: settlementMethod === "partner_account" ? Number(targetPartnerId) : undefined,
         paymentMethod:
           settlementMethod === "direct_payment" ? paymentMethod : undefined,
       });
-      toast.success(ui("تمت التسوية والترحيل المحاسبي وتحديث سجل الفواتير"));
+      toast.success(ui(settlementMethod === "partner_account" ? "تم تحميل قيمة الضيافة على حساب الشريك دون تحصيل" : "تمت التسوية والترحيل المحاسبي وتحديث سجل الفواتير"));
       setSettleTarget(null);
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["billing-statements"] }),
         qc.invalidateQueries({ queryKey: ["billing-account-sales"] }),
+        qc.invalidateQueries({ queryKey: ["quick-sales"] }),
+        qc.invalidateQueries({ queryKey: ["shift-sessions"] }),
+        qc.invalidateQueries({ queryKey: ["shift-close-report"] }),
+        ...["finance", "revenues", "cafe-dashboard", "cafe-reports"].map(key => qc.invalidateQueries({ queryKey: [key] })),
       ]);
     } catch (error) {
       toast.error(apiError(error));
@@ -316,8 +325,10 @@ export function SalesSettlementsPage() {
   const billingStatusLabel = (sale: AccountSale) => {
     if (sale.status === "refunded") return ui("مستردة");
     if (sale.status === "cancelled") return ui("ملغاة");
+    if (sale.saleType === "hospitality" && sale.billingStatus === "not_applicable") return ui("ضيافة غير مجمعة");
     if (sale.billingStatus === "unbilled") return ui("غير مجمعة");
     if (sale.billingStatus === "in_statement") return ui("ضمن كشف مستحق");
+    if (sale.saleType === "hospitality") return ui("تمت تسوية الضيافة");
     if (sale.billingCycle === "immediate") return ui("مدفوعة فورًا");
     return ui("تمت التسوية");
   };
@@ -325,6 +336,7 @@ export function SalesSettlementsPage() {
   const billingStatusClass = (sale: AccountSale) => {
     if (["refunded", "cancelled"].includes(sale.status))
       return "bg-rose-50 text-rose-700";
+    if (sale.saleType === "hospitality" && sale.billingStatus === "not_applicable") return "bg-amber-50 text-amber-800";
     if (sale.billingStatus === "unbilled") return "bg-amber-50 text-amber-800";
     if (sale.billingStatus === "in_statement") return "bg-sky-50 text-sky-700";
     return "bg-emerald-50 text-emerald-700";
@@ -338,7 +350,7 @@ export function SalesSettlementsPage() {
         : ui("دفع فوري");
 
   const settlementLabel = (statement: Statement) => {
-    if (statement.status !== "settled") return ui("لم تسوَّ بعد");
+    if (statement.status !== "settled") return ui(statement.partnerId && statement.accountType === "hospitality" ? "على حساب شريك — مستحق" : "لم تسوَّ بعد");
     if (statement.settlementMethod === "payroll_deduction")
       return ui("خصم من الراتب");
     if (statement.settlementMethod === "profit_share_deduction")
@@ -349,19 +361,23 @@ export function SalesSettlementsPage() {
   return (
     <GymSalesPageShell
       section="sales"
-      title={ui("فواتير الموظفين والشركاء")}
+      title={ui("فواتير الموظفين والشركاء والضيافة")}
       description={ui(
-        "دفتر مستقل لكل حساب يعرض الفواتير المدفوعة والمؤجلة، ثم يجمعها يوميًا أو شهريًا ويسجل كل خطوة للمراجعة.",
+        "دفتر مستقل لكل حساب يعرض الفواتير المدفوعة والمؤجلة، ثم يجمعها شهريًا ويسجل كل خطوة للمراجعة.",
       )}
     >
+      {accountActive && (previewQuery.isError || historyQuery.isError || statementsQuery.isError) && <div role="alert" className="mb-4 rounded-lg border border-destructive/30 bg-destructive/5 p-4 text-sm">
+        <p>{ui("تعذر تحميل بيانات التسويات. أعد المحاولة قبل إصدار أو تسوية كشف.")}</p>
+        <Button variant="outline" className="mt-2" onClick={() => { void previewQuery.refetch(); void historyQuery.refetch(); void statementsQuery.refetch(); }}>{ui("إعادة المحاولة")}</Button>
+      </div>}
       <Card className="mb-5 overflow-hidden border-primary/15">
         <CardContent className="grid gap-4 p-5 lg:grid-cols-[1fr_1.4fr]">
           <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-1 rounded-xl bg-muted p-1">
+            <div className="flex flex-wrap gap-1 rounded-xl bg-muted p-1">
               <Button
                 type="button"
                 variant={accountType === "employee" ? "default" : "ghost"}
-                onClick={() => changeAccountType("employee")}
+                aria-pressed={accountType === "employee"} onClick={() => changeAccountType("employee")}
               >
                 <UserRound className="me-2 size-4" />
                 {ui("فواتير الموظفين")}
@@ -369,13 +385,16 @@ export function SalesSettlementsPage() {
               <Button
                 type="button"
                 variant={accountType === "partner" ? "default" : "ghost"}
-                onClick={() => changeAccountType("partner")}
+                aria-pressed={accountType === "partner"} onClick={() => changeAccountType("partner")}
               >
                 <Handshake className="me-2 size-4" />
                 {ui("فواتير الشركاء")}
               </Button>
+              <Button type="button" variant={accountType === "hospitality" ? "default" : "ghost"} aria-pressed={accountType === "hospitality"} onClick={() => changeAccountType("hospitality")}>
+                <Coffee className="me-2 size-4" />{ui("فواتير الضيافة")}
+              </Button>
             </div>
-            <div>
+            {accountType === "hospitality" ? <p className="text-sm leading-6 text-muted-foreground">{ui("حدد الفترة وفواتير الضيافة، ثم أصدر كشفًا لتحصيل قيمته أو تحميله على حساب شريك. قيمة التسوية هي إجمالي الفواتير المعروض.")}</p> : <div>
               <Label>
                 {ui(accountType === "employee" ? "الموظف" : "الشريك")}
               </Label>
@@ -393,20 +412,13 @@ export function SalesSettlementsPage() {
                   emptyText={ui("لا توجد نتيجة مطابقة")}
                 />
               </div>
-            </div>
+            </div>}
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <Label>{ui("دورة التجميع")}</Label>
-                <select
-                  className="mt-1 h-10 w-full rounded-md border bg-background px-3"
-                  value={billingCycle}
-                  onChange={(event) =>
-                    changeCycle(event.target.value as "daily" | "monthly")
-                  }
-                >
-                  <option value="daily">{ui("يومي")}</option>
-                  <option value="monthly">{ui("شهري")}</option>
-                </select>
+                <p className="mt-1 flex h-10 items-center rounded-md border bg-muted/40 px-3 text-sm font-semibold">
+                  {ui("شهري")}
+                </p>
               </div>
               <div>
                 <Label>{ui("الفرع")}</Label>
@@ -446,7 +458,7 @@ export function SalesSettlementsPage() {
             </div>
           </div>
 
-          {accountId ? (
+          {accountActive ? (
             <div className="grid content-start gap-3 sm:grid-cols-3">
               <div className="rounded-2xl border bg-sky-50/60 p-4">
                 <WalletCards className="mb-3 size-5 text-sky-700" />
@@ -454,7 +466,7 @@ export function SalesSettlementsPage() {
                   {ui("إجمالي المشتريات")}
                 </p>
                 <b className="nums mt-1 block text-xl">
-                  {toArabicDigits(totals.purchases.toFixed(2))} EGP
+                  {formatMoneyNumber(totals.purchases)} EGP
                 </b>
               </div>
               <div className="rounded-2xl border bg-amber-50/70 p-4">
@@ -463,7 +475,7 @@ export function SalesSettlementsPage() {
                   {ui("المبلغ المستحق")}
                 </p>
                 <b className="nums mt-1 block text-xl text-amber-800">
-                  {toArabicDigits(totals.outstanding.toFixed(2))} EGP
+                  {formatMoneyNumber(totals.outstanding)} EGP
                 </b>
               </div>
               <div className="rounded-2xl border bg-emerald-50/70 p-4">
@@ -472,7 +484,7 @@ export function SalesSettlementsPage() {
                   {ui("مدفوع / مسوّى")}
                 </p>
                 <b className="nums mt-1 block text-xl text-emerald-800">
-                  {toArabicDigits(totals.settled.toFixed(2))} EGP
+                  {formatMoneyNumber(totals.settled)} EGP
                 </b>
               </div>
               <div className="sm:col-span-3 flex items-center justify-between rounded-xl border border-primary/15 bg-primary/[0.035] px-4 py-3">
@@ -508,7 +520,7 @@ export function SalesSettlementsPage() {
         </CardContent>
       </Card>
 
-      {accountId ? (
+      {accountActive ? (
         <section className="mb-5 overflow-hidden rounded-2xl border">
           <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
             <div>
@@ -528,6 +540,7 @@ export function SalesSettlementsPage() {
               <thead>
                 <tr className="border-b text-muted-foreground">
                   <th className="p-3 text-start">{ui("الفاتورة")}</th>
+                  <th className="p-3 text-start">{ui("الطلب الفعلي")}</th>
                   <th>{ui("التاريخ")}</th>
                   <th>{ui("الدورة")}</th>
                   <th>{ui("الإجمالي")}</th>
@@ -544,17 +557,20 @@ export function SalesSettlementsPage() {
                         {sale.saleNumber}
                       </span>
                     </td>
+                    <td className="min-w-64 p-3">
+                      <ItemsEvidence items={sale.items} emptyLabel={ui("لا توجد أصناف مسجلة")} />
+                    </td>
                     <td className="nums text-center">
                       {sale.saleDate} · {sale.saleTime}
                     </td>
                     <td className="text-center">
-                      {cycleLabel(sale.billingCycle)}
+                      {sale.saleType === "hospitality" ? ui("ضيافة") : cycleLabel(sale.billingCycle)}
                     </td>
                     <td className="nums text-center font-bold">
-                      {toArabicDigits(sale.totalAmount.toFixed(2))}
+                      {formatMoneyNumber(sale.totalAmount)}
                     </td>
                     <td className="nums text-center">
-                      {toArabicDigits(sale.collectedAmount.toFixed(2))}
+                      {formatMoneyNumber(sale.collectedAmount)}
                     </td>
                     <td className="p-2 text-center">
                       <span
@@ -568,7 +584,7 @@ export function SalesSettlementsPage() {
                 {!historyRows.length ? (
                   <tr>
                     <td
-                      colSpan={6}
+                      colSpan={7}
                       className="p-8 text-center text-muted-foreground"
                     >
                       {historyQuery.isFetching
@@ -583,7 +599,7 @@ export function SalesSettlementsPage() {
         </section>
       ) : null}
 
-      {accountId ? (
+      {accountActive ? (
         <div className="mb-5 grid gap-4 xl:grid-cols-[1.15fr_.85fr]">
           <Card>
             <CardContent className="p-5">
@@ -599,7 +615,7 @@ export function SalesSettlementsPage() {
                 </div>
                 <div className="text-end">
                   <p className="nums text-2xl font-black text-primary">
-                    {toArabicDigits(selectedTotal.toFixed(2))} EGP
+                    {formatMoneyNumber(selectedTotal)} EGP
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {ui("الإجمالي المختار")}
@@ -632,24 +648,25 @@ export function SalesSettlementsPage() {
                           </p>
                           <p className="truncate text-xs text-muted-foreground">
                             {sale.items
-                              .map((item) => `${item.name} × ${item.quantity}`)
+                              .map((item) => `${item.name} × ${formatDisplayNumber(item.quantity)}`)
                               .join("، ")}
                           </p>
                         </div>
                         <b className="nums">
-                          {toArabicDigits(sale.amount.toFixed(2))}
+                          {formatMoneyNumber(sale.amount)}
                         </b>
                       </label>
                     ))}
                   </div>
-                  <Button
+                  {canCreate ? <Button
+                    permissionAction="create"
                     className="mt-4 w-full"
                     onClick={() => void createStatement()}
-                    disabled={creating || !selected.length}
+                    disabled={creating || !selected.length || previewQuery.isFetching || previewQuery.isError}
                   >
                     <FileStack className="me-2 size-4" />
                     {creating ? ui("جاري الإصدار…") : ui("إصدار كشف مجمع")}
-                  </Button>
+                  </Button> : null}
                 </>
               ) : (
                 <div className="grid min-h-44 place-items-center rounded-xl border border-dashed text-center text-muted-foreground">
@@ -669,13 +686,9 @@ export function SalesSettlementsPage() {
                 {ui("كيف تعمل الدورة؟")}
               </p>
               <p className="text-sm leading-7 text-muted-foreground">
-                {billingCycle === "daily"
-                  ? ui(
-                      "تظهر هنا فواتير هذا اليوم فقط، ثم تصدر كشفًا يوميًا واحدًا قابلًا للتسوية.",
-                    )
-                  : ui(
-                      "تظهر فواتير الشهر المحدد، ثم تصدر كشفًا شهريًا واحدًا قابلًا للتسوية.",
-                    )}
+                {ui(
+                  "تظهر كل الفواتير المؤجلة غير المجمعة للحساب في الفترة المحددة (من أول الشهر افتراضيًا)، ومعاها الفواتير القديمة المسجلة «يومي»، ثم تصدر كشفًا شهريًا واحدًا قابلًا للتسوية.",
+                )}
               </p>
               <div className="rounded-xl border bg-muted/30 p-3 text-xs leading-6 text-muted-foreground">
                 {ui(
@@ -687,7 +700,7 @@ export function SalesSettlementsPage() {
         </div>
       ) : null}
 
-      {accountId ? (
+      {accountActive ? (
         <section className="overflow-hidden rounded-2xl border">
           <div className="border-b bg-muted/30 px-4 py-3 font-bold">
             {ui("كشوف الحساب الصادرة لهذا الحساب")}
@@ -697,6 +710,7 @@ export function SalesSettlementsPage() {
               <thead>
                 <tr className="border-b text-muted-foreground">
                   <th className="p-3 text-start">{ui("رقم الكشف")}</th>
+                  <th className="p-3 text-start">{ui("الفواتير والطلبات")}</th>
                   <th>{ui("الفترة")}</th>
                   <th>{ui("الإجمالي")}</th>
                   <th>{ui("الدورة")}</th>
@@ -710,12 +724,26 @@ export function SalesSettlementsPage() {
                   <tr key={statement.id} className="border-b last:border-0">
                     <td className="p-3 font-semibold">
                       {statement.statementNumber}
+                      {statement.accountType === "hospitality" && <span className="mt-1 block text-xs font-normal text-muted-foreground">{ui("ضيافة المكان")}{statement.partnerId ? ` · ${statement.accountName || partners.find(p => p.id === statement.partnerId)?.name || `#${statement.partnerId}`}` : ''}</span>}
+                    </td>
+                    <td className="min-w-72 p-3">
+                      <div className="max-h-36 space-y-2 overflow-y-auto pe-1">
+                        {(statement.sales ?? []).map((sale) => (
+                          <article key={sale.id} className="rounded-xl border bg-muted/20 p-2.5">
+                            <div className="mb-1.5 flex items-center justify-between gap-2">
+                              <b className="nums text-xs">#{toArabicDigits(sale.dailyNumber)} · {sale.saleNumber}</b>
+                              <span className="nums text-xs font-bold">{formatMoneyNumber(sale.amount)} EGP</span>
+                            </div>
+                            <ItemsEvidence items={sale.items} emptyLabel={ui("لا توجد أصناف مسجلة")} />
+                          </article>
+                        ))}
+                      </div>
                     </td>
                     <td className="nums text-center">
                       {statement.periodStart} — {statement.periodEnd}
                     </td>
                     <td className="nums text-center font-bold">
-                      {toArabicDigits(statement.totalAmount.toFixed(2))}
+                      {formatMoneyNumber(statement.totalAmount)}
                     </td>
                     <td className="text-center">
                       {cycleLabel(statement.billingCycle)}
@@ -730,7 +758,7 @@ export function SalesSettlementsPage() {
                       >
                         {statement.status === "settled"
                           ? ui("تمت التسوية")
-                          : ui("مستحق")}
+                          : statement.accountType === "hospitality" && statement.partnerId ? ui("على حساب شريك — مستحق") : ui("مستحق")}
                       </span>
                     </td>
                     <td className="text-center text-xs text-muted-foreground">
@@ -739,17 +767,20 @@ export function SalesSettlementsPage() {
                       </span>
                       {statement.settledAt ? (
                         <span className="ms-2">
-                          {ui("تسوية")}: #{statement.settledBy ?? "—"}
+                          {ui("آخر إجراء")}: #{statement.settledBy ?? "—"}
+                          <time className="nums mt-1 block" dateTime={statement.settledAt}>{new Date(statement.settledAt).toLocaleString()}</time>
                         </span>
                       ) : null}
                     </td>
                     <td className="p-2 text-center">
-                      {statement.status === "issued" ? (
+                      {canUpdate && statement.status === "issued" ? (
                         <Button
+                          permissionAction="update"
                           size="sm"
                           onClick={() => {
                             setSettleTarget(statement);
                             setSettlementMethod("direct_payment");
+                            setTargetPartnerId("");
                           }}
                         >
                           {ui("تسوية الآن")}
@@ -765,7 +796,7 @@ export function SalesSettlementsPage() {
                 {!statementsQuery.data?.data?.length ? (
                   <tr>
                     <td
-                      colSpan={7}
+                      colSpan={8}
                       className="p-8 text-center text-muted-foreground"
                     >
                       {ui("لم تصدر كشوف لهذا الحساب بعد")}
@@ -779,7 +810,7 @@ export function SalesSettlementsPage() {
       ) : null}
 
       <Dialog
-        open={Boolean(settleTarget)}
+        open={canUpdate && Boolean(settleTarget)}
         onOpenChange={(open) => !open && setSettleTarget(null)}
       >
         <DialogContent>
@@ -787,14 +818,30 @@ export function SalesSettlementsPage() {
             <DialogTitle>{ui("تسوية كشف الحساب")}</DialogTitle>
             <DialogDescription>
               {settleTarget?.statementNumber} ·{" "}
-              {toArabicDigits((settleTarget?.totalAmount ?? 0).toFixed(2))} EGP
+              {formatMoneyNumber((settleTarget?.totalAmount ?? 0))} EGP
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
+            <section className="rounded-2xl border bg-muted/25 p-3">
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <h3 className="text-sm font-black">{ui("الطلبات التي تتم تسويتها")}</h3>
+                <span className="text-xs text-muted-foreground">{toArabicDigits(settleTarget?.sales?.length ?? 0)} {ui("فاتورة")}</span>
+              </div>
+              <div className="max-h-52 space-y-2 overflow-y-auto pe-1">
+                {(settleTarget?.sales ?? []).map((sale) => (
+                  <article key={sale.id} className="rounded-xl border bg-background p-3">
+                    <div className="flex items-center justify-between gap-2"><b className="nums">#{toArabicDigits(sale.dailyNumber)} · {sale.saleNumber}</b><b className="nums">{formatMoneyNumber(sale.amount)} EGP</b></div>
+                    <p className="nums mt-1 text-xs text-muted-foreground">{sale.saleDate} · {sale.saleTime}</p>
+                    <div className="mt-2"><ItemsEvidence items={sale.items} emptyLabel={ui("لا توجد أصناف مسجلة")} /></div>
+                  </article>
+                ))}
+              </div>
+            </section>
             <div>
-              <Label>{ui("طريقة التسوية")}</Label>
+              <Label htmlFor="hospitality-settlement-method">{ui("طريقة التسوية")}</Label>
               <select
                 className="mt-1 h-10 w-full rounded-md border bg-background px-3"
+                id="hospitality-settlement-method"
                 value={settlementMethod}
                 onChange={(event) =>
                   setSettlementMethod(
@@ -803,22 +850,26 @@ export function SalesSettlementsPage() {
                 }
               >
                 <option value="direct_payment">{ui("دفع مباشر")}</option>
-                {settleTarget?.accountType === "employee" ? (
-                  <option value="payroll_deduction">
-                    {ui("خصم من الراتب")}
-                  </option>
-                ) : (
+                {settleTarget?.accountType === "hospitality" && !settleTarget.partnerId && <option value="partner_account">{ui("على حساب شريك")}</option>}
+                {(settleTarget?.accountType === "partner" || (settleTarget?.accountType === "hospitality" && settleTarget.partnerId)) && (
                   <option value="profit_share_deduction">
                     {ui("خصم من نسبة أرباح الشريك")}
                   </option>
                 )}
               </select>
             </div>
+            {settlementMethod === "partner_account" && <div className="space-y-2">
+              <Label htmlFor="hospitality-partner">{ui("الشريك الذي يتحمل القيمة")}</Label>
+              <Combobox id="hospitality-partner" aria-label={ui("الشريك الذي يتحمل القيمة")} value={targetPartnerId} onValueChange={setTargetPartnerId} options={partners.map(partner => ({ value: String(partner.id), label: partner.name }))} placeholder={ui("اختر الشريك")} searchPlaceholder={ui("ابحث باسم الشريك")} emptyText={ui("لا يوجد شريك نشط مطابق")} />
+              <p className="text-sm leading-6 text-muted-foreground">{ui("ستضاف القيمة إلى مستحقات الشريك، ويمكن تحصيلها لاحقًا من تبويب فواتير الشركاء.")}</p>
+            </div>}
+            {settleTarget?.accountType === 'employee' && <p className="text-sm leading-6 text-muted-foreground">{ui('خصم الحساب من المرتب بيتحدد من صفحة المرتبات الشهرية داخل بيانات الموظف. هنا للتحصيل المباشر فقط.')}</p>}
             {settlementMethod === "direct_payment" ? (
               <div>
-                <Label>{ui("وسيلة الدفع")}</Label>
+                <Label htmlFor="hospitality-payment-method">{ui("وسيلة الدفع")}</Label>
                 <select
                   className="mt-1 h-10 w-full rounded-md border bg-background px-3"
+                  id="hospitality-payment-method"
                   value={paymentMethod}
                   onChange={(event) =>
                     setPaymentMethod(event.target.value as typeof paymentMethod)
@@ -838,12 +889,23 @@ export function SalesSettlementsPage() {
             <Button variant="outline" onClick={() => setSettleTarget(null)}>
               {ui("إلغاء")}
             </Button>
-            <Button onClick={() => void settle()} disabled={settling}>
-              {settling ? ui("جاري الترحيل…") : ui("اعتماد التسوية")}
+            <Button permissionAction="update" onClick={() => void settle()} disabled={settling || (settlementMethod === "partner_account" && !targetPartnerId)}>
+              {settling ? ui("جاري الترحيل…") : ui(settlementMethod === "partner_account" ? "تأكيد التحميل على الشريك" : "اعتماد التسوية")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </GymSalesPageShell>
   );
+}
+
+function ItemsEvidence({
+  items,
+  emptyLabel,
+}: {
+  items: Array<{ id?: number; name: string; quantity: number; amount?: number }>;
+  emptyLabel: string;
+}) {
+  if (!items?.length) return <span className="text-xs text-muted-foreground">{emptyLabel}</span>;
+  return <ul className="space-y-1 text-xs">{items.map((item, index) => <li key={item.id ?? `${item.name}-${index}`} className="flex items-baseline justify-between gap-3"><span className="min-w-0 break-words font-semibold">{item.name} × {toArabicDigits(item.quantity)}</span>{item.amount != null ? <span className="nums shrink-0 text-muted-foreground">{formatMoneyNumber(item.amount)}</span> : null}</li>)}</ul>;
 }

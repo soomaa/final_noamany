@@ -1,0 +1,55 @@
+name: Backend quality gates
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: one80_ci
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      NODE_ENV: test
+      DATABASE_URL: mysql://root:root@127.0.0.1:3306/one80_ci
+      E2E_MYSQL_ADMIN_URL: mysql://root:root@127.0.0.1:3306/mysql
+      JWT_ACCESS_SECRET: ci-access-secret-that-is-longer-than-thirty-two-characters
+      JWT_REFRESH_SECRET: ci-refresh-secret-that-is-longer-than-thirty-two-characters
+      PRIVATE_UPLOAD_DIR: ${{ runner.temp }}/one80-private-uploads
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: mkdir -p "$PRIVATE_UPLOAD_DIR"
+      - run: npm run prisma:validate
+      - run: npm run prisma:generate
+      - run: npx prisma migrate deploy
+      - run: npm run prisma:drift:check
+      - run: npm run prisma:rehearse
+      - run: npm run typecheck
+      - run: npm test -- --runInBand
+      - run: npm run build

@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
@@ -37,6 +38,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 type Draft = Omit<ProgramSegment, "id"> & { id?: string };
 
@@ -63,6 +65,10 @@ const KIND_ICON: Record<SegmentKind, JSX.Element> = {
 
 const EventLiveProgram = () => {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('club.events.list:create');
+  const canUpdate = can('club.events.list:update');
+  const canDelete = can('club.events.list:delete');
   const liveApi = useClubEventsLiveApi();
   const basePath = useEventLiveBasePath();
   const { segments, reload } = useProgramSegments(false);
@@ -75,15 +81,18 @@ const EventLiveProgram = () => {
   );
 
   const openNew = () => {
+    if (!canCreate) return;
     setDraft({ ...EMPTY, order_index: segments.length });
     setOpen(true);
   };
   const openEdit = (s: ProgramSegment) => {
+    if (!canUpdate) return;
     setDraft({ ...s, description: s.description ?? "", video_url: s.video_url ?? "" });
     setOpen(true);
   };
 
   const save = async () => {
+    if (draft.id ? !canUpdate : !canCreate) return;
     if (!draft.title.trim()) {
       toast.error(ui('العنوان مطلوب'));
       return;
@@ -118,9 +127,10 @@ const EventLiveProgram = () => {
   };
 
   const remove = async (id: string) => {
+    if (!canDelete) return;
     if (!confirm(ui("حذف هذه الفقرة؟"))) return;
     try {
-      await // delete-disabled: liveApi.remove(id);
+      await liveApi.remove(id);
       toast.success(ui("تم الحذف"));
       reload();
     } catch (e) {
@@ -129,6 +139,7 @@ const EventLiveProgram = () => {
   };
 
   const move = async (id: string, dir: -1 | 1) => {
+    if (!canUpdate) return;
     const idx = segments.findIndex((s: ProgramSegment) => s.id === id);
     const swap = segments[idx + dir];
     if (!swap) return;
@@ -146,6 +157,7 @@ const EventLiveProgram = () => {
 
   // السحب-والإفلات: يعيد ترقيم كل الفقرات ويحفظها فعلياً في قاعدة البيانات
   const onDragEnd = async (e: DragEndEvent) => {
+    if (!canUpdate) return;
     const { active, over } = e;
     if (!over || active.id === over.id) return;
     const oldIdx = segments.findIndex((s: ProgramSegment) => s.id === active.id);
@@ -162,6 +174,7 @@ const EventLiveProgram = () => {
   };
 
   const toggleEnabled = async (s: ProgramSegment) => {
+    if (!canUpdate) return;
     try {
       await liveApi.update(s.id, { enabled: !s.enabled });
       reload();
@@ -188,9 +201,9 @@ const EventLiveProgram = () => {
                 {ui("شاشة العرض")}
               </Link>
             </Button>
-            <Button onClick={openNew} size="sm" className="bg-[hsl(var(--grad-green))] hover:bg-[hsl(var(--grad-green-dark))]">
+            {canCreate ? <Button permissionResource="club.events.list" permissionAction="create" onClick={openNew} size="sm" className="bg-[hsl(var(--grad-green))] hover:bg-[hsl(var(--grad-green-dark))]">
               <Plus className="h-4 w-4 ml-1" /> {ui("فقرة جديدة")}
-            </Button>
+            </Button> : null}
           </div>
         </div>
       </header>
@@ -218,6 +231,8 @@ const EventLiveProgram = () => {
                   onToggle={() => toggleEnabled(s)}
                   onEdit={() => openEdit(s)}
                   onRemove={() => remove(s.id)}
+                  canUpdate={canUpdate}
+                  canDelete={canDelete}
                 />
               ))}
             </div>
@@ -343,7 +358,7 @@ const EventLiveProgram = () => {
           </div>
           <DialogFooter className="gap-2">
             <Button variant="outline" onClick={() => setOpen(false)}>{ui("إلغاء")}</Button>
-            <Button onClick={save} disabled={saving} className="bg-[hsl(var(--grad-green))] hover:bg-[hsl(var(--grad-green-dark))]">
+            <Button permissionResource="club.events.list" permissionAction={draft.id ? 'update' : 'create'} onClick={save} disabled={saving} className="bg-[hsl(var(--grad-green))] hover:bg-[hsl(var(--grad-green-dark))]">
               {saving ? ui("جارٍ الحفظ…") : ui("حفظ")}
             </Button>
           </DialogFooter>
@@ -407,11 +422,12 @@ const MediaUrlsEditor = ({
 export default EventLiveProgram;
 
 const SegmentRow = ({
-  s, i, total, onUp, onDown, onToggle, onEdit, onRemove,
+  s, i, total, onUp, onDown, onToggle, onEdit, onRemove, canUpdate, canDelete,
 }: {
   s: ProgramSegment; i: number; total: number;
   onUp: () => void; onDown: () => void; onToggle: () => void;
   onEdit: () => void; onRemove: () => void;
+  canUpdate: boolean; canDelete: boolean;
 }) => {
   const { ui } = useLocale();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: s.id });
@@ -425,7 +441,7 @@ const SegmentRow = ({
       }`}
     >
       <div className="flex items-start gap-3">
-        <button
+        {canUpdate ? <button
           type="button"
           {...attributes}
           {...listeners}
@@ -434,8 +450,8 @@ const SegmentRow = ({
           aria-label={ui("مقبض السحب")}
         >
           <GripVertical className="h-4 w-4 text-[hsl(var(--grad-green-dark))]" />
-          <span className="text-[10px] font-bold text-[hsl(var(--grad-green-dark))] tabular-nums">#{i + 1}</span>
-        </button>
+          <span className="text-[10px] font-bold text-[hsl(var(--grad-green-dark))] tabular-nums">#{formatDisplayNumber(i + 1)}</span>
+        </button> : null}
         <div className={`w-10 h-10 rounded-xl flex items-center justify-center text-white shrink-0 ${
           s.kind === "video" ? "bg-gradient-to-br from-[hsl(var(--grad-gold))] to-[hsl(var(--grad-gold-dark))]" : "bg-gradient-to-br from-[hsl(var(--grad-green))] to-[hsl(var(--grad-green-dark))]"
         }`}>
@@ -448,17 +464,18 @@ const SegmentRow = ({
               {SEGMENT_KIND_LABEL[s.kind]}
             </span>
             <span className="text-[10px] font-bold bg-[hsl(var(--grad-gold))]/10 text-[hsl(var(--grad-gold-dark))] px-2 py-0.5 rounded-full">
-              {s.duration_seconds} {ui("ث")}
+              {formatDisplayNumber(s.duration_seconds)} {ui("ث")}
             </span>
             {(s.kind === "image" || s.kind === "gallery") && (
-              <span className="text-[10px] text-muted-foreground">{s.media_urls.length} {ui("صورة")}</span>
+              <span className="text-[10px] text-muted-foreground">{formatDisplayNumber(s.media_urls.length)} {ui("صورة")}</span>
             )}
           </div>
           {s.description && (
             <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{s.description}</p>
           )}
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        {(canUpdate || canDelete) ? <div className="flex items-center gap-1 shrink-0">
+          {canUpdate ? <>
           <Button size="icon" variant="ghost" onClick={onUp} disabled={i === 0} title={ui("أعلى")}>
             <ArrowUp className="h-4 w-4" />
           </Button>
@@ -471,10 +488,11 @@ const SegmentRow = ({
           <Button size="icon" variant="ghost" onClick={onEdit} title={ui("تعديل")}>
             <Pencil className="h-4 w-4 text-[hsl(var(--grad-green-dark))]" />
           </Button>
-          <Button size="icon" variant="ghost" onClick={onRemove} title={ui("حذف")}>
+          </> : null}
+          {canDelete ? <Button permissionResource="club.events.list" permissionAction="delete" size="icon" variant="ghost" onClick={onRemove} title={ui("حذف")}>
             <Trash2 className="h-4 w-4 text-red-600" />
-          </Button>
-        </div>
+          </Button> : null}
+        </div> : null}
       </div>
     </Card>
   );

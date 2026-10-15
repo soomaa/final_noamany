@@ -16,6 +16,7 @@ import { isNotImplemented, useResource } from '@/lib/api-hooks';
 import { getRequestType, type RequestTypeKey } from '@/lib/i18n-constants';
 import { queryClient } from '@/lib/query';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 interface RequestDetail {
   id: number;
@@ -25,11 +26,36 @@ interface RequestDetail {
   status: string;
   createdAt?: string;
   payload?: Record<string, unknown>;
+  effectSnapshot?: SalaryCertificateSnapshot | null;
   timeline?: TimelineEvent[];
 }
 
+interface SalaryCertificateSnapshot {
+  employeeName?: string | null;
+  employeeCode?: number | null;
+  jobTitle?: string | null;
+  issuedOn?: string | null;
+  directedTo?: string | null;
+  purpose?: string | null;
+  basicSalary?: number;
+  allowances?: number;
+  deductions?: number;
+  grossSalary?: number;
+  netBeforeStatutory?: number;
+  company?: {
+    institute_name?: string;
+    address?: string;
+    currency?: string;
+    currency_symbol?: string;
+  } | null;
+}
+
 export function RequestDetailPage() {
-  const { t, ui } = useLocale();
+  const { can } = usePermission();
+  const canPrint = can('leaves.requests:print');
+  const canApprove = can('leaves.requests:approve');
+  const canReject = can('leaves.requests:reject');
+  const { t, ui, locale } = useLocale();
   const { id } = useParams<{ id: string }>();
   const { data, isLoading, isError, error, refetch } = useResource<RequestDetail>('requests', id);
 
@@ -90,6 +116,12 @@ export function RequestDetailPage() {
     { id: '1', status: 'submitted', label: ui('تم تقديم الطلب'), at: data.createdAt },
     { id: '2', status: 'pending', label: ui('قيد المراجعة') },
   ];
+  const certificate = data.type === 'salary-certificate' ? data.effectSnapshot : null;
+  const formatAmount = (value?: number) =>
+    new Intl.NumberFormat(locale === 'ar' ? 'ar-EG-u-nu-latn' : 'en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value ?? 0);
 
   const content = (
     <div className="grid gap-6 lg:grid-cols-3">
@@ -111,12 +143,29 @@ export function RequestDetailPage() {
             )}
           </CardContent>
         </Card>
-        {data.type === 'salary-certificate' && data.status === 'approved' && (
+        {canPrint && data.type === 'salary-certificate' && data.status === 'approved' && certificate && (
           <Card>
             <CardHeader><CardTitle className="text-base">{ui('تعريف مرتب — للطباعة')}</CardTitle></CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <p>{ui('يشهد')} {data.employeeName} {ui('بأنه يعمل لدى الشركة...')}</p>
-              <Button variant="outline" onClick={() => window.print()}>{ui('طباعة التعريف')}</Button>
+            <CardContent className="space-y-5 text-sm">
+              <div className="space-y-2 leading-7">
+                <p className="font-medium">{certificate.company?.institute_name ?? ui('الشركة')}</p>
+                <p className="break-words">
+                  {ui('تشهد الشركة بأن')} <strong>{certificate.employeeName ?? data.employeeName ?? '—'}</strong>{' '}
+                  {ui('يعمل لديها بوظيفة')} <strong>{certificate.jobTitle ?? '—'}</strong>.
+                </p>
+                {certificate.directedTo ? <p>{ui('موجّه إلى')}: {certificate.directedTo}</p> : null}
+                {certificate.purpose ? <p>{ui('الغرض')}: {certificate.purpose}</p> : null}
+              </div>
+              <dl className="grid gap-3 rounded-xl bg-muted/40 p-4 sm:grid-cols-2">
+                <div><dt className="text-muted-foreground">{ui('الراتب الأساسي')}</dt><dd className="nums font-semibold">{formatAmount(certificate.basicSalary)} {certificate.company?.currency_symbol}</dd></div>
+                <div><dt className="text-muted-foreground">{ui('البدلات')}</dt><dd className="nums font-semibold">{formatAmount(certificate.allowances)} {certificate.company?.currency_symbol}</dd></div>
+                <div><dt className="text-muted-foreground">{ui('إجمالي الراتب')}</dt><dd className="nums font-semibold">{formatAmount(certificate.grossSalary)} {certificate.company?.currency_symbol}</dd></div>
+                <div><dt className="text-muted-foreground">{ui('الصافي قبل الاستقطاعات النظامية')}</dt><dd className="nums font-semibold">{formatAmount(certificate.netBeforeStatutory)} {certificate.company?.currency_symbol}</dd></div>
+              </dl>
+              <div className="flex flex-wrap items-center justify-between gap-3 text-muted-foreground">
+                <span>{ui('تاريخ الإصدار')}: {certificate.issuedOn ?? '—'}</span>
+                <Button variant="outline" onClick={() => window.print()} className="no-print">{ui('طباعة التعريف')}</Button>
+              </div>
             </CardContent>
           </Card>
         )}
@@ -137,10 +186,10 @@ export function RequestDetailPage() {
         description={typeMeta?.label}
         actions={
           <div className="flex flex-wrap gap-2 no-print">
-            {data.status === 'pending' && (
+            {data.status === 'pending' && (canApprove || canReject) && (
               <>
-                <Button size="sm" onClick={() => void approve()}><Check className="size-4" />{ui('اعتماد')}</Button>
-                <Button size="sm" variant="destructive" onClick={() => void reject()}><X className="size-4" />{ui('رفض')}</Button>
+                {canApprove ? <Button size="sm" onClick={() => void approve()}><Check className="size-4" />{ui('اعتماد')}</Button> : null}
+                {canReject ? <Button size="sm" variant="destructive" onClick={() => void reject()}><X className="size-4" />{ui('رفض')}</Button> : null}
               </>
             )}
             <Button variant="outline" size="sm" asChild><Link to="/requests"><ArrowRight className="size-4" />{ui('العودة')}</Link></Button>

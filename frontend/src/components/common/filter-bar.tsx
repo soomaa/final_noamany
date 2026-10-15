@@ -13,6 +13,8 @@ export interface FilterField {
   type: 'text' | 'select' | 'date';
   options?: { value: string; label: string }[];
   placeholder?: string;
+  allLabel?: string;
+  disabled?: boolean;
 }
 
 interface FilterBarProps {
@@ -22,11 +24,9 @@ interface FilterBarProps {
   extra?: ReactNode;
   /** Query keys kept when clearing filters (e.g. isSpecial on the special subs page). */
   preserveParams?: string[];
-  /** When true, hides the built-in search input (e.g. when the DataTable already has one). */
-  hideSearch?: boolean;
 }
 
-export function FilterBar({ fields = [], searchPlaceholder, className, extra, preserveParams = [], hideSearch }: FilterBarProps) {
+export function FilterBar({ fields = [], searchPlaceholder, className, extra, preserveParams = [] }: FilterBarProps) {
   const { t, ui } = useLocale();
   const resolvedSearchPlaceholder = searchPlaceholder ?? ui('بحث…');
   const [searchParams, setSearchParams] = useSearchParams();
@@ -57,11 +57,6 @@ export function FilterBar({ fields = [], searchPlaceholder, className, extra, pr
 
   const clearAll = () => {
     const next = new URLSearchParams();
-    // If the search input is hidden (managed by DataTable), preserve its value.
-    if (hideSearch) {
-      const s = searchParams.get('search');
-      if (s) next.set('search', s);
-    }
     for (const key of preserveParams) {
       const value = searchParams.get(key);
       if (value) next.set(key, value);
@@ -69,41 +64,37 @@ export function FilterBar({ fields = [], searchPlaceholder, className, extra, pr
     setSearchParams(next, { replace: true });
   };
 
-  const hasFilters = hideSearch
-    ? fields.some((f) => searchParams.get(f.key)) ||
-      [...searchParams.keys()].some((k) => !preserveParams.includes(k) && !['page', 'pageSize', 'search', 'sort', 'order', 'tab'].includes(k))
-    : search ||
-      fields.some((f) => searchParams.get(f.key)) ||
-      [...searchParams.keys()].some((k) => !preserveParams.includes(k) && !['page', 'pageSize', 'search', 'sort', 'order', 'tab'].includes(k));
+  const hasFilters =
+    search ||
+    fields.some((f) => searchParams.get(f.key)) ||
+    [...searchParams.keys()].some((k) => !preserveParams.includes(k) && !['page', 'pageSize', 'search', 'sort', 'order', 'tab'].includes(k));
 
   return (
     <div className={cn('surface-panel mb-3 flex flex-col gap-3 rounded-xl border bg-card px-4 py-3', className)}>
       <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end">
-        {!hideSearch && (
-          <div className="min-w-[200px] flex-1">
-            <Label htmlFor="filter-search" className="sr-only">
-              {t('shared.search')}
-            </Label>
-            <Input
-              id="filter-search"
-              placeholder={resolvedSearchPlaceholder}
-              value={searchInput}
-              onChange={(e) => setSearchInput(e.target.value)}
-            />
-          </div>
-        )}
+        <div className="min-w-[200px] flex-1">
+          <Label htmlFor="filter-search" className="sr-only">
+            {t('shared.search')}
+          </Label>
+          <Input
+            id="filter-search"
+            placeholder={resolvedSearchPlaceholder}
+            value={searchInput}
+            onChange={(e) => setSearchInput(e.target.value)}
+          />
+        </div>
         {fields.map((field) => (
           <div key={field.key} className="min-w-[160px]">
             <Label className="mb-1.5 block text-xs text-muted-foreground">{field.label}</Label>
             {field.type === 'select' ? (
-              <Select value={searchParams.get(field.key) ?? ''} onValueChange={(v) => setFilter(field.key, v === 'all' ? '' : v)}>
-                <SelectTrigger>
+              <Select disabled={field.disabled} value={searchParams.get(field.key) ?? ''} onValueChange={(v) => setFilter(field.key, v === 'all' ? '' : v)}>
+                <SelectTrigger aria-label={field.label} className="min-h-11 text-foreground data-[placeholder]:text-muted-foreground">
                   <SelectValue placeholder={field.placeholder ?? field.label} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">{t('shared.all')}</SelectItem>
+                  <SelectItem value="all" className="min-h-11">{field.allLabel ?? t('shared.all')}</SelectItem>
                   {field.options?.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
+                    <SelectItem key={o.value} value={o.value} className="min-h-11">
                       {o.label}
                     </SelectItem>
                   ))}

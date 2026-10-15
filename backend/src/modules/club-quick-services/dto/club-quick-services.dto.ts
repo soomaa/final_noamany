@@ -66,6 +66,10 @@ export class UpsertClubQuickServiceDto {
   @IsOptional()
   @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  createsSalesLead?: boolean;
 }
 
 export class SellClubQuickServiceDto {
@@ -82,6 +86,10 @@ export class SellClubQuickServiceDto {
   @IsOptional()
   @IsString()
   memberName?: string;
+
+  @IsOptional()
+  @IsString()
+  customerPhone?: string;
 
   @IsOptional()
   @Transform(({ value }) => (value != null && value !== '' ? Number(value) : undefined))

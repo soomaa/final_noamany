@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,10 +11,32 @@ import { paginated } from '../../common/dto/list-result';
 import { ACTIVE_BOOKING_STATUSES, assertEndTimeAfterStart, localDateString, timeOverlap } from './club-fitness.utils';
 import { attachMemberBrief, loadMemberBriefMap, searchMemberIds } from '../club-members/club-member-brief.utils';
 import { ListClubHallBookingsDto, ListClubHallsDto } from './dto/list-club-halls.dto';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @Injectable()
 export class ClubHallsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
+
+  private assertBranchAccess(user: JwtUser | undefined, branchId: number) {
+    if (!this.branchScope.isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
+  }
+
+  private async assertMemberInBranch(memberId: number, branchId: number) {
+    const member = await this.prisma.club_members.findFirst({
+      where: { id: memberId, is_deleted: false },
+      select: { branch_id: true },
+    });
+    if (!member) throw new NotFoundException('العضو غير موجود');
+    if (member.branch_id !== branchId) {
+      throw new ForbiddenException('لا يمكن استخدام عضو من فرع آخر في حجز القاعة');
+    }
+  }
 
   private mapHall(row: {
     id: number;
@@ -71,13 +94,15 @@ export class ClubHallsService {
     };
   }
 
-  async listHalls(q: ListClubHallsDto) {
+  async listHalls(q: ListClubHallsDto, user?: JwtUser) {
     const and: Prisma.club_hallsWhereInput[] = [{ is_deleted: false }];
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({ OR: [{ name: { contains: s } }, { hall_number: { contains: s } }] });
     }
     if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) and.push({ branch_id: { in: scope } });
     if (q.status && q.status !== 'all') {
       and.push({ status: q.status as Prisma.EnumClubFitnessHallStatusFilter['equals'] });
     }
@@ -95,9 +120,11 @@ export class ClubHallsService {
     return paginated(rows.map((r) => this.mapHall(r)), total, q.page, q.pageSize);
   }
 
-  async hallStatistics(branch?: string) {
+  async hallStatistics(branch?: string, user?: JwtUser) {
+    const scope = this.branchScope.resolveListFilter(user, branch ?? null);
     const where: Prisma.club_hallsWhereInput = { is_deleted: false };
     if (branch && branch !== 'all') where.branch_id = Number(branch);
+    if (scope !== null) where.branch_id = { in: scope };
 
     const [total, available, maintenance, unavailable] = await Promise.all([
       this.prisma.club_halls.count({ where }),
@@ -116,26 +143,29 @@ export class ClubHallsService {
         is_deleted: false,
         status: { in: [...ACTIVE_BOOKING_STATUSES] },
         ...(branch && branch !== 'all' ? { hall: { branch_id: Number(branch) } } : {}),
+        ...(scope !== null ? { hall: { branch_id: { in: scope } } } : {}),
       },
     });
 
     return { total, available, maintenance, unavailable, totalCapacity, todayBookings };
   }
 
-  async findHall(id: number) {
+  async findHall(id: number, user?: JwtUser) {
     const row = await this.prisma.club_halls.findFirst({
       where: { id, is_deleted: false },
     });
     if (!row) throw new NotFoundException('القاعة غير موجودة');
+    this.assertBranchAccess(user, row.branch_id);
     return this.mapHall(row);
   }
 
-  async createHall(body: Record<string, unknown>) {
+  async createHall(body: Record<string, unknown>, user?: JwtUser) {
     if (!body.name || !body.hallNumber || body.capacity == null || !body.branchId) {
       throw new BadRequestException('الاسم ورقم القاعة والسعة والفرع مطلوبة');
     }
 
     const branchId = Number(body.branchId);
+    this.assertBranchAccess(user, branchId);
     const hallNumber = String(body.hallNumber).trim();
 
     const existing = await this.prisma.club_halls.findFirst({
@@ -158,8 +188,9 @@ export class ClubHallsService {
     return this.mapHall(row);
   }
 
-  async updateHall(id: number, body: Record<string, unknown>) {
-    const hall = await this.findHall(id);
+  async updateHall(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const hall = await this.findHall(id, user);
+    if (body.branchId != null) this.assertBranchAccess(user, Number(body.branchId));
 
     if (body.hallNumber && String(body.hallNumber).trim() !== hall.hallNumber) {
       const branchId = body.branchId != null ? Number(body.branchId) : hall.branchId;
@@ -191,8 +222,8 @@ export class ClubHallsService {
     return this.mapHall(row);
   }
 
-  async removeHall(id: number) {
-    await this.findHall(id);
+  async removeHall(id: number, user?: JwtUser) {
+    await this.findHall(id, user);
     const activeBookings = await this.prisma.club_hall_bookings.count({
       where: {
         hall_id: id,
@@ -234,7 +265,7 @@ export class ClubHallsService {
     }
   }
 
-  async listBookings(q: ListClubHallBookingsDto) {
+  async listBookings(q: ListClubHallBookingsDto, user?: JwtUser) {
     const and: Prisma.club_hall_bookingsWhereInput[] = [{ is_deleted: false }];
     if (q.hallId) and.push({ hall_id: Number(q.hallId) });
     if (q.memberId) and.push({ member_id: Number(q.memberId) });
@@ -251,6 +282,8 @@ export class ClubHallsService {
     if (q.branch && q.branch !== 'all') {
       and.push({ hall: { branch_id: Number(q.branch) } });
     }
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) and.push({ hall: { branch_id: { in: scope } } });
 
     const where: Prisma.club_hall_bookingsWhereInput = { AND: and };
     const [rows, total] = await Promise.all([
@@ -276,12 +309,13 @@ export class ClubHallsService {
     );
   }
 
-  async findBooking(id: number) {
+  async findBooking(id: number, user?: JwtUser) {
     const row = await this.prisma.club_hall_bookings.findFirst({
       where: { id, is_deleted: false },
       include: { hall: true },
     });
     if (!row) throw new NotFoundException('حجز القاعة غير موجود');
+    this.assertBranchAccess(user, row.hall.branch_id);
     const memberMap = await loadMemberBriefMap(this.prisma, [row.member_id]);
     return {
       ...this.mapBooking({ ...row, hall: this.mapHall(row.hall) }),
@@ -289,7 +323,7 @@ export class ClubHallsService {
     };
   }
 
-  async createBooking(body: Record<string, unknown>) {
+  async createBooking(body: Record<string, unknown>, user?: JwtUser) {
     const hallId = Number(body.hallId);
     if (!hallId || !body.bookingDate || !body.startTime || !body.endTime) {
       throw new BadRequestException('القاعة والتاريخ ووقت البداية والنهاية مطلوبة');
@@ -302,6 +336,8 @@ export class ClubHallsService {
       where: { id: hallId, is_deleted: false },
     });
     if (!hall) throw new NotFoundException('القاعة غير موجودة');
+    this.assertBranchAccess(user, hall.branch_id);
+    if (body.memberId) await this.assertMemberInBranch(Number(body.memberId), hall.branch_id);
     if (hall.status !== 'available') {
       throw new BadRequestException('القاعة غير متاحة للحجز (صيانة أو غير متاحة)');
     }
@@ -336,8 +372,8 @@ export class ClubHallsService {
     return this.mapBooking({ ...row, hall: this.mapHall(row.hall) });
   }
 
-  async updateBooking(id: number, body: Record<string, unknown>) {
-    const existing = await this.findBooking(id);
+  async updateBooking(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const existing = await this.findBooking(id, user);
 
     const hallId = body.hallId != null ? Number(body.hallId) : existing.hallId;
     const bookingDate = body.bookingDate != null ? String(body.bookingDate) : existing.bookingDate;
@@ -349,6 +385,8 @@ export class ClubHallsService {
       where: { id: hallId, is_deleted: false },
     });
     if (!hall) throw new NotFoundException('القاعة غير موجودة');
+    this.assertBranchAccess(user, hall.branch_id);
+    if (body.memberId) await this.assertMemberInBranch(Number(body.memberId), hall.branch_id);
 
     if (peopleCount > hall.capacity) {
       throw new BadRequestException(
@@ -383,8 +421,8 @@ export class ClubHallsService {
     return this.mapBooking({ ...row, hall: this.mapHall(row.hall) });
   }
 
-  async removeBooking(id: number) {
-    await this.findBooking(id);
+  async removeBooking(id: number, user?: JwtUser) {
+    await this.findBooking(id, user);
     await this.prisma.club_hall_bookings.update({
       where: { id },
       data: { is_deleted: true },
@@ -392,3 +430,4 @@ export class ClubHallsService {
     return { success: true };
   }
 }
+

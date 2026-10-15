@@ -6,5 +6,6 @@ export const DEFAULT_PRODUCT_IMAGE =
 
 /** Resolve stored upload path (or absolute URL) for display; falls back to placeholder. */
 export function resolveProductImageUrl(imageUrl?: string | null): string {
+  if (imageUrl?.startsWith('https://')) return imageUrl;
   return uploadUrl(imageUrl) ?? DEFAULT_PRODUCT_IMAGE;
 }

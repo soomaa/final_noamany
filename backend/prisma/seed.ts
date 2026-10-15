@@ -21,10 +21,8 @@ import { seedGymSales } from './seed/30-gymsales';
 import { seedPosAdmin } from './seed/35-pos-admin';
 import { seedAccountingApp } from './seed/40-accounting-app';
 import { seedCafe } from './seed/50-cafe';
-import { seedWebsite } from './seed/55-website';
 import { seedReferenceCatalogs } from './seed/05-reference-catalogs';
 import { clearFakeFitnessCafeData } from './scripts/clear-fake-fitness-cafe-data';
-import { clearPayrollDemoData } from './scripts/clear-payroll-demo-data';
 
 /**
  * A few sample RBAC data-scopes + user exceptions so the admin RBAC screens
@@ -98,7 +96,7 @@ async function seedRbacExtras() {
 
 async function main() {
   const t0 = Date.now();
-  console.log('=== Noamany demo seed ===');
+  console.log('=== ONE80 demo seed ===');
 
   await seedFoundation();
 
@@ -116,7 +114,6 @@ async function main() {
   await seedPosAdmin();
   await seedAccountingApp();
   await seedCafe();
-  await seedWebsite();
   await seedReferenceCatalogs();
 
   // Operational cafe/fitness screens start empty by default. Set this only when a developer
@@ -124,8 +121,6 @@ async function main() {
   if (process.env.SEED_OPERATIONAL_DEMO !== 'true') {
     await clearFakeFitnessCafeData(prisma, false);
     console.log('✔ Fitness scheduling and cafe operational data left empty');
-    await clearPayrollDemoData(prisma, false);
-    console.log('✔ Payroll demo runs, components and salary scales left empty');
   }
 
   console.log(`\n=== done in ${((Date.now() - t0) / 1000).toFixed(1)}s ===`);

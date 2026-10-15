@@ -9,6 +9,7 @@ export interface EntitlementReason {
 
 export interface EntitlementResult {
   allowed: boolean;
+  allowGraceSessions: boolean;
   member: {
     id: number;
     memberCode: string;
@@ -35,6 +36,7 @@ export interface EntitlementResult {
     daysRemaining?: number | null;
     startDate?: string;
     endDate?: string;
+    projectedEndDate?: string | null;
   } | null;
   /** Expired / latest sub for reception grace UX when check-in is denied. */
   latestSubscription?: {
@@ -45,6 +47,7 @@ export interface EntitlementResult {
     derivedStatus: string;
     remainingAmount: number;
     endDate: string;
+    projectedEndDate?: string | null;
     startDate: string;
     daysRemaining?: number | null;
     sessionsRemaining?: number | null;
@@ -60,6 +63,7 @@ export interface ClubSearchHit {
   phone: string | null;
   cardNumber: string | null;
   branchId: number;
+  gender?: 'male' | 'female' | null;
   isActive: boolean;
   matchType: string;
   activeSubscriptionType: string | null;
@@ -74,6 +78,7 @@ export interface RecentCheckIn {
   memberCode: string;
   memberName: string;
   branchId: number;
+  gender?: 'male' | 'female' | null;
   checkInTime: string;
   attendanceDate: string;
   status: string;
@@ -114,16 +119,29 @@ export interface CheckInResponse {
     endDate?: string | null;
     consumedSession: boolean;
   } | null;
-  classAttendance?: {
-    classId: number;
-    className: string;
-    trainerId: number;
-    trainerName: string;
-    hallName: string | null;
-    startTime: string;
-    endTime: string;
-  } | null;
+  classAttendance?: ScheduledClassSlot | null;
   overridden?: boolean;
+}
+
+/** The scheduled class a member is checked into, as reception sees it. */
+export interface ScheduledClassSlot {
+  classId: number;
+  className: string;
+  classColor: string | null;
+  trainerId: number;
+  trainerName: string;
+  trainerColor: string | null;
+  hallName: string | null;
+  startTime: string;
+  endTime: string;
+  /** Whether the class is running now, still to come, or just finished. */
+  position: 'now' | 'upcoming' | 'past' | null;
+}
+
+export interface NextScheduledClass {
+  classTypeId: number | null;
+  class: ScheduledClassSlot | null;
+  eligibleTrainers: Array<{ id: number; name: string; color: string | null }>;
 }
 
 export interface StaffTask {

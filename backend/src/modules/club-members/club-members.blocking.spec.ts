@@ -5,7 +5,6 @@ describe('ClubMembersService blocking', () => {
     const existing = {
       id: 5,
       branch_id: 2,
-      gender: 'male',
       is_deleted: false,
       is_active: true,
       is_blocked: false,
@@ -50,15 +49,11 @@ describe('ClubMembersService blocking', () => {
       },
     };
     const audit = { log: jest.fn().mockResolvedValue(undefined) };
-    const branchScope = {
-      isBranchAllowed: jest.fn().mockReturnValue(true),
-      isMemberGenderAllowed: jest.fn().mockReturnValue(true),
-    };
+    const branchScope = { isBranchAllowed: jest.fn().mockReturnValue(true) };
     const service = new ClubMembersService(
       prisma as never,
       audit as never,
       branchScope as never,
-      {} as never,
       {} as never,
     );
 

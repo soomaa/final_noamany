@@ -1,4 +1,4 @@
-import { Controller, Get, NotFoundException, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Put, Query, UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -7,7 +7,9 @@ import { MenuService } from './menu.service';
 import { WorkspaceService } from './workspace.service';
 import { WorkspaceWidgetsService } from './workspace-widgets.service';
 import { PermissionEngineService } from './engine/permission-engine.service';
-import { buildRouteMap, RESOURCE_TREE, ResourceNode } from './catalog/rbac.catalog';
+import { DashboardShortcutsService } from './dashboard-shortcuts.service';
+import { UpdateDashboardShortcutsDto } from './dto/dashboard-shortcuts.dto';
+import { buildRouteMap, flattenCatalog, RESOURCE_TREE, ResourceNode } from './catalog/rbac.catalog';
 
 interface NavNode {
   key: string;
@@ -29,6 +31,7 @@ export class MeController {
     private readonly workspaceWidgetsService: WorkspaceWidgetsService,
     private readonly prisma: PrismaService,
     private readonly engine: PermissionEngineService,
+    private readonly shortcutsService: DashboardShortcutsService,
   ) {}
 
   /** Fresh profile from DB (avatar/name may have changed since token issue). */
@@ -64,12 +67,30 @@ export class MeController {
   @Get('permissions')
   async permissions(@CurrentUser('sub') userId: number) {
     const eff = await this.engine.getEffective(userId);
+    const scope = Object.fromEntries(eff.scope);
+    if (!eff.superAdmin && await this.engine.financialPrivacyEnabled()) {
+      scope['financial-reports'] = 'own';
+      for (const resource of flattenCatalog()) {
+        if (resource.key.startsWith('financial-reports.')) scope[resource.key] = 'own';
+      }
+    }
     return {
       superAdmin: eff.superAdmin,
       keys: [...eff.keys],
       routeMap: buildRouteMap(),
-      scope: Object.fromEntries(eff.scope),
+      resourceActions: Object.fromEntries(flattenCatalog().map((resource) => [resource.key, resource.actions])),
+      scope,
     };
+  }
+
+  @Get('shortcuts')
+  shortcuts(@CurrentUser('sub') userId: number) {
+    return this.shortcutsService.get(userId);
+  }
+
+  @Put('shortcuts')
+  saveShortcuts(@CurrentUser('sub') userId: number, @Body() body: UpdateDashboardShortcutsDto) {
+    return this.shortcutsService.save(userId, body.routes);
   }
 
   /** Role-aware landing route + dashboard widgets for the current user. */

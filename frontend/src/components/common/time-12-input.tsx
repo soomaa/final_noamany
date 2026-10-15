@@ -2,6 +2,7 @@ import { Clock3 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { cn, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { uiStatic } from '@/lib/ui-static';
 
 interface Time12InputProps {
   value?: string | null;
@@ -12,7 +13,7 @@ interface Time12InputProps {
   'aria-label'?: string;
 }
 
-const ARABIC_DIGITS = '٠١٢٣٤٥٦٧٨٩';
+const ARABIC_DIGITS = uiStatic('٠١٢٣٤٥٦٧٨٩');
 
 function toLatinDigits(value: string) {
   return value.replace(/[٠-٩]/g, (digit) => String(ARABIC_DIGITS.indexOf(digit)));
@@ -125,7 +126,7 @@ export function Time12Input({ value, onValueChange, disabled, className, id, 'ar
                 active ? 'bg-background text-primary shadow-sm' : 'text-muted-foreground hover:text-foreground',
               )}
             >
-              {locale === 'ar' ? (item === 'am' ? 'ص' : 'م') : item.toUpperCase()}
+              {locale === 'ar' ? (item === 'am' ? ui('ص') : ui('م')) : item.toUpperCase()}
             </button>
           );
         })}

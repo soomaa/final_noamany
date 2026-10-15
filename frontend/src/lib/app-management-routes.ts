@@ -1,6 +1,8 @@
-/** App management module routes — mirrors SwatGym sidebar under `/app`. */
+/** ONE80 member-app management routes under `/app`. */
 export const APP_MANAGEMENT_ROUTES = {
   about: '/app/about',
+  paymentMethods: '/app/payment-methods',
+  branches: '/app/branches',
   invitations: {
     sent: '/app/invitations/sent',
     accepted: '/app/invitations/accepted',
@@ -12,6 +14,6 @@ export const APP_MANAGEMENT_ROUTES = {
   exerciseCategories: '/app/exercise-categories',
   exercises: '/app/exercises',
   news: '/app/news',
-  community: '/app/community',
   ads: '/app/ads',
+  notifications: '/app/notifications',
 } as const;

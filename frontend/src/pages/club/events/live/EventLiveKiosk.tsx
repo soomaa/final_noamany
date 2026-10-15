@@ -136,7 +136,7 @@ const EventLiveKiosk = () => {
         setSubmitting(false);
         const at = existing.checkedInAt ?? existing.checked_in_at ?? existing.createdAt;
         toast.error(
-          `${existing.title ? `${existing.title} / ${existing.name}` : existing.name} — ${new Date(at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', hour12: true })}`,
+          `${existing.title ? `${existing.title} / ${existing.name}` : existing.name} — ${new Date(at).toLocaleTimeString('ar-SA-u-nu-latn', { hour: '2-digit', minute: '2-digit', hour12: true })}`,
         );
         return;
       }
@@ -203,7 +203,7 @@ const EventLiveKiosk = () => {
               <div className="absolute inset-0 bg-[hsl(var(--grad-green))]/25 blur-xl rounded-full animate-pulse" />
               <img
                 src={resolveEventLogo(settings.logo_url)}
-                alt={ui("شعار Noamany")}
+                alt={ui("شعار ONE80")}
                 className="relative h-16 w-auto object-contain"
                 style={{ animation: "kiosk-float 4s ease-in-out infinite" }}
               />

@@ -861,9 +861,7 @@ export async function seedHrAffairs(): Promise<void> {
     for (let s = 0; s < evalSettingDefs.length; s++) {
       await prisma.hr_ta3en_moaqt_evaluation_details.create({
         data: {
-          evaluation_order_id: String(ev.id),
-          emp_id_fk: String(e.id),
-          evaluate_id_fk: String(evalSettingIds[s]),
+          evaluate_id_fk: ev.id,
           title: evalSettingDefs[s].title,
           max_degree: evalSettingDefs[s].degree,
           emp_degree: String(randInt(12, 20)),
@@ -872,10 +870,10 @@ export async function seedHrAffairs(): Promise<void> {
     }
     // strengths / weaknesses points (type 1=strength, 2=weakness)
     await prisma.hr_ta3en_moaqt_evaluation_points.create({
-      data: { evaluate_id_fk: ev.id, emp_id_fk: e.id, title: 'التزام عالٍ وحضور منتظم', type: 1, type_n: 'نقاط القوة' },
+      data: { evaluate_id_fk: ev.id, title: 'التزام عالٍ وحضور منتظم', type: 1, type_n: 'نقاط القوة' },
     });
     await prisma.hr_ta3en_moaqt_evaluation_points.create({
-      data: { evaluate_id_fk: ev.id, emp_id_fk: e.id, title: 'يحتاج لتطوير مهارات التقارير', type: 2, type_n: 'نقاط التحسين' },
+      data: { evaluate_id_fk: ev.id, title: 'يحتاج لتطوير مهارات التقارير', type: 2, type_n: 'نقاط التحسين' },
     });
   }
   log('hr-affairs', `hr_ta3en_moaqt_evaluation: 12 (+details +points)`);

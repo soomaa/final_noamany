@@ -17,6 +17,7 @@ import { usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { AppManagementShell } from './app-shell';
 
@@ -30,6 +31,7 @@ interface AppCrudPageProps<T extends { id: number }> {
   title: string;
   description: string;
   resource: string;
+  permissionResource: string;
   columns: CrudColumn<T>[];
   emptyForm: Record<string, unknown>;
   renderForm: (
@@ -38,20 +40,23 @@ interface AppCrudPageProps<T extends { id: number }> {
     editMode: boolean,
   ) => ReactNode;
   toPayload: (form: Record<string, unknown>) => Record<string, unknown>;
-  canCreate?: boolean;
 }
 
 export function AppCrudPage<T extends { id: number }>({
   title,
   description,
   resource,
+  permissionResource,
   columns,
   emptyForm,
   renderForm,
   toPayload,
-  canCreate = true,
 }: AppCrudPageProps<T>) {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can(`${permissionResource}:create`);
+  const canUpdate = can(`${permissionResource}:update`);
+  const canDelete = can(`${permissionResource}:delete`);
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<T>(resource, params);
   const [open, setOpen] = useState(false);
@@ -68,14 +73,18 @@ export function AppCrudPage<T extends { id: number }>({
         cell: ({ row }: { row: { original: T } }) =>
           c.render ? c.render(row.original) : String((row.original as Record<string, unknown>)[c.key as string] ?? '—'),
       })),
-      {
+      ...(canUpdate || canDelete ? [{
         id: 'actions',
         header: ui('إجراءات'),
         cell: ({ row }: { row: { original: T } }) => (
           <div className="flex gap-1">
-            <Button
+            {canUpdate ? <Button
               variant="ghost"
               size="icon"
+              permissionResource={permissionResource}
+              permissionAction="update"
+              aria-label={ui('تعديل')}
+              title={ui('تعديل')}
               onClick={() => {
                 setEditId(row.original.id);
                 setForm({ ...emptyForm, ...row.original });
@@ -83,10 +92,14 @@ export function AppCrudPage<T extends { id: number }>({
               }}
             >
               <Pencil className="h-4 w-4" />
-            </Button>
-            <Button
+            </Button> : null}
+            {canDelete ? <Button
               variant="ghost"
               size="icon"
+              permissionResource={permissionResource}
+              permissionAction="delete"
+              aria-label={ui('حذف')}
+              title={ui('حذف')}
               onClick={async () => {
                 if (!(await confirm({ title: ui('تأكيد الحذف؟') }))) return;
                 try {
@@ -99,15 +112,16 @@ export function AppCrudPage<T extends { id: number }>({
               }}
             >
               <Trash2 className="h-4 w-4 text-destructive" />
-            </Button>
+            </Button> : null}
           </div>
         ),
-      },
+      }] : []),
     ],
-    [columns, emptyForm, params.page, params.pageSize, refetch, resource, ui],
+    [canDelete, canUpdate, columns, emptyForm, params.page, params.pageSize, refetch, resource, ui],
   );
 
   async function save() {
+    if ((editId != null && !canUpdate) || (editId == null && !canCreate)) return;
     setSaving(true);
     try {
       const payload = toPayload(form);
@@ -137,6 +151,7 @@ export function AppCrudPage<T extends { id: number }>({
         canCreate ? (
           <Button
             variant="brand"
+            permissionResource={permissionResource}
             onClick={() => {
               setEditId(null);
               setForm(emptyForm);
@@ -151,6 +166,7 @@ export function AppCrudPage<T extends { id: number }>({
     >
       <FilterBar searchPlaceholder={ui('بحث…')} />
       <DataTable
+        exportSource={{ resource: resource, params }}
         columns={tableColumns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -175,7 +191,7 @@ export function AppCrudPage<T extends { id: number }>({
             <Button variant="outline" onClick={() => setOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button variant="brand" disabled={saving} onClick={() => void save()}>
+            <Button permissionResource={permissionResource} permissionAction={editId != null ? 'update' : 'create'} variant="brand" disabled={saving} onClick={() => void save()}>
               {ui('حفظ')}
             </Button>
           </DialogFooter>

@@ -4,6 +4,8 @@ import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { cairoDateString } from '../../common/utils/cairo-date';
+import { HrDataScopeService } from '../../common/hr-scope/hr-data-scope.service';
 import {
   AddActivityFileDto,
   CreateActivityDto,
@@ -14,21 +16,12 @@ import {
 
 @Injectable()
 export class ActivitiesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly scope: HrDataScopeService) {}
 
-  private readonly activityFields = {
-    id: true,
-    emp_id: true,
-    title: true,
-    send_date: true,
-    send_time: true,
-    suspend: true,
-    notes: true,
-    rad_notes: true,
-  } satisfies Prisma.hr_anshetaSelect;
-
-  async list(q: ListActivitiesDto) {
+  async list(q: ListActivitiesDto, user: JwtUser) {
     const and: Prisma.hr_anshetaWhereInput[] = [];
+    const identities = await this.scope.employeeIdentities(user, 'affairs.activities');
+    if (identities) and.push(identities.ids.length ? { emp_id: { in: identities.ids } } : { id: -1 });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({ OR: [{ title: { contains: s } }, { notes: { contains: s } }] });
@@ -36,25 +29,14 @@ export class ActivitiesService {
 
     const where: Prisma.hr_anshetaWhereInput = and.length ? { AND: and } : {};
     const [rows, total] = await Promise.all([
-      this.prisma.hr_ansheta.findMany({
-        where,
-        orderBy: { id: 'desc' },
-        skip: q.skip,
-        take: q.take,
-        // Keep read compatibility with databases that have not yet applied
-        // the optional mobile-source migration.
-        select: this.activityFields,
-      }),
+      this.prisma.hr_ansheta.findMany({ where, orderBy: { id: 'desc' }, skip: q.skip, take: q.take }),
       this.prisma.hr_ansheta.count({ where }),
     ]);
 
     const data = await Promise.all(
       rows.map(async (row) => {
         const emp = row.emp_id
-          ? await this.prisma.employees.findUnique({
-              where: { id: row.emp_id },
-              select: { employee: true },
-            })
+          ? await this.prisma.employees.findUnique({ where: { id: row.emp_id } })
           : null;
         const fileCount = await this.prisma.hr_ansheta_files.count({
           where: { main_id_fk: row.id },
@@ -77,13 +59,10 @@ export class ActivitiesService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async get(id: number) {
-    const row = await this.findOrThrow(id);
+  async get(id: number, user: JwtUser) {
+    const row = await this.findScopedOrThrow(id, user);
     const emp = row.emp_id
-      ? await this.prisma.employees.findUnique({
-          where: { id: row.emp_id },
-          select: { employee: true },
-        })
+      ? await this.prisma.employees.findUnique({ where: { id: row.emp_id } })
       : null;
     const files = await this.prisma.hr_ansheta_files.findMany({
       where: { main_id_fk: id },
@@ -108,6 +87,7 @@ export class ActivitiesService {
   }
 
   async create(dto: CreateActivityDto, user: JwtUser) {
+    await this.scope.assertEmployeeInScope(user, dto.empId, 'affairs.activities');
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
 
@@ -117,17 +97,21 @@ export class ActivitiesService {
         emp_id: dto.empId,
         title: dto.title,
         notes: dto.notes ?? null,
-        send_date: now.toISOString().slice(0, 10), // 'YYYY-MM-DD'
+        send_date: cairoDateString(now),
         send_time: now.toTimeString().slice(0, 5), // 'HH:MM'
         suspend: SuspendStatus.INCOMING,
       },
     });
+    // NOTE: legacy stamps a publisher per activity; the rebuilt table keeps no
+    // publisher column, so user context is accepted but not persisted here.
+    void user;
     return { id: row.id };
   }
 
-  async update(id: number, dto: UpdateActivityDto) {
-    await this.findOrThrow(id);
+  async update(id: number, dto: UpdateActivityDto, user: JwtUser) {
+    await this.findScopedOrThrow(id, user);
     if (dto.empId != null) {
+      await this.scope.assertEmployeeInScope(user, dto.empId, 'affairs.activities');
       const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
       if (!emp) throw new NotFoundException('الموظف غير موجود');
     }
@@ -142,16 +126,16 @@ export class ActivitiesService {
     return { id };
   }
 
-  async remove(id: number) {
-    await this.findOrThrow(id);
+  async remove(id: number, user: JwtUser) {
+    await this.findScopedOrThrow(id, user);
     // Cascade-delete the gallery rows first (no FK in legacy schema).
     await this.prisma.hr_ansheta_files.deleteMany({ where: { main_id_fk: id } });
     await this.prisma.hr_ansheta.delete({ where: { id } });
     return { id };
   }
 
-  async approve(id: number) {
-    await this.findOrThrow(id);
+  async approve(id: number, user: JwtUser) {
+    await this.findScopedOrThrow(id, user);
     await this.prisma.hr_ansheta.update({
       where: { id },
       data: { suspend: SuspendStatus.APPROVED, rad_notes: null },
@@ -159,8 +143,8 @@ export class ActivitiesService {
     return { id, status: SuspendStatus.APPROVED };
   }
 
-  async reject(id: number, dto: RejectActivityDto) {
-    await this.findOrThrow(id);
+  async reject(id: number, dto: RejectActivityDto, user: JwtUser) {
+    await this.findScopedOrThrow(id, user);
     await this.prisma.hr_ansheta.update({
       where: { id },
       data: { suspend: SuspendStatus.REJECTED, rad_notes: dto.radNotes ?? null },
@@ -168,8 +152,8 @@ export class ActivitiesService {
     return { id, status: SuspendStatus.REJECTED };
   }
 
-  async listFiles(id: number) {
-    await this.findOrThrow(id);
+  async listFiles(id: number, user: JwtUser) {
+    await this.findScopedOrThrow(id, user);
     const files = await this.prisma.hr_ansheta_files.findMany({
       where: { main_id_fk: id },
       orderBy: { id: 'desc' },
@@ -181,31 +165,37 @@ export class ActivitiesService {
     }));
   }
 
-  async addFile(id: number, dto: AddActivityFileDto) {
-    await this.findOrThrow(id);
+  async addFile(id: number, dto: AddActivityFileDto, user: JwtUser) {
+    await this.findScopedOrThrow(id, user);
     const row = await this.prisma.hr_ansheta_files.create({
       data: {
         main_id_fk: id,
         file_name: dto.fileName,
-        uploaded_on: new Date().toISOString().slice(0, 10),
+        uploaded_on: cairoDateString(),
       },
     });
     return { id: row.id };
   }
 
-  async removeFile(fileId: number) {
+  async removeFile(fileId: number, user: JwtUser) {
     const file = await this.prisma.hr_ansheta_files.findUnique({ where: { id: fileId } });
     if (!file) throw new NotFoundException('الصورة غير موجودة');
+    if (file.main_id_fk == null) throw new NotFoundException('الصورة غير موجودة');
+    await this.findScopedOrThrow(file.main_id_fk, user);
     await this.prisma.hr_ansheta_files.delete({ where: { id: fileId } });
     return { id: fileId };
   }
 
   private async findOrThrow(id: number) {
-    const row = await this.prisma.hr_ansheta.findUnique({
-      where: { id },
-      select: this.activityFields,
-    });
+    const row = await this.prisma.hr_ansheta.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('النشاط غير موجود');
+    return row;
+  }
+
+  private async findScopedOrThrow(id: number, user: JwtUser) {
+    const row = await this.findOrThrow(id);
+    if (row.emp_id == null) throw new NotFoundException('النشاط غير موجود');
+    await this.scope.assertEmployeeInScope(user, row.emp_id, 'affairs.activities');
     return row;
   }
 }

@@ -10,8 +10,9 @@ import { Label } from '@/components/ui/label';
 import { useClubT } from '@/hooks/use-club-t';
 import { useBranches } from '@/hooks/use-branches';
 import { api } from '@/lib/api';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import type { ClubMemberListItem } from '@/types/club';
+import { usePermission } from '@/hooks/use-permission';
 
 interface FinancialSub {
   id: number;
@@ -34,6 +35,8 @@ interface FinancialReceipt {
 
 export function ClubMemberFormPage() {
   const ct = useClubT();
+  const { can } = usePermission();
+  const canPrint = can('club.subscriptions.list:print');
   const { data: branches } = useBranches();
   const printRef = useRef<HTMLDivElement>(null);
   const [searchCode, setSearchCode] = useState('');
@@ -76,7 +79,7 @@ export function ClubMemberFormPage() {
         title={ct('subscriptions.memberForm')}
         description={ct('members.financialMemberId')}
         actions={
-          data && (
+          data && canPrint && (
             <Button variant="outline" onClick={() => window.print()}>
               <Printer className="size-4" /> {ct('common.print')}
             </Button>
@@ -103,7 +106,7 @@ export function ClubMemberFormPage() {
       {data && (
         <div ref={printRef} className="rounded-xl border bg-card p-6 shadow-sm print:border-0 print:shadow-none">
           <div className="border-b pb-4 text-center">
-            <p className="text-xs text-muted-foreground">Noamany Fitness Center</p>
+            <p className="text-xs text-muted-foreground">ONE80 Gym</p>
             <h2 className="text-2xl font-bold">{data.member.name}</h2>
             <p className="mt-1 font-mono text-sm nums">{data.member.memberCode}</p>
           </div>
@@ -111,7 +114,7 @@ export function ClubMemberFormPage() {
           <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
             <p>
               <span className="text-muted-foreground">{ct('members.phone')}:</span>{' '}
-              <span className="nums">{data.member.phone ? toArabicDigits(data.member.phone) : '—'}</span>
+              <span className="nums">{data.member.phone ? formatDigits(data.member.phone) : '—'}</span>
             </p>
             <p>
               <span className="text-muted-foreground">{ct('members.nationalId')}:</span>{' '}

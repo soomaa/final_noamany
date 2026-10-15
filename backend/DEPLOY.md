@@ -4,15 +4,20 @@ This ZIP is a **single Node.js app**: the NestJS backend serves BOTH the API (`/
 and the pre-built React frontend (`public/`). One domain, no CORS/proxy setup needed.
 
 ## Requirements
-- cPanel with **Setup Node.js App** (Node **18+**).
-- A **fresh, empty MySQL database** + user (create in cPanel → MySQL Databases).
+- cPanel with **Setup Node.js App** (Node **20+**).
+- The existing ONE80 MySQL database and a database user with migration privileges.
 
 ## Steps
 
 1. **Upload & extract** this ZIP into the app folder, e.g. `~/gymhub` (via File Manager or `unzip`).
 
-2. **Create the DB** in cPanel (MySQL Databases): a new database + user, add the user to the
-   database with **ALL PRIVILEGES**. Note the name/user/password.
+2. **Back up the live DB before every release:**
+
+   ```bash
+   bash scripts/backup-db.sh
+   ```
+
+   Verify that the resulting `.sql.gz` exists and is not empty before continuing.
 
 3. **Configure env:** copy `.env.production` → `.env` and fill the `<< FILL >>` values:
    - `DATABASE_URL` — `mysql://USER:PASSWORD@localhost:3306/DBNAME`
@@ -28,7 +33,7 @@ and the pre-built React frontend (`public/`). One domain, no CORS/proxy setup ne
 4. **Setup Node.js App** in cPanel:
    - Application root: the folder you extracted to.
    - Application startup file: `dist/main.js`
-   - Node version: 18+  → **Create**.
+   - Node version: 20+  → **Create**.
 
 5. **Run the deploy** — open the app's terminal (cPanel shows a `source .../bin/activate`
    command; run it, then `cd` to the app folder), and run **one command**:
@@ -37,18 +42,41 @@ and the pre-built React frontend (`public/`). One domain, no CORS/proxy setup ne
    bash deploy.sh
    ```
 
-   This installs deps, creates the schema on your DB, builds, and seeds the full demo data.
+   This installs dependencies, applies reviewed migrations, synchronizes the RBAC catalog, and
+   builds the app. It does **not** run the full seed and does not replace business data.
 
 6. **Restart** the Node.js app in cPanel. Visit your domain — the app loads and `/api` works.
 
-## Login (all accounts: password `one80@123`)
-- `admin`, `hrmanager` → full access (super admin)
-- `men.manager`, `women.manager` → branch managers
-- `emp1005`, `emp1010`, … → individual staff
+## One-time production data cleanup
 
-## Re-seed later (optional)
-`npm run db:seed` re-fills the demo data (each module clears its own tables first).
-It does **not** drop the database, so it's safe to re-run.
+The cleanup command is preview-only by default. It removes fake employee/HR rows, all members,
+their attendance/subscriptions, and fake staff users while retaining only `admin` and the account
+with username `Mahmoud` and full name `محمود`. Job titles and every membership package/price row are fingerprinted and
+preserved. Cafe, POS, inventory, and procurement table counts are also fingerprinted and must
+remain identical.
+
+```bash
+npm run db:prepare:production
+```
+
+Review the preview and confirm that the two retained accounts are resolved correctly. After a
+verified backup, execute:
+
+```bash
+PRODUCTION_CLEANUP_ACK=DELETE_HR_KEEP_CAFE \
+  npm run db:prepare:production -- --confirm-production-cleanup
+```
+
+If either account is ambiguous, pass the ids printed by the preview:
+
+```bash
+PRODUCTION_CLEANUP_ACK=DELETE_HR_KEEP_CAFE \
+  npm run db:prepare:production -- \
+  --confirm-production-cleanup --admin-user-id=1 --mahmoud-user-id=42
+```
+
+Do not run `npm run db:seed`, `npm run db:reseed`, `db:clear:fitness-cafe`, or
+`deploy-fresh.sh` against production. Those are development/recovery commands, not release steps.
 
 ## Database schema & migrations
 `deploy.sh` applies the schema with **`prisma migrate deploy`** (versioned, reviewed migrations —
@@ -59,6 +87,27 @@ recreating tables:
 ```bash
 npx prisma migrate resolve --applied 00000000000000_baseline
 ```
+
+Before every deployment, run the two read-only preflight checks:
+
+```bash
+npm run prisma:history:doctor
+npm run prisma:drift:check
+```
+
+The history doctor defaults to dry-run. A metadata repair requires a verified backup identifier
+and the explicit repair command; it archives the exact legacy row before removing it. Do not run
+the repair command merely to silence an unknown migration.
+
+`npm run prisma:push` is intentionally guarded. It runs only when all of these are true:
+
+- `ALLOW_PRISMA_DB_PUSH=local-only` is set explicitly;
+- `NODE_ENV` is not `production`;
+- the MySQL host is loopback (`localhost`, `127.0.0.1`, or `::1`);
+- the database name ends with `_dev` or `_e2e`.
+
+The same guard protects `npm run db:reseed`. Never set the local-only acknowledgement on a
+production or shared environment.
 
 ## Backups (do NOT skip — this holds money data)
 A ready backup script with rotation is included:
@@ -74,9 +123,12 @@ Keep off-server copies too (download the dumps or sync to remote storage).
 
 ## Security notes
 - **Secrets:** never commit real `JWT_*` secrets; generate per-environment (see step 3).
-- **Branch isolation:** super-admins (`level = 1`) may see all branches. Every other account is
-  restricted to exactly its assigned branch; parent/child fanout is intentionally disabled.
+- **Branch isolation:** branch managers are restricted to their own branch(es); the parent→child
+  mapping is `DASHBOARD_BRANCH_FANOUT` (default `3=6,7,3`). Super-admins (level 1) see all.
 - **Rate limiting:** login is throttled to 10/min per IP.
+- New employee logins are created from the employee form's **إضافة إلى النظام** option. Their
+  RBAC role is the role attached to the selected job title; configure that matrix before handing
+  credentials to the employee.
 
 ## Notes
 - If cPanel/Passenger complains about the port, leave `PORT` as-is — Passenger injects its own.

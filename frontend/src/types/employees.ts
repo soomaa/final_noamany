@@ -9,6 +9,8 @@ export interface EmployeeListItem {
   mosma_wazefy_n: string | null;
   employment_type: string | null;
   employee_type: 0 | 1 | 2;
+  leave_emp?: number | null;
+  end_service_date_m?: string | null;
   personal_photo: string | null;
   branch_id_fk: number | null;
   gender: number | null;
@@ -25,38 +27,14 @@ export interface FinanceRowApi {
   badl_discount_id_fk: string;
   value: string;
   method_to_count: 'fixed' | 'percent' | 'days';
-  specific_period: boolean;
   date_from: string;
   date_to: string;
   insurance_affect: boolean;
 }
 
 export interface DwamData {
-  id?: number;
-  shiftId: string;
-  shiftName?: string;
-  branchId: string;
-  hdoorFromTime: string;
-  hdoorToTime: string;
-  hdoorKhasmFrom: string;
-  ensrafFromTime: string;
-  ensrafToTime: string;
-  ensrafKhasmFrom: string;
   shift_type: string;
   schedule: { day: number; enabled: boolean; startTime: string; endTime: string }[];
-  assignments: Array<{
-    id: number;
-    shiftId: string;
-    shiftName?: string;
-    branchId: string;
-    branchName?: string;
-    hdoorFromTime: string;
-    hdoorToTime: string;
-    hdoorKhasmFrom: string;
-    ensrafFromTime: string;
-    ensrafToTime: string;
-    ensrafKhasmFrom: string;
-  }>;
 }
 
 export interface EmployeeInsurance {
@@ -151,7 +129,6 @@ export interface EmployeeFormData {
   card_enhaa_date: string;
   address: string;
   emp_sign: string;
-  emp_code_gym: string;
   birth_img: string;
   qualification_img: string;
   phesh_genai: string;

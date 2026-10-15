@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -10,21 +9,15 @@ import { PaginationDto } from "../../common/dto/pagination.dto";
 import { paginated } from "../../common/dto/list-result";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import {
-  EMPLOYEE_WORKFLOW_SELECT,
-  WorkflowEmployee,
-} from "../../common/prisma/employee-workflow.select";
-import {
   SUSPEND_APPROVED,
   SUSPEND_REJECTED,
   SuspendStatus,
   suspendToListStatus,
 } from "../../common/utils/suspend-status.util";
 import { todayIso } from "../../common/utils/legacy-date.util";
-import { insertLegacyNotification } from "../../common/utils/legacy-notification.util";
 import { CreateLeaveDto } from "./dto/create-leave.dto";
 import { ActionLeaveDto } from "./dto/action-leave.dto";
 import { ListLeavesDto } from "./dto/list-leaves.dto";
-import { JwtUser } from "../../common/types/jwt-user";
 import {
   ACCEPT_SUSPEND,
   LeaveStage,
@@ -34,6 +27,28 @@ import {
   STAGE_DATE_FIELD,
   nextRecipientMosama,
 } from "./approval-chain.util";
+import { accruedAnnualLeave, inclusiveLeaveDays } from "./leave-balance.policy";
+import { allocateDocumentNumber } from "../../common/number-series/document-number-series";
+import {
+  cairoDateParts,
+  cairoDateString,
+  dateOnlyEpochSeconds,
+  dateOnlyParts,
+} from "../../common/utils/cairo-date";
+
+type LeaveDb = PrismaService | Prisma.TransactionClient;
+
+interface BalanceContractRow {
+  contractId: number;
+  empCode: number;
+  employeeId: number;
+  employeeName: string | null;
+  startWorkDate: string | null;
+  yearVacationNum: string;
+  casualVacationNum: string;
+  previousBalance: number;
+  vacationStart: string | null;
+}
 
 /** legacy day-name array indexed by PHP date('N') (1=Mon .. 7=Sun). */
 const AR_DAYS = [
@@ -53,20 +68,88 @@ export class LeavesService {
 
   private arDayName(dateStr?: string | null): string | null {
     if (!dateStr) return null;
-    const d = new Date(dateStr + "T12:00:00");
-    if (Number.isNaN(d.getTime())) return null;
+    const { year, month, day } = dateOnlyParts(dateStr);
     // JS getDay(): 0=Sun..6=Sat → PHP N: Mon=1..Sun=7
-    const jsDay = d.getDay();
+    const jsDay = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
     const phpN = jsDay === 0 ? 7 : jsDay;
     return AR_DAYS[phpN] ?? null;
   }
 
-  async list(
-    q: ListLeavesDto,
-    actor?: number | Pick<JwtUser, "sub" | "level">,
-  ) {
-    const userId = typeof actor === "number" ? actor : actor?.sub;
-    const isAdmin = typeof actor !== "number" && actor?.level === 1;
+  async assertLeaveAvailable(
+    db: LeaveDb,
+    employee: Prisma.employeesGetPayload<Record<string, never>>,
+    leaveTypeId: number,
+    startDate: string,
+    endDate: string,
+    days: number,
+    excludeId?: number,
+  ): Promise<void> {
+    if (startDate.slice(0, 4) !== endDate.slice(0, 4)) {
+      throw new BadRequestException(
+        "الإجازة الممتدة بين سنتين يجب تقسيمها إلى طلبين",
+      );
+    }
+    const overlapping = await db.hr_all_agzat_orders.findMany({
+      where: {
+        emp_id_fk: employee.id,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+        suspend: {
+          in: [
+            SuspendStatus.INCOMING,
+            SuspendStatus.APPROVED_L1,
+            SuspendStatus.INVESTIGATING,
+            SuspendStatus.APPROVED,
+          ],
+        },
+        agaza_from_date_m: { lte: endDate },
+        agaza_to_date_m: { gte: startDate },
+      },
+      select: { id: true, agaza_from_date_m: true, agaza_to_date_m: true },
+    });
+    assertNoOverlap(
+      { start: startDate, end: endDate, label: "الإجازة الجديدة" },
+      overlapping.map((row) => ({
+        id: row.id,
+        start: row.agaza_from_date_m ?? startDate,
+        end: row.agaza_to_date_m ?? endDate,
+        label: row.agaza_from_date_m ?? undefined,
+      })),
+      "يوجد تداخل مع طلب إجازة قائم",
+    );
+
+    if (leaveTypeId !== 1 || employee.emp_code == null) return;
+    const contract = await db.contract_employe.findFirst({
+      where: { emp_code: String(employee.emp_code) },
+    });
+    const annualQuota = contract
+      ? parseFloat(contract.year_vacation_num) || 0
+      : 0;
+    const available = accruedAnnualLeave({
+      annualQuota,
+      previousBalance: contract?.vacation_previous_balance ?? 0,
+      accrualStartDate: contract?.vacation_start_m,
+      employmentStartDate: employee.start_work_date_m,
+      asOfDate: startDate,
+    });
+    const year = Number(startDate.slice(0, 4));
+    const usedRows = await db.hr_all_agzat_orders.aggregate({
+      where: {
+        emp_code_fk: BigInt(employee.emp_code),
+        suspend: SuspendStatus.APPROVED,
+        year,
+        ...(excludeId ? { id: { not: excludeId } } : {}),
+      },
+      _sum: { num_days: true },
+    });
+    const remaining = Math.max(0, available - (usedRows._sum.num_days ?? 0));
+    if (days > remaining + 0.0001) {
+      throw new BadRequestException(
+        `رصيد الإجازة المستحق غير كافٍ (المتبقي ${remaining.toFixed(2)} يوم، المطلوب ${days})`,
+      );
+    }
+  }
+
+  async list(q: ListLeavesDto, userId?: number) {
     const and: Prisma.hr_all_agzat_ordersWhereInput[] = [];
 
     // legacy tabs (get_datatables_agazat)
@@ -130,8 +213,6 @@ export class LeavesService {
     const data = rows.map((r) => ({
       id: r.id,
       agaza_rkm: r.agaza_rkm,
-      requestNumber: r.agaza_rkm ?? undefined,
-      submittedAt: r.agaza_date ?? undefined,
       employeeName: empMap.get(r.emp_id_fk ?? 0) ?? r.manager_name ?? undefined,
       leaveType:
         r.no3_agaza != null
@@ -140,21 +221,10 @@ export class LeavesService {
       f2aAgaza: r.f2a_agaza ?? undefined,
       startDate: r.agaza_from_date_m ?? undefined,
       endDate: r.agaza_to_date_m ?? undefined,
-      returnToWorkDate: r.mobashret_amal_date_m ?? undefined,
       days: r.num_days != null ? Math.round(r.num_days) : undefined,
       currentTo: r.current_to_user_name ?? undefined,
-      reason: r.reason ?? undefined,
-      addressSinceAgaza: r.address_since_agaza ?? undefined,
       actionsSends: r.actions_sends ?? undefined,
       status: suspendToListStatus(r.suspend),
-      canAction:
-        userId != null &&
-        r.current_to_user_id === userId &&
-        r.actions_sends !== "close_talab" &&
-        NEXT_STAGE_BY_CURRENT[r.actions_sends ?? ""] != null,
-      canManage:
-        r.suspend === SuspendStatus.INCOMING &&
-        (isAdmin || (userId != null && r.publisher === userId)),
     }));
 
     return paginated(data, total, q.page, q.pageSize);
@@ -165,33 +235,23 @@ export class LeavesService {
     body: CreateLeaveDto,
     currentUserId?: number,
     currentUserName?: string,
-    options?: { enforceLegacyMobileBalance?: boolean },
   ) {
     if (!body.leaveTypeId || !body.startDate || !body.endDate) {
       throw new BadRequestException("نوع الإجازة والتواريخ مطلوبة");
     }
 
-    const start = new Date(body.startDate + "T12:00:00");
-    const end = new Date(body.endDate + "T12:00:00");
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) {
-      throw new BadRequestException("تواريخ غير صحيحة");
+    const days = inclusiveLeaveDays(body.startDate, body.endDate);
+    if (body.numDays != null && body.numDays !== days) {
+      throw new BadRequestException(
+        `عدد الأيام يجب أن يطابق التواريخ (${days} يوم)`,
+      );
     }
-    if (end < start)
-      throw new BadRequestException("تاريخ النهاية يجب أن يكون بعد البداية");
-
-    const days =
-      body.numDays ??
-      Math.ceil((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
+    const startParts = dateOnlyParts(body.startDate);
 
     const leaveType = await this.prisma.holiday_setting.findUnique({
       where: { id: body.leaveTypeId },
     });
     if (!leaveType) throw new BadRequestException("نوع الإجازة غير موجود");
-    if (leaveType.agaza_ttype === 1) {
-      throw new BadRequestException(
-        "الإجازات الرسمية تُحدد من إعدادات الإجازات الرسمية ولا تُقدم كطلب موظف",
-      );
-    }
     if (
       leaveType.min_days != null &&
       leaveType.min_days > 0 &&
@@ -211,102 +271,50 @@ export class LeavesService {
       );
     }
 
-    let empId = body.empId;
-    let emp: WorkflowEmployee | null = null;
-    if (!empId && currentUserId) {
-      const account = await this.prisma.users.findUnique({
-        where: { user_id: currentUserId },
-      });
-      if (account?.emp_code != null) {
-        // New-system invariant: users.emp_code stores employees.id. Keep the
-        // business-code fallback for older imports, but prefer the primary key
-        // so a coincidentally equal emp_code cannot route a request to another employee.
-        emp = await this.prisma.employees.findUnique({
-          where: { id: account.emp_code },
-          select: EMPLOYEE_WORKFLOW_SELECT,
-        });
-        emp ??= await this.prisma.employees.findFirst({
-          where: { emp_code: account.emp_code },
-          select: EMPLOYEE_WORKFLOW_SELECT,
-        });
-        empId = emp?.id;
-      }
-    }
+    const empId = body.empId;
+    let emp = null as Awaited<
+      ReturnType<typeof this.prisma.employees.findUnique>
+    > | null;
     if (empId) {
-      emp ??= await this.prisma.employees.findUnique({
-        where: { id: empId },
-        select: EMPLOYEE_WORKFLOW_SELECT,
-      });
+      emp = await this.prisma.employees.findUnique({ where: { id: empId } });
       if (!emp) throw new NotFoundException("الموظف غير موجود");
 
-      // Overlap check
-      const overlapping = await this.prisma.hr_all_agzat_orders.findMany({
-        where: {
-          emp_id_fk: empId,
-          suspend: SuspendStatus.APPROVED,
-          agaza_from_date_m: { lte: body.endDate },
-          agaza_to_date_m: { gte: body.startDate },
-        },
-      });
-      assertNoOverlap(
-        { start: body.startDate, end: body.endDate, label: "الإجازة الجديدة" },
-        overlapping.map((o) => ({
-          start: o.agaza_from_date_m ?? body.startDate,
-          end: o.agaza_to_date_m ?? body.endDate,
-          id: o.id,
-          label: o.agaza_from_date_m ?? undefined,
-        })),
-        "يوجد تداخل مع إجازة معتمدة",
-      );
-    }
-
-    // The legacy endpoint opts into its historical balance ladder. Employee requests
-    // from the new mobile API deliberately do not use a leave-balance restriction.
-    if (emp && options?.enforceLegacyMobileBalance) {
-      await this.assertLegacyMobileBalance(
-        emp.id,
-        emp.start_work_date_m,
+      await this.assertLeaveAvailable(
+        this.prisma,
+        emp,
         body.leaveTypeId,
+        body.startDate,
+        body.endDate,
         days,
       );
     }
 
-    if (emp && [3, 4].includes(body.leaveTypeId)) {
-      await this.assertSickLeaveMonthlyLimit(emp.id, body.startDate);
+    // sick leave (3/4) requires medical fields
+    if ([3, 4].includes(body.leaveTypeId) && !body.maradName?.trim()) {
+      throw new BadRequestException(
+        "بيانات التقرير الطبي مطلوبة لهذا النوع من الإجازات",
+      );
     }
-
-    const maxRkm = await this.prisma.hr_all_agzat_orders.aggregate({
-      _max: { agaza_rkm: true },
-    });
-    const agazaRkm = (maxRkm._max.agaza_rkm ?? 0) + 1;
 
     const empCode = emp?.emp_code ?? null;
     const empCodeBig = empCode != null ? BigInt(empCode) : null;
 
-    // Legacy employees.manger stores employees.id; retain emp_code fallback for later imports.
-    const managerRef = emp?.manger ? parseInt(emp.manger, 10) : null;
-    const managerEmp = managerRef
+    // direct-manager routing (employees.manger holds an emp_code)
+    const managerEmpCode = emp?.manger ? parseInt(emp.manger, 10) : null;
+    const managerEmp = managerEmpCode
       ? await this.prisma.employees.findFirst({
-          where: { OR: [{ id: managerRef }, { emp_code: managerRef }] },
-          select: { id: true, emp_code: true, employee: true },
+          where: { emp_code: managerEmpCode },
         })
       : null;
-    let managerUser =
-      managerEmp != null
+    const managerUser =
+      managerEmp?.id != null
         ? await this.prisma.users.findFirst({
-            where: { emp_code: managerEmp.id, approved: 1 },
+            where: { emp_code: managerEmp.id },
           })
         : null;
-    if (!managerUser && managerEmp?.emp_code != null) {
-      managerUser = await this.prisma.users.findFirst({
-        where: { emp_code: managerEmp.emp_code, approved: 1 },
-      });
-    }
     const empUser =
-      emp != null
-        ? await this.prisma.users.findFirst({
-            where: { OR: [{ emp_code: emp.id }, { emp_code: empCode ?? -1 }] },
-          })
+      emp?.id != null
+        ? await this.prisma.users.findFirst({ where: { emp_code: emp.id } })
         : null;
 
     // substitute employee
@@ -314,96 +322,108 @@ export class LeavesService {
     if (body.substituteEmpId) {
       substituteEmp = await this.prisma.employees.findUnique({
         where: { id: body.substituteEmpId },
-        select: EMPLOYEE_WORKFLOW_SELECT,
       });
     }
     // legacy: level=1 when a substitute is set (route to substitute first), else level=2
     const level = body.substituteEmpId ? 1 : 2;
 
-    const row = await this.prisma.hr_all_agzat_orders.create({
-      data: {
-        agaza_rkm: agazaRkm,
-        no3_agaza: body.leaveTypeId,
-        f2a_agaza: body.f2aAgaza ?? 0,
-        emp_id_fk: empId ?? null,
-        emp_code_fk: empCodeBig,
-        edara_id_fk: emp?.edara_id ?? null,
-        edara_n: emp?.edara_n ?? null,
-        qsm_id_fk: 0,
-        qsm_n: "",
-        direct_manager_id_fk: managerEmp?.id ?? managerRef ?? null,
-        direct_manager_code_fk:
-          managerEmp?.emp_code != null
-            ? BigInt(managerEmp.emp_code)
-            : managerRef != null
-              ? BigInt(managerRef)
+    const row = await this.prisma.$transaction(async (tx) => {
+      if (emp) {
+        await allocateDocumentNumber(tx, `hr.leave.employee.${emp.id}`);
+        await this.assertLeaveAvailable(
+          tx,
+          emp,
+          body.leaveTypeId,
+          body.startDate,
+          body.endDate,
+          days,
+        );
+      }
+      const maxRkm = await tx.hr_all_agzat_orders.aggregate({
+        _max: { agaza_rkm: true },
+      });
+      const agazaRkm = await allocateDocumentNumber(
+        tx,
+        "hr.leave",
+        (maxRkm._max.agaza_rkm ?? 0) + 1,
+      );
+      const created = await tx.hr_all_agzat_orders.create({
+        data: {
+          agaza_rkm: agazaRkm,
+          no3_agaza: body.leaveTypeId,
+          f2a_agaza: body.f2aAgaza ?? 0,
+          emp_id_fk: empId ?? null,
+          emp_code_fk: empCodeBig,
+          edara_id_fk: emp?.edara_id ?? null,
+          edara_n: emp?.edara_n ?? null,
+          qsm_id_fk: emp?.qsm_id ?? null,
+          qsm_n: emp?.qsm_n ?? null,
+          direct_manager_id_fk: managerEmp?.id ?? managerEmpCode ?? null,
+          direct_manager_code_fk:
+            managerEmpCode != null ? BigInt(managerEmpCode) : null,
+          direct_manager_n: managerEmp?.employee ?? null,
+          agaza_from_date_m: body.startDate,
+          agaza_to_date_m: body.endDate,
+          agaza_from_date_h: body.startDateHijri ?? null,
+          agaza_to_date_h: body.endDateHijri ?? null,
+          agaza_from_date: dateOnlyEpochSeconds(body.startDate),
+          agaza_to_date: dateOnlyEpochSeconds(body.endDate),
+          num_days: days,
+          mobashret_amal_date_m: body.returnToWorkDate ?? null,
+          mobashret_amal_date_h: body.returnToWorkDateHijri ?? null,
+          address_since_agaza: body.addressSinceAgaza ?? null,
+          emp_jwal: body.empPhone ?? null,
+          agaza_from_day_n: this.arDayName(body.startDate),
+          agaza_to_day_n: this.arDayName(body.endDate),
+          mobashret_amal_day_n: this.arDayName(body.returnToWorkDate),
+          emp_badel_id_fk: body.substituteEmpId ?? null,
+          emp_badel_code_fk:
+            substituteEmp?.emp_code != null
+              ? BigInt(substituteEmp.emp_code)
               : null,
-        direct_manager_n: managerEmp?.employee ?? null,
-        agaza_from_date_m: body.startDate,
-        agaza_to_date_m: body.endDate,
-        agaza_from_date_h: body.startDateHijri ?? null,
-        agaza_to_date_h: body.endDateHijri ?? null,
-        agaza_from_date: Math.floor(start.getTime() / 1000),
-        agaza_to_date: Math.floor(end.getTime() / 1000),
-        num_days: days,
-        mobashret_amal_date_m: body.returnToWorkDate ?? null,
-        mobashret_amal_date_h: body.returnToWorkDateHijri ?? null,
-        address_since_agaza: body.addressSinceAgaza ?? null,
-        emp_jwal: body.empPhone ?? null,
-        agaza_from_day_n: this.arDayName(body.startDate),
-        agaza_to_day_n: this.arDayName(body.endDate),
-        mobashret_amal_day_n: this.arDayName(body.returnToWorkDate),
-        emp_badel_id_fk: body.substituteEmpId ?? null,
-        emp_badel_code_fk:
-          substituteEmp?.emp_code != null
-            ? BigInt(substituteEmp.emp_code)
-            : null,
-        emp_badel_n: substituteEmp?.employee ?? null,
-        daraget_waffa: body.daragetWaffa ?? null,
-        marad_name: body.maradName ?? null,
-        hospital_name: body.hospitalName ?? null,
-        hospital_report: body.hospitalReport ?? null,
-        taqrer_form_date_m: body.taqrerFromDate ?? null,
-        taqrer_to_date_m: body.taqrerToDate ?? null,
-        reason: body.reason ?? body.pledge ?? null,
-        agaza_date: todayIso(),
-        agaza_date_ar: todayIso(),
-        suspend: SuspendStatus.INCOMING,
-        level,
-        month: new Date().getMonth() + 1,
-        year: new Date().getFullYear(),
-        publisher: currentUserId ?? null,
-        publisher_name: currentUserName ?? null,
-        current_from_user_name: emp?.employee ?? null,
-        current_from_user_id: empUser?.user_id ?? null,
-        current_from_emp_id: empId != null ? String(empId) : null,
-        current_to_user_name: managerEmp?.employee ?? null,
-        current_to_user_id: managerUser?.user_id ?? null,
-        current_to_emp_id:
-          managerEmp?.id != null ? String(managerEmp.id) : null,
-        send_to_direct_manager: "yes",
-        actions_sends: "send_to_direct_manager",
-      },
+          emp_badel_n: substituteEmp?.employee ?? null,
+          daraget_waffa: body.daragetWaffa ?? null,
+          marad_name: body.maradName ?? null,
+          hospital_name: body.hospitalName ?? null,
+          hospital_report: body.hospitalReport ?? null,
+          taqrer_form_date_m: body.taqrerFromDate ?? null,
+          taqrer_to_date_m: body.taqrerToDate ?? null,
+          reason: body.reason ?? body.pledge ?? null,
+          agaza_date: cairoDateString(),
+          agaza_date_ar: cairoDateString(),
+          suspend: SuspendStatus.INCOMING,
+          level,
+          month: startParts.month,
+          year: startParts.year,
+          publisher: currentUserId ?? null,
+          publisher_name: currentUserName ?? null,
+          current_from_user_name: emp?.employee ?? null,
+          current_from_user_id: empUser?.user_id ?? null,
+          current_from_emp_id: empId != null ? String(empId) : null,
+          current_to_user_name: managerEmp?.employee ?? null,
+          current_to_user_id: managerUser?.user_id ?? null,
+          current_to_emp_id:
+            managerEmp?.id != null ? String(managerEmp.id) : null,
+          send_to_direct_manager: "yes",
+          actions_sends: "send_to_direct_manager",
+        },
+      });
+      await this.insertHistory(
+        {
+          agazaRkm: created.agaza_rkm,
+          agazaId: created.id,
+          fromUser: currentUserId,
+          fromUserName: currentUserName,
+          toUser: managerUser?.user_id,
+          toUserName: managerEmp?.employee ?? undefined,
+          msg: "تحويل للمدير المباشر",
+          reason: "send_to_direct_manager",
+          processCode: PROCESS_CODE.ACCEPT,
+        },
+        tx,
+      );
+      return created;
     });
-
-    await this.insertHistory({
-      agazaRkm,
-      agazaId: row.id,
-      fromUser: currentUserId,
-      fromUserName: currentUserName,
-      toUser: managerUser?.user_id,
-      toUserName: managerEmp?.employee ?? undefined,
-      msg: "تحويل للمدير المباشر",
-      reason: "send_to_direct_manager",
-      processCode: PROCESS_CODE.ACCEPT,
-    });
-    await insertLegacyNotification(
-      this.prisma,
-      row.id,
-      101,
-      currentUserId,
-      managerUser?.user_id,
-    );
 
     return { id: row.id, agaza_rkm: row.agaza_rkm };
   }
@@ -433,10 +453,7 @@ export class LeavesService {
       throw new BadRequestException("لا يوجد إجراء متاح على هذا الطلب");
 
     const emp = row.emp_id_fk
-      ? await this.prisma.employees.findUnique({
-          where: { id: row.emp_id_fk },
-          select: EMPLOYEE_WORKFLOW_SELECT,
-        })
+      ? await this.prisma.employees.findUnique({ where: { id: row.emp_id_fk } })
       : null;
 
     const reason = body.reason ?? null;
@@ -480,13 +497,8 @@ export class LeavesService {
       ? await this.prisma.users.findUnique({ where: { user_id: toUserId } })
       : null;
     if (!toUserName && toUser?.emp_code != null) {
-      let recEmp = await this.prisma.employees.findUnique({
+      const recEmp = await this.prisma.employees.findUnique({
         where: { id: toUser.emp_code },
-        select: { employee: true },
-      });
-      recEmp ??= await this.prisma.employees.findFirst({
-        where: { emp_code: toUser.emp_code },
-        select: { employee: true },
       });
       toUserName = recEmp?.employee ?? null;
     }
@@ -506,170 +518,74 @@ export class LeavesService {
       data.close_talab = "yes";
     }
 
-    await this.prisma.hr_all_agzat_orders.update({
-      where: { id },
-      data: data as Prisma.hr_all_agzat_ordersUpdateInput,
-    });
-
-    await this.insertHistory({
-      agazaRkm: row.agaza_rkm,
-      agazaId: id,
-      fromUser: userId,
-      fromUserName: userName,
-      toUser: toUserId ?? undefined,
-      toUserName: toUserName ?? undefined,
-      msg: body.action === "accept" ? "اعتماد" : "رفض",
-      reason: stage,
-      processCode,
-    });
-
-    if (stage === "approve_moder_3am" && body.action === "accept") {
-      await this.insertHistory({
-        agazaRkm: row.agaza_rkm,
-        agazaId: id,
-        fromUser: userId,
-        fromUserName: userName,
-        toUser: toUserId ?? undefined,
-        toUserName: toUserName ?? undefined,
-        msg: "إغلاق الطلب",
-        reason: "close_talab",
-        processCode: PROCESS_CODE.CLOSE,
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM hr_all_agzat_orders WHERE id = ${id} FOR UPDATE`,
+      );
+      const locked = await tx.hr_all_agzat_orders.findUnique({ where: { id } });
+      if (
+        !locked ||
+        locked.actions_sends !== row.actions_sends ||
+        locked.suspend !== row.suspend
+      ) {
+        throw new BadRequestException(
+          "تم اتخاذ إجراء على الطلب بواسطة مستخدم آخر",
+        );
+      }
+      if (stage === "approve_moder_3am" && body.action === "accept" && emp) {
+        await allocateDocumentNumber(tx, `hr.leave.employee.${emp.id}`);
+        const days = inclusiveLeaveDays(
+          locked.agaza_from_date_m ?? "",
+          locked.agaza_to_date_m ?? "",
+        );
+        await this.assertLeaveAvailable(
+          tx,
+          emp,
+          locked.no3_agaza ?? 0,
+          locked.agaza_from_date_m ?? "",
+          locked.agaza_to_date_m ?? "",
+          days,
+          id,
+        );
+      }
+      await tx.hr_all_agzat_orders.update({
+        where: { id },
+        data: data as Prisma.hr_all_agzat_ordersUpdateInput,
       });
-    }
-
-    const notificationCode =
-      stage === "approve_direct_manager"
-        ? 105
-        : stage === "approve_moder_edara"
-          ? 106
-          : stage === "approve_hr"
-            ? 107
-            : body.action === "accept"
-              ? 110
-              : 111;
-    await insertLegacyNotification(
-      this.prisma,
-      id,
-      notificationCode,
-      userId,
-      toUserId,
-    );
-    // The next approver is notified above. Also notify the request owner about
-    // every decision, including intermediate approvals in a multi-step chain.
-    if (
-      row.publisher != null &&
-      row.publisher !== toUserId &&
-      row.publisher !== userId
-    ) {
-      await insertLegacyNotification(
-        this.prisma,
-        id,
-        notificationCode,
-        userId,
-        row.publisher,
+      await this.insertHistory(
+        {
+          agazaRkm: row.agaza_rkm,
+          agazaId: id,
+          fromUser: userId,
+          fromUserName: userName,
+          toUser: toUserId ?? undefined,
+          toUserName: toUserName ?? undefined,
+          msg: body.action === "accept" ? "اعتماد" : "رفض",
+          reason: stage,
+          processCode,
+        },
+        tx,
       );
-    }
 
-    // `status` describes the action just completed by the current approver.
-    // The request can still continue through later workflow recipients, so the
-    // persisted workflow state is returned separately rather than reporting a
-    // direct-manager approval as a rejection/pending action.
-    return {
-      id,
-      stage,
-      suspend,
-      status: body.action === "accept" ? "accepted" : "rejected",
-      workflowStatus: suspendToListStatus(suspend),
-    };
-  }
-
-  /** Exact balance ladder used by the active legacy Api.php Add_Agaza endpoint. */
-  private async assertLegacyMobileBalance(
-    empId: number,
-    startWorkDate: string | null,
-    leaveTypeId: number,
-    requestedDays: number,
-  ) {
-    const controlledTypes = [20, 21, 4];
-    if (!controlledTypes.includes(leaveTypeId)) return;
-
-    const months = this.monthsSince(startWorkDate);
-    let totalAllowed = 0;
-    if (months >= 12) totalAllowed = 7;
-    else if (months >= 6) totalAllowed = leaveTypeId === 20 ? 4 : 3;
-
-    const used = await this.prisma.hr_all_agzat_orders.aggregate({
-      where: {
-        emp_id_fk: empId,
-        no3_agaza: leaveTypeId,
-        suspend: SuspendStatus.APPROVED,
-        year: new Date().getFullYear(),
-      },
-      _sum: { num_days: true },
+      if (stage === "approve_moder_3am" && body.action === "accept") {
+        await this.insertHistory(
+          {
+            agazaRkm: row.agaza_rkm,
+            agazaId: id,
+            fromUser: userId,
+            fromUserName: userName,
+            toUser: toUserId ?? undefined,
+            toUserName: toUserName ?? undefined,
+            msg: "إغلاق الطلب",
+            reason: "close_talab",
+            processCode: PROCESS_CODE.CLOSE,
+          },
+          tx,
+        );
+      }
     });
-    const balance = Math.max(0, totalAllowed - (used._sum.num_days ?? 0));
-    if (requestedDays > balance) {
-      throw new BadRequestException("لقد استنفذت الرصيد بالكامل");
-    }
-  }
 
-  /** A sick-leave request is allowed at most three times per employee per month. */
-  private async assertSickLeaveMonthlyLimit(empId: number, startDate: string) {
-    const monthStart = new Date(`${startDate}T12:00:00`);
-    const nextMonthStart = new Date(
-      monthStart.getFullYear(),
-      monthStart.getMonth() + 1,
-      1,
-    );
-    const monthStartIso = `${monthStart.getFullYear()}-${String(monthStart.getMonth() + 1).padStart(2, "0")}-01`;
-    const nextMonthStartIso = `${nextMonthStart.getFullYear()}-${String(nextMonthStart.getMonth() + 1).padStart(2, "0")}-01`;
-    const existing = await this.prisma.hr_all_agzat_orders.aggregate({
-      where: {
-        emp_id_fk: empId,
-        no3_agaza: { in: [3, 4] },
-        suspend: { notIn: [SuspendStatus.REJECTED, SuspendStatus.CANCELLED] },
-        agaza_from_date_m: { gte: monthStartIso, lt: nextMonthStartIso },
-      },
-      _count: { id: true },
-    });
-    if (existing._count.id >= 3) {
-      throw new BadRequestException(
-        "الحد الأقصى للإجازات المرضية هو 3 طلبات في الشهر",
-      );
-    }
-  }
-
-  /** Balance card used by the legacy add-agaza form (get_vacation_balance). */
-  async available(empId: number, leaveTypeId: number) {
-    const emp = await this.prisma.employees.findUnique({
-      where: { id: empId },
-      select: { id: true, start_work_date_m: true },
-    });
-    if (!emp) throw new NotFoundException("الموظف غير موجود");
-
-    const months = this.monthsSince(emp.start_work_date_m);
-    let totalAllowed = 0;
-    if ([20, 21, 4].includes(leaveTypeId)) {
-      if (months >= 12) totalAllowed = 7;
-      else if (months >= 6) totalAllowed = leaveTypeId === 20 ? 4 : 3;
-    }
-    const used = await this.prisma.hr_all_agzat_orders.aggregate({
-      where: {
-        emp_id_fk: empId,
-        no3_agaza: leaveTypeId,
-        suspend: SuspendStatus.APPROVED,
-        year: new Date().getFullYear(),
-      },
-      _sum: { num_days: true },
-    });
-    const usedDays = used._sum.num_days ?? 0;
-    return {
-      balance: Math.max(0, totalAllowed - usedDays),
-      totalAllowed,
-      usedDays,
-      monthsOfService: months,
-      controlled: [20, 21, 4].includes(leaveTypeId),
-    };
+    return { id, stage, suspend, status: suspendToListStatus(suspend) };
   }
 
   private async resolveByMosama(
@@ -701,122 +617,47 @@ export class LeavesService {
     });
     if (!row) throw new NotFoundException("طلب الإجازة غير موجود");
 
-    await this.prisma.hr_all_agzat_orders.update({
-      where: { id },
-      data: {
-        suspend: SuspendStatus.CANCELLED,
-        suspend_date: todayIso(),
-        reason_action: "cancel",
-      },
-    });
-
-    await this.insertHistory({
-      agazaRkm: row.agaza_rkm,
-      agazaId: id,
-      fromUser: userId,
-      fromUserName: userName,
-      toUser: row.publisher ?? undefined,
-      msg: "إلغاء",
-      reason: "cancel",
+    await this.prisma.$transaction(async (tx) => {
+      await tx.hr_all_agzat_orders.update({
+        where: { id },
+        data: {
+          suspend: SuspendStatus.CANCELLED,
+          suspend_date: cairoDateString(),
+          reason_action: "cancel",
+        },
+      });
+      await this.insertHistory(
+        {
+          agazaRkm: row.agaza_rkm,
+          agazaId: id,
+          fromUser: userId,
+          fromUserName: userName,
+          toUser: row.publisher ?? undefined,
+          msg: "إلغاء",
+          reason: "cancel",
+        },
+        tx,
+      );
     });
 
     return { id, status: "rejected" };
   }
 
-  async remove(id: number, actor: Pick<JwtUser, "sub" | "level">) {
-    await this.findManageableLeave(id, actor);
-    await this.prisma.$transaction([
-      this.prisma.hr_all_agzat_attaches.deleteMany({
-        where: { talab_id_fk: id },
-      }),
-      this.prisma.hr_all_agzat_history.deleteMany({
-        where: { agaza_id_fk: id },
-      }),
-      this.prisma.hr_all_agzat_orders.delete({ where: { id } }),
-    ]);
-    return { id };
-  }
-
-  async update(
-    id: number,
-    body: {
-      startDate?: string;
-      endDate?: string;
-      returnToWorkDate?: string;
-      reason?: string;
-      addressSinceAgaza?: string;
+  private async insertHistory(
+    opts: {
+      agazaRkm: number | null | undefined;
+      agazaId: number;
+      fromUser?: number;
+      fromUserName?: string;
+      toUser?: number | null;
+      toUserName?: string;
+      msg: string;
+      reason: string;
+      processCode?: number;
     },
-    actor: Pick<JwtUser, "sub" | "level">,
+    db: LeaveDb = this.prisma,
   ) {
-    const row = await this.findManageableLeave(id, actor);
-    const startDate = body.startDate ?? row.agaza_from_date_m;
-    const endDate = body.endDate ?? row.agaza_to_date_m;
-    if (!startDate || !endDate)
-      throw new BadRequestException("تواريخ الإجازة مطلوبة");
-
-    const start = new Date(`${startDate}T12:00:00`);
-    const end = new Date(`${endDate}T12:00:00`);
-    if (
-      Number.isNaN(start.getTime()) ||
-      Number.isNaN(end.getTime()) ||
-      end < start
-    ) {
-      throw new BadRequestException("تاريخ النهاية يجب أن يكون بعد البداية");
-    }
-    const returnToWorkDate = body.returnToWorkDate ?? row.mobashret_amal_date_m;
-    const days =
-      Math.ceil((end.getTime() - start.getTime()) / (24 * 60 * 60 * 1000)) + 1;
-
-    await this.prisma.hr_all_agzat_orders.update({
-      where: { id },
-      data: {
-        agaza_from_date_m: startDate,
-        agaza_to_date_m: endDate,
-        agaza_from_date: Math.floor(start.getTime() / 1000),
-        agaza_to_date: Math.floor(end.getTime() / 1000),
-        agaza_from_day_n: this.arDayName(startDate),
-        agaza_to_day_n: this.arDayName(endDate),
-        mobashret_amal_date_m: returnToWorkDate,
-        mobashret_amal_day_n: this.arDayName(returnToWorkDate),
-        num_days: days,
-        reason: body.reason?.trim() || null,
-        address_since_agaza: body.addressSinceAgaza?.trim() || null,
-      },
-    });
-    return { id };
-  }
-
-  private async findManageableLeave(
-    id: number,
-    actor: Pick<JwtUser, "sub" | "level">,
-  ) {
-    const row = await this.prisma.hr_all_agzat_orders.findUnique({
-      where: { id },
-    });
-    if (!row) throw new NotFoundException("طلب الإجازة غير موجود");
-    if (row.suspend !== SuspendStatus.INCOMING) {
-      throw new BadRequestException("لا يمكن تعديل أو حذف طلب تمت مراجعته");
-    }
-    if (actor.level !== 1 && row.publisher !== actor.sub) {
-      throw new ForbiddenException(
-        "يمكن لصاحب الطلب أو المدير فقط تعديل أو حذف الطلب",
-      );
-    }
-    return row;
-  }
-
-  private async insertHistory(opts: {
-    agazaRkm: number | null | undefined;
-    agazaId: number;
-    fromUser?: number;
-    fromUserName?: string;
-    toUser?: number | null;
-    toUserName?: string;
-    msg: string;
-    reason: string;
-    processCode?: number;
-  }) {
-    await this.prisma.hr_all_agzat_history.create({
+    await db.hr_all_agzat_history.create({
       data: {
         agaza_rkm_fk: opts.agazaRkm ?? 0,
         agaza_id_fk: opts.agazaId,
@@ -827,8 +668,8 @@ export class LeavesService {
         talab_in_fk: opts.processCode ?? 0,
         talab_msg: opts.msg,
         reason_action: opts.reason,
-        date: todayIso(),
-        date_ar: todayIso(),
+        date: cairoDateString(),
+        date_ar: cairoDateString(),
       },
     });
   }
@@ -855,9 +696,8 @@ export class LeavesService {
       minDays: r.min_days,
       maxDays: r.max_days,
       agazaTtype: r.agaza_ttype,
-      dateFrom: r.date_from,
-      dateTo: r.date_to,
       hasSubstitute: r.mowazf_badel === 1,
+      isPaid: r.is_paid,
       isActive: r.active === "yes",
     }));
     return paginated(data, total, q.page, q.pageSize);
@@ -868,9 +708,8 @@ export class LeavesService {
     minDays?: number;
     maxDays?: number;
     agazaTtype?: number;
-    dateFrom?: string;
-    dateTo?: string;
     hasSubstitute?: boolean;
+    isPaid?: boolean;
     isActive?: boolean;
   }) {
     if (!body.title?.trim())
@@ -882,9 +721,8 @@ export class LeavesService {
         max_days: body.maxDays ?? 0,
         num_days: body.maxDays ?? 0,
         agaza_ttype: body.agazaTtype ?? 0,
-        date_from: body.dateFrom ?? null,
-        date_to: body.dateTo ?? null,
         mowazf_badel: body.hasSubstitute ? 1 : 0,
+        is_paid: body.isPaid !== false,
         active: body.isActive !== false ? "yes" : "no",
       },
     });
@@ -898,9 +736,8 @@ export class LeavesService {
       minDays?: number;
       maxDays?: number;
       agazaTtype?: number;
-      dateFrom?: string;
-      dateTo?: string;
       hasSubstitute?: boolean;
+      isPaid?: boolean;
       isActive?: boolean;
     },
   ) {
@@ -938,14 +775,13 @@ export class LeavesService {
         max_days: body.maxDays ?? existing.max_days,
         num_days: body.maxDays ?? existing.num_days,
         agaza_ttype: body.agazaTtype ?? existing.agaza_ttype,
-        date_from: body.dateFrom ?? existing.date_from,
-        date_to: body.dateTo ?? existing.date_to,
         mowazf_badel:
           body.hasSubstitute != null
             ? body.hasSubstitute
               ? 1
               : 0
             : existing.mowazf_badel,
+        is_paid: body.isPaid ?? existing.is_paid,
         active:
           body.isActive != null
             ? body.isActive
@@ -971,13 +807,15 @@ export class LeavesService {
   /** months elapsed between a date-string and today (legacy DateTime::diff y*12+m). */
   private monthsSince(dateStr?: string | null): number {
     if (!dateStr) return 0;
-    const d = new Date(dateStr + "T12:00:00");
-    if (Number.isNaN(d.getTime())) return 0;
-    const now = new Date();
-    let months =
-      (now.getFullYear() - d.getFullYear()) * 12 +
-      (now.getMonth() - d.getMonth());
-    if (now.getDate() < d.getDate()) months -= 1;
+    let started: { year: number; month: number; day: number };
+    try {
+      started = dateOnlyParts(dateStr.slice(0, 10));
+    } catch {
+      return 0;
+    }
+    const now = cairoDateParts();
+    let months = (now.year - started.year) * 12 + (now.month - started.month);
+    if (now.day < started.day) months -= 1;
     return Math.max(0, months);
   }
 
@@ -990,36 +828,69 @@ export class LeavesService {
   }
 
   async balances(q: PaginationDto) {
-    const year = new Date().getFullYear();
-    const [contracts, emps, setting, types] = await Promise.all([
-      this.prisma.contract_employe.findMany(),
-      this.prisma.employees.findMany({
-        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
-        select: {
-          id: true,
-          emp_code: true,
-          employee: true,
-          start_work_date_m: true,
-        },
-      }),
+    const year = cairoDateParts().year;
+    const search = q.search?.trim();
+    const searchClause = search
+      ? Prisma.sql`AND (e.employee LIKE ${`%${search}%`} OR CAST(e.emp_code AS CHAR) LIKE ${`%${search}%`})`
+      : Prisma.empty;
+    const activeContractJoin = Prisma.sql`
+      FROM employees e
+      INNER JOIN contract_employe c
+        ON c.emp_code = CAST(e.emp_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+      WHERE (e.leave_emp IS NULL OR e.leave_emp = 0)
+        AND e.emp_code IS NOT NULL
+        ${searchClause}
+    `;
+
+    const [contracts, countRows, setting, types] = await Promise.all([
+      this.prisma.$queryRaw<BalanceContractRow[]>(Prisma.sql`
+        SELECT
+          c.id AS contractId,
+          e.emp_code AS empCode,
+          e.id AS employeeId,
+          e.employee AS employeeName,
+          e.start_work_date_m AS startWorkDate,
+          c.year_vacation_num AS yearVacationNum,
+          c.casual_vacation_num AS casualVacationNum,
+          c.vacation_previous_balance AS previousBalance,
+          c.vacation_start_m AS vacationStart
+        ${activeContractJoin}
+        ORDER BY c.id ASC
+        LIMIT ${q.take} OFFSET ${q.skip}
+      `),
+      this.prisma.$queryRaw<{ total: bigint }[]>(Prisma.sql`
+        SELECT COUNT(*) AS total
+        ${activeContractJoin}
+      `),
       this.prisma.hr_agazat_sysat.findFirst(),
       this.prisma.holiday_setting.findMany(),
     ]);
-    const byCode = new Map(emps.map((e) => [String(e.emp_code), e]));
+    const total = Number(countRows[0]?.total ?? 0n);
     const defaultType = types[0];
     const emergencyType = types.find((t) => t.agaza_ttype === 1);
     const emergencyQuota = setting?.emergency_nums_in_year ?? 0;
+    const employeeCodes = contracts.map((contract) => BigInt(contract.empCode));
 
-    // used days per employee (suspend=4) for current year, and emergency subset (f2a=1)
+    // Only aggregate leave usage for the employees on this page. This keeps the
+    // endpoint bounded even when the installation has tens of thousands of staff.
     const [usedRows, emergencyRows] = await Promise.all([
       this.prisma.hr_all_agzat_orders.groupBy({
         by: ["emp_code_fk"],
-        where: { suspend: SuspendStatus.APPROVED, year },
+        where: {
+          emp_code_fk: { in: employeeCodes },
+          suspend: SuspendStatus.APPROVED,
+          year,
+        },
         _sum: { num_days: true },
       }),
       this.prisma.hr_all_agzat_orders.groupBy({
         by: ["emp_code_fk"],
-        where: { suspend: SuspendStatus.APPROVED, year, f2a_agaza: 1 },
+        where: {
+          emp_code_fk: { in: employeeCodes },
+          suspend: SuspendStatus.APPROVED,
+          year,
+          f2a_agaza: 1,
+        },
         _sum: { num_days: true },
       }),
     ]);
@@ -1030,66 +901,56 @@ export class LeavesService {
       emergencyRows.map((u) => [String(u.emp_code_fk), u._sum.num_days ?? 0]),
     );
 
-    let rows = contracts.flatMap((c) => {
-      const emp = byCode.get(c.emp_code);
-      if (!emp) return [];
-
-      const yearVacation = parseFloat(c.year_vacation_num) || 0;
+    const rows = contracts.map((contract) => {
+      const yearVacation = parseFloat(contract.yearVacationNum) || 0;
       const monthVacation = yearVacation / 12;
-      const casualQuota = parseFloat(c.casual_vacation_num) || 0;
-      const prevBalance = c.vacation_previous_balance || 0;
+      const casualQuota = parseFloat(contract.casualVacationNum) || 0;
+      const prevBalance = contract.previousBalance || 0;
 
       // monthly pro-rata accrual from vacation_start_m (fallback: start_work_date_m)
-      const startM = c.vacation_start_m || emp.start_work_date_m || null;
-      const monthsAccrued = this.monthsSince(startM);
-      const accrued = monthVacation * monthsAccrued;
+      const startM = contract.vacationStart || contract.startWorkDate || null;
+      const availableBeforeUsage = accruedAnnualLeave({
+        annualQuota: yearVacation,
+        previousBalance: prevBalance,
+        accrualStartDate: startM,
+        employmentStartDate: contract.startWorkDate,
+        asOfDate: cairoDateString(),
+      });
+      const accrued = Math.max(0, availableBeforeUsage - prevBalance);
 
-      const usedKey = emp.emp_code != null ? String(emp.emp_code) : "";
+      const usedKey = String(contract.empCode);
       const used = usedMap.get(usedKey) ?? 0;
       const emergencyUsed = emergencyUsedMap.get(usedKey) ?? 0;
 
       // annual available = accrued − used + previous balance (legacy ava_days f2a!=1)
-      const annualRemaining = accrued - used + prevBalance;
-      const tenureMonths = this.monthsSince(emp.start_work_date_m);
+      const annualRemaining = availableBeforeUsage - used;
+      const tenureMonths = this.monthsSince(contract.startWorkDate);
 
-      return [
-        {
-          id: emp.id,
-          employeeName: emp.employee ?? undefined,
-          empCode: emp.emp_code != null ? String(emp.emp_code) : undefined,
-          leaveType: defaultType?.name ?? "إجازة سنوية",
-          // annual (سنوية)
-          total: Math.round(accrued + prevBalance),
-          used: Math.round(used),
-          remaining: Math.max(0, Math.round(annualRemaining)),
-          // tenure ladder reference balance
-          tenureBalance: this.tenureLadder(tenureMonths),
-          // emergency (طارئة) quota
-          emergencyType: emergencyType?.name ?? "طارئة",
-          emergencyTotal: emergencyQuota,
-          emergencyUsed: Math.round(emergencyUsed),
-          emergencyRemaining: Math.max(
-            0,
-            Math.round(emergencyQuota - emergencyUsed),
-          ),
-          // casual (عارضة) quota
-          casualTotal: Math.round(casualQuota),
-          monthlyAccrual: Math.round(monthVacation * 100) / 100,
-        },
-      ];
+      return {
+        id: contract.employeeId,
+        employeeName: contract.employeeName ?? undefined,
+        empCode: String(contract.empCode),
+        leaveType: defaultType?.name ?? "إجازة سنوية",
+        // annual (سنوية)
+        total: Math.round(accrued + prevBalance),
+        used: Math.round(used),
+        remaining: Math.max(0, Math.round(annualRemaining)),
+        // tenure ladder reference balance
+        tenureBalance: this.tenureLadder(tenureMonths),
+        // emergency (طارئة) quota
+        emergencyType: emergencyType?.name ?? "طارئة",
+        emergencyTotal: emergencyQuota,
+        emergencyUsed: Math.round(emergencyUsed),
+        emergencyRemaining: Math.max(
+          0,
+          Math.round(emergencyQuota - emergencyUsed),
+        ),
+        // casual (عارضة) quota
+        casualTotal: Math.round(casualQuota),
+        monthlyAccrual: Math.round(monthVacation * 100) / 100,
+      };
     });
-
-    if (q.search?.trim()) {
-      const s = q.search.trim().toLowerCase();
-      rows = rows.filter(
-        (r) =>
-          r.employeeName?.toLowerCase().includes(s) || r.empCode?.includes(s),
-      );
-    }
-
-    const total = rows.length;
-    const data = rows.slice(q.skip, q.skip + q.take);
-    return paginated(data, total, q.page, q.pageSize);
+    return paginated(rows, total, q.page, q.pageSize);
   }
 
   /**
@@ -1098,50 +959,78 @@ export class LeavesService {
    * to the start of the target year. Mirrors how the legacy app reads
    * vacation_previous_balance as carried-over days.
    */
-  async carryOver(targetYear?: number) {
-    const year = targetYear ?? new Date().getFullYear();
+  async carryOver(targetYear?: number, initiatedBy?: number) {
+    const year = targetYear ?? cairoDateParts().year;
+    if (!Number.isInteger(year) || year < 2000 || year > 2200) {
+      throw new BadRequestException("سنة ترحيل الرصيد غير صالحة");
+    }
     const prevYear = year - 1;
     const newAnchor = `${year}-01-01`;
-
-    const contracts = await this.prisma.contract_employe.findMany();
-    const emps = await this.prisma.employees.findMany({
-      select: { id: true, emp_code: true, start_work_date_m: true },
-    });
-    const byCode = new Map(emps.map((e) => [String(e.emp_code), e]));
-
-    // used days in the previous year per employee
-    const usedRows = await this.prisma.hr_all_agzat_orders.groupBy({
-      by: ["emp_code_fk"],
-      where: { suspend: SuspendStatus.APPROVED, year: prevYear },
-      _sum: { num_days: true },
-    });
-    const usedMap = new Map(
-      usedRows.map((u) => [String(u.emp_code_fk), u._sum.num_days ?? 0]),
-    );
-
-    let processed = 0;
-    for (const c of contracts) {
-      const emp = byCode.get(c.emp_code);
-      const yearVacation = parseFloat(c.year_vacation_num) || 0;
-      const monthVacation = yearVacation / 12;
-      const startM = c.vacation_start_m || emp?.start_work_date_m || null;
-      const monthsAccrued = this.monthsSince(startM);
-      const accrued = monthVacation * monthsAccrued;
-      const used = usedMap.get(c.emp_code) ?? 0;
-      const prevBalance = c.vacation_previous_balance || 0;
-
-      const carried = Math.max(0, accrued - used + prevBalance);
-
-      await this.prisma.contract_employe.update({
-        where: { id: c.id },
-        data: {
-          vacation_previous_balance: Math.round(carried * 100) / 100,
-          vacation_start_m: newAnchor,
+    return this.prisma.$transaction(async (tx) => {
+      await tx.leave_carryover_runs.upsert({
+        where: { target_year: year },
+        create: {
+          target_year: year,
+          status: "running",
+          initiated_by: initiatedBy ?? null,
         },
+        update: {},
       });
-      processed += 1;
-    }
+      const existing = await tx.leave_carryover_runs.findUnique({
+        where: { target_year: year },
+      });
+      if (existing?.status === "completed") {
+        return { year, processed: existing.processed, idempotent: true };
+      }
 
-    return { year, processed };
+      const contracts = await tx.contract_employe.findMany();
+      const emps = await tx.employees.findMany({
+        select: { id: true, emp_code: true, start_work_date_m: true },
+      });
+      const byCode = new Map(
+        emps.map((employee) => [String(employee.emp_code), employee]),
+      );
+      const usedRows = await tx.hr_all_agzat_orders.groupBy({
+        by: ["emp_code_fk"],
+        where: { suspend: SuspendStatus.APPROVED, year: prevYear },
+        _sum: { num_days: true },
+      });
+      const usedMap = new Map(
+        usedRows.map((used) => [
+          String(used.emp_code_fk),
+          used._sum.num_days ?? 0,
+        ]),
+      );
+
+      let processed = 0;
+      for (const contract of contracts) {
+        if (contract.vacation_start_m === newAnchor) continue;
+        const employee = byCode.get(contract.emp_code);
+        const availableAtYearEnd = accruedAnnualLeave({
+          annualQuota: parseFloat(contract.year_vacation_num) || 0,
+          previousBalance: contract.vacation_previous_balance || 0,
+          accrualStartDate: contract.vacation_start_m,
+          employmentStartDate: employee?.start_work_date_m,
+          asOfDate: `${prevYear}-12-31`,
+        });
+        const carried = Math.max(
+          0,
+          availableAtYearEnd - (usedMap.get(contract.emp_code) ?? 0),
+        );
+        await tx.contract_employe.update({
+          where: { id: contract.id },
+          data: {
+            vacation_previous_balance: Math.round(carried * 100) / 100,
+            vacation_start_m: newAnchor,
+          },
+        });
+        processed += 1;
+      }
+      await tx.leave_carryover_runs.update({
+        where: { target_year: year },
+        data: { status: "completed", processed, completed_at: new Date() },
+      });
+      return { year, processed, idempotent: false };
+    });
   }
 }

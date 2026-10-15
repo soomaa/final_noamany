@@ -1,68 +1,61 @@
 import { RequestMethod, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
-import { ExpressAdapter, NestExpressApplication } from '@nestjs/platform-express';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import compression from 'compression';
 import helmet from 'helmet';
 import { existsSync } from 'fs';
-import { isAbsolute, join } from 'path';
-import express, { type NextFunction, type Request, type Response } from 'express';
-import { PrismaService } from './common/prisma/prisma.service';
+import { join } from 'path';
+import { text, type NextFunction, Request, Response } from 'express';
 import { AppModule } from './app.module';
+import { PrismaService } from './common/prisma/prisma.service';
+import { resolveCorrelationId } from './common/http/correlation-id';
+import { RequestContextService } from './common/http/request-context.service';
+import { RequestMetricsService } from './common/metrics/request-metrics.service';
+import { installProcessGuards } from './common/process-guards';
 
 // Legacy BigInt columns (e.g. employees.card_num) must serialize as strings in JSON.
 (BigInt.prototype as unknown as { toJSON: () => string }).toJSON = function () {
   return this.toString();
 };
 
+// Installed before the app is built, so an abort during startup is covered too.
+installProcessGuards();
+
 async function bootstrap() {
-  // Configure Express before Nest registers any controller. Setting this on the
-  // adapter after NestFactory.create() is too late because the router already
-  // exists, leaving /Api/:action able to capture lowercase /api/* requests.
-  const expressServer = express();
-  expressServer.set('case sensitive routing', true);
-
-  const app = await NestFactory.create<NestExpressApplication>(
-    AppModule,
-    new ExpressAdapter(expressServer),
-  );
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const config = app.get(ConfigService);
+  const requestContext = app.get(RequestContextService);
+  const requestMetrics = app.get(RequestMetricsService);
 
-  // Keep the former CodeIgniter mobile contract reachable at root /Api/* while
-  // all modern application routes remain under /api. Mutations in the legacy
-  // adapter are still protected by JwtAuthGuard.
-  app.setGlobalPrefix('api', {
-    exclude: [{ path: 'Api/{*path}', method: RequestMethod.ALL }],
-  });
+  // ZKTeco controllers in HTTP (push) mode call fixed firmware paths under /iclock.
+  app.setGlobalPrefix('api', { exclude: [{ path: 'iclock/*path', method: RequestMethod.ALL }] });
+  app.use('/iclock', text({ type: () => true, limit: '2mb' }));
   // Default helmet CSP blocks Vite inline bootstrap + Cloudflare beacon on production SPA.
   app.use(
     helmet({
       crossOriginResourcePolicy: { policy: 'cross-origin' },
-      contentSecurityPolicy: {
-        directives: {
-          defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", 'https://static.cloudflareinsights.com'],
-          styleSrc: ["'self'", "'unsafe-inline'"],
-          imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-          fontSrc: ["'self'", 'data:'],
-          connectSrc: ["'self'", 'https:', 'wss:'],
-          mediaSrc: ["'self'", 'blob:', 'https:'],
-          frameSrc: ["'self'", 'https:'],
-          objectSrc: ["'none'"],
-          baseUri: ["'self'"],
-          formAction: ["'self'"],
-          frameAncestors: ["'self'"],
-        },
-      },
+      contentSecurityPolicy: false,
     }),
   );
-  app.use((_req: Request, res: Response, next: NextFunction) => {
-    res.setHeader('Permissions-Policy', 'camera=(self), geolocation=(self), microphone=()');
+  app.use(cookieParser());
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const correlationId = resolveCorrelationId(req.get('x-request-id'));
+    (req as Request & { correlationId: string }).correlationId = correlationId;
+    res.setHeader('X-Request-ID', correlationId);
+    requestContext.run({ correlationId }, next);
+  });
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const startedAt = process.hrtime.bigint();
+    const finish = requestMetrics.startRequest(req.method);
+    res.once('finish', () => {
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      finish(res.statusCode, durationMs);
+    });
     next();
   });
-  app.use(cookieParser());
   // Compress JSON and static responses; list/report payloads benefit substantially.
   app.use(compression());
 
@@ -82,7 +75,7 @@ async function bootstrap() {
   // Swagger exposes the entire API surface — keep it out of production.
   if (config.get<string>('nodeEnv') !== 'production') {
     const swaggerConfig = new DocumentBuilder()
-      .setTitle('Noamany Fitness Center ERP API')
+      .setTitle('ONE80 Gym ERP API')
       .setDescription('Gym management system — members, subscriptions, POS, HR, accounting')
       .setVersion('1.0')
       .addBearerAuth()
@@ -92,36 +85,15 @@ async function bootstrap() {
     SwaggerModule.setup('api/docs', app, document);
   }
 
-  // Serve uploaded files (employee photos, documents, signatures).
-  const configuredUploadDir = config.get<string>('uploadDir') ?? './uploads';
-  const uploadDir = isAbsolute(configuredUploadDir)
-    ? configuredUploadDir
-    : join(process.cwd(), configuredUploadDir);
-  app.useStaticAssets(uploadDir, {
-    prefix: config.get<string>('publicUploadBase') ?? '/uploads',
-  });
+  // Uploaded content is never mounted as static data. New files are delivered only
+  // through the authenticated /api/uploads/files/:id controller after RBAC + scope checks.
 
-  // Unified single-origin deployment:
-  //   /              -> public website
-  //   /login + all unknown application routes -> management system SPA
-  //   /api + /uploads -> backend endpoints and uploaded assets
+  // Serve the built frontend (single-origin deploy: this app hosts both the SPA and /api).
+  // Place the frontend build in <cwd>/public. The SPA fallback below returns index.html for
+  // client-side routes while leaving /api to its handlers.
   const publicDir = join(process.cwd(), 'public');
-  const siteIndexHtml = join(publicDir, 'index.html');
-  const systemIndexHtml = join(publicDir, 'system.html');
-  if (existsSync(siteIndexHtml)) {
-    // Passenger may expose a mounted request's `path` as `/` while preserving
-    // the browser URL in `originalUrl`. Handle the login shell before static
-    // files so /login can never fall through to the public website index.
-    if (existsSync(systemIndexHtml)) {
-      app.use((req: Request, res: Response, next: NextFunction) => {
-        if (req.method !== 'GET') return next();
-        if (!req.headers.accept?.includes('text/html')) return next();
-        const requestPath = req.originalUrl.split('?')[0];
-        if (requestPath !== '/login' && !requestPath.startsWith('/login/')) return next();
-        res.setHeader('Cache-Control', 'no-cache');
-        return res.sendFile(systemIndexHtml);
-      });
-    }
+  const indexHtml = join(publicDir, 'index.html');
+  if (existsSync(indexHtml)) {
     app.useStaticAssets(publicDir, {
       setHeaders: (res, filePath) => {
         if (filePath.endsWith('index.html')) {
@@ -135,11 +107,9 @@ async function bootstrap() {
     });
     app.use((req: Request, res: Response, next: NextFunction) => {
       if (req.method !== 'GET') return next();
-      const requestPath = req.originalUrl.split('?')[0];
-      if (requestPath.startsWith('/api') || requestPath.startsWith('/uploads')) return next();
+      if (req.path.startsWith('/api') || req.path.startsWith('/iclock')) return next();
       if (!req.headers.accept?.includes('text/html')) return next();
-      if (requestPath === '/') return res.sendFile(siteIndexHtml);
-      return res.sendFile(existsSync(systemIndexHtml) ? systemIndexHtml : siteIndexHtml);
+      return res.sendFile(indexHtml);
     });
   }
 
@@ -163,7 +133,7 @@ async function bootstrap() {
   const port = config.get<number>('port') ?? 4000;
   await app.listen(port);
 
-  console.log(`Noamany HR API → http://localhost:${port}/api`);
+  console.log(`ONE80 HR API → http://localhost:${port}/api`);
 }
 
 bootstrap();

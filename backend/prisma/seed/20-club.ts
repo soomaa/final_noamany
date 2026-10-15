@@ -362,7 +362,7 @@ export async function seedClub(): Promise<void> {
         member_code: code,
         name,
         phone: memberPhone,
-        email: `member${1000 + i}@noamanycenter.test`,
+        email: `member${1000 + i}@one80gym.test`,
         gender: gender as any,
         card_number: `CARD-${100000 + i}`,
         date_of_birth: ymd(addDays(BASE, -randInt(6570, 16425))), // 18-45 yrs
@@ -737,7 +737,7 @@ export async function seedClub(): Promise<void> {
       data: {
         employee_id: linkedEmp,
         name,
-        email: `trainer${i + 1}@noamanycenter.test`,
+        email: `trainer${i + 1}@one80gym.test`,
         phone: phone(),
         specialization: pick(specializations),
         experience: `${randInt(2, 15)} سنوات`,

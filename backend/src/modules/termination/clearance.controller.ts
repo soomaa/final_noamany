@@ -12,6 +12,7 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ClearanceService } from './clearance.service';
 import { CreateClearanceDto, ListClearanceDto, UpdateClearanceDto } from './dto/clearance.dto';
 
@@ -32,16 +33,23 @@ export class ClearanceController {
   }
 
   @Post()
-  create(@Body() dto: CreateClearanceDto) {
-    return this.clearance.create(dto);
+  @RequiresPermission('termination.clearance:create')
+  create(@Body() dto: CreateClearanceDto, @CurrentUser('sub') userId: number) {
+    return this.clearance.create(dto, userId);
   }
 
   @Patch(':groupId')
-  update(@Param('groupId', ParseIntPipe) groupId: number, @Body() dto: UpdateClearanceDto) {
-    return this.clearance.update(groupId, dto);
+  @RequiresPermission('termination.clearance:update')
+  update(
+    @Param('groupId', ParseIntPipe) groupId: number,
+    @Body() dto: UpdateClearanceDto,
+    @CurrentUser('sub') userId: number,
+  ) {
+    return this.clearance.update(groupId, dto, userId);
   }
 
   @Delete(':groupId')
+  @RequiresPermission('termination.clearance:delete')
   remove(@Param('groupId', ParseIntPipe) groupId: number) {
     return this.clearance.remove(groupId);
   }

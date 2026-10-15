@@ -8,7 +8,7 @@ import { cn } from '@/lib/utils';
 
 /** Shared brand palette for charts — hex only (SVG fill/stroke attrs do not resolve CSS vars). */
 export const CHART_COLORS = [
-  '#ED1C24',
+  '#EAB308',
   '#F7CE1B',
   '#2D8F6F',
   '#D97706',

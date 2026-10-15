@@ -70,7 +70,6 @@ export class ClubReceiptsCrudService {
     locker_subscription_id?: number | null;
     member_id: number | null;
     member_name: string;
-    branch_id?: number | null;
     amount: unknown;
     type: string | null;
     payment_method: string | null;
@@ -88,7 +87,6 @@ export class ClubReceiptsCrudService {
       lockerSubscriptionId: r.locker_subscription_id ?? null,
       memberId: r.member_id,
       memberName: r.member_name,
-      branchId: r.branch_id ?? null,
       amount: toNum(r.amount),
       type: r.type,
       paymentMethod: r.payment_method,
@@ -107,37 +105,12 @@ export class ClubReceiptsCrudService {
     };
   }
 
-  /** Returns the next sequential receipt number (preview — not reserved). */
-  async nextNumber(): Promise<{ number: string }> {
-    const number = await this.receipts.nextReceiptNumber();
-    return { number };
-  }
-
   async list(q: ListClubReceiptsDto, user?: JwtUser) {
     const and: Prisma.club_receiptsWhereInput[] = [this.receiptScopeWhere(user)];
     const where: Prisma.club_receiptsWhereInput = {};
     if (q.status) where.status = q.status;
     if (q.subscriptionId != null) where.subscription_id = q.subscriptionId;
     if (q.memberId != null) where.member_id = q.memberId;
-    // A receipt can inherit its business branch from the subscription/member;
-    // filtering only the nullable receipt header would omit valid historical rows.
-    if (q.branchId != null) {
-      where.OR = [
-        { branch_id: q.branchId },
-        { subscription: { branch_id: q.branchId } },
-        { locker_subscription: { main_branch_id: q.branchId } },
-        { member: { branch_id: q.branchId } },
-      ];
-    }
-    if (q.startDate && q.endDate && q.endDate < q.startDate) {
-      throw new BadRequestException('تاريخ النهاية يجب أن يكون بعد تاريخ البداية');
-    }
-    if (q.startDate || q.endDate) {
-      where.receipt_date = {
-        ...(q.startDate ? { gte: q.startDate } : {}),
-        ...(q.endDate ? { lte: q.endDate } : {}),
-      };
-    }
     and.push(where);
     const scopedWhere: Prisma.club_receiptsWhereInput = { AND: and };
 
@@ -177,15 +150,16 @@ export class ClubReceiptsCrudService {
   }
 
   async create(body: CreateClubReceiptDto, user?: JwtUser) {
+    let selectedMember: { id: number; name: string; branch_id: number } | null = null;
     if (body.memberId) {
       await assertMemberExists(this.prisma, body.memberId).catch((e) => {
         throw new BadRequestException(e instanceof Error ? e.message : 'العضو غير موجود');
       });
-      const member = await this.prisma.club_members.findUnique({
+      selectedMember = await this.prisma.club_members.findUnique({
         where: { id: body.memberId },
-        select: { branch_id: true },
+        select: { id: true, name: true, branch_id: true },
       });
-      if (!member || !this.branchScope.isBranchAllowed(user, member.branch_id)) {
+      if (!selectedMember || !this.branchScope.isBranchAllowed(user, selectedMember.branch_id)) {
         throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
       }
     }
@@ -200,15 +174,18 @@ export class ClubReceiptsCrudService {
       if (!this.branchScope.isBranchAllowed(user, sub.branch_id)) {
         throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
       }
+      if (selectedMember && sub.member_id != null && selectedMember.id !== sub.member_id) {
+        throw new BadRequestException('العضو المحدد لا يطابق عضو الاشتراك');
+      }
+      if (selectedMember && selectedMember.branch_id !== sub.branch_id) {
+        throw new ForbiddenException('لا يمكن ربط إيصال اشتراك بعضو من فرع آخر');
+      }
     }
 
     // Derive a branch for the GL posting: subscription's branch, else the member's branch, else
     // the branch the caller collected at (walk-in receipts have neither).
     let branchId = sub?.branch_id;
-    if (branchId == null && body.memberId) {
-      const mem = await this.prisma.club_members.findUnique({ where: { id: body.memberId } });
-      branchId = mem?.branch_id;
-    }
+    if (branchId == null) branchId = selectedMember?.branch_id;
     if (branchId == null && body.branchId != null) {
       if (!this.branchScope.isBranchAllowed(user, body.branchId)) {
         throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
@@ -240,6 +217,13 @@ export class ClubReceiptsCrudService {
             where: { subscription_id: subscriptionId },
             _sum: { amount: true },
           });
+          // A migrated subscription can carry a real paid_amount with no matching receipt, so the
+          // ledger total alone understates what was already collected and would let this receipt
+          // over-collect. Settle on whichever record shows more money in.
+          const alreadyCollected = Math.max(
+            toNum(collected._sum.amount),
+            toNum(lockedSub.paid_amount),
+          );
           const receivable = roundMoney(Math.max(
             0,
             netValue(
@@ -249,7 +233,7 @@ export class ClubReceiptsCrudService {
             ) -
               toNum(lockedSub.waived_amount) -
               toNum(lockedSub.transferred_credit_amount) -
-              toNum(collected._sum.amount),
+              alreadyCollected,
           ));
           if (roundMoney(body.amount) > receivable) {
             throw new BadRequestException('مبلغ الإيصال يتجاوز المبلغ المتبقي');
@@ -262,8 +246,8 @@ export class ClubReceiptsCrudService {
           data: {
             receipt_number: receiptNumber,
             subscription_id: subscriptionId ?? null,
-            member_id: body.memberId ?? null,
-            member_name: body.memberName,
+            member_id: sub?.member_id ?? body.memberId ?? null,
+            member_name: sub?.customer_name ?? selectedMember?.name ?? body.memberName,
             branch_id: branchId ?? null,
             amount: body.amount,
             type: body.type ?? null,

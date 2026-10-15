@@ -64,6 +64,7 @@ export function StockTab() {
         </Button>
       </div>
       <DataTable
+        exportSource={{ resource: 'stock', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}

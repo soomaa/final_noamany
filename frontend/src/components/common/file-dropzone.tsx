@@ -22,7 +22,7 @@ export function FileDropzone({ accept, maxSizeMb = 10, value, onChange, classNam
   const validate = useCallback(
     (file: File) => {
       if (maxSizeMb && file.size > maxSizeMb * 1024 * 1024) {
-        setError(ui(`الحد الأقصى ${maxSizeMb} ميجابايت`));
+        setError(`${ui('الحد الأقصى ')}${maxSizeMb}${ui(' ميجابايت')}`);
         return false;
       }
       setError(null);
@@ -75,7 +75,7 @@ export function FileDropzone({ accept, maxSizeMb = 10, value, onChange, classNam
       {value && (
         <div className="flex items-center justify-between rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm">
           <span className="truncate">{value.name}</span>
-          <Button type="button" variant="ghost" size="icon" onClick={() => onChange(null)} aria-label={ui('إزالة')}>
+          <Button permissionAction={null} type="button" variant="ghost" size="icon" onClick={() => onChange(null)} aria-label={ui('إزالة')}>
             <X className="size-4" />
           </Button>
         </div>

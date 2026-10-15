@@ -1,29 +1,29 @@
+import { calendarPayrollPeriod, PayrollWindow, sumPayrollEvents } from './monthly-payroll.util';
+import { MonthlyPayrollEventDto, PayrollCafeChoiceDto } from './dto/payroll.dto';
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
-import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { JwtUser } from '../../common/types/jwt-user';
-import { retryOnUniqueViolation } from '../../common/retry-unique';
-import { ModuleLedgerService } from '../accounting/module-ledger.service';
-import { recordSystemExpense } from '../finance/system-expense.util';
-import {
-  CreatePayComponentDto,
-  CreatePayrollRunDto,
-  CreateSalaryIncreaseDto,
-  ListPayComponentsDto,
-  ListSalaryIncreasesDto,
-  PayrollPreviewDto,
-  UpdatePayComponentDto,
-  UpdateSalaryIncreaseDto,
-} from './dto/payroll.dto';
+import { allocateDocumentNumber } from '../../common/number-series/document-number-series';
+import { FailClosedHrLedgerAdapter, HR_LEDGER_ADAPTER, HrLedgerAdapter } from '../../ports/accounting/hr-ledger.adapter';
+import { CreatePayComponentDto, CreatePayrollRunDto, UpdatePayComponentDto } from './dto/payroll.dto';
 import { ComputedEmployeeSalary, PayrollEngineService } from './payroll-engine.service';
+import { HrDataScopeService } from '../../common/hr-scope/hr-data-scope.service';
+import {
+  BANK_PAYMENT_ADAPTER,
+  BankPaymentAdapter,
+  DisabledBankPaymentAdapter,
+} from '../../ports/payroll/bank-payment.adapter';
+import { JwtUser } from '../../common/types/jwt-user';
+import { buildPayrollEmployeeWhere } from './salary-component.util';
 import {
   decimal,
   mapRunStatus,
@@ -36,6 +36,11 @@ import {
 
 const COMPONENT_TYPES = ['allowances', 'deduction'] as const;
 
+/** Marks quests settled by a payroll post so unpost does not reopen cash repayments. */
+function payrollQuestPayer(mosayerRkm: number): string {
+  return `payroll:${mosayerRkm}`;
+}
+
 interface PayrollBranchTotals {
   branchId: number | null;
   grossEarnings: number;
@@ -44,30 +49,206 @@ interface PayrollBranchTotals {
   employeeInsurance: number;
   employerInsurance: number;
   loanDeductions: number;
+  incomeTax: number;
+  cafeDeductions: number;
   nonLiabilityDeductions: number;
 }
 
 const payrollMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
+
+function payrollStatusWhere(status?: string): Prisma.hr_mosayerWhereInput | null {
+  switch (status) {
+    case 'completed': return { finish_sarf_date: { not: null } };
+    case 'banked': return { finish_sarf_date: null, tanfez_ezn_sarf: 'yes' };
+    case 'bank_prepared': return { finish_sarf_date: null, tanfez_ezn_sarf: { not: 'yes' }, file_downloded: { not: null } };
+    case 'posted': return { finish_sarf_date: null, tanfez_ezn_sarf: { not: 'yes' }, file_downloded: null, halet_sarf: 'yes' };
+    case 'approved': return { halet_sarf: { not: 'yes' }, approved: 1 };
+    case 'reviewing': return {
+      halet_sarf: { not: 'yes' }, approved: { not: 1 },
+      OR: [
+        { suspend_mohasb: 'yes' }, { suspend_direct_manager: 'yes' }, { suspend_moder_mali: 'yes' },
+      ],
+    };
+    case 'computed': return {
+      halet_sarf: { not: 'yes' }, approved: { not: 1 }, taghez: 'yes',
+      suspend_mohasb: { not: 'yes' }, suspend_direct_manager: { not: 'yes' }, suspend_moder_mali: { not: 'yes' },
+    };
+    case 'draft': return { taghez: { not: 'yes' }, approved: { not: 1 }, halet_sarf: { not: 'yes' } };
+    default: return null;
+  }
+}
 
 @Injectable()
 export class PayrollService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly engine: PayrollEngineService,
-    private readonly moduleLedger: ModuleLedgerService,
-    private readonly branchScope: BranchScopeService,
+    @Optional() @Inject(HR_LEDGER_ADAPTER)
+    private readonly moduleLedger: HrLedgerAdapter = new FailClosedHrLedgerAdapter(),
+    @Optional() private readonly hrScope?: HrDataScopeService,
+    @Optional() @Inject(BANK_PAYMENT_ADAPTER)
+    private readonly bankPayment: BankPaymentAdapter = new DisabledBankPaymentAdapter(),
   ) {}
+
+  private runWindow(run: { mosayer_month: number | null; mosayer_year: number | null; period_start?: string | null; period_end?: string | null }): PayrollWindow {
+    return run.period_start && run.period_end ? { fromDate: run.period_start, toDate: run.period_end } : payrollPeriod(run.mosayer_month!, run.mosayer_year!);
+  }
+
+  private async lockEditableRun(tx: Prisma.TransactionClient, id: number) {
+    await tx.$queryRaw`SELECT id FROM hr_mosayer WHERE id = ${id} FOR UPDATE`;
+    const run = await tx.hr_mosayer.findUnique({ where: { id } });
+    if (!run) throw new NotFoundException('المرتبات الشهرية غير موجودة');
+    if (!['draft', 'computed', 'reviewing'].includes(mapRunStatus(run))) throw new BadRequestException('تم اعتماد المرتبات؛ التعديل مقفول');
+    return run;
+  }
+
+  private async importLegacyOverrides(tx: Prisma.TransactionClient, runId: number, employeeId: number, lineId: number) {
+    const line = await tx.hr_mosayer_details.findFirst({ where: { id: lineId } });
+    const saved = (line?.calculation_snapshot as any)?.overrides;
+    if (!saved) return;
+    const existing = await tx.payroll_monthly_events.findMany({ where: { run_id: runId, employee_id: employeeId } });
+    if (existing.length) return;
+    for (const [key, kind] of [['privateBonus', 'bonus'], ['taqeemValue', 'evaluation'], ['targetValue', 'target']]) {
+      const amount = Number(saved[key] ?? 0);
+      if (amount > 0) await tx.payroll_monthly_events.create({ data: { run_id: runId, employee_id: employeeId, kind, amount, note: 'قيمة محفوظة قبل تفعيل سجل الحركات', actor_id: 0, actor_name: 'ترحيل القيم السابقة', request_id: `legacy-payroll-${runId}-${employeeId}-${key}` } });
+    }
+  }
+
+  private async monthlyOverrides(tx: Prisma.TransactionClient, runId: number, employeeId: number) {
+    const events = await tx.payroll_monthly_events.findMany({ where: { run_id: runId, employee_id: employeeId }, orderBy: { id: 'asc' } });
+    const allocations = await tx.payroll_cafe_allocations.findMany({ where: { run_id: runId, employee_id: employeeId } });
+    return { ...sumPayrollEvents(events), cafeDeduction: payrollMoney(allocations.reduce((n, a) => n + Number(a.amount), 0)) };
+  }
+
+  private async refreshMonthlyEmployee(tx: Prisma.TransactionClient, run: Awaited<ReturnType<PayrollService['lockEditableRun']>>, lineId: number, employeeId: number) {
+    const overrides = await this.monthlyOverrides(tx, run.id, employeeId);
+    const computed = await this.engine.computeOneById(employeeId, run.mosayer_month!, run.mosayer_year!, overrides, this.runWindow(run));
+    if (!computed) throw new BadRequestException('تعذر احتساب الموظف؛ راجع حالة الموظف وراتبه');
+    if (computed.totalKhsomat > computed.totalEsthkak) throw new BadRequestException('الخصومات أكبر من المستحقات؛ قلّل الخصم أو أجّل حساب الكافيه');
+    await tx.hr_mosayer_details.update({ where: { id: lineId }, data: this.toDetailRow(run.mosayer_rkm!, computed) });
+    await this.recomputeHeaderTotals(tx, run.mosayer_rkm, run.id);
+    // Any edit after submission requires a fresh review.
+    await tx.hr_mosayer.update({ where: { id: run.id }, data: { taghez: 'yes', suspend_mohasb: null, suspend_direct_manager: null, suspend_moder_mali: null } });
+  }
+
+  async monthlyEmployee(runId: number, lineId: number, user: JwtUser) {
+    const slip = await this.getSlip(runId, lineId, user);
+    const employeeId = slip.employee.id;
+    if (!employeeId) throw new BadRequestException('الموظف غير مرتبط بسجل صالح');
+    const run = await this.getRunOrThrow(runId, user);
+    const [events, allocations, sales] = await Promise.all([
+      this.prisma.payroll_monthly_events.findMany({ where: { run_id: runId, employee_id: employeeId }, orderBy: { id: 'desc' } }),
+      this.prisma.payroll_cafe_allocations.findMany({ where: { employee_id: employeeId } }),
+      this.prisma.sales_quick_sales.findMany({ where: { employee_id: employeeId, sale_type: 'employee', status: 'completed', billing_cycle: 'monthly', billing_status: { in: ['unbilled', 'in_statement'] }, sale_date: { lte: this.runWindow(run).toDate } }, orderBy: { id: 'asc' } }),
+    ]);
+    const reservedElsewhere = new Set(allocations.filter(a => a.run_id !== runId).map(a => a.sale_id));
+    const available = sales.filter(s => !reservedElsewhere.has(s.id));
+    const selected = allocations.filter(a => a.run_id === runId);
+    return { ...slip, editable: ['draft', 'computed', 'reviewing'].includes(slip.run.status),
+      history: events.map(e => ({ id: e.id, kind: e.kind, amount: Number(e.amount), note: e.note, actorName: e.actor_name, createdAt: e.created_at, reversesId: e.reverses_id })),
+      cafe: { outstanding: payrollMoney(available.reduce((n, s) => n + Number(s.total_amount) - Number(s.collected_amount), 0)), selectedAmount: payrollMoney(selected.reduce((n, a) => n + Number(a.amount), 0)), selected: selected.length > 0, settled: selected.some(a => a.settled_at != null), reservedElsewhere: payrollMoney(allocations.filter(a => a.run_id !== runId && !a.settled_at).reduce((n, a) => n + Number(a.amount), 0)), invoiceCount: available.length },
+    };
+  }
+
+  async addMonthlyEvent(runId: number, lineId: number, dto: MonthlyPayrollEventDto, user: JwtUser) {
+    await this.assertGlobalPayrollScope(user);
+    const slip = await this.getSlip(runId, lineId, user);
+    const employeeId = slip.employee.id!;
+    if (!employeeId || !dto.note.trim()) throw new BadRequestException('اكتب سبب الحركة');
+    await this.prisma.$transaction(async tx => {
+      const run = await this.lockEditableRun(tx, runId);
+      const duplicate = await tx.payroll_monthly_events.findUnique({ where: { request_id: dto.requestId } });
+      if (duplicate) {
+        if (duplicate.run_id !== runId || duplicate.employee_id !== employeeId || duplicate.kind !== dto.kind || Number(duplicate.amount) !== dto.amount || duplicate.note !== dto.note.trim() || duplicate.reverses_id !== (dto.reversesId ?? null)) throw new ConflictException('طلب مختلف بنفس رقم الحفظ');
+        return;
+      }
+      await this.importLegacyOverrides(tx, runId, employeeId, lineId);
+      if (dto.kind === 'reversal') {
+        const original = await tx.payroll_monthly_events.findFirst({ where: { id: dto.reversesId ?? -1, run_id: runId, employee_id: employeeId, kind: { in: ['deduction', 'increase', 'bonus', 'evaluation', 'target'] } } });
+        if (!original || Number(original.amount) !== dto.amount || await tx.payroll_monthly_events.findFirst({ where: { reverses_id: original.id } })) throw new BadRequestException('الحركة غير موجودة أو تم إلغاؤها');
+      } else if (dto.reversesId != null) throw new BadRequestException('رقم الحركة الأصلية متاح للإلغاء فقط');
+      await tx.payroll_monthly_events.create({ data: { run_id: runId, employee_id: employeeId, kind: dto.kind, amount: dto.amount, note: dto.note.trim(), actor_id: user.sub, actor_name: user.name || `مستخدم ${user.sub}`, request_id: dto.requestId, reverses_id: dto.reversesId } });
+      await this.refreshMonthlyEmployee(tx, run, lineId, employeeId);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 60000 });
+    return this.monthlyEmployee(runId, lineId, user);
+  }
+
+  async chooseMonthlyCafe(runId: number, lineId: number, dto: PayrollCafeChoiceDto, user: JwtUser) {
+    await this.assertGlobalPayrollScope(user);
+    const slip = await this.getSlip(runId, lineId, user);
+    const employeeId = slip.employee.id!;
+    if (!employeeId || !dto.note.trim()) throw new BadRequestException('اكتب ملاحظة القرار');
+    await this.prisma.$transaction(async tx => {
+      const run = await this.lockEditableRun(tx, runId);
+      const kind = dto.deduct ? 'cafe_select' : 'cafe_defer';
+      const duplicate = await tx.payroll_monthly_events.findUnique({ where: { request_id: dto.requestId } });
+      if (duplicate) {
+        if (duplicate.run_id !== runId || duplicate.employee_id !== employeeId || duplicate.kind !== kind || duplicate.note !== dto.note.trim() || Number(duplicate.amount) !== dto.expectedAmount) throw new ConflictException('طلب مختلف بنفس رقم الحفظ');
+        return;
+      }
+      await this.importLegacyOverrides(tx, runId, employeeId, lineId);
+      // Serialize allocations across different payroll months for the same employee.
+      await tx.$queryRaw`SELECT id FROM employees WHERE id = ${employeeId} FOR UPDATE`;
+      const old = await tx.payroll_cafe_allocations.findMany({ where: { run_id: runId, employee_id: employeeId } });
+      let amount = payrollMoney(old.reduce((n, a) => n + Number(a.amount), 0));
+      if (dto.deduct) {
+        const candidates = await tx.sales_quick_sales.findMany({ where: { employee_id: employeeId, sale_type: 'employee', status: 'completed', billing_cycle: 'monthly', billing_status: { in: ['unbilled', 'in_statement'] }, sale_date: { lte: this.runWindow(run).toDate } }, orderBy: { id: 'asc' } });
+        const held = await tx.payroll_cafe_allocations.findMany({ where: { employee_id: employeeId, run_id: { not: runId } } });
+        const heldIds = new Set(held.map(a => a.sale_id));
+        const ids = candidates.filter(s => !heldIds.has(s.id)).map(s => s.id);
+        if (!ids.length) throw new BadRequestException('لا توجد مديونية متاحة لهذا الشهر');
+        await tx.$queryRaw(Prisma.sql`SELECT id FROM sales_quick_sales WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`);
+        const sales = await tx.sales_quick_sales.findMany({ where: { id: { in: ids }, status: 'completed', billing_status: { in: ['unbilled', 'in_statement'] } } });
+        amount = payrollMoney(sales.reduce((n, s) => n + Number(s.total_amount) - Number(s.collected_amount), 0));
+        if (sales.length !== ids.length || amount <= 0 || amount !== dto.expectedAmount) throw new ConflictException('مديونية الكافيه اتغيرت؛ حدّث البيانات وراجع المبلغ');
+        await tx.payroll_cafe_allocations.deleteMany({ where: { run_id: runId, employee_id: employeeId } });
+        for (const sale of sales) await tx.payroll_cafe_allocations.create({ data: { run_id: runId, employee_id: employeeId, sale_id: sale.id, amount: payrollMoney(Number(sale.total_amount) - Number(sale.collected_amount)), previous_status: sale.billing_status } });
+      } else {
+        if (amount !== dto.expectedAmount) throw new ConflictException('المبلغ المختار اتغير؛ حدّث البيانات');
+        await tx.payroll_cafe_allocations.deleteMany({ where: { run_id: runId, employee_id: employeeId } });
+      }
+      await tx.payroll_monthly_events.create({ data: { run_id: runId, employee_id: employeeId, kind, amount, note: dto.note.trim(), actor_id: user.sub, actor_name: user.name || `مستخدم ${user.sub}`, request_id: dto.requestId } });
+      await this.refreshMonthlyEmployee(tx, run, lineId, employeeId);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 60000 });
+    return this.monthlyEmployee(runId, lineId, user);
+  }
+
+  private async settleMonthlyCafe(tx: Prisma.TransactionClient, runId: number, userId?: number) {
+    const allocations = await tx.payroll_cafe_allocations.findMany({ where: { run_id: runId }, orderBy: { sale_id: 'asc' } });
+    if (!allocations.length) return;
+    const header = await tx.hr_mosayer.findUnique({ where: { id: runId } });
+    const lines = await tx.hr_mosayer_details.findMany({ where: { mosayer_rkm_fk: header?.mosayer_rkm ?? -1 } });
+    for (const employeeId of new Set(allocations.map(a => a.employee_id))) {
+      const amount = payrollMoney(allocations.filter(a => a.employee_id === employeeId).reduce((n, a) => n + Number(a.amount), 0));
+      const line = lines.find(l => l.emp_id === employeeId);
+      const deduction = Number((line?.calculation_snapshot as any)?.breakdown?.cafeDeduction ?? 0);
+      if (deduction !== amount) throw new ConflictException('خصم الكافيه لا يطابق صافي المرتب؛ راجع الحساب قبل الترحيل');
+    }
+    const ids = allocations.map(a => a.sale_id);
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM sales_quick_sales WHERE id IN (${Prisma.join(ids)}) ORDER BY id FOR UPDATE`);
+    for (const a of allocations) {
+      const sale = await tx.sales_quick_sales.findUnique({ where: { id: a.sale_id } });
+      if (!sale || a.settled_at || sale.status !== 'completed' || !['unbilled', 'in_statement'].includes(sale.billing_status) || payrollMoney(Number(sale.total_amount) - Number(sale.collected_amount)) !== Number(a.amount)) throw new ConflictException('تغيرت مديونية الكافيه المختارة؛ تعذر ترحيل المرتبات');
+      await tx.sales_quick_sales.update({ where: { id: sale.id }, data: { billing_status: 'settled' } });
+      await tx.fin_revenues.updateMany({ where: { source_module: 'quick_sale', source_ref: sale.sale_number }, data: { payment_status: 'مدفوع' } });
+      await tx.sales_invoice_events.create({ data: { quick_sale_id: sale.id, event_type: 'payroll_deduction', notes: `تم خصم ${a.amount} من المرتبات الشهرية رقم ${runId}`, created_by: userId } });
+    }
+    const items = await tx.sales_billing_statement_items.findMany({ where: { quick_sale_id: { in: ids } } });
+    for (const statementId of [...new Set(items.map(i => i.statement_id))]) {
+      const all = await tx.sales_billing_statement_items.findMany({ where: { statement_id: statementId }, include: { sale: true } });
+      if (all.some(i => i.sale.billing_status !== 'settled')) throw new BadRequestException('اختر كامل مديونية كشف حساب الموظف قبل الترحيل');
+      const statement = await tx.sales_billing_statements.findUnique({ where: { id: statementId } });
+      if (!statement || statement.status !== 'issued') throw new ConflictException('كشف الكافيه اتسدد بالفعل');
+      await tx.sales_billing_statements.update({ where: { id: statementId }, data: { status: 'settled', paid_amount: statement.total_amount, settlement_method: 'payroll_deduction', settled_at: new Date(), settled_by: userId } });
+    }
+    await tx.payroll_cafe_allocations.updateMany({ where: { run_id: runId }, data: { settled_at: new Date() } });
+  }
 
   // ─── Components (all_defined_setting) ───────────────────────────────────
 
-  async listComponents(q: ListPayComponentsDto) {
+  async listComponents(q: PaginationDto) {
     const where: Prisma.all_defined_settingWhereInput = {
-      defined_type_title:
-        q.category === 'deduction'
-          ? 'deduction'
-          : q.category === 'allowance'
-            ? 'allowances'
-            : { in: [...COMPONENT_TYPES] },
+      defined_type_title: { in: [...COMPONENT_TYPES] },
       ...(q.search?.trim()
         ? { defined_title: { contains: q.search.trim() } }
         : {}),
@@ -86,11 +267,10 @@ export class PayrollService {
 
   async createComponent(dto: CreatePayComponentDto) {
     const typeTitle = dto.category === 'deduction' ? 'deduction' : 'allowances';
-    const type = dto.category === 'deduction' ? 2 : 1;
     const row = await this.prisma.all_defined_setting.create({
       data: {
         defined_title: dto.title,
-        defined_type: type,
+        defined_type: dto.type ? parseInt(dto.type, 10) || 0 : 0,
         defined_type_title: typeTitle,
         in_order: String(dto.amount ?? 0),
       },
@@ -102,9 +282,9 @@ export class PayrollService {
     await this.ensureComponent(id);
     const data: Prisma.all_defined_settingUpdateInput = {};
     if (dto.title != null) data.defined_title = dto.title;
+    if (dto.type != null) data.defined_type = parseInt(dto.type, 10) || 0;
     if (dto.category != null) {
       data.defined_type_title = dto.category === 'deduction' ? 'deduction' : 'allowances';
-      data.defined_type = dto.category === 'deduction' ? 2 : 1;
     }
     if (dto.amount != null) data.in_order = String(dto.amount);
     const row = await this.prisma.all_defined_setting.update({
@@ -141,143 +321,17 @@ export class PayrollService {
         overrides?.category ??
         (row.defined_type_title === 'deduction' ? 'deduction' : 'allowance'),
       amount: overrides?.amount ?? (Number.isNaN(parsedAmount) ? 0 : parsedAmount),
-      // The legacy table has no active flag; defined_type=2 means "deduction",
-      // not "inactive". Existing definitions are therefore active by default.
-      isActive: overrides?.isActive ?? true,
+      isActive: overrides?.isActive ?? row.defined_type !== 2,
     };
-  }
-
-  // ─── Live salary sheet (legacy Employee_salaries) ────────────────────────
-
-  async previewSalarySheet(q: PayrollPreviewDto, user: JwtUser) {
-    if (q.fromDate > q.toDate) {
-      throw new BadRequestException('تاريخ البداية يجب أن يسبق تاريخ النهاية');
-    }
-    const branchIds = this.branchScope.resolveListFilter(user, q.branchId);
-    const computed = branchIds?.length === 0 ? [] : await this.engine.computeAllForPeriod(
-      q.fromDate,
-      q.toDate,
-      branchIds ?? undefined,
-    );
-    const search = q.search?.trim().toLocaleLowerCase('ar');
-    const filtered = search
-      ? computed.filter((row) =>
-          `${row.empName} ${row.empCode} ${row.mosmaWazefyN ?? ''}`
-            .toLocaleLowerCase('ar')
-            .includes(search),
-        )
-      : computed;
-
-    const resultBranchIds = [...new Set(filtered.map((row) => row.branchId).filter((id): id is number => id != null && id > 0))];
-    const sites = resultBranchIds.length
-      ? await this.prisma.tbl_sites.findMany({
-          where: { id: { in: resultBranchIds } },
-          select: { id: true, name: true },
-        })
-      : [];
-    const siteNames = new Map(sites.map((site) => [site.id, site.name]));
-    const pageRows = filtered.slice(q.skip, q.skip + q.take).map((row) =>
-      this.toSalaryPreviewRow(row, siteNames.get(row.branchId ?? -1)),
-    );
-    return {
-      ...paginated(pageRows, filtered.length, q.page, q.pageSize),
-      summary: {
-        employees: filtered.length,
-        earnings: payrollMoney(filtered.reduce((sum, row) => sum + row.totalEsthkak, 0)),
-        deductions: payrollMoney(filtered.reduce((sum, row) => sum + row.totalKhsomat, 0)),
-        net: payrollMoney(filtered.reduce((sum, row) => sum + row.safi, 0)),
-      },
-      period: { fromDate: q.fromDate, toDate: q.toDate },
-    };
-  }
-
-  // ─── Salary increases (tbl_zeyada_rateb) ────────────────────────────────
-
-  async listSalaryIncreases(q: ListSalaryIncreasesDto) {
-    if (q.dateFrom && q.dateTo && q.dateFrom > q.dateTo) {
-      throw new BadRequestException('تاريخ البداية يجب أن يسبق تاريخ النهاية');
-    }
-    const where: Prisma.tbl_zeyada_ratebWhereInput = {
-      ...(q.employeeId ? { emp_id_fk: q.employeeId } : {}),
-      ...(q.dateFrom || q.dateTo
-        ? { date_ar: { ...(q.dateFrom ? { gte: q.dateFrom } : {}), ...(q.dateTo ? { lte: q.dateTo } : {}) } }
-        : {}),
-    };
-    if (q.search?.trim()) {
-      const search = q.search.trim();
-      const code = Number(search);
-      where.OR = [
-        { emp_name: { contains: search } },
-        ...(Number.isFinite(code) ? [{ emp_code: code }] : []),
-      ];
-    }
-    const [rows, total] = await Promise.all([
-      this.prisma.tbl_zeyada_rateb.findMany({
-        where,
-        orderBy: [{ date_ar: 'desc' }, { id: 'desc' }],
-        skip: q.skip,
-        take: q.take,
-      }),
-      this.prisma.tbl_zeyada_rateb.count({ where }),
-    ]);
-    return paginated(rows.map((row) => this.toSalaryIncreaseRow(row)), total, q.page, q.pageSize);
-  }
-
-  async createSalaryIncrease(dto: CreateSalaryIncreaseDto, userId: number) {
-    const employee = await this.getIncreaseEmployee(dto.employeeId);
-    const row = await this.prisma.tbl_zeyada_rateb.create({
-      data: {
-        emp_id_fk: employee.id,
-        emp_code: employee.emp_code!,
-        emp_name: employee.employee ?? '',
-        value: Math.round(dto.value),
-        date_ar: dto.date,
-        date_s: unixDate(dto.date),
-        publisher: userId,
-      },
-    });
-    return this.toSalaryIncreaseRow(row);
-  }
-
-  async updateSalaryIncrease(id: number, dto: UpdateSalaryIncreaseDto, userId: number) {
-    const existing = await this.prisma.tbl_zeyada_rateb.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException('زيادة الراتب غير موجودة');
-    const employee = dto.employeeId != null ? await this.getIncreaseEmployee(dto.employeeId) : null;
-    const date = dto.date ?? existing.date_ar;
-    const row = await this.prisma.tbl_zeyada_rateb.update({
-      where: { id },
-      data: {
-        ...(employee
-          ? { emp_id_fk: employee.id, emp_code: employee.emp_code!, emp_name: employee.employee ?? '' }
-          : {}),
-        ...(dto.value != null ? { value: Math.round(dto.value) } : {}),
-        ...(dto.date != null ? { date_ar: date, date_s: unixDate(date) } : {}),
-        publisher: userId,
-      },
-    });
-    return this.toSalaryIncreaseRow(row);
-  }
-
-  async removeSalaryIncrease(id: number) {
-    const row = await this.prisma.tbl_zeyada_rateb.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('زيادة الراتب غير موجودة');
-    await this.prisma.tbl_zeyada_rateb.delete({ where: { id } });
-    return { ok: true };
-  }
-
-  private async getIncreaseEmployee(id: number) {
-    const employee = await this.prisma.employees.findUnique({
-      where: { id },
-      select: { id: true, emp_code: true, employee: true },
-    });
-    if (!employee || employee.emp_code == null) throw new NotFoundException('الموظف غير موجود');
-    return employee;
   }
 
   // ─── Payroll runs (hr_mosayer) ────────────────────────────────────────────
 
-  async createRun(dto: CreatePayrollRunDto) {
-    await this.assertAllActiveEmployeesHaveSalary();
+  async createRun(dto: CreatePayrollRunDto, user?: JwtUser) {
+    await this.assertGlobalPayrollScope(user);
+    const window = calendarPayrollPeriod(dto.month, dto.year);
+    if (dto.payoutDate && (!/^\d{4}-\d{2}-\d{2}$/.test(dto.payoutDate) || dto.payoutDate < window.fromDate)) throw new BadRequestException('حدد تاريخ صرف صالح لا يسبق شهر المرتبات');
+    await this.assertAllActiveEmployeesHaveSalary(dto.month, dto.year, window);
     const existing = await this.prisma.hr_mosayer.findFirst({
       where: { mosayer_month: dto.month, mosayer_year: dto.year },
     });
@@ -285,54 +339,91 @@ export class PayrollService {
       throw new ConflictException('مسيرة هذا الشهر موجودة مسبقًا');
     }
 
-    const now = todayAr();
-    // Race-safe مسيّرة رقم: recompute max+1 and insert together, retrying if a concurrent run took it.
-    const { header, mosayerRkm } = await retryOnUniqueViolation(async () => {
-      const maxRkm = await this.prisma.hr_mosayer.aggregate({ _max: { mosayer_rkm: true } });
-      const nextRkm = (maxRkm._max.mosayer_rkm ?? 0) + 1;
-      const created = await this.prisma.hr_mosayer.create({
-        data: {
-          mosayer_rkm: nextRkm,
-          mosayer_date: now,
-          mosayer_date_ar: now,
-          mosayer_month: dto.month,
-          mosayer_year: dto.year,
-          total: 0,
-          taghez: 'no',
-          approved: 0,
-        },
+    const computed = await this.engine.computeAll(dto.month, dto.year, window);
+    if (!computed.length) throw new BadRequestException('لا توجد بنود قابلة للاحتساب في مسيرة الرواتب');
+    const totals = this.aggregateTotals(computed);
+    const policy = computed[0];
+    try {
+      const header = await this.prisma.$transaction(async (tx) => {
+        const periodKey = `${dto.year}-${String(dto.month).padStart(2, '0')}`;
+        await tx.payroll_period_controls.upsert({ where: { period_key: periodKey }, create: { period_key: periodKey }, update: {} });
+        await tx.$queryRaw`SELECT period_key FROM payroll_period_controls WHERE period_key = ${periodKey} FOR UPDATE`;
+        const concurrentExisting = await tx.hr_mosayer.findFirst({ where: { mosayer_month: dto.month, mosayer_year: dto.year }, select: { id: true } });
+        if (concurrentExisting) throw new ConflictException('مسيرة هذا الشهر موجودة مسبقًا');
+        const maxRkm = await tx.hr_mosayer.aggregate({ _max: { mosayer_rkm: true } });
+        const mosayerRkm = await allocateDocumentNumber(
+          tx,
+          'hr.payroll',
+          (maxRkm._max.mosayer_rkm ?? 0) + 1,
+        );
+        const created = await tx.hr_mosayer.create({
+          data: {
+            period_start: window.fromDate,
+            period_end: window.toDate,
+            payout_date: dto.payoutDate ?? window.toDate,
+            mosayer_rkm: mosayerRkm,
+            mosayer_date: todayAr(),
+            mosayer_date_ar: todayAr(),
+            mosayer_month: dto.month,
+            mosayer_year: dto.year,
+            total: computed.length,
+            taghez: 'yes',
+            taghez_date_ar: todayAr(),
+            taghez_time: timeAr(),
+            approved: 0,
+            tax_policy_id: policy.taxPolicyId,
+            tax_policy_version: policy.taxPolicyVersion,
+            tax_policy_snapshot: policy.taxPolicySnapshot,
+            ...totals,
+          },
+        });
+        for (const line of computed) {
+          if (line.taxPolicyVersion !== policy.taxPolicyVersion) {
+            throw new BadRequestException('لا يمكن إنشاء مسيرة تحتوي أكثر من نسخة سياسة ضريبية');
+          }
+          await tx.hr_mosayer_details.create({ data: this.toDetailRow(mosayerRkm, line) });
+        }
+        return created;
       });
-      return { header: created, mosayerRkm: nextRkm };
-    });
-
-    await this.persistComputedSalaries(header.id, mosayerRkm, dto.month, dto.year);
-    return this.findRun(header.id);
+      return this.findRun(header.id);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw new ConflictException('مسيرة هذا الشهر موجودة مسبقًا');
+      }
+      throw error;
+    }
   }
 
-  async listRuns(q: PaginationDto & { status?: string }) {
-    const rows = await this.prisma.hr_mosayer.findMany({
-      orderBy: { id: 'desc' },
-    });
-
-    let filtered = rows;
-    if (q.status) {
-      filtered = rows.filter((r) => mapRunStatus(r) === q.status);
-    }
+  async listRuns(q: PaginationDto & { status?: string }, user?: JwtUser) {
+    const payrollNumbers = await this.payrollNumbersForUser(user);
+    const and: Prisma.hr_mosayerWhereInput[] = [];
+    if (payrollNumbers !== null) and.push({ mosayer_rkm: { in: payrollNumbers } });
+    const statusWhere = payrollStatusWhere(q.status);
+    if (statusWhere) and.push(statusWhere);
     if (q.search?.trim()) {
       const s = q.search.trim().toLowerCase();
-      filtered = filtered.filter((r) => {
-        const title = runTitle(r.mosayer_month ?? 0, r.mosayer_year ?? 0).toLowerCase();
-        return title.includes(s) || String(r.id).includes(s);
-      });
+      const numeric = Number.parseInt(s.replace(/[^0-9]/g, ''), 10);
+      const months = Array.from({ length: 12 }, (_, index) => index + 1)
+        .filter((month) => monthLabel(month).toLowerCase().includes(s));
+      const or: Prisma.hr_mosayerWhereInput[] = [
+        ...(Number.isSafeInteger(numeric) ? [
+          { id: numeric }, { mosayer_rkm: numeric }, { mosayer_year: numeric },
+          ...(numeric >= 1 && numeric <= 12 ? [{ mosayer_month: numeric }] : []),
+        ] : []),
+        ...(months.length ? [{ mosayer_month: { in: months } }] : []),
+      ];
+      and.push(or.length ? { OR: or } : { id: -1 });
     }
-
-    const total = filtered.length;
-    const pageRows = filtered.slice(q.skip, q.skip + q.take);
-    return paginated(pageRows.map((r) => this.toRunRow(r)), total, q.page, q.pageSize);
+    const where: Prisma.hr_mosayerWhereInput = and.length ? { AND: and } : {};
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.hr_mosayer.findMany({ where, orderBy: { id: 'desc' }, skip: q.skip, take: q.take }),
+      this.prisma.hr_mosayer.count({ where }),
+    ]);
+    return paginated(rows.map((r) => this.toRunRow(r)), total, q.page, q.pageSize);
   }
 
-  async findRun(id: number) {
-    const row = await this.getRunOrThrow(id);
+  async findRun(id: number, user?: JwtUser) {
+    const row = await this.getRunOrThrow(id, user);
     const employeeCount = await this.prisma.hr_mosayer_details.count({
       where: { mosayer_rkm_fk: row.mosayer_rkm ?? undefined },
     });
@@ -343,10 +434,12 @@ export class PayrollService {
     };
   }
 
-  async listRunLines(id: number, q: PaginationDto) {
-    const row = await this.getRunOrThrow(id);
+  async listRunLines(id: number, q: PaginationDto, user?: JwtUser) {
+    const row = await this.getRunOrThrow(id, user);
+    const identities = await this.payrollIdentities(user);
     const where: Prisma.hr_mosayer_detailsWhereInput = {
       mosayer_rkm_fk: row.mosayer_rkm ?? undefined,
+      ...(identities === null ? {} : { emp_id: { in: identities.ids } }),
     };
     if (q.search?.trim()) {
       const s = q.search.trim();
@@ -369,40 +462,24 @@ export class PayrollService {
     return paginated(lines.map((l) => this.toLineRow(l)), total, q.page, q.pageSize);
   }
 
-  async getSlip(runId: number, empLineId: number) {
-    const run = await this.getRunOrThrow(runId);
+  async getSlip(runId: number, empLineId: number, user?: JwtUser) {
+    const run = await this.getRunOrThrow(runId, user);
+    const identities = await this.payrollIdentities(user);
     const line = await this.prisma.hr_mosayer_details.findFirst({
-      where: { id: empLineId, mosayer_rkm_fk: run.mosayer_rkm ?? undefined },
+      where: {
+        id: empLineId,
+        mosayer_rkm_fk: run.mosayer_rkm ?? undefined,
+        ...(identities === null ? {} : { emp_id: { in: identities.ids } }),
+      },
     });
     if (!line) throw new NotFoundException('بند الموظف غير موجود');
-    const manualRows = run.mosayer_rkm != null
-      ? await this.prisma.hr_mosayer_egraat.findMany({
-          where: {
-            mosayer_rkm_fk: run.mosayer_rkm,
-            emp_id: String(line.emp_id ?? ''),
-            badal_code: { in: ['private_bonus', 'taqeem', 'target'] },
-          },
-          select: { badal_code: true, new_value: true },
-        })
-      : [];
-    const manualValue = (code: string) => manualRows.find((row) => row.badal_code === code)?.new_value ?? 0;
 
-    // Re-derive the late split (permit vs non-permit) from the engine breakdown,
-    // since hr_mosayer_details persists only the combined khasm_takher line.
-    let latePermit = 0;
-    let lateNoPermit = decimal(line.khasm_takher);
-    if (line.emp_id != null && run.mosayer_month != null && run.mosayer_year != null) {
-      const recomputed = await this.engine.computeOneById(
-        line.emp_id,
-        run.mosayer_month,
-        run.mosayer_year,
-      );
-      if (recomputed) {
-        const b = recomputed.breakdown as { khasmTakherAmount?: number; khasmEznAmount?: number };
-        lateNoPermit = b.khasmTakherAmount ?? lateNoPermit;
-        latePermit = b.khasmEznAmount ?? 0;
-      }
-    }
+    // Historical slips must never re-run against mutable attendance/policy data.
+    const snapshot = line.calculation_snapshot as {
+      breakdown?: { khasmTakherAmount?: number; khasmEznAmount?: number };
+    } | null;
+    const lateNoPermit = snapshot?.breakdown?.khasmTakherAmount ?? decimal(line.khasm_takher);
+    const latePermit = snapshot?.breakdown?.khasmEznAmount ?? 0;
 
     return {
       run: this.toRunRow(run),
@@ -426,6 +503,7 @@ export class PayrollService {
         other: decimal(line.tot_okraa_esthkaq),
         total: decimal(line.total_esthkak),
       },
+      adjustments: (line.calculation_snapshot as any)?.breakdown ?? {},
       deductions: {
         absence: decimal(line.khasm_keyab),
         unpaidLeave: decimal(line.agaza_bdon_rateb),
@@ -433,16 +511,12 @@ export class PayrollService {
         permitLateness: latePermit,
         penalty: decimal(line.khasm_gezaa),
         insurance: decimal(line.khasm_tamen),
+        incomeTax: decimal(line.income_tax),
         loan: decimal(line.khasm_solaf),
         other: decimal(line.tot_okraa_khasm),
         total: decimal(line.total_khsomat),
       },
       netSalary: decimal(line.safi),
-      manualAdjustments: {
-        privateBonus: manualValue('private_bonus'),
-        taqeemValue: manualValue('taqeem'),
-        targetValue: manualValue('target'),
-      },
       bank: {
         bankId: line.emp_bank_id_fk,
         account: line.emp_bank_account_num,
@@ -462,13 +536,12 @@ export class PayrollService {
     runId: number,
     empLineId: number,
     overrides: { privateBonus?: number; taqeemValue?: number; targetValue?: number },
-    userId?: number,
   ) {
     const run = await this.getRunOrThrow(runId);
     // Block edits once the run has left the editable phase — overrides must not alter an
     // approved / posted / banked payroll run.
     const status = mapRunStatus(run);
-    if (['approved', 'posted', 'banked', 'completed'].includes(status)) {
+    if (['approved', 'posted', 'bank_prepared', 'banked', 'completed'].includes(status)) {
       throw new BadRequestException('لا يمكن تعديل مسيّرة معتمدة أو مرحّلة أو مصروفة');
     }
     const line = await this.prisma.hr_mosayer_details.findFirst({
@@ -484,6 +557,7 @@ export class PayrollService {
       run.mosayer_month,
       run.mosayer_year,
       overrides,
+      this.runWindow(run),
     );
     if (!recomputed) throw new NotFoundException('تعذر إعادة احتساب الموظف');
 
@@ -495,42 +569,17 @@ export class PayrollService {
     // Update the line AND recompute the hr_mosayer header totals (egmali_* / egmali_safi)
     // from the detail rows in the same transaction, so the header never drifts from its lines.
     await this.prisma.$transaction(async (tx) => {
-      await tx.hr_mosayer_egraat.deleteMany({
-        where: {
-          mosayer_rkm_fk: run.mosayer_rkm,
-          emp_id: String(line.emp_id),
-          badal_code: { in: ['private_bonus', 'taqeem', 'target'] },
-        },
-      });
-      const manualDefinitions = [
-        { code: 'private_bonus', name: 'مكافأة البرايفت', value: overrides.privateBonus ?? 0 },
-        { code: 'taqeem', name: 'التقييم', value: overrides.taqeemValue ?? 0 },
-        { code: 'target', name: 'نسبة التارجت', value: overrides.targetValue ?? 0 },
-      ].filter((item) => item.value > 0);
-      if (manualDefinitions.length) {
-        await tx.hr_mosayer_egraat.createMany({
-          data: manualDefinitions.map((item) => ({
-            mosayer_rkm_fk: run.mosayer_rkm,
-            emp_id: String(line.emp_id),
-            emp_code: String(line.emp_code ?? ''),
-            emp_name: line.emp_name,
-            operation_value: 'plus',
-            badal_code: item.code,
-            badal_n: item.name,
-            badal_name: item.name,
-            new_value: item.value,
-            subs_value: String(item.value),
-            egraa_date: todayAr(),
-            egraa_date_ar: todayAr(),
-            time_add: timeAr(),
-            publisher: userId != null ? String(userId) : null,
-          })),
-        });
-      }
       await tx.hr_mosayer_details.update({
         where: { id: empLineId },
         data: {
-          tot_okraa_esthkaq: manual,
+          tot_okraa_esthkaq: recomputed.otherAllowances ?? 0,
+          tot_okraa_khasm: recomputed.otherDeductions,
+          taxable_earnings: recomputed.taxableEarnings,
+          income_tax: recomputed.incomeTax,
+          tax_policy_id: recomputed.taxPolicyId,
+          tax_policy_version: recomputed.taxPolicyVersion,
+          tax_breakdown: recomputed.taxBreakdown,
+          calculation_snapshot: this.calculationSnapshot(recomputed, overrides),
           total_esthkak: recomputed.totalEsthkak,
           total_khsomat: recomputed.totalKhsomat,
           safi: recomputed.safi,
@@ -541,53 +590,43 @@ export class PayrollService {
     return this.getSlip(runId, empLineId);
   }
 
-  async runAction(id: number, action: string, userId?: number) {
+  async runAction(id: number, action: string, userId?: number, user?: JwtUser) {
+    await this.assertGlobalPayrollScope(user);
     const run = await this.getRunOrThrow(id);
     const status = mapRunStatus(run);
+    let bankFile: { filename: string; content: string } | undefined;
 
     switch (action) {
       case 'compute':
-        if (['approved', 'posted', 'banked', 'completed'].includes(status)) {
+        if (['approved', 'posted', 'bank_prepared', 'banked', 'completed'].includes(status)) {
           throw new BadRequestException('لا يمكن إعادة احتساب مسيّرة معتمدة أو مصروفة');
         }
         if (!run.mosayer_rkm || run.mosayer_month == null || run.mosayer_year == null) {
           throw new BadRequestException('بيانات المسيرة غير مكتملة');
         }
-        await this.assertAllActiveEmployeesHaveSalary();
+        await this.assertAllActiveEmployeesHaveSalary(run.mosayer_month, run.mosayer_year, this.runWindow(run));
         await this.persistComputedSalaries(
           run.id,
           run.mosayer_rkm,
           run.mosayer_month,
           run.mosayer_year,
         );
-        await this.prisma.hr_mosayer.update({
-          where: { id },
-          data: { taghez: 'yes', taghez_date_ar: todayAr(), taghez_time: timeAr() },
-        });
         break;
 
       case 'review':
-        if (status === 'draft') {
-          throw new BadRequestException('يجب احتساب المسيرة أولًا');
-        }
-        await this.prisma.hr_mosayer.update({
-          where: { id },
-          data: { suspend_mohasb: 'yes', suspend_direct_manager: 'yes' },
-        });
-        break;
-
       case 'approve':
-        if (status !== 'reviewing') {
-          throw new BadRequestException('يجب مراجعة المسيّرة قبل الاعتماد');
+        if (action === 'review') {
+          if (!run.mosayer_rkm || !run.mosayer_month || !run.mosayer_year) throw new BadRequestException('بيانات المرتبات غير مكتملة');
+          await this.persistComputedSalaries(run.id, run.mosayer_rkm, run.mosayer_month, run.mosayer_year);
         }
-        // VERIFY: legacy approval chain may use multiple suspend_* fields
-        await this.prisma.hr_mosayer.update({
-          where: { id },
-          data: {
-            approved: 1,
-            suspend_moder_3am: 'yes',
-            suspend_moder_mali: 'yes',
-          },
+        await this.prisma.$transaction(async tx => {
+          const latest = await this.lockEditableRun(tx, id);
+          const current = mapRunStatus(latest);
+          if (action === 'review' && current !== 'computed') throw new BadRequestException('احسب المرتبات قبل إرسالها للمراجعة');
+          if (action === 'approve' && current !== 'reviewing') throw new BadRequestException('راجع آخر تعديلات المرتبات قبل الاعتماد');
+          const details = await tx.hr_mosayer_details.findMany({ where: { mosayer_rkm_fk: latest.mosayer_rkm! } });
+          if (details.some(l => Number(l.total_khsomat) > Number(l.total_esthkak))) throw new BadRequestException('يوجد موظف خصوماته أكبر من مستحقاته');
+          await tx.hr_mosayer.update({ where: { id }, data: action === 'review' ? { suspend_mohasb: 'yes', suspend_direct_manager: 'yes' } : { approved: 1, suspend_moder_3am: 'yes', suspend_moder_mali: 'yes' } });
         });
         break;
 
@@ -600,7 +639,7 @@ export class PayrollService {
         if (run.mosayer_rkm == null || run.mosayer_month == null || run.mosayer_year == null) {
           throw new BadRequestException('بيانات المسيرة غير مكتملة');
         }
-        await this.moduleLedger.ensureChart();
+        await this.moduleLedger.ensureReady();
         await this.prisma.$transaction(async (tx) => {
           const claimed = await tx.hr_mosayer.updateMany({
             where: {
@@ -616,19 +655,23 @@ export class PayrollService {
           if (claimed.count === 0) {
             throw new BadRequestException('المسيّرة مرحّلة بالفعل أو غير معتمدة');
           }
+          await this.settleMonthlyCafe(tx, id, userId);
           const branchTotals = await this.getPayrollBranchTotals(run.mosayer_rkm!, tx);
+          const accrualDate = this.runWindow(run).toDate;
           for (const totals of branchTotals) {
             this.assertPayrollTotalsBalanced(totals, run.mosayer_rkm!);
             await this.moduleLedger.postPayrollAccrual(
               {
                 payrollNumber: run.mosayer_rkm!,
                 branchId: totals.branchId ?? undefined,
-                date: todayAr(),
+                date: accrualDate,
                 grossEarnings: totals.grossEarnings,
                 netPay: totals.netPay,
                 employeeInsurance: totals.employeeInsurance,
                 employerInsurance: totals.employerInsurance,
                 loanDeductions: totals.loanDeductions,
+                incomeTax: totals.incomeTax,
+                cafeDeductions: totals.cafeDeductions,
                 nonLiabilityDeductions: totals.nonLiabilityDeductions,
                 createdBy: userId,
               },
@@ -637,9 +680,9 @@ export class PayrollService {
             const payrollExpense = payrollMoney(
               totals.grossEarnings + totals.employerInsurance - totals.nonLiabilityDeductions,
             );
-            await recordSystemExpense(tx, {
+            await this.moduleLedger.recordPayrollExpense({
               invoiceNumber: `PAYROLL-${run.mosayer_rkm!}-BR-${totals.branchId ?? 'GLOBAL'}`,
-              date: todayAr(),
+              date: accrualDate,
               category: 'رواتب',
               subCategory: 'مسيّرة رواتب',
               amount: payrollExpense,
@@ -647,7 +690,7 @@ export class PayrollService {
               branchId: totals.branchId ?? undefined,
               createdBy: userId,
               paymentMethod: 'تحويل بنكي',
-            });
+            }, tx);
           }
           // Mark the exact loan installments that were deducted (khasm_solaf) as paid, so a
           // collected loan can't be collected again in a later run. Uses the same window/filters
@@ -662,7 +705,7 @@ export class PayrollService {
           // stamp the exact rows the engine collected with this run number so a recompute or an
           // overlapping-period run can't collect them twice. Same window/filters as the engine
           // (getGezaaByDate / getMokafaaByDate).
-          const { fromDate, toDate } = payrollPeriod(run.mosayer_month!, run.mosayer_year!);
+          const { fromDate, toDate } = this.runWindow(run);
           await this.engine.stampConsumedPenalties(run.mosayer_rkm!, fromDate, toDate, tx);
           await this.engine.stampConsumedBonuses(run.mosayer_rkm!, fromDate, toDate, tx);
         });
@@ -670,43 +713,117 @@ export class PayrollService {
       }
 
       case 'bank': {
-        // Precondition: the run must be posted before the bank file can be issued.
+        // This action only prepares the import file. A CSV is not evidence that
+        // money moved; settlement comes exclusively from BANK_PAYMENT_ADAPTER.
         if (status !== 'posted') {
           throw new BadRequestException('يجب ترحيل المسيّرة قبل إصدار ملف البنك');
         }
         if (run.mosayer_rkm == null) {
           throw new BadRequestException('بيانات المسيرة غير مكتملة');
         }
-        await this.moduleLedger.ensureChart();
+        bankFile = await this.buildBankCsv(run);
         await this.prisma.$transaction(async (tx) => {
           const claimed = await tx.hr_mosayer.updateMany({
             where: {
               id,
               halet_sarf: 'yes',
-              tanfez_ezn_sarf: { not: 'yes' },
               file_downloded: null,
             },
             data: {
-              tanfez_ezn_sarf: 'yes',
-              file_downloded: `bank_${run.mosayer_rkm ?? id}_${todayAr()}.csv`,
+              file_downloded: bankFile!.filename,
             },
           });
           if (claimed.count === 0) {
             throw new BadRequestException('تم إصدار ملف البنك مسبقاً');
           }
+        });
+        break;
+      }
+
+      case 'bank-sync': {
+        if (status !== 'bank_prepared') {
+          throw new BadRequestException('يجب تجهيز ملف البنك قبل طلب تأكيد التسوية');
+        }
+        if (run.mosayer_rkm == null) throw new BadRequestException('بيانات المسيرة غير مكتملة');
+        const branchTotals = await this.getPayrollBranchTotals(run.mosayer_rkm);
+        const expectedAmount = payrollMoney(branchTotals.reduce((sum, row) => sum + row.netPay, 0));
+        const settlement = await this.bankPayment.getPayrollSettlement({
+          payrollNumber: run.mosayer_rkm,
+          expectedAmount,
+        });
+        if (settlement.status !== 'settled' || Math.abs(settlement.settledAmount - expectedAmount) > 0.01) {
+          throw new BadRequestException('البنك لم يؤكد تسوية كامل صافي المسيرة بعد');
+        }
+        await this.moduleLedger.ensureReady();
+        await this.prisma.$transaction(async (tx) => {
+          const claimed = await tx.hr_mosayer.updateMany({
+            where: { id, halet_sarf: 'yes', file_downloded: { not: null }, tanfez_ezn_sarf: { not: 'yes' } },
+            data: { tanfez_ezn_sarf: 'yes', finish_sarf_date: todayAr() },
+          });
+          if (claimed.count === 0) throw new BadRequestException('تم تأكيد تسوية المسيرة مسبقًا');
+          for (const totals of branchTotals) {
+            await this.moduleLedger.postPayrollPayment({
+              payrollNumber: run.mosayer_rkm!,
+              branchId: totals.branchId ?? undefined,
+              date: todayAr(),
+              netPay: totals.netPay,
+              createdBy: userId,
+            }, tx);
+          }
+        });
+        break;
+      }
+
+      case 'unpost': {
+        // A settled/banked run represents real money movement. Until a target
+        // BankPaymentAdapter provides an explicit, confirmed reversal contract,
+        // reversing only the GL would falsify reconciliation. Fail closed.
+        if (status !== 'posted') {
+          throw new BadRequestException('لا يمكن عكس مسيّرة تمت تسويتها بنكيًا دون عكس بنكي مؤكد');
+        }
+        if (run.mosayer_rkm == null || run.mosayer_month == null || run.mosayer_year == null) {
+          throw new BadRequestException('بيانات المسيرة غير مكتملة');
+        }
+        if (await this.prisma.payroll_cafe_allocations.count({ where: { run_id: id, settled_at: { not: null } } })) throw new BadRequestException('المرتبات سددت حساب كافيه؛ يلزم إجراء تسوية محاسبية بدل إلغاء الترحيل');
+        await this.prisma.$transaction(async (tx) => {
+          await this.moduleLedger.reversePayrollRun(
+            {
+              payrollNumber: run.mosayer_rkm!,
+              reason: `عكس مسيّرة رواتب ${run.mosayer_rkm}`,
+              userId,
+            },
+            tx,
+          );
           const branchTotals = await this.getPayrollBranchTotals(run.mosayer_rkm!, tx);
           for (const totals of branchTotals) {
-            await this.moduleLedger.postPayrollPayment(
-              {
-                payrollNumber: run.mosayer_rkm!,
-                branchId: totals.branchId ?? undefined,
-                date: todayAr(),
-                netPay: totals.netPay,
-                createdBy: userId,
-              },
+            await this.moduleLedger.reversePayrollExpense(
+              `PAYROLL-${run.mosayer_rkm!}-BR-${totals.branchId ?? 'GLOBAL'}`,
+              `عكس مسيّرة رواتب ${run.mosayer_rkm}`,
               tx,
             );
           }
+          await this.engine.releaseConsumedByRun(run.mosayer_rkm!, tx);
+          await this.unsettleDeductedLoanQuests(
+            tx,
+            run.mosayer_rkm!,
+            run.mosayer_month!,
+            run.mosayer_year!,
+          );
+          await tx.hr_mosayer.update({
+            where: { id },
+            data: {
+              approved: 0,
+              suspend_mohasb: null,
+              suspend_direct_manager: null,
+              suspend_moder_mali: null,
+              suspend_moder_3am: null,
+              halet_sarf: 'no',
+              tanfez_ezn_sarf: 'no',
+              file_downloded: null,
+              finish_sarf_date: null,
+              taghez: 'yes',
+            },
+          });
         });
         break;
       }
@@ -715,24 +832,64 @@ export class PayrollService {
         throw new BadRequestException(`إجراء غير معروف: ${action}`);
     }
 
-    return this.findRun(id);
+    const result = await this.findRun(id);
+    return bankFile ? { ...result, bankFile } : result;
   }
 
   /**
-   * Generate the bank transfer file as downloadable CSV: code, name, bank, account, net.
-   * Mirrors the slip bank fields (emp_bank_id_fk / account / code / name-in-bank) per line.
+   * Download the bank CSV. File preparation never marks a run paid and never
+   * posts a payment journal.
    */
-  async generateBankFile(id: number): Promise<{ filename: string; content: string }> {
+  async generateBankFile(id: number, user?: JwtUser): Promise<{ filename: string; content: string }> {
+    await this.assertGlobalPayrollScope(user);
     const run = await this.getRunOrThrow(id);
     const status = mapRunStatus(run);
-    if (!['banked', 'completed'].includes(status)) {
-      throw new BadRequestException('يجب تنفيذ التحويل البنكي قبل تنزيل الملف');
+    if (!['posted', 'bank_prepared', 'banked', 'completed'].includes(status)) {
+      throw new BadRequestException('يجب ترحيل المسيّرة قبل تنزيل ملف البنك');
     }
+    return this.buildBankCsv(run);
+  }
+
+  async reconciliation(id: number, user?: JwtUser) {
+    const run = await this.getRunOrThrow(id, user);
+    if (run.mosayer_rkm == null) throw new BadRequestException('بيانات المسيرة غير مكتملة');
+    const totals = await this.getPayrollBranchTotals(run.mosayer_rkm);
+    const netPay = payrollMoney(totals.reduce((s, t) => s + t.netPay, 0));
+    const projection = await this.moduleLedger.getPayrollReconciliation({
+      payrollNumber: run.mosayer_rkm,
+    });
+    const settlement = await this.bankPayment.getPayrollSettlement({
+      payrollNumber: run.mosayer_rkm,
+      expectedAmount: netPay,
+    });
+    const accrualPayable = payrollMoney(projection.payrollGlPayable);
+    const bankPayment = payrollMoney(settlement.settledAmount);
+    const salaryExpense = payrollMoney(projection.salaryExpense);
+    const status = mapRunStatus(run);
+    return {
+      runId: run.id,
+      payrollNumber: run.mosayer_rkm,
+      status,
+      netPay,
+      payrollGlPayable: accrualPayable,
+      bankPayment,
+      bankSettlement: settlement,
+      salaryExpense,
+      differences: {
+        netVsPayable: payrollMoney(netPay - accrualPayable),
+        netVsBank: payrollMoney(netPay - bankPayment),
+      },
+      balanced:
+        Math.abs(netPay - accrualPayable) <= 0.01 &&
+        Math.abs(netPay - bankPayment) <= 0.01,
+    };
+  }
+
+  private async buildBankCsv(run: { id: number; mosayer_rkm: number | null }) {
     const lines = await this.prisma.hr_mosayer_details.findMany({
       where: { mosayer_rkm_fk: run.mosayer_rkm ?? undefined },
       orderBy: { id: 'asc' },
     });
-
     const header = ['emp_code', 'emp_name', 'bank', 'account', 'net'];
     const rows = lines.map((l) => [
       l.emp_code != null ? String(l.emp_code) : '',
@@ -741,27 +898,23 @@ export class PayrollService {
       l.emp_bank_account_num || '',
       decimal(l.safi).toFixed(2),
     ]);
-
-    const csv = [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\r\n');
-    // Prepend BOM so Arabic names render correctly in Excel.
-    const content = '﻿' + csv + '\r\n';
-    const filename = `bank_${run.mosayer_rkm ?? id}_${todayAr()}.csv`;
-
-    // Persist the bank-issue flags (legacy: tanfez_ezn_sarf + file_downloded).
-    await this.prisma.hr_mosayer.update({
-      where: { id },
-      data: { tanfez_ezn_sarf: 'yes', file_downloded: filename },
-    });
-
-    return { filename, content };
+    const csv = [header, ...rows]
+      .map((r) => r.map((value) => csvCell(csvFormulaSafe(value))).join(','))
+      .join('\r\n');
+    return {
+      filename: `bank_${run.mosayer_rkm ?? run.id}_${todayAr()}.csv`,
+      content: '\uFEFF' + csv + '\r\n',
+    };
   }
 
-  async removeRun(id: number) {
+  async removeRun(id: number, user?: JwtUser) {
+    await this.assertGlobalPayrollScope(user);
     const run = await this.getRunOrThrow(id);
+    if (await this.prisma.payroll_monthly_events.count({ where: { run_id: id } })) throw new BadRequestException('المرتبات لها سجل حركات؛ استخدم إلغاء الحركة بدل حذف الشهر');
     // Block deletion once the run is approved / posted / banked / completed — deleting a
     // posted run would leave settled loan quests / GL without their source document.
     const status = mapRunStatus(run);
-    if (['approved', 'posted', 'banked', 'completed'].includes(status)) {
+    if (['approved', 'posted', 'bank_prepared', 'banked', 'completed'].includes(status)) {
       throw new BadRequestException('لا يمكن حذف مسيّرة معتمدة أو مرحّلة أو مصروفة');
     }
     await this.prisma.$transaction(async (tx) => {
@@ -796,7 +949,8 @@ export class PayrollService {
     month: number,
     year: number,
   ) {
-    const { fromDate, toDate } = payrollPeriod(month, year);
+    const header = await tx.hr_mosayer.findFirst({ where: { mosayer_rkm: mosayerRkm } });
+    const { fromDate, toDate } = header ? this.runWindow(header) : payrollPeriod(month, year);
 
     // Emp codes that are actually in this run (the ones whose salary — and loan deduction —
     // was computed and persisted).
@@ -817,7 +971,12 @@ export class PayrollService {
       if (!quests.length) continue;
       await tx.hr_solaf_quest.updateMany({
         where: { id: { in: quests.map((q) => q.id) } },
-        data: { paid: 'yes', date_paid: nowDate, time_paid: nowTime },
+        data: {
+          paid: 'yes',
+          date_paid: nowDate,
+          time_paid: nowTime,
+          paid_sarf_person: payrollQuestPayer(mosayerRkm),
+        },
       });
       for (const q of quests) {
         if (q.t_rkm_fk != null) affectedLoans.add(q.t_rkm_fk);
@@ -836,14 +995,51 @@ export class PayrollService {
     }
   }
 
+  /** Unpost counterpart: reopen the exact period quests this run settled. */
+  private async unsettleDeductedLoanQuests(
+    tx: Prisma.TransactionClient,
+    mosayerRkm: number,
+    month: number,
+    year: number,
+  ) {
+    const header = await tx.hr_mosayer.findFirst({ where: { mosayer_rkm: mosayerRkm } });
+    const { fromDate, toDate } = header ? this.runWindow(header) : payrollPeriod(month, year);
+    const details = await tx.hr_mosayer_details.findMany({
+      where: { mosayer_rkm_fk: mosayerRkm },
+      select: { emp_code: true },
+    });
+    const empCodes = Array.from(
+      new Set(details.map((d) => d.emp_code).filter((c): c is number => c != null)),
+    );
+    if (!empCodes.length) return;
+    const payer = payrollQuestPayer(mosayerRkm);
+    const quests = await tx.$queryRaw<{ id: number; t_rkm_fk: number | null }[]>`
+      SELECT q.id, q.t_rkm_fk
+      FROM hr_solaf_quest q
+      LEFT JOIN hr_solaf s ON s.t_rkm = q.t_rkm_fk
+      WHERE q.emp_code_fk IN (${Prisma.join(empCodes)})
+        AND q.paid = 'yes'
+        AND q.paid_sarf_person = ${payer}
+        AND STR_TO_DATE(CONCAT(q.year, '-', LPAD(q.month, 2, '0'), '-01'), '%Y-%m-%d')
+            BETWEEN STR_TO_DATE(${fromDate}, '%Y-%m-%d') AND STR_TO_DATE(${toDate}, '%Y-%m-%d')
+    `;
+    if (!quests.length) return;
+    await tx.hr_solaf_quest.updateMany({
+      where: { id: { in: quests.map((q) => q.id) } },
+      data: { paid: 'no', date_paid: null, time_paid: null, paid_sarf_person: null },
+    });
+    const loanRkms = [...new Set(quests.map((q) => q.t_rkm_fk).filter((n): n is number => n != null))];
+    if (loanRkms.length) {
+      await tx.hr_solaf.updateMany({ where: { t_rkm: { in: loanRkms } }, data: { ended: 'no' } });
+    }
+  }
+
   // ─── Persistence helpers ──────────────────────────────────────────────────
 
-  private async assertAllActiveEmployeesHaveSalary() {
+  private async assertAllActiveEmployeesHaveSalary(month?: number, year?: number, window?: PayrollWindow) {
+    const period = window ?? (month != null && year != null ? payrollPeriod(month, year) : undefined);
     const employees = await this.prisma.employees.findMany({
-      where: {
-        employee_type: 1,
-        OR: [{ leave_emp: null }, { leave_emp: 0 }],
-      },
+      where: buildPayrollEmployeeWhere(period),
       select: { id: true, emp_code: true, employee: true, basic_salary: true },
       orderBy: { id: 'asc' },
     });
@@ -869,12 +1065,14 @@ export class PayrollService {
       where: { mosayer_rkm_fk: mosayerRkm },
       select: {
         emp_id: true,
+        calculation_snapshot: true,
         total_esthkak: true,
         total_khsomat: true,
         safi: true,
         khasm_tamen: true,
         tamin_hesa_oner: true,
         khasm_solaf: true,
+        income_tax: true,
       },
     });
     if (details.length === 0) {
@@ -902,18 +1100,24 @@ export class PayrollService {
         employeeInsurance: 0,
         employerInsurance: 0,
         loanDeductions: 0,
+        incomeTax: 0,
+        cafeDeductions: 0,
         nonLiabilityDeductions: 0,
       };
       const totalDeductions = decimal(detail.total_khsomat);
       const employeeInsurance = decimal(detail.khasm_tamen);
       const loanDeductions = decimal(detail.khasm_solaf);
+      const incomeTax = decimal(detail.income_tax);
+      const cafeDeduction = Number((detail.calculation_snapshot as any)?.breakdown?.cafeDeduction ?? 0);
       totals.grossEarnings += decimal(detail.total_esthkak);
       totals.totalDeductions += totalDeductions;
       totals.netPay += decimal(detail.safi);
       totals.employeeInsurance += employeeInsurance;
       totals.employerInsurance += decimal(detail.tamin_hesa_oner);
       totals.loanDeductions += loanDeductions;
-      totals.nonLiabilityDeductions += totalDeductions - employeeInsurance - loanDeductions;
+      totals.incomeTax += incomeTax;
+      totals.cafeDeductions += cafeDeduction;
+      totals.nonLiabilityDeductions += totalDeductions - employeeInsurance - loanDeductions - incomeTax - cafeDeduction;
       grouped.set(key, totals);
     }
     return Array.from(grouped.values()).map((totals) => ({
@@ -924,6 +1128,8 @@ export class PayrollService {
       employeeInsurance: payrollMoney(totals.employeeInsurance),
       employerInsurance: payrollMoney(totals.employerInsurance),
       loanDeductions: payrollMoney(totals.loanDeductions),
+      incomeTax: payrollMoney(totals.incomeTax),
+      cafeDeductions: payrollMoney(totals.cafeDeductions),
       nonLiabilityDeductions: payrollMoney(totals.nonLiabilityDeductions),
     }));
   }
@@ -933,10 +1139,13 @@ export class PayrollService {
       totals.netPay +
         totals.employeeInsurance +
         totals.loanDeductions +
+        totals.incomeTax +
+        totals.cafeDeductions +
         totals.nonLiabilityDeductions,
     );
     if (
       totals.nonLiabilityDeductions < 0 ||
+      totals.totalDeductions > totals.grossEarnings ||
       Math.abs(totals.grossEarnings - creditAllocation) > 0.01
     ) {
       throw new BadRequestException(
@@ -951,47 +1160,26 @@ export class PayrollService {
     month: number,
     year: number,
   ) {
-    const computed = await this.engine.computeAll(month, year);
-    const manualRows = await this.prisma.hr_mosayer_egraat.findMany({
-      where: {
-        mosayer_rkm_fk: mosayerRkm,
-        badal_code: { in: ['private_bonus', 'taqeem', 'target'] },
-      },
-      select: { emp_id: true, new_value: true },
-    });
-    const manualByEmployee = new Map<number, number>();
-    for (const manualRow of manualRows) {
-      const employeeId = Number(manualRow.emp_id);
-      if (!Number.isFinite(employeeId)) continue;
-      manualByEmployee.set(employeeId, (manualByEmployee.get(employeeId) ?? 0) + (manualRow.new_value ?? 0));
-    }
-    for (const row of computed) {
-      const manual = manualByEmployee.get(row.empId) ?? 0;
-      if (!manual) continue;
-      row.manualEarnings = manual;
-      row.totalEsthkak = payrollMoney(row.totalEsthkak + manual);
-      row.safi = payrollMoney(row.safi + manual);
-    }
-    const totals = this.aggregateTotals(computed);
-
-    // Atomic: delete old detail rows, re-create them, and update the header in ONE transaction so a
-    // crash mid-loop can't leave a half-written payroll run (header totals out of sync with details).
-    await this.prisma.$transaction(async (tx) => {
-      await tx.hr_mosayer_details.deleteMany({ where: { mosayer_rkm_fk: mosayerRkm } });
-      for (const c of computed) {
-        await tx.hr_mosayer_details.create({ data: this.toDetailRow(mosayerRkm, c) });
+    await this.prisma.$transaction(async tx => {
+      const run = await this.lockEditableRun(tx, headerId);
+      const old = await tx.hr_mosayer_details.findMany({ where: { mosayer_rkm_fk: mosayerRkm } });
+      const overrides = new Map();
+      for (const line of old) if (line.emp_id) {
+        await this.importLegacyOverrides(tx, headerId, line.emp_id, line.id);
+        overrides.set(line.emp_id, await this.monthlyOverrides(tx, headerId, line.emp_id));
       }
-      await tx.hr_mosayer.update({
-        where: { id: headerId },
-        data: {
-          ...totals,
-          total: computed.length,
-          taghez: 'yes',
-          taghez_date_ar: todayAr(),
-          taghez_time: timeAr(),
-        },
-      });
-    });
+      const computed = await this.engine.computeAll(month, year, this.runWindow(run), overrides);
+      if (!computed.length) throw new BadRequestException('لا توجد بنود قابلة للاحتساب');
+      // Keep history and IDs: do not silently drop a previously included employee.
+      if (old.some(l => !computed.some(c => c.empId === l.emp_id))) throw new BadRequestException('تغيرت قائمة الموظفين؛ راجع حالة الموظفين قبل إعادة الاحتساب');
+      for (const c of computed) {
+        const line = old.find(l => l.emp_id === c.empId);
+        if (line) await tx.hr_mosayer_details.update({ where: { id: line.id }, data: this.toDetailRow(mosayerRkm, c) });
+        else await tx.hr_mosayer_details.create({ data: this.toDetailRow(mosayerRkm, c) });
+      }
+      const policy = computed[0];
+      await tx.hr_mosayer.update({ where: { id: headerId }, data: { ...this.aggregateTotals(computed), tax_policy_id: policy.taxPolicyId, tax_policy_version: policy.taxPolicyVersion, tax_policy_snapshot: policy.taxPolicySnapshot, total: computed.length, taghez: 'yes', suspend_mohasb: null, suspend_direct_manager: null, suspend_moder_mali: null, taghez_date_ar: todayAr(), taghez_time: timeAr() } });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 120000 });
   }
 
   private toDetailRow(mosayerRkm: number, c: ComputedEmployeeSalary): Prisma.hr_mosayer_detailsCreateInput {
@@ -1015,7 +1203,8 @@ export class PayrollService {
       tot_edafi: c.totEdafi,
       tot_mokafaa: c.totMokafaa,
       tot_entdab: c.totEntdab,
-      tot_okraa_esthkaq: c.manualEarnings,
+      tot_okraa_esthkaq: c.otherAllowances,
+      tot_okraa_khasm: c.otherDeductions,
       total_esthkak: c.totalEsthkak,
       khasm_keyab: c.khasmKeyab,
       agaza_bdon_rateb: c.agazaBdonRateb,
@@ -1024,7 +1213,12 @@ export class PayrollService {
       khasm_tamen: c.khasmTamen,
       tamin_hesa_oner: c.taminHesaOner,
       khasm_solaf: c.khasmSolaf,
-      tot_okraa_khasm: c.totOkraaKhasm,
+      taxable_earnings: c.taxableEarnings,
+      income_tax: c.incomeTax,
+      tax_policy_id: c.taxPolicyId,
+      tax_policy_version: c.taxPolicyVersion,
+      tax_breakdown: c.taxBreakdown,
+      calculation_snapshot: this.calculationSnapshot(c),
       total_khsomat: c.totalKhsomat,
       safi: c.safi,
       agr_sa3a: c.agrSa3a,
@@ -1032,6 +1226,27 @@ export class PayrollService {
       sa3at_amal: c.breakdown?.workHours != null ? Number(c.breakdown.workHours) : 8,
       taghez: 'no',
     };
+  }
+
+  private calculationSnapshot(
+    c: ComputedEmployeeSalary,
+    overrides?: { privateBonus?: number; taqeemValue?: number; targetValue?: number },
+  ): Prisma.InputJsonObject {
+    return JSON.parse(JSON.stringify({
+      schemaVersion: 1,
+      employeeId: c.empId,
+      employeeCode: c.empCode,
+      taxPolicy: c.taxPolicySnapshot,
+      breakdown: c.breakdown,
+      overrides: overrides ?? null,
+      result: {
+        grossEarnings: c.totalEsthkak,
+        totalDeductions: c.totalKhsomat,
+        netSalary: c.safi,
+        taxableEarnings: c.taxableEarnings,
+        incomeTax: c.incomeTax,
+      },
+    })) as Prisma.InputJsonObject;
   }
 
   /**
@@ -1058,6 +1273,7 @@ export class PayrollService {
         tot_mokafaa: true,
         tot_entdab: true,
         tot_okraa_esthkaq: true,
+        tot_okraa_khasm: true,
         total_esthkak: true,
         khasm_keyab: true,
         agaza_bdon_rateb: true,
@@ -1066,7 +1282,7 @@ export class PayrollService {
         khasm_tamen: true,
         tamin_hesa_oner: true,
         khasm_solaf: true,
-        tot_okraa_khasm: true,
+        income_tax: true,
         total_khsomat: true,
         safi: true,
       },
@@ -1087,6 +1303,7 @@ export class PayrollService {
         egmali_tot_mokafaa: n(s.tot_mokafaa),
         egmali_tot_entdab: n(s.tot_entdab),
         egmali_tot_okraa_esthkaq: n(s.tot_okraa_esthkaq),
+        egmali_tot_okraa_khasm: n(s.tot_okraa_khasm),
         egmali_total_esthkak: n(s.total_esthkak),
         egmali_khasm_keyab: n(s.khasm_keyab),
         egmali_agaza_bdon_rateb: n(s.agaza_bdon_rateb),
@@ -1095,7 +1312,7 @@ export class PayrollService {
         egmali_khasm_tamen: n(s.khasm_tamen),
         egmali_tamin_hesa_oner: n(s.tamin_hesa_oner),
         egmali_khasm_solaf: n(s.khasm_solaf),
-        egmali_tot_okraa_khasm: n(s.tot_okraa_khasm),
+        egmali_income_tax: n(s.income_tax),
         egmali_total_khsomat: n(s.total_khsomat),
         egmali_safi: n(s.safi),
       },
@@ -1117,7 +1334,8 @@ export class PayrollService {
       egmali_tot_edafi: sum((r) => r.totEdafi),
       egmali_tot_mokafaa: sum((r) => r.totMokafaa),
       egmali_tot_entdab: sum((r) => r.totEntdab),
-      egmali_tot_okraa_esthkaq: sum((r) => r.manualEarnings),
+      egmali_tot_okraa_esthkaq: sum((r) => r.otherAllowances ?? 0),
+      egmali_tot_okraa_khasm: sum((r) => r.otherDeductions ?? 0),
       egmali_total_esthkak: sum((r) => r.totalEsthkak),
       egmali_khasm_keyab: sum((r) => r.khasmKeyab),
       egmali_agaza_bdon_rateb: sum((r) => r.agazaBdonRateb),
@@ -1126,16 +1344,44 @@ export class PayrollService {
       egmali_khasm_tamen: sum((r) => r.khasmTamen),
       egmali_tamin_hesa_oner: sum((r) => r.taminHesaOner),
       egmali_khasm_solaf: sum((r) => r.khasmSolaf),
-      egmali_tot_okraa_khasm: sum((r) => r.totOkraaKhasm),
+      egmali_income_tax: sum((r) => r.incomeTax),
       egmali_total_khsomat: sum((r) => r.totalKhsomat),
       egmali_safi: sum((r) => r.safi),
     };
   }
 
-  private async getRunOrThrow(id: number) {
+  private async getRunOrThrow(id: number, user?: JwtUser) {
     const row = await this.prisma.hr_mosayer.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('مسيرة الرواتب غير موجودة');
+    const allowed = await this.payrollNumbersForUser(user);
+    if (allowed !== null && (row.mosayer_rkm == null || !allowed.includes(row.mosayer_rkm))) {
+      throw new NotFoundException('مسيرة الرواتب غير موجودة');
+    }
     return row;
+  }
+
+  private async payrollIdentities(user?: JwtUser) {
+    if (!user || !this.hrScope) return null;
+    return this.hrScope.employeeIdentities(user, 'payroll.runs');
+  }
+
+  private async payrollNumbersForUser(user?: JwtUser): Promise<number[] | null> {
+    const identities = await this.payrollIdentities(user);
+    if (identities === null) return null;
+    if (!identities.ids.length) return [];
+    const rows = await this.prisma.hr_mosayer_details.findMany({
+      where: { emp_id: { in: identities.ids }, mosayer_rkm_fk: { not: null } },
+      select: { mosayer_rkm_fk: true },
+      distinct: ['mosayer_rkm_fk'],
+    });
+    return rows.map((row) => row.mosayer_rkm_fk).filter((value): value is number => value != null);
+  }
+
+  private async assertGlobalPayrollScope(user?: JwtUser): Promise<void> {
+    const identities = await this.payrollIdentities(user);
+    if (identities !== null) {
+      throw new BadRequestException('تنفيذ مسيرة الرواتب يتطلب نطاق بيانات عام');
+    }
   }
 
   private toRunRow(row: {
@@ -1145,6 +1391,9 @@ export class PayrollService {
     egmali_safi: Prisma.Decimal | null;
     mosayer_date_ar: string | null;
     taghez: string | null;
+    period_start?: string | null;
+    period_end?: string | null;
+    payout_date?: string | null;
     suspend_mohasb: string | null;
     suspend_direct_manager: string | null;
     suspend_moder_mali: string | null;
@@ -1160,6 +1409,9 @@ export class PayrollService {
     return {
       id: row.id,
       title: runTitle(month, year),
+      periodStart: this.runWindow(row).fromDate,
+      periodEnd: this.runWindow(row).toDate,
+      payoutDate: row.payout_date ?? this.runWindow(row).toDate,
       month: monthLabel(month),
       year,
       totalAmount: decimal(row.egmali_safi),
@@ -1189,92 +1441,6 @@ export class PayrollService {
       netSalary: decimal(line.safi),
     };
   }
-
-  private toSalaryPreviewRow(row: ComputedEmployeeSalary, branchName?: string) {
-    const breakdown = row.breakdown as {
-      hoursEdafi?: number;
-      sheftEdafi?: number;
-      hoursEdafiValue?: number;
-      daysEdafiValue?: number;
-      absenceDays?: number;
-      paidLeaveDays?: number;
-      unpaidLeaveDays?: number;
-      forgottenFingerprint?: { count?: number; deductionDays?: number };
-      late?: { lateWithPermission?: number; lateWithoutPermission?: number };
-      khasmTakherAmount?: number;
-      khasmEznAmount?: number;
-      incentives?: {
-        targetBase?: number;
-        targetCommission?: number;
-        proteinCommission?: number;
-        classCommission?: number;
-      };
-    };
-    return {
-      id: row.empId,
-      empCode: row.empCode,
-      employeeName: row.empName,
-      jobTitle: row.mosmaWazefyN,
-      branchId: row.branchId,
-      branchName: row.branchId === 0 ? 'الإدارة' : branchName ?? '—',
-      basicSalary: row.ratebAsasy,
-      fixedAllowance: row.badalSakn,
-      variableAllowance: row.badalMowaslat,
-      bonusAllowance: row.badalTabe3aAmal,
-      grantAllowance: row.badalTaklef,
-      incentiveAllowance: row.badalEtsal,
-      dayWage: row.agrYom,
-      hourWage: row.agrSa3a,
-      overtimeHours: breakdown.hoursEdafi ?? 0,
-      overtimeHoursValue: breakdown.hoursEdafiValue ?? 0,
-      overtimeDays: breakdown.sheftEdafi ?? 0,
-      overtimeDaysValue: breakdown.daysEdafiValue ?? 0,
-      salaryIncrease: row.zeyadaRateb,
-      rewards: row.totMokafaa,
-      classCommission: breakdown.incentives?.classCommission ?? 0,
-      proteinCommission: breakdown.incentives?.proteinCommission ?? 0,
-      targetBase: breakdown.incentives?.targetBase ?? 0,
-      targetCommission: breakdown.incentives?.targetCommission ?? 0,
-      totalEarnings: row.totalEsthkak,
-      absenceDays: breakdown.absenceDays ?? 0,
-      absenceValue: row.khasmKeyab,
-      paidLeaveDays: breakdown.paidLeaveDays ?? 0,
-      paidLeaveValue: row.khasmAgazat,
-      unpaidLeaveDays: breakdown.unpaidLeaveDays ?? 0,
-      unpaidLeaveValue: row.agazaBdonRateb,
-      lateMinutes: breakdown.late?.lateWithoutPermission ?? 0,
-      lateValue: breakdown.khasmTakherAmount ?? 0,
-      permissionMinutes: breakdown.late?.lateWithPermission ?? 0,
-      permissionValue: breakdown.khasmEznAmount ?? 0,
-      forgottenFingerprintCount: breakdown.forgottenFingerprint?.count ?? 0,
-      forgottenFingerprintValue: row.khasmBasma,
-      penalties: row.khasmGezaa,
-      insurance: row.khasmTamen,
-      loans: row.khasmSolaf,
-      totalDeductions: row.totalKhsomat,
-      netSalary: row.safi,
-    };
-  }
-
-  private toSalaryIncreaseRow(row: {
-    id: number;
-    emp_id_fk: number;
-    emp_code: number;
-    emp_name: string;
-    value: Prisma.Decimal;
-    date_ar: string;
-    publisher: number;
-  }) {
-    return {
-      id: row.id,
-      employeeId: row.emp_id_fk,
-      employeeCode: row.emp_code,
-      employeeName: row.emp_name,
-      value: decimal(row.value),
-      date: row.date_ar,
-      publisher: row.publisher,
-    };
-  }
 }
 
 /** CSV-escape a cell (RFC 4180: quote when it contains comma/quote/newline). */
@@ -1285,6 +1451,7 @@ function csvCell(value: string): string {
   return value;
 }
 
-function unixDate(date: string): string {
-  return String(Math.floor(new Date(`${date}T00:00:00Z`).getTime() / 1000));
+/** Neutralize spreadsheet formula execution while preserving the visible value. */
+function csvFormulaSafe(value: string): string {
+  return /^[=+\-@\t\r]/.test(value.trimStart()) ? `'${value}` : value;
 }

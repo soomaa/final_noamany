@@ -5,9 +5,7 @@ export { FinanceDashboardPage } from './dashboard';
 export { FinanceExpensesPage } from './expenses';
 export { FinanceRevenuesPage } from './revenues';
 export { FinanceExpenseReportsPage } from './expense-reports';
-export { FinanceRevenueReportsPage } from './revenue-reports';
-export { FinanceAnalysisPage } from './analysis';
-export { FinanceProfitLossPage } from './profit-loss';
+export { FinanceReportRedirect as FinanceRevenueReportsPage, FinanceReportRedirect as FinanceAnalysisPage, FinanceReportRedirect as FinanceProfitLossPage } from './statement';
 
 export function FinanceIndexPage() {
   return <Navigate to={FINANCE_ROUTES.dashboard} replace />;

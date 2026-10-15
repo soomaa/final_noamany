@@ -91,9 +91,9 @@ export function ProcurementQuickPoPage() {
   const statusOptions = useMemo(
     // value = RAW canonical status the backend filters on; label = localized for display.
     () => [
-      { value: 'مسودة', label: ui('مسودة') },
-      { value: 'مؤكد', label: ui('مؤكد') },
-      { value: 'ملغي', label: ui('ملغي') },
+      { value: ui('مسودة'), label: ui('مسودة') },
+      { value: ui('مؤكد'), label: ui('مؤكد') },
+      { value: ui('ملغي'), label: ui('ملغي') },
     ],
     [ui],
   );
@@ -113,7 +113,7 @@ export function ProcurementQuickPoPage() {
     setConfirmingId(id);
     try {
       // Send the RAW canonical status the backend stores/compares (see quick-purchase-orders.service.ts).
-      await api.patch(`/quick-purchase-orders/${id}/status`, { status: 'مؤكد' });
+      await api.patch(`/quick-purchase-orders/${id}/status`, { status: ui('مؤكد') });
       toast.success(ui('تم تأكيد الأمر وإضافة المخزون'));
       void refetch();
     } catch (e) {
@@ -148,7 +148,7 @@ export function ProcurementQuickPoPage() {
         header: ui('الإجراءات'),
         cell: ({ row }) => (
           <div className="flex gap-1">
-            {row.original.status === 'مسودة' && (
+            {row.original.status === ui('مسودة') && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -161,7 +161,7 @@ export function ProcurementQuickPoPage() {
             <Button
               variant="ghost"
               size="icon"
-              disabled={row.original.status !== 'مسودة'}
+              disabled={row.original.status !== ui('مسودة')}
               onClick={() => {
                 setEditId(row.original.id);
                 setForm({
@@ -182,7 +182,7 @@ export function ProcurementQuickPoPage() {
             <Button
               variant="ghost"
               size="icon"
-              disabled={row.original.status !== 'مسودة'}
+              disabled={row.original.status !== ui('مسودة')}
               onClick={() => void deleteMutation.mutate(row.original.id)}
             >
               <Trash2 className="h-4 w-4 text-destructive" />
@@ -237,7 +237,7 @@ export function ProcurementQuickPoPage() {
       };
       if (editId) await api.put(`/quick-purchase-orders/${editId}`, payload);
       else await api.post('/quick-purchase-orders', payload);
-      toast.success(ui(editId ? 'تم التحديث' : ui('تم إنشاء أمر الشراء')));
+      toast.success(ui(editId ? ui('تم التحديث') : ui('تم إنشاء أمر الشراء')));
       setOpen(false);
       void refetch();
     } catch (e) {
@@ -271,6 +271,7 @@ export function ProcurementQuickPoPage() {
     >
       <FilterBar fields={filters} searchPlaceholder={ui('بحث في أوامر الشراء…')} />
       <DataTable
+        exportSource={{ resource: 'quick-purchase-orders', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -288,7 +289,7 @@ export function ProcurementQuickPoPage() {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent size="lg" className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{ui(editId ? 'تعديل أمر شراء' : 'أمر شراء سريع')}</DialogTitle>
+            <DialogTitle>{ui(editId ? ui('تعديل أمر شراء') : ui('أمر شراء سريع'))}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             <div className="grid gap-1">

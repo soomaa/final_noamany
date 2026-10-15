@@ -8,7 +8,7 @@ import { WarehousesService } from './warehouses.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('warehouses')
-@RequiresPermission('gym-sales.inventory:view')
+@RequiresPermission('gym-sales.inventory.raw_materials:view')
 export class WarehousesController {
   constructor(private readonly service: WarehousesService) {}
 
@@ -28,25 +28,25 @@ export class WarehousesController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.inventory:create')
+  @RequiresPermission('gym-sales.inventory.raw_materials:create')
   create(@Body() body: UpsertWarehouseDto) {
     return this.service.create(body);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertWarehouseDto>) {
     return this.service.update(id, body);
   }
 
   @Patch(':id')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   patch(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertWarehouseDto>) {
     return this.service.update(id, body);
   }
 
   @Patch(':id/inventory/:balanceId')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   updateBalance(
     @Param('balanceId', ParseIntPipe) balanceId: number,
     @Body() body: UpdateWarehouseBalanceDto,
@@ -55,7 +55,7 @@ export class WarehousesController {
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.inventory:delete')
+  @RequiresPermission('gym-sales.inventory.raw_materials:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

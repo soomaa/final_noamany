@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useBranches } from '@/hooks/use-branches';
 import { api, apiError } from '@/lib/api';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 async function downloadCsv(path: string, filename: string) {
   const { data } = await api.get<string>(path, { responseType: 'text' });
@@ -21,16 +22,22 @@ async function downloadCsv(path: string, filename: string) {
 
 export function BackupSettingsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canExport = can('admin.backup:export');
   const { data: branches } = useBranches();
   const [branchId, setBranchId] = useState('');
   const [loading, setLoading] = useState<string | null>(null);
 
   const branchParam = branchId && branchId !== 'all' ? `?branchId=${branchId}` : '';
 
-  const runExport = async (kind: 'members' | 'subscriptions' | 'attendance' | 'receipts') => {
+  const runExport = async (kind: 'members' | 'subscriptions') => {
+    if (!canExport) return;
     setLoading(kind);
     try {
-      const path = `/club/backup/${kind}.csv${branchParam}`;
+      const path =
+        kind === 'members'
+          ? `/club/backup/members.csv${branchParam}`
+          : `/club/backup/subscriptions.csv${branchParam}`;
       await downloadCsv(path, `${kind}-export.csv`);
       toast.success(ui('تم التصدير بنجاح'));
     } catch (e) {
@@ -71,21 +78,13 @@ export function BackupSettingsPage() {
             </select>
           </div>
 
-          <div className="flex flex-wrap gap-3">
+          {canExport ? <div className="flex flex-wrap gap-3">
             <Button
               disabled={loading !== null}
               onClick={() => void runExport('members')}
             >
               <Download className="me-2 h-4 w-4" />
               {loading === 'members' ? ui('جاري التصدير…') : ui('تصدير الأعضاء CSV')}
-            </Button>
-            <Button variant="outline" disabled={loading !== null} onClick={() => void runExport('attendance')}>
-              <Download className="me-2 h-4 w-4" />
-              {loading === 'attendance' ? ui('جاري التصدير…') : ui('تصدير الحضور CSV')}
-            </Button>
-            <Button variant="outline" disabled={loading !== null} onClick={() => void runExport('receipts')}>
-              <Download className="me-2 h-4 w-4" />
-              {loading === 'receipts' ? ui('جاري التصدير…') : ui('تصدير المدفوعات CSV')}
             </Button>
             <Button
               variant="outline"
@@ -95,7 +94,7 @@ export function BackupSettingsPage() {
               <Download className="me-2 h-4 w-4" />
               {loading === 'subscriptions' ? ui('جاري التصدير…') : ui('تصدير الاشتراكات CSV')}
             </Button>
-          </div>
+          </div> : null}
 
           <p className="text-sm text-muted-foreground">
             {ui('للاستعادة الكاملة استخدم نسخ قاعدة البيانات على مستوى الخادم. هذا التصدير للتقارير والنسخ الاحتياطي التشغيلي.')}

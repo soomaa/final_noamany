@@ -38,8 +38,8 @@ export function toClubPaymentMethod(v?: string | null): ClubPaymentMethod | null
   return 'cash';
 }
 
-export function deriveSubStatus(startDate: string, endDate: string): ClubSubStatus {
-  const today = parseDateOnly(localDateString());
+export function deriveSubStatus(startDate: string, endDate: string, at = new Date()): ClubSubStatus {
+  const today = parseDateOnly(localDateString(at));
   const start = parseDateOnly(startDate);
   const end = parseDateOnly(endDate);
   if (today < start) return 'upcoming';
@@ -57,11 +57,11 @@ export function deriveSessionAwareStatus(opts: {
   isLinkedToSessions: boolean;
   sessionsCount?: number | null;
   sessionsUsed?: number | null;
-}): ClubSubStatus {
+}, at = new Date()): ClubSubStatus {
   if (!opts.isLinkedToSessions) {
-    return deriveSubStatus(opts.startDate, opts.endDate);
+    return deriveSubStatus(opts.startDate, opts.endDate, at);
   }
-  const today = parseDateOnly(localDateString());
+  const today = parseDateOnly(localDateString(at));
   const start = parseDateOnly(opts.startDate);
   if (today < start) return 'upcoming';
   if (!isOpenEndedEndDate(opts.endDate) && today > parseDateOnly(opts.endDate)) {
@@ -91,12 +91,13 @@ export function resolveSubscriptionEndDate(
   startDate: string,
   days: number,
   isLinkedToSessions: boolean,
+  _packageSessionsCount?: number | null,
 ): string {
   if (isLinkedToSessions) {
     const validityDays = days > 0 ? days : DEFAULT_SESSION_PACKAGE_DAYS;
-    return addDays(startDate, validityDays);
+    return addDays(startDate, Math.max(1, validityDays) - 1);
   }
-  return addDays(startDate, days);
+  return addDays(startDate, Math.max(1, days) - 1);
 }
 
 /** MySQL UNSIGNED aggregates may return bigint — normalize before arithmetic. */
@@ -109,18 +110,36 @@ export function nextSeqFromMax(maxNum: unknown): number {
 }
 
 export function daysBetween(start: string, end: string): number {
-  // Calendar days must not gain/lose an hour when Egypt changes its DST offset.
-  const utcDay = (value: string) => {
-    const [year, month, day] = value.split('-').map(Number);
-    return Date.UTC(year, month - 1, day);
-  };
-  return (utcDay(end) - utcDay(start)) / 86400000;
+  // Date-only arithmetic must not depend on the server timezone or DST.
+  return Math.round((Date.parse(`${end}T00:00:00Z`) - Date.parse(`${start}T00:00:00Z`)) / 86400000);
 }
 
 /**
  * Resolve charge for buying `selectedSessions` from a session package.
  * Prefer an explicit matrix row; otherwise fall back to proportional price/N × k.
  */
+export function resolveTypePriceForBranch(
+  defaultPrice: number,
+  branchId?: number | null,
+  branchPrices?: Array<{ branchId: number; price: number }> | null,
+): number {
+  if (branchId != null && branchPrices?.length) {
+    const hit = branchPrices.find((row) => row.branchId === branchId);
+    if (hit && Number.isFinite(hit.price) && hit.price >= 0) return hit.price;
+  }
+  return defaultPrice;
+}
+
+export function scaleSessionMatrixForPackagePrice(
+  matrix: Array<{ sessionsCount: number; price: number }>,
+  fromPrice: number,
+  toPrice: number,
+): Array<{ sessionsCount: number; price: number }> {
+  if (!matrix.length || !fromPrice || fromPrice === toPrice) return matrix;
+  const factor = toPrice / fromPrice;
+  return matrix.map((row) => ({ ...row, price: roundMoney(row.price * factor) }));
+}
+
 export function resolveSessionMatrixPrice(opts: {
   packagePrice: number;
   maxSessions: number;
@@ -240,4 +259,88 @@ export function primaryClubPaymentMethod(
     if (!best || r.amount > best.amount) best = r;
   }
   return best?.method ?? null;
+}
+
+/** Fields needed to collapse renewal history into the current working card(s). */
+export interface MemberSubscriptionLineageFields {
+  id: number;
+  status: string;
+  subscriptionTypeId?: number | null;
+  subscriptionType?: string | null;
+  /** List API field */
+  subscriptionEndDate?: string | null;
+  /** Profile-summary field */
+  endDate?: string | null;
+}
+
+/**
+ * Renewals create a new `club_subscriptions` row (no parent FK). For member-facing
+ * cards, collapse same-plan history so only the current working period shows.
+ *
+ * Preference within a plan lineage:
+ * 1. active (+ any upcoming renewal that has not started yet)
+ * 2. else frozen (+ upcoming) — current period is paused
+ * 3. else upcoming
+ * 4. else the single newest expired period (so renew remains possible)
+ *
+ * Independent concurrent plans (different type id / name) all remain visible.
+ */
+export function selectCurrentSubscriptionsForMemberDisplay<
+  T extends MemberSubscriptionLineageFields,
+>(subscriptions: T[]): T[] {
+  if (subscriptions.length <= 1) return subscriptions;
+
+  const groups = new Map<string, T[]>();
+  for (const sub of subscriptions) {
+    const key = memberSubscriptionLineageKey(sub);
+    const bucket = groups.get(key);
+    if (bucket) bucket.push(sub);
+    else groups.set(key, [sub]);
+  }
+
+  const keep = new Set<number>();
+  for (const group of groups.values()) {
+    const active = group.filter((sub) => sub.status === 'active');
+    const frozen = group.filter((sub) => sub.status === 'frozen');
+    const upcoming = group.filter((sub) => sub.status === 'upcoming');
+
+    if (active.length > 0) {
+      for (const sub of active) keep.add(sub.id);
+      for (const sub of upcoming) keep.add(sub.id);
+      continue;
+    }
+    if (frozen.length > 0) {
+      for (const sub of frozen) keep.add(sub.id);
+      for (const sub of upcoming) keep.add(sub.id);
+      continue;
+    }
+    if (upcoming.length > 0) {
+      for (const sub of upcoming) keep.add(sub.id);
+      continue;
+    }
+    const newest = [...group].sort(compareMemberSubscriptionsNewestFirst)[0];
+    if (newest) keep.add(newest.id);
+  }
+
+  return subscriptions.filter((sub) => keep.has(sub.id));
+}
+
+function memberSubscriptionLineageKey(sub: MemberSubscriptionLineageFields): string {
+  if (sub.subscriptionTypeId != null) return `type:${sub.subscriptionTypeId}`;
+  const name = (sub.subscriptionType ?? '').trim().toLowerCase();
+  if (name) return `name:${name}`;
+  return `id:${sub.id}`;
+}
+
+function memberSubscriptionEndDate(sub: MemberSubscriptionLineageFields): string {
+  return sub.subscriptionEndDate ?? sub.endDate ?? '';
+}
+
+function compareMemberSubscriptionsNewestFirst(
+  a: MemberSubscriptionLineageFields,
+  b: MemberSubscriptionLineageFields,
+): number {
+  const endCmp = memberSubscriptionEndDate(b).localeCompare(memberSubscriptionEndDate(a));
+  if (endCmp !== 0) return endCmp;
+  return b.id - a.id;
 }

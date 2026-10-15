@@ -1,3 +1,4 @@
+import { ReceptionEntryAlerts } from '@/components/club/reception-entry-alerts';
 import { Activity, ArrowLeft, CreditCard, Lock, Users } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -119,6 +120,8 @@ export function ClubDashboardBody({ embedded }: { embedded?: boolean }) {
           ))}
         </div>
       )}
+
+      <ReceptionEntryAlerts branchId={branchId} />
 
       {isLoading && <p className="text-muted-foreground">{ct('common.loading')}</p>}
 

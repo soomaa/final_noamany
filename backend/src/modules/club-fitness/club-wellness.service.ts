@@ -1,7 +1,7 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { purchasedBenefits } from '../club-subscriptions/purchased-benefits';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, SalesPaymentMethod } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { ClubBranchGroupReader, ClubBranchGroupService } from '../../common/branch-groups/club-branch-group.service';
 import { assertPositive, assertWithinRange } from '../../common/validators';
 import { paginated } from '../../common/dto/list-result';
 import { ClubFitnessLedgerService } from './club-fitness-ledger.service';
@@ -17,21 +17,64 @@ import { attachMemberBrief, loadMemberBriefMap, searchMemberIds } from '../club-
 import { ListClubFitnessDto } from './dto/list-club-fitness.dto';
 import { recordSystemRevenue } from '../finance/system-revenue.util';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
-import { clubOperationBranchIds } from '../../common/branch-groups/club-operation-scope';
 import { JwtUser } from '../../common/types/jwt-user';
-import { isReceptionEmployee } from '../../common/utils/reception-user.util';
+import { sortInbodyEntitlements, validateInbodyOffer } from './inbody-entitlements';
+import { ClubServiceDebtsService } from '../club-service-debts/club-service-debts.service';
+
+function addCalendarDays(date: string, days: number): string {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
 
 @Injectable()
 export class ClubWellnessService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledger: ClubFitnessLedgerService,
-    @Inject(ClubBranchGroupService)
-    private readonly branchGroups: Pick<ClubBranchGroupReader, 'siblingBranchIds'> = {
-      siblingBranchIds: async (branchId) => [branchId],
-    },
-    private readonly branchScope: BranchScopeService = new BranchScopeService(),
+    private readonly branchScope: BranchScopeService,
+    private readonly debts: ClubServiceDebtsService,
   ) {}
+
+  private assertBranchAccess(user: JwtUser | undefined, branchId: number) {
+    if (!this.branchScope.isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
+  }
+
+  private assertCatalogWriteAccess(user: JwtUser | undefined, branchId: number | null) {
+    if (branchId == null) {
+      if (user && user.level !== 1) {
+        throw new ForbiddenException('الخدمات العامة لا يعدلها إلا مدير النظام');
+      }
+      return;
+    }
+    this.assertBranchAccess(user, branchId);
+  }
+
+  private async assertMemberAccess(memberId: number, user?: JwtUser, expectedBranchId?: number) {
+    const member = await this.prisma.club_members.findFirst({
+      where: { id: memberId, is_deleted: false },
+      select: { branch_id: true, name: true, phone: true },
+    });
+    if (!member) throw new NotFoundException('العضو غير موجود');
+    this.assertBranchAccess(user, member.branch_id);
+    if (expectedBranchId != null && member.branch_id !== expectedBranchId) {
+      throw new ForbiddenException('لا يمكن استخدام عضو من فرع آخر');
+    }
+    return member;
+  }
+
+  private async allowedMemberIds(user?: JwtUser): Promise<number[] | null> {
+    const scope = this.branchScope.allowedBranchIds(user);
+    if (scope === null) return null;
+    if (scope.length === 0) return [];
+    const members = await this.prisma.club_members.findMany({
+      where: { branch_id: { in: scope }, is_deleted: false },
+      select: { id: true },
+    });
+    return members.map((member) => member.id);
+  }
 
   private paymentMethod(value: unknown): SalesPaymentMethod {
     const method = String(value ?? 'cash') as SalesPaymentMethod;
@@ -59,7 +102,7 @@ export class ClubWellnessService {
     return this.prisma.club_subscriptions.findMany({
       where: {
         member_id: memberId,
-        status: 'active',
+        status: { in: ['active', 'upcoming'] },
         subscription_start_date: { lte: today },
         subscription_end_date: { gte: today },
       },
@@ -68,28 +111,29 @@ export class ClubWellnessService {
     });
   }
 
-  async getMemberBenefits(memberCode: string) {
+  async getMemberBenefits(memberCode: string, user?: JwtUser) {
     if (!memberCode?.trim()) throw new BadRequestException('كود العضو مطلوب');
     const member = await this.findMemberByCode(memberCode);
+    this.assertBranchAccess(user, member.branch_id);
     const subscriptions = await this.activeBenefits(member.id);
     const inbody = subscriptions
-      .filter((s) => Number(s.type?.inbody_count ?? 0) > s.inbody_used)
+      .filter((s) => Number(purchasedBenefits(s, s.type).inbody_count ?? 0) > s.inbody_used)
       .map((s) => ({
         subscriptionId: s.id,
         subscriptionNumber: s.subscription_number,
-        total: Number(s.type?.inbody_count ?? 0),
+        total: Number(purchasedBenefits(s, s.type).inbody_count ?? 0),
         used: s.inbody_used,
-        remaining: Math.max(0, Number(s.type?.inbody_count ?? 0) - s.inbody_used),
+        remaining: Math.max(0, Number(purchasedBenefits(s, s.type).inbody_count ?? 0) - s.inbody_used),
         expiresAt: s.subscription_end_date,
       }));
     const spa = subscriptions
-      .filter((s) => s.type?.includes_spa && Number(s.type?.spa_count ?? 0) > s.spa_used)
+      .filter((s) => purchasedBenefits(s, s.type).includes_spa && Number(purchasedBenefits(s, s.type).spa_count ?? 0) > s.spa_used)
       .map((s) => ({
         subscriptionId: s.id,
         subscriptionNumber: s.subscription_number,
-        total: Number(s.type?.spa_count ?? 0),
+        total: Number(purchasedBenefits(s, s.type).spa_count ?? 0),
         used: s.spa_used,
-        remaining: Math.max(0, Number(s.type?.spa_count ?? 0) - s.spa_used),
+        remaining: Math.max(0, Number(purchasedBenefits(s, s.type).spa_count ?? 0) - s.spa_used),
         expiresAt: s.subscription_end_date,
       }));
     return {
@@ -104,55 +148,69 @@ export class ClubWellnessService {
     };
   }
 
-  async checkInSpaByBarcode(memberCode: string, userId?: number) {
+  async getInbodyMemberContext(memberCode: string, user?: JwtUser) {
     if (!memberCode?.trim()) throw new BadRequestException('كود العضو مطلوب');
     const member = await this.findMemberByCode(memberCode);
-    const scanner = userId == null
-      ? null
-      : await this.prisma.users?.findUnique({
-          where: { user_id: userId },
-          select: { branch_id_fk: true },
-        });
-    const operationBranchId = Number(scanner?.branch_id_fk ?? member.branch_id);
-    const compatibleBranchIds = await this.branchGroups.siblingBranchIds(operationBranchId);
-    if (!compatibleBranchIds.includes(member.branch_id)) {
-      throw new ForbiddenException('لا يمكن تسجيل SPA لعضو تابع لفرع آخر');
-    }
+    this.assertBranchAccess(user, member.branch_id);
     const today = localDateString();
-    const duplicate = await this.prisma.club_spa_attendance.findFirst({
-      where: { member_id: member.id, attendance_date: today },
-    });
-    if (duplicate) throw new ConflictException('تم تسجيل حضور السبا بالفعل اليوم');
-
-    const subscriptionId = await this.prisma.$transaction(async (tx) => {
-      const consumedSubscriptionId = await this.consumeBenefit(tx, member.id, 'spa', 1);
-      if (consumedSubscriptionId == null) {
-        throw new BadRequestException('رصيد السبا في الاشتراك غير كافٍ أو انتهت صلاحيته');
-      }
-      const time = new Intl.DateTimeFormat('en-GB', {
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false,
-      }).format(new Date());
-      await tx.club_spa_attendance.create({
-        data: {
+    const [subscriptions, purchased, offers, settings] = await Promise.all([
+      this.activeBenefits(member.id),
+      this.prisma.club_inbody_entitlements.findMany({
+        where: {
           member_id: member.id,
-          member_code: member.member_code,
-          member_name: member.name,
-          branch_id: operationBranchId,
-          subscription_id: consumedSubscriptionId,
-          attendance_date: today,
-          check_in_time: time,
-          created_by: userId ?? null,
+          is_active: true,
+          OR: [{ expires_at: null }, { expires_at: { gte: today } }],
         },
-      });
-      return consumedSubscriptionId;
-    });
-    const benefits = await this.getMemberBenefits(memberCode);
+      }),
+      this.prisma.club_inbody_services.findMany({
+        where: { branch_id: member.branch_id, is_active: true },
+        orderBy: [{ measurement_count: 'asc' }, { price: 'asc' }],
+      }),
+      this.prisma.club_inbody_branch_settings.findUnique({
+        where: { branch_id: member.branch_id },
+      }),
+    ]);
+    const offerNames = new Map(offers.map((offer) => [offer.id, offer.name]));
+    const balances = sortInbodyEntitlements([
+      ...subscriptions
+        .filter((row) => Number(purchasedBenefits(row, row.type).inbody_count ?? 0) > row.inbody_used)
+        .map((row) => ({
+          id: row.id,
+          source: 'subscription' as const,
+          label: `اشتراك ${row.subscription_number}`,
+          remaining: Math.max(0, Number(purchasedBenefits(row, row.type).inbody_count ?? 0) - row.inbody_used),
+          expiresAt: row.subscription_end_date,
+        })),
+      ...purchased
+        .filter((row) => row.total_count > row.used_count)
+        .map((row) => ({
+          id: row.id,
+          source: 'package' as const,
+          label: offerNames.get(row.service_id) ?? 'باقة InBody',
+          remaining: Math.max(0, row.total_count - row.used_count),
+          expiresAt: row.expires_at,
+        })),
+    ]);
+
     return {
-      member: benefits.member,
-      subscriptionId,
-      remaining: benefits.spa.remaining,
+      member: {
+        id: member.id,
+        memberCode: member.member_code,
+        name: member.name,
+        branchId: member.branch_id,
+      },
+      totalRemaining: balances.reduce((sum, balance) => sum + balance.remaining, 0),
+      hasActiveMembership: subscriptions.length > 0,
+      allowWithoutActiveMembership: settings?.allow_without_active_membership ?? false,
+      balances,
+      offers: offers.map((offer) => ({
+        id: offer.id,
+        name: offer.name,
+        price: toNum(offer.price),
+        measurementCount: offer.measurement_count,
+        validityDays: offer.validity_days,
+        branchId: offer.branch_id,
+      })),
     };
   }
 
@@ -170,7 +228,7 @@ export class ClubWellnessService {
       SELECT id
       FROM club_subscriptions
       WHERE member_id = ${memberId}
-        AND status = 'active'
+        AND status IN ('active', 'upcoming')
         AND subscription_start_date <= ${today}
         AND subscription_end_date >= ${today}
       ORDER BY subscription_end_date ASC, id ASC
@@ -179,7 +237,7 @@ export class ClubWellnessService {
     const subscriptions = await tx.club_subscriptions.findMany({
       where: {
         member_id: memberId,
-        status: 'active',
+        status: { in: ['active', 'upcoming'] },
         subscription_start_date: { lte: today },
         subscription_end_date: { gte: today },
       },
@@ -191,9 +249,9 @@ export class ClubWellnessService {
     for (const subscription of subscriptions) {
       const limit =
         kind === 'inbody'
-          ? Number(subscription.type?.inbody_count ?? 0)
-          : subscription.type?.includes_spa
-            ? Number(subscription.type?.spa_count ?? 0)
+          ? Number(purchasedBenefits(subscription, subscription.type).inbody_count ?? 0)
+          : purchasedBenefits(subscription, subscription.type).includes_spa
+            ? Number(purchasedBenefits(subscription, subscription.type).spa_count ?? 0)
             : 0;
       const used = kind === 'inbody' ? subscription.inbody_used : subscription.spa_used;
       const available = Math.max(0, limit - used);
@@ -217,6 +275,105 @@ export class ClubWellnessService {
       if (remainingQuantity === 0) return primarySubscriptionId;
     }
     return null;
+  }
+
+  private async consumeNearestInbodyBalance(
+    tx: Prisma.TransactionClient,
+    memberId: number,
+  ): Promise<{
+    source: 'subscription' | 'package';
+    subscriptionId: number | null;
+    entitlementId: number | null;
+    expiresAt: string | null;
+  } | null> {
+    const today = localDateString();
+    await tx.$queryRaw`
+      SELECT id
+      FROM club_subscriptions
+      WHERE member_id = ${memberId}
+        AND status IN ('active', 'upcoming')
+        AND subscription_start_date <= ${today}
+        AND subscription_end_date >= ${today}
+      FOR UPDATE
+    `;
+    await tx.$queryRaw`
+      SELECT id
+      FROM club_inbody_entitlements
+      WHERE member_id = ${memberId}
+        AND is_active = true
+        AND (expires_at IS NULL OR expires_at >= ${today})
+      FOR UPDATE
+    `;
+
+    const [subscriptions, purchased] = await Promise.all([
+      tx.club_subscriptions.findMany({
+        where: {
+          member_id: memberId,
+          status: { in: ['active', 'upcoming'] },
+          subscription_start_date: { lte: today },
+          subscription_end_date: { gte: today },
+        },
+        include: { type: true },
+      }),
+      tx.club_inbody_entitlements.findMany({
+        where: {
+          member_id: memberId,
+          is_active: true,
+          OR: [{ expires_at: null }, { expires_at: { gte: today } }],
+        },
+      }),
+    ]);
+
+    const candidates = sortInbodyEntitlements([
+      ...subscriptions
+        .filter((row) => Number(purchasedBenefits(row, row.type).inbody_count ?? 0) > row.inbody_used)
+        .map((row) => ({
+          id: row.id,
+          source: 'subscription' as const,
+          expiresAt: row.subscription_end_date,
+          used: row.inbody_used,
+        })),
+      ...purchased
+        .filter((row) => row.total_count > row.used_count)
+        .map((row) => ({
+          id: row.id,
+          source: 'package' as const,
+          expiresAt: row.expires_at,
+          used: row.used_count,
+        })),
+    ]);
+
+    const selected = candidates[0];
+    if (!selected) return null;
+    if (selected.source === 'subscription') {
+      const claimed = await tx.club_subscriptions.updateMany({
+        where: { id: selected.id, inbody_used: selected.used },
+        data: { inbody_used: { increment: 1 } },
+      });
+      if (claimed.count !== 1) {
+        throw new ConflictException('تم تغيير رصيد InBody أثناء العملية، أعد المحاولة');
+      }
+      return {
+        source: 'subscription',
+        subscriptionId: selected.id,
+        entitlementId: null,
+        expiresAt: selected.expiresAt,
+      };
+    }
+
+    const claimed = await tx.club_inbody_entitlements.updateMany({
+      where: { id: selected.id, used_count: selected.used },
+      data: { used_count: { increment: 1 } },
+    });
+    if (claimed.count !== 1) {
+      throw new ConflictException('تم تغيير رصيد InBody أثناء العملية، أعد المحاولة');
+    }
+    return {
+      source: 'package',
+      subscriptionId: null,
+      entitlementId: selected.id,
+      expiresAt: selected.expiresAt,
+    };
   }
 
   private addMinutesToTime(time: string, minutes: number): string {
@@ -274,6 +431,7 @@ export class ClubWellnessService {
     row: {
       id: number;
       member_id: number;
+      branch_id: number | null;
       measurement_date: string;
       weight: Prisma.Decimal | null;
       height_cm: Prisma.Decimal | null;
@@ -282,6 +440,11 @@ export class ClubWellnessService {
       bmi: Prisma.Decimal | null;
       notes: string | null;
       report_url: string | null;
+      settlement_source: string;
+      subscription_id: number | null;
+      entitlement_id: number | null;
+      invoice_id: number | null;
+      created_by: number | null;
       created_at: Date;
       updated_at: Date;
     },
@@ -290,6 +453,7 @@ export class ClubWellnessService {
     return {
       id: row.id,
       memberId: row.member_id,
+      branchId: row.branch_id,
       ...attachMemberBrief(row.member_id, memberMap),
       measurementDate: row.measurement_date,
       weight: row.weight != null ? toNum(row.weight) : null,
@@ -299,6 +463,11 @@ export class ClubWellnessService {
       bmi: row.bmi != null ? toNum(row.bmi) : null,
       notes: row.notes,
       reportUrl: row.report_url,
+      settlementSource: row.settlement_source,
+      subscriptionId: row.subscription_id,
+      entitlementId: row.entitlement_id,
+      invoiceId: row.invoice_id,
+      createdBy: row.created_by,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -306,42 +475,30 @@ export class ClubWellnessService {
 
   // --- InBody measurements ---
 
-  private async inbodyMemberScope(user?: JwtUser): Promise<Prisma.club_membersWhereInput> {
-    if (!user) return {};
-    const branches = await clubOperationBranchIds(this.branchScope, this.branchGroups, user);
-    const gender = this.branchScope.memberGenderFilter(user);
-    return { is_deleted: false, ...(branches === null ? {} : { branch_id: { in: branches } }), ...(gender ? { gender } : {}) };
-  }
-
-  private async assertInbodyMemberAccess(memberId: number, user?: JwtUser) {
-    if (!user) return;
-    const member = await this.prisma.club_members.findFirst({ where: { AND: [{ id: memberId }, await this.inbodyMemberScope(user)] }, select: { id: true } });
-    if (!member) throw new ForbiddenException('العضو خارج الفروع أو الأقسام المسموح بها');
-  }
-
-  private assertInbodyDateAccess(date: string, user?: JwtUser) {
-    if (isReceptionEmployee(user) && date !== localDateString()) throw new ForbiddenException('موظف الاستقبال يمكنه الوصول إلى قياسات اليوم فقط');
-  }
-
   async listInbodyMeasurements(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_inbody_measurementsWhereInput = {};
-    const scopedIds = user ? (await this.prisma.club_members.findMany({ where: await this.inbodyMemberScope(user), select: { id: true } })).map(member => member.id) : null;
-    if (scopedIds) where.member_id = { in: scopedIds };
-    if (q.memberId) where.member_id = scopedIds === null || scopedIds.includes(Number(q.memberId)) ? Number(q.memberId) : { in: [] };
-    if (q.dateFrom || q.dateTo) {
-      where.measurement_date = {
-        ...(q.dateFrom ? { gte: q.dateFrom } : {}),
-        ...(q.dateTo ? { lte: q.dateTo } : {}),
-      };
-    }
-    if (isReceptionEmployee(user)) where.measurement_date = localDateString();
+    if (q.memberId) where.member_id = Number(q.memberId);
 
     if (q.search?.trim()) {
       const memberIds = await searchMemberIds(this.prisma, q.search);
       if (memberIds.length === 0) {
         return paginated([], 0, q.page, q.pageSize);
       }
-      where.member_id = { in: memberIds.filter(id => (scopedIds === null || scopedIds.includes(id)) && (!q.memberId || id === Number(q.memberId))) };
+      where.member_id = { in: memberIds };
+    }
+    const scopedMemberIds = await this.allowedMemberIds(user);
+    if (scopedMemberIds !== null) {
+      const requestedIds =
+        typeof where.member_id === 'number'
+          ? [where.member_id]
+          : where.member_id && typeof where.member_id === 'object' && 'in' in where.member_id
+            ? (where.member_id.in ?? [])
+            : null;
+      where.member_id = {
+        in: requestedIds == null
+          ? scopedMemberIds
+          : requestedIds.filter((id) => scopedMemberIds.includes(Number(id))).map(Number),
+      };
     }
 
     const [rows, total] = await Promise.all([
@@ -362,45 +519,10 @@ export class ClubWellnessService {
     );
   }
 
-  /** Preview only: the database assigns the final auto-increment id on save. */
-  async nextInbodyFileNumber() {
-    const result = await this.prisma.club_inbody_measurements.aggregate({
-      _max: { id: true },
-    });
-    return (result._max.id ?? 0) + 1;
-  }
-
-  /** SPA barcode visits are distinct from paid SPA invoices and are reportable by date/branch. */
-  async listSpaAttendance(q: ListClubFitnessDto) {
-    const where: Prisma.club_spa_attendanceWhereInput = {};
-    if (q.memberId) where.member_id = Number(q.memberId);
-    if (q.branch && q.branch !== 'all') where.branch_id = Number(q.branch);
-    if (q.dateFrom || q.dateTo) {
-      where.attendance_date = {
-        ...(q.dateFrom ? { gte: q.dateFrom } : {}),
-        ...(q.dateTo ? { lte: q.dateTo } : {}),
-      };
-    }
-    if (q.search?.trim()) {
-      const s = q.search.trim();
-      where.OR = [{ member_name: { contains: s } }, { member_code: { contains: s } }];
-    }
-    const [rows, total] = await Promise.all([
-      this.prisma.club_spa_attendance.findMany({ where, orderBy: [{ attendance_date: 'desc' }, { check_in_time: 'desc' }], skip: q.skip, take: q.take }),
-      this.prisma.club_spa_attendance.count({ where }),
-    ]);
-    return paginated(rows.map((row) => ({
-      id: row.id, memberId: row.member_id, memberCode: row.member_code, memberName: row.member_name,
-      branchId: row.branch_id, subscriptionId: row.subscription_id, attendanceDate: row.attendance_date,
-      checkInTime: row.check_in_time, createdAt: row.created_at,
-    })), total, q.page, q.pageSize);
-  }
-
   async findInbodyMeasurement(id: number, user?: JwtUser) {
     const row = await this.prisma.club_inbody_measurements.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('قياس InBody غير موجود');
-    this.assertInbodyDateAccess(row.measurement_date, user);
-    await this.assertInbodyMemberAccess(row.member_id, user);
+    await this.assertMemberAccess(row.member_id, user);
     const memberMap = await loadMemberBriefMap(this.prisma, [row.member_id]);
     return this.mapInbodyMeasurement(row, memberMap);
   }
@@ -409,9 +531,7 @@ export class ClubWellnessService {
     if (!body.memberId || !body.measurementDate) {
       throw new BadRequestException('كود العضو وتاريخ القياس مطلوبان');
     }
-    await assertMemberExists(this.prisma, Number(body.memberId));
-    await this.assertInbodyMemberAccess(Number(body.memberId), user);
-    this.assertInbodyDateAccess(String(body.measurementDate), user);
+    await this.assertMemberAccess(Number(body.memberId), user);
     this.validateInbodyMeasurementValues(body);
     await this.assertUniqueInbodyDay(Number(body.memberId), String(body.measurementDate));
     const weight = body.weight != null ? Number(body.weight) : null;
@@ -438,15 +558,189 @@ export class ClubWellnessService {
     return this.findInbodyMeasurement(row.id, user);
   }
 
+  async recordInbodyMeasurement(body: Record<string, unknown>, userId?: number, user?: JwtUser) {
+    if (!body.memberId || !body.branchId || !body.measurementDate || !body.reportUrl) {
+      throw new BadRequestException('العضو والفرع وتاريخ القياس وتقرير InBody مطلوبة');
+    }
+    const memberId = Number(body.memberId);
+    const branchId = Number(body.branchId);
+    const measurementDate = String(body.measurementDate);
+    const reportUrl = String(body.reportUrl).trim();
+    if (!reportUrl) throw new BadRequestException('تقرير InBody مطلوب');
+    const member = await this.assertMemberAccess(memberId, user, branchId);
+    await this.assertUniqueInbodyDay(memberId, measurementDate);
+
+    return this.prisma.$transaction(async (tx) => {
+      let balance = await this.consumeNearestInbodyBalance(tx, memberId);
+      let invoiceId: number | null = null;
+      let chargedAmount = 0;
+      let settlementSource = balance?.source ?? 'paid_single';
+      let invoiceNumber: string | null = null;
+      let serviceName: string | null = null;
+      let receiptPaymentMethod: string | null = null;
+      let paidAmount = 0;
+      let remainingAmount = 0;
+      let receiptPayments: { method: string; amount: number }[] = [];
+
+      if (!balance) {
+        if (body.offerId == null) {
+          throw new BadRequestException('اختر سعر القياس أو إحدى باقات InBody');
+        }
+        const offer = await tx.club_inbody_services.findFirst({
+          where: {
+            id: Number(body.offerId),
+            branch_id: branchId,
+            is_active: true,
+          },
+        });
+        if (!offer) throw new NotFoundException('سعر أو باقة InBody غير موجودة لهذا الفرع');
+
+        const today = localDateString();
+        const activeMemberships = await tx.club_subscriptions.count({
+          where: {
+            member_id: memberId,
+            status: { in: ['active', 'upcoming'] },
+            subscription_start_date: { lte: today },
+            subscription_end_date: { gte: today },
+          },
+        });
+        if (activeMemberships === 0) {
+          const settings = await tx.club_inbody_branch_settings.findUnique({
+            where: { branch_id: branchId },
+          });
+          if (!settings?.allow_without_active_membership) {
+            throw new BadRequestException('بيع InBody بدون اشتراك جيم فعّال غير مسموح في هذا الفرع');
+          }
+        }
+
+        const paymentMethod = this.paymentMethod(body.paymentMethod);
+        const year = new Date().getFullYear();
+        invoiceNumber = await nextNumber(
+          tx,
+          'club_inbody_invoices',
+          'invoice_number',
+          `INB-${year}`,
+        );
+        chargedAmount = toNum(offer.price);
+        paidAmount = body.paidAmount == null ? chargedAmount : Number(body.paidAmount);
+        if (!Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > chargedAmount) {
+          throw new BadRequestException('المبلغ المدفوع يجب أن يكون بين صفر وسعر القياس أو الباقة');
+        }
+        remainingAmount = Math.round((chargedAmount - paidAmount) * 100) / 100;
+        serviceName = offer.name;
+        receiptPaymentMethod = paymentMethod;
+        const invoice = await tx.club_inbody_invoices.create({
+          data: {
+            invoice_number: invoiceNumber,
+            is_member: true,
+            member_id: memberId,
+            customer_name: null,
+            service_id: offer.id,
+            branch_id: branchId,
+            unit_price: chargedAmount,
+            total_amount: chargedAmount,
+            paid_amount: paidAmount,
+            remaining_amount: remainingAmount,
+            invoice_date: measurementDate,
+            status: remainingAmount > 0 ? (paidAmount > 0 ? 'partial' : 'unpaid') : 'paid',
+            payment_method: paymentMethod,
+            covered_by_subscription: false,
+            created_by: userId ?? null,
+          },
+        });
+        invoiceId = invoice.id;
+        const sale = await this.debts.recordSale({
+          sourceType: 'inbody',
+          sourceRef: invoice.invoice_number,
+          branchId,
+          memberId,
+          customerName: member.name,
+          customerPhone: member.phone,
+          totalAmount: chargedAmount,
+          paidAmount,
+          paymentMethod,
+          payments: Array.isArray(body.payments) ? body.payments as { method: string; amount: number }[] : undefined,
+          transactionDate: measurementDate,
+          description: `تحصيل InBody ${invoice.invoice_number}`,
+          createdBy: userId,
+        }, tx);
+        receiptPaymentMethod = sale.payments?.[0]?.method ?? paymentMethod;
+        receiptPayments = sale.payments;
+        const entitlement = await tx.club_inbody_entitlements.create({
+          data: {
+            member_id: memberId,
+            branch_id: branchId,
+            service_id: offer.id,
+            invoice_id: invoice.id,
+            total_count: offer.measurement_count,
+            used_count: 1,
+            purchased_date: measurementDate,
+            expires_at: offer.validity_days
+              ? addCalendarDays(measurementDate, offer.validity_days)
+              : null,
+          },
+        });
+        balance = {
+          source: 'package',
+          subscriptionId: null,
+          entitlementId: entitlement.id,
+          expiresAt: offer.validity_days
+            ? addCalendarDays(measurementDate, offer.validity_days)
+            : null,
+        };
+        settlementSource = offer.measurement_count > 1 ? 'package_purchase' : 'paid_single';
+
+        if (paidAmount > 0) await recordSystemRevenue(tx, {
+          sourceModule: 'inbody_invoice',
+          sourceRef: invoice.invoice_number,
+          date: measurementDate,
+          source: 'InBody',
+          subSource: offer.name,
+          amount: paidAmount,
+          description: `تحصيل ${offer.name}`,
+          invoiceNumber: invoice.invoice_number,
+          branchId,
+          createdBy: userId,
+          paymentMethod,
+        });
+      }
+
+      const measurement = await tx.club_inbody_measurements.create({
+        data: {
+          member_id: memberId,
+          branch_id: branchId,
+          measurement_date: measurementDate,
+          report_url: reportUrl,
+          notes: body.notes ? String(body.notes).trim() : null,
+          settlement_source: settlementSource,
+          subscription_id: balance?.subscriptionId ?? null,
+          entitlement_id: balance?.entitlementId ?? null,
+          invoice_id: invoiceId,
+          created_by: userId ?? null,
+        },
+      });
+
+      return {
+        id: measurement.id,
+        settlementSource,
+        chargedAmount,
+        invoiceNumber,
+        serviceName,
+        paymentMethod: receiptPaymentMethod,
+        paidAmount,
+        remainingAmount,
+        payments: receiptPayments,
+      };
+    });
+  }
+
   async updateInbodyMeasurement(id: number, body: Record<string, unknown>, user?: JwtUser) {
     const existing = await this.findInbodyMeasurement(id, user);
     this.validateInbodyMeasurementValues(body);
     const memberId = body.memberId != null ? Number(body.memberId) : existing.memberId;
     const measurementDate =
       body.measurementDate != null ? String(body.measurementDate) : existing.measurementDate;
-    this.assertInbodyDateAccess(measurementDate, user);
-    await this.assertInbodyMemberAccess(memberId, user);
-    if (body.memberId != null) await assertMemberExists(this.prisma, memberId);
+    if (body.memberId != null) await this.assertMemberAccess(memberId, user);
     await this.assertUniqueInbodyDay(memberId, measurementDate, id);
     const weight = body.weight !== undefined ? (body.weight != null ? Number(body.weight) : null) : existing.weight;
     const heightCm =
@@ -494,6 +788,8 @@ export class ClubWellnessService {
     branch_id: number;
     unit_price: Prisma.Decimal;
     total_amount: Prisma.Decimal;
+    paid_amount: Prisma.Decimal;
+    remaining_amount: Prisma.Decimal;
     invoice_date: string;
     invoice_time: string | null;
     status: string;
@@ -515,6 +811,8 @@ export class ClubWellnessService {
       branchId: row.branch_id,
       unitPrice: toNum(row.unit_price),
       totalAmount: toNum(row.total_amount),
+      paidAmount: toNum(row.paid_amount),
+      remainingAmount: toNum(row.remaining_amount),
       invoiceDate: row.invoice_date,
       invoiceTime: row.invoice_time,
       status: row.status,
@@ -528,10 +826,12 @@ export class ClubWellnessService {
     };
   }
 
-  async listInbodyInvoices(q: ListClubFitnessDto) {
+  async listInbodyInvoices(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_inbody_invoicesWhereInput = { is_active: true };
     if (q.memberId) where.member_id = Number(q.memberId);
     if (q.branch && q.branch !== 'all') where.branch_id = Number(q.branch);
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) where.branch_id = { in: scope };
 
     const [rows, total] = await Promise.all([
       this.prisma.club_inbody_invoices.findMany({
@@ -554,25 +854,28 @@ export class ClubWellnessService {
     );
   }
 
-  async findInbodyInvoice(id: number) {
+  async findInbodyInvoice(id: number, user?: JwtUser) {
     const row = await this.prisma.club_inbody_invoices.findFirst({
       where: { id, is_active: true },
     });
     if (!row) throw new NotFoundException('فاتورة InBody غير موجودة');
+    this.assertBranchAccess(user, row.branch_id);
     const memberMap = await loadMemberBriefMap(this.prisma, [row.member_id]);
     return { ...this.mapInbodyInvoice(row), ...attachMemberBrief(row.member_id, memberMap) };
   }
 
-  async createInbodyInvoice(body: Record<string, unknown>, userId?: number) {
+  async createInbodyInvoice(body: Record<string, unknown>, userId?: number, user?: JwtUser) {
     if (!body.branchId) {
       throw new BadRequestException('الفرع مطلوب');
     }
+    const branchId = Number(body.branchId);
+    this.assertBranchAccess(user, branchId);
     const isMember = body.isMember !== false;
     if (isMember) {
       if (body.memberId == null) {
         throw new BadRequestException('كود العضو مطلوب لفاتورة العضو');
       }
-      await assertMemberExists(this.prisma, Number(body.memberId));
+      await this.assertMemberAccess(Number(body.memberId), user, branchId);
     }
 
     if (body.serviceId == null) throw new BadRequestException('خدمة InBody مطلوبة');
@@ -606,9 +909,11 @@ export class ClubWellnessService {
           member_id: memberId,
           customer_name: body.customerName ? String(body.customerName) : null,
           service_id: body.serviceId != null ? Number(body.serviceId) : null,
-          branch_id: Number(body.branchId),
+          branch_id: branchId,
           unit_price: unitPrice,
           total_amount: totalAmount,
+          paid_amount: covered ? 0 : totalAmount,
+          remaining_amount: 0,
           invoice_date: invoiceDate,
           invoice_time: body.invoiceTime ? String(body.invoiceTime) : null,
           status,
@@ -656,8 +961,11 @@ export class ClubWellnessService {
     return this.mapInbodyInvoice(row);
   }
 
-  async updateInbodyInvoice(id: number, body: Record<string, unknown>) {
-    const existing = await this.findInbodyInvoice(id);
+  async updateInbodyInvoice(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const existing = await this.findInbodyInvoice(id, user);
+    const branchId = body.branchId != null ? Number(body.branchId) : existing.branchId;
+    this.assertBranchAccess(user, branchId);
+    if (body.memberId != null) await this.assertMemberAccess(Number(body.memberId), user, branchId);
     if (existing.coveredBySubscription) {
       throw new BadRequestException('لا يمكن تعديل فاتورة تم خصمها من الاشتراك');
     }
@@ -710,8 +1018,8 @@ export class ClubWellnessService {
     return this.mapInbodyInvoice(row);
   }
 
-  async removeInbodyInvoice(id: number) {
-    const existing = await this.findInbodyInvoice(id);
+  async removeInbodyInvoice(id: number, user?: JwtUser) {
+    const existing = await this.findInbodyInvoice(id, user);
     // A paid invoice has a GL entry; soft-deleting it would leave revenue on the books with no
     // visible source doc. Block it (GL reversal on delete is out of scope here).
     if (existing.status === 'paid' || existing.coveredBySubscription) {
@@ -726,9 +1034,13 @@ export class ClubWellnessService {
 
   // --- Spa services ---
 
-  async listSpaServices(q: ListClubFitnessDto) {
+  async listSpaServices(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_spa_servicesWhereInput = {};
     if (q.branch && q.branch !== 'all') where.branch_id = Number(q.branch);
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) {
+      where.AND = [{ OR: [{ branch_id: null }, { branch_id: { in: scope } }] }];
+    }
     if (q.search?.trim()) where.name = { contains: q.search.trim() };
 
     const [rows, total] = await Promise.all([
@@ -758,9 +1070,13 @@ export class ClubWellnessService {
     );
   }
 
-  async listSpaServicesCatalog() {
+  async listSpaServicesCatalog(user?: JwtUser) {
+    const scope = this.branchScope.allowedBranchIds(user);
     const rows = await this.prisma.club_spa_services.findMany({
-      where: { is_active: true },
+      where: {
+        is_active: true,
+        ...(scope !== null ? { OR: [{ branch_id: null }, { branch_id: { in: scope } }] } : {}),
+      },
       orderBy: { name: 'asc' },
     });
     return rows.map((r) => ({
@@ -772,9 +1088,10 @@ export class ClubWellnessService {
     }));
   }
 
-  async findSpaService(id: number) {
+  async findSpaService(id: number, user?: JwtUser) {
     const row = await this.prisma.club_spa_services.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('خدمة السبا غير موجودة');
+    if (row.branch_id != null) this.assertBranchAccess(user, row.branch_id);
     return {
       id: row.id,
       name: row.name,
@@ -788,25 +1105,36 @@ export class ClubWellnessService {
     };
   }
 
-  async createSpaService(body: Record<string, unknown>) {
+  async createSpaService(body: Record<string, unknown>, user?: JwtUser) {
     if (!body.name || body.price == null) {
       throw new BadRequestException('اسم الخدمة والسعر مطلوبان');
     }
+    const branchId = body.branchId != null
+      ? Number(body.branchId)
+      : user && user.level !== 1
+        ? Number(user.branch)
+        : null;
+    this.assertCatalogWriteAccess(user, branchId);
     const row = await this.prisma.club_spa_services.create({
       data: {
         name: String(body.name).trim(),
         description: body.description ? String(body.description) : null,
         duration: body.duration != null ? Number(body.duration) : 60,
         price: Number(body.price),
-        branch_id: body.branchId != null ? Number(body.branchId) : null,
+        branch_id: branchId,
         is_active: body.isActive !== false,
       },
     });
-    return this.findSpaService(row.id);
+    return this.findSpaService(row.id, user);
   }
 
-  async updateSpaService(id: number, body: Record<string, unknown>) {
-    await this.findSpaService(id);
+  async updateSpaService(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const existing = await this.prisma.club_spa_services.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('خدمة السبا غير موجودة');
+    this.assertCatalogWriteAccess(user, existing.branch_id);
+    if (body.branchId !== undefined) {
+      this.assertCatalogWriteAccess(user, body.branchId != null ? Number(body.branchId) : null);
+    }
     await this.prisma.club_spa_services.update({
       where: { id },
       data: {
@@ -818,11 +1146,13 @@ export class ClubWellnessService {
         ...(body.isActive !== undefined ? { is_active: Boolean(body.isActive) } : {}),
       },
     });
-    return this.findSpaService(id);
+    return this.findSpaService(id, user);
   }
 
-  async removeSpaService(id: number) {
-    await this.findSpaService(id);
+  async removeSpaService(id: number, user?: JwtUser) {
+    const existing = await this.prisma.club_spa_services.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('خدمة السبا غير موجودة');
+    this.assertCatalogWriteAccess(user, existing.branch_id);
     await this.prisma.club_spa_services.update({
       where: { id },
       data: { is_active: false },
@@ -881,10 +1211,12 @@ export class ClubWellnessService {
     };
   }
 
-  async listSpaBookings(q: ListClubFitnessDto) {
+  async listSpaBookings(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_spa_bookingsWhereInput = { is_active: true };
     if (q.memberId) where.member_id = Number(q.memberId);
     if (q.branch && q.branch !== 'all') where.branch_id = Number(q.branch);
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) where.branch_id = { in: scope };
 
     const [rows, total] = await Promise.all([
       this.prisma.club_spa_bookings.findMany({
@@ -908,23 +1240,24 @@ export class ClubWellnessService {
     );
   }
 
-  async findSpaBooking(id: number) {
+  async findSpaBooking(id: number, user?: JwtUser) {
     const row = await this.prisma.club_spa_bookings.findFirst({
       where: { id, is_active: true },
       include: { service: { select: { id: true, name: true, price: true, duration: true } } },
     });
     if (!row) throw new NotFoundException('حجز السبا غير موجود');
+    this.assertBranchAccess(user, row.branch_id);
     const memberMap = await loadMemberBriefMap(this.prisma, [row.member_id]);
     return { ...this.mapSpaBooking(row), ...attachMemberBrief(row.member_id, memberMap) };
   }
 
-  async createSpaBooking(body: Record<string, unknown>) {
+  async createSpaBooking(body: Record<string, unknown>, user?: JwtUser) {
     if (!body.serviceId || !body.branchId || !body.bookingDate || !body.bookingTime) {
       throw new BadRequestException('الخدمة والفرع وتاريخ ووقت الحجز مطلوبة');
     }
-    if (body.memberId != null) {
-      await assertMemberExists(this.prisma, Number(body.memberId));
-    }
+    const branchId = Number(body.branchId);
+    this.assertBranchAccess(user, branchId);
+    if (body.memberId != null) await this.assertMemberAccess(Number(body.memberId), user, branchId);
 
     const service = await this.prisma.club_spa_services.findUnique({
       where: { id: Number(body.serviceId) },
@@ -947,7 +1280,7 @@ export class ClubWellnessService {
           customer_name: body.customerName ? String(body.customerName) : null,
           customer_phone: body.customerPhone ? String(body.customerPhone) : null,
           service_id: Number(body.serviceId),
-          branch_id: Number(body.branchId),
+          branch_id: branchId,
           booking_date: String(body.bookingDate),
           booking_time: String(body.bookingTime),
           duration,
@@ -963,8 +1296,11 @@ export class ClubWellnessService {
     return this.mapSpaBooking(row);
   }
 
-  async updateSpaBooking(id: number, body: Record<string, unknown>) {
-    const existing = await this.findSpaBooking(id);
+  async updateSpaBooking(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const existing = await this.findSpaBooking(id, user);
+    const branchId = body.branchId != null ? Number(body.branchId) : existing.branchId;
+    this.assertBranchAccess(user, branchId);
+    if (body.memberId != null) await this.assertMemberAccess(Number(body.memberId), user, branchId);
     const serviceId = body.serviceId != null ? Number(body.serviceId) : existing.serviceId;
     const bookingDate = body.bookingDate != null ? String(body.bookingDate) : existing.bookingDate;
     const bookingTime = body.bookingTime != null ? String(body.bookingTime) : existing.bookingTime;
@@ -1040,8 +1376,8 @@ export class ClubWellnessService {
     return this.mapSpaBooking(row);
   }
 
-  async removeSpaBooking(id: number) {
-    await this.findSpaBooking(id);
+  async removeSpaBooking(id: number, user?: JwtUser) {
+    await this.findSpaBooking(id, user);
     await this.prisma.club_spa_bookings.update({
       where: { id },
       data: { is_active: false },
@@ -1093,10 +1429,12 @@ export class ClubWellnessService {
     };
   }
 
-  async listSpaInvoices(q: ListClubFitnessDto) {
+  async listSpaInvoices(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_spa_invoicesWhereInput = { is_active: true };
     if (q.memberId) where.member_id = Number(q.memberId);
     if (q.branch && q.branch !== 'all') where.branch_id = Number(q.branch);
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) where.branch_id = { in: scope };
 
     const [rows, total] = await Promise.all([
       this.prisma.club_spa_invoices.findMany({
@@ -1120,21 +1458,24 @@ export class ClubWellnessService {
     );
   }
 
-  async findSpaInvoice(id: number) {
+  async findSpaInvoice(id: number, user?: JwtUser) {
     const row = await this.prisma.club_spa_invoices.findFirst({
       where: { id, is_active: true },
       include: { service: { select: { id: true, name: true } } },
     });
     if (!row) throw new NotFoundException('فاتورة السبا غير موجودة');
+    this.assertBranchAccess(user, row.branch_id);
     const memberMap = await loadMemberBriefMap(this.prisma, [row.member_id]);
     return { ...this.mapSpaInvoice(row), ...attachMemberBrief(row.member_id, memberMap) };
   }
 
-  async createSpaInvoice(body: Record<string, unknown>, userId?: number) {
+  async createSpaInvoice(body: Record<string, unknown>, userId?: number, user?: JwtUser) {
     if (!body.memberId || !body.serviceId || !body.branchId) {
       throw new BadRequestException('العضو والخدمة والفرع مطلوبة');
     }
-    await assertMemberExists(this.prisma, Number(body.memberId));
+    const branchId = Number(body.branchId);
+    this.assertBranchAccess(user, branchId);
+    await this.assertMemberAccess(Number(body.memberId), user, branchId);
 
     const quantity = assertPositive(body.quantity ?? 1, 'الكمية');
     const service = await this.prisma.club_spa_services.findUnique({
@@ -1165,7 +1506,7 @@ export class ClubWellnessService {
           invoice_number: invoiceNumber,
           member_id: Number(body.memberId),
           service_id: Number(body.serviceId),
-          branch_id: Number(body.branchId),
+          branch_id: branchId,
           quantity,
           unit_price: unitPrice,
           total_amount: totalAmount,
@@ -1215,8 +1556,11 @@ export class ClubWellnessService {
     return this.mapSpaInvoice(row);
   }
 
-  async updateSpaInvoice(id: number, body: Record<string, unknown>) {
-    const existing = await this.findSpaInvoice(id);
+  async updateSpaInvoice(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const existing = await this.findSpaInvoice(id, user);
+    const branchId = body.branchId != null ? Number(body.branchId) : existing.branchId;
+    this.assertBranchAccess(user, branchId);
+    if (body.memberId != null) await this.assertMemberAccess(Number(body.memberId), user, branchId);
     if (existing.coveredBySubscription) {
       throw new BadRequestException('لا يمكن تعديل فاتورة تم خصمها من الاشتراك');
     }
@@ -1270,8 +1614,8 @@ export class ClubWellnessService {
     return this.mapSpaInvoice(row);
   }
 
-  async removeSpaInvoice(id: number) {
-    const existing = await this.findSpaInvoice(id);
+  async removeSpaInvoice(id: number, user?: JwtUser) {
+    const existing = await this.findSpaInvoice(id, user);
     // A paid invoice has a GL entry; block soft-delete so revenue never orphans (GL reversal on
     // delete is out of scope here).
     if (existing.status === 'paid' || existing.coveredBySubscription) {
@@ -1286,22 +1630,30 @@ export class ClubWellnessService {
 
   // --- InBody services catalog ---
 
-  async listInbodyServicesCatalog() {
+  async listInbodyServicesCatalog(user?: JwtUser) {
+    const scope = this.branchScope.allowedBranchIds(user);
     const rows = await this.prisma.club_inbody_services.findMany({
-      where: { is_active: true },
+      where: {
+        is_active: true,
+        ...(scope !== null ? { OR: [{ branch_id: null }, { branch_id: { in: scope } }] } : {}),
+      },
       orderBy: { name: 'asc' },
     });
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
       price: toNum(r.price),
+      measurementCount: r.measurement_count,
+      validityDays: r.validity_days,
       branchId: r.branch_id,
     }));
   }
 
-  async listInbodyServices(q: ListClubFitnessDto) {
+  async listInbodyServices(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_inbody_servicesWhereInput = {};
     if (q.branch && q.branch !== 'all') where.branch_id = Number(q.branch);
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) where.AND = [{ OR: [{ branch_id: null }, { branch_id: { in: scope } }] }];
     if (q.search?.trim()) where.name = { contains: q.search.trim() };
     const [rows, total] = await Promise.all([
       this.prisma.club_inbody_services.findMany({
@@ -1318,6 +1670,8 @@ export class ClubWellnessService {
         name: r.name,
         description: r.description,
         price: toNum(r.price),
+        measurementCount: r.measurement_count,
+        validityDays: r.validity_days,
         branchId: r.branch_id,
         isActive: r.is_active,
       })),
@@ -1327,14 +1681,17 @@ export class ClubWellnessService {
     );
   }
 
-  async findInbodyService(id: number) {
+  async findInbodyService(id: number, user?: JwtUser) {
     const row = await this.prisma.club_inbody_services.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('خدمة InBody غير موجودة');
+    if (row.branch_id != null) this.assertBranchAccess(user, row.branch_id);
     return {
       id: row.id,
       name: row.name,
       description: row.description,
       price: toNum(row.price),
+      measurementCount: row.measurement_count,
+      validityDays: row.validity_days,
       branchId: row.branch_id,
       isActive: row.is_active,
       createdAt: row.created_at,
@@ -1342,49 +1699,113 @@ export class ClubWellnessService {
     };
   }
 
-  async createInbodyService(body: Record<string, unknown>) {
-    if (!body.name || body.price == null) {
-      throw new BadRequestException('اسم الخدمة والسعر مطلوبان');
-    }
-    const price = Number(body.price);
-    if (!Number.isFinite(price) || price < 0) throw new BadRequestException('السعر غير صحيح');
+  async createInbodyService(body: Record<string, unknown>, user?: JwtUser) {
+    const offer = validateInbodyOffer(body);
+    const branchId = body.branchId != null
+      ? Number(body.branchId)
+      : user && user.level !== 1
+        ? Number(user.branch)
+        : null;
+    this.assertCatalogWriteAccess(user, branchId);
     const row = await this.prisma.club_inbody_services.create({
       data: {
-        name: String(body.name).trim(),
+        name: offer.name,
         description: body.description ? String(body.description) : null,
-        price,
-        branch_id: body.branchId != null ? Number(body.branchId) : null,
+        price: offer.price,
+        measurement_count: offer.measurementCount,
+        validity_days: offer.validityDays,
+        branch_id: branchId,
         is_active: body.isActive !== false,
       },
     });
-    return this.findInbodyService(row.id);
+    return this.findInbodyService(row.id, user);
   }
 
-  async updateInbodyService(id: number, body: Record<string, unknown>) {
-    await this.findInbodyService(id);
-    if (body.price != null && (!Number.isFinite(Number(body.price)) || Number(body.price) < 0)) {
-      throw new BadRequestException('السعر غير صحيح');
+  async updateInbodyService(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const existing = await this.prisma.club_inbody_services.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('خدمة InBody غير موجودة');
+    this.assertCatalogWriteAccess(user, existing.branch_id);
+    if (body.branchId !== undefined) {
+      this.assertCatalogWriteAccess(user, body.branchId != null ? Number(body.branchId) : null);
     }
+    const offer = validateInbodyOffer({
+      name: body.name ?? existing.name,
+      measurementCount: body.measurementCount ?? existing.measurement_count,
+      price: body.price ?? toNum(existing.price),
+      validityDays: body.validityDays !== undefined ? body.validityDays : existing.validity_days,
+    });
     await this.prisma.club_inbody_services.update({
       where: { id },
       data: {
-        ...(body.name != null ? { name: String(body.name).trim() } : {}),
+        name: offer.name,
         ...(body.description !== undefined
           ? { description: body.description ? String(body.description) : null }
           : {}),
-        ...(body.price != null ? { price: Number(body.price) } : {}),
+        price: offer.price,
+        measurement_count: offer.measurementCount,
+        validity_days: offer.validityDays,
         ...(body.branchId !== undefined
           ? { branch_id: body.branchId != null ? Number(body.branchId) : null }
           : {}),
         ...(body.isActive !== undefined ? { is_active: Boolean(body.isActive) } : {}),
       },
     });
-    return this.findInbodyService(id);
+    return this.findInbodyService(id, user);
   }
 
-  async removeInbodyService(id: number) {
-    await this.findInbodyService(id);
+  async removeInbodyService(id: number, user?: JwtUser) {
+    const existing = await this.prisma.club_inbody_services.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException('خدمة InBody غير موجودة');
+    this.assertCatalogWriteAccess(user, existing.branch_id);
     await this.prisma.club_inbody_services.update({ where: { id }, data: { is_active: false } });
     return { success: true };
   }
+
+  async getInbodyBranchSettings(branchId: number, user?: JwtUser) {
+    this.assertBranchAccess(user, branchId);
+    const [settings, offers] = await Promise.all([
+      this.prisma.club_inbody_branch_settings.findUnique({ where: { branch_id: branchId } }),
+      this.prisma.club_inbody_services.findMany({
+        where: { branch_id: branchId },
+        orderBy: [{ measurement_count: 'asc' }, { price: 'asc' }],
+      }),
+    ]);
+    return {
+      branchId,
+      allowWithoutActiveMembership: settings?.allow_without_active_membership ?? false,
+      offers: offers.map((offer) => ({
+        id: offer.id,
+        name: offer.name,
+        description: offer.description,
+        price: toNum(offer.price),
+        measurementCount: offer.measurement_count,
+        validityDays: offer.validity_days,
+        branchId: offer.branch_id,
+        isActive: offer.is_active,
+      })),
+    };
+  }
+
+  async updateInbodyBranchSettings(
+    branchId: number,
+    body: Record<string, unknown>,
+    user?: JwtUser,
+  ) {
+    this.assertBranchAccess(user, branchId);
+    const row = await this.prisma.club_inbody_branch_settings.upsert({
+      where: { branch_id: branchId },
+      create: {
+        branch_id: branchId,
+        allow_without_active_membership: body.allowWithoutActiveMembership === true,
+      },
+      update: {
+        allow_without_active_membership: body.allowWithoutActiveMembership === true,
+      },
+    });
+    return {
+      branchId: row.branch_id,
+      allowWithoutActiveMembership: row.allow_without_active_membership,
+    };
+  }
 }
+

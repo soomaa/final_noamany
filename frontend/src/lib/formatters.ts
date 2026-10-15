@@ -3,7 +3,32 @@ import { ar, enUS } from 'date-fns/locale';
 import { formatDigits } from '@/lib/utils';
 import type { Locale } from '@/store/locale';
 
-const STORAGE_KEY = 'one80_locale';
+const STORAGE_KEY = 'hr_locale';
+const moneyFormatters = [0, 2].map((digits) => new Intl.NumberFormat('en-US', {
+  minimumFractionDigits: digits,
+  maximumFractionDigits: digits,
+}));
+const numberFormatters = {
+  en: new Intl.NumberFormat('en-US'),
+  ar: new Intl.NumberFormat('en-US'),
+};
+const clockFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function clockFormatter(locale: Locale, seconds: boolean, includeDate: boolean): Intl.DateTimeFormat {
+  const key = `${locale}:${seconds}:${includeDate}`;
+  let formatter = clockFormatters.get(key);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'ar-EG-u-nu-latn', {
+      ...(includeDate ? { year: 'numeric', month: '2-digit', day: '2-digit' } as const : {}),
+      hour: 'numeric',
+      minute: '2-digit',
+      ...(seconds ? { second: '2-digit' as const } : {}),
+      hour12: true,
+    });
+    clockFormatters.set(key, formatter);
+  }
+  return formatter;
+}
 
 export function getStoredLocale(): Locale {
   try {
@@ -26,13 +51,16 @@ export function formatMoney(
   if (value == null || value === '') return '—';
   const n = typeof value === 'string' ? parseFloat(value) : value;
   if (Number.isNaN(n)) return '—';
-  const numLocale = locale === 'en' ? 'en-US' : 'ar-EG';
-  const curr = currency ?? (locale === 'en' ? 'EGP' : 'ج.م');
-  const formatted = new Intl.NumberFormat(numLocale, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
-  return `${formatDigits(formatted, locale)} ${curr}`;
+  const curr = currency ?? 'EGP';
+  return `${formatMoneyNumber(n)} ${curr}`;
+}
+
+export function formatMoneyNumber(value: number | string): string {
+  const n = typeof value === 'string' ? parseFloat(value) : value;
+  if (!Number.isFinite(n)) return '—';
+  const cents = Math.round(n * 100);
+  const hasPiastres = Math.abs(cents % 100) !== 0;
+  return moneyFormatters[hasPiastres ? 1 : 0].format(cents / 100);
 }
 
 export function formatNum(
@@ -42,8 +70,7 @@ export function formatNum(
   if (value == null || value === '') return '—';
   const n = typeof value === 'string' ? parseFloat(value) : value;
   if (Number.isNaN(n)) return '—';
-  const numLocale = locale === 'en' ? 'en-US' : 'ar-SA';
-  return formatDigits(new Intl.NumberFormat(numLocale).format(n), locale);
+  return formatDigits(numberFormatters[locale].format(n), locale);
 }
 
 /** YYYY-MM-DD from the LOCAL calendar day (never use toISOString().slice(0,10) — it shifts to UTC) */
@@ -118,12 +145,7 @@ export function formatTimeFromDate(
   if (!value) return '—';
   const date = typeof value === 'string' ? parseISO(value) : value;
   if (!isValid(date)) return '—';
-  const result = new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'ar-EG', {
-    hour: 'numeric',
-    minute: '2-digit',
-    ...(options.seconds ? { second: '2-digit' as const } : {}),
-    hour12: true,
-  }).format(date);
+  const result = clockFormatter(locale, Boolean(options.seconds), false).format(date);
   return formatDigits(result, locale);
 }
 
@@ -136,14 +158,6 @@ export function formatDateTime(
   if (!value) return '—';
   const date = typeof value === 'string' ? parseISO(value) : value;
   if (!isValid(date)) return '—';
-  const result = new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'ar-EG', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: 'numeric',
-    minute: '2-digit',
-    ...(options.seconds ? { second: '2-digit' as const } : {}),
-    hour12: true,
-  }).format(date);
+  const result = clockFormatter(locale, Boolean(options.seconds), true).format(date);
   return formatDigits(result, locale);
 }

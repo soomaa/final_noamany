@@ -3,6 +3,40 @@ import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { cairoDateString } from '../../common/utils/cairo-date';
+
+type SalaryDoor = {
+  salary_start: number | null;
+  x_1: number | null;
+  x_2: number | null;
+  x_3: number | null;
+  x_4: number | null;
+  x_5: number | null;
+  x_6: number | null;
+  x_7: number | null;
+  x_8: number | null;
+  x_9: number | null;
+  x_10: number | null;
+  x_11: number | null;
+  x_12: number | null;
+  x_13: number | null;
+  x_14: number | null;
+  x_15: number | null;
+};
+
+export function yearsOfService(startWorkDate: string | null | undefined, today: string): number {
+  if (!startWorkDate || startWorkDate.length < 10 || today.length < 10) return 0;
+  const start = Date.parse(`${startWorkDate.slice(0, 10)}T00:00:00Z`);
+  const end = Date.parse(`${today.slice(0, 10)}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return 0;
+  return Math.floor((end - start) / (365.25 * 86_400_000));
+}
+
+export function scaleSalaryForYears(row: SalaryDoor, years: number): number {
+  const step = Math.min(15, Math.max(1, years + 1));
+  const fromStep = row[`x_${step}` as keyof SalaryDoor];
+  return Number(fromStep ?? row.salary_start ?? 0);
+}
 
 function buildSalarySteps(salaryStart: number, yearBonusValue: number) {
   const steps: Record<string, number> = {};
@@ -40,6 +74,47 @@ export class SalaryScaleService {
       yearBonusValue: r.year_bonus_value,
     }));
     return paginated(data, total, q.page, q.pageSize);
+  }
+
+  /**
+   * Apply this grade to employees whose degree / rank / qualification matches
+   * the scale row, when their basic salary is still empty. Years of service
+   * pick the matching x_N step when present; otherwise salary_start.
+   */
+  async applyToEmployees(id: number) {
+    const row = await this.findOrThrow(id);
+    const salaryStart = row.salary_start ?? 0;
+    if (salaryStart <= 0) throw new NotFoundException('قيمة بداية السلم غير صالحة');
+    const martba = (row.martba ?? '').trim();
+    const mo2hel = (row.mo2hel ?? '').trim();
+    const matchOr: Prisma.employeesWhereInput[] = [{ degree_id: String(row.id) }];
+    if (martba) {
+      matchOr.push({ degree_id: martba }, { employee_degree: martba });
+    }
+    if (mo2hel) {
+      matchOr.push({ employee_qualification: mo2hel });
+    }
+    const candidates = await this.prisma.employees.findMany({
+      where: {
+        AND: [
+          { OR: matchOr },
+          { OR: [{ basic_salary: null }, { basic_salary: { lte: 0 } }] },
+        ],
+      },
+      select: { id: true, start_work_date_m: true },
+    });
+    const today = cairoDateString();
+    let updated = 0;
+    for (const emp of candidates) {
+      const salary = scaleSalaryForYears(row, yearsOfService(emp.start_work_date_m, today));
+      if (salary <= 0) continue;
+      await this.prisma.employees.update({
+        where: { id: emp.id },
+        data: { basic_salary: salary },
+      });
+      updated += 1;
+    }
+    return { id, updated, salaryStart };
   }
 
   async create(body: { mo2hel: string; martba: string; dawamType: string; salaryStart: number; yearBonusValue: number }) {

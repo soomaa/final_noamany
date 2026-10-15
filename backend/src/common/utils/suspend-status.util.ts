@@ -9,7 +9,7 @@ export type SuspendUiStatus = 'pending' | 'incoming' | 'approved' | 'rejected' |
  *   - cancel()  writes 5  (leaves, alongside reason_action='cancel')
  *   - approve   walks 0 → 1 → 4 (nextApproveSuspend)
  *
- *   approved filter = { APPROVED_L1, APPROVED }  (1, 4)
+ *   approved filter = { APPROVED }  (4); APPROVED_L1 remains pending.
  *   "rejected" filter = { REJECTED, CANCELLED }  (2, 5) — the legacy UI renders
  *      cancelled rows under the same "rejected" badge.
  *
@@ -28,9 +28,9 @@ export const SuspendStatus = {
 /** @deprecated use SuspendStatus.INVESTIGATING */
 export const SUSPEND_INVESTIGATING = SuspendStatus.INVESTIGATING;
 
-/** suspend 0=pending/incoming, 1|4=approved path, 2|5=rejected */
-/** suspend values that count as "approved" in list filters (1, 4). */
-export const SUSPEND_APPROVED: number[] = [SuspendStatus.APPROVED_L1, SuspendStatus.APPROVED];
+/** suspend 0|1=pending path, 4=fully approved, 2|5=rejected */
+export const SUSPEND_APPROVED: number[] = [SuspendStatus.APPROVED];
+export const SUSPEND_PENDING: number[] = [SuspendStatus.INCOMING, SuspendStatus.APPROVED_L1];
 /** suspend values shown under the "rejected" filter — rejected + cancelled (2, 5). */
 export const SUSPEND_REJECTED: number[] = [SuspendStatus.REJECTED, SuspendStatus.CANCELLED];
 
@@ -81,7 +81,7 @@ export function buildSuspendWhere(status?: string): { suspend?: number | { in: n
     case 'incoming':
       return { suspend: SuspendStatus.INCOMING };
     case 'pending':
-      return { suspend: { in: [SuspendStatus.INCOMING, SuspendStatus.APPROVED_L1] } };
+      return { suspend: { in: SUSPEND_PENDING } };
     case 'approved':
       return { suspend: { in: SUSPEND_APPROVED } };
     case 'rejected':

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  ForbiddenException,
   Get,
   Param,
   ParseIntPipe,
@@ -16,6 +17,8 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { AppManagementService } from './app-management.service';
+import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import {
   CreateInvitationDto,
   CreateMemberNotificationDto,
@@ -30,12 +33,26 @@ import {
   UpsertNewsDto,
   UpsertOfferDto,
   UpsertTrainerDto,
+  UpsertPaymentMethodDto,
 } from './dto/app-management.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('app')
 export class AppManagementController {
-  constructor(private readonly service: AppManagementService) {}
+  constructor(
+    private readonly service: AppManagementService,
+    private readonly permissions: PermissionEngineService,
+  ) {}
+
+  private invitationResource(status: AmInvitationStatus) {
+    return `app-management.invitations.${status === 'pending' ? 'sent' : status}`;
+  }
+
+  private async assertInvitationPermission(userId: number, status: AmInvitationStatus, action: 'view' | 'update') {
+    if (!await this.permissions.can(userId, this.invitationResource(status), action)) {
+      throw new ForbiddenException('ليس لديك صلاحية لهذا النوع من الدعوات');
+    }
+  }
 
   @Get('about')
   @Public()
@@ -50,40 +67,70 @@ export class AppManagementController {
   }
 
   @Get('invitations')
-  @RequiresPermission('app-management.invitations:view')
-  listInvitations(@Query() query: ListInvitationsDto) {
+  @RequiresPermission(
+    'app-management.invitations.sent:view',
+    'app-management.invitations.accepted:view',
+    'app-management.invitations.attended:view',
+    'app-management.invitations.rejected:view',
+  )
+  async listInvitations(@Query() query: ListInvitationsDto, @CurrentUser('sub') userId: number) {
+    if (query.status) {
+      await this.assertInvitationPermission(userId, query.status, 'view');
+    } else {
+      const statuses: AmInvitationStatus[] = ['pending', 'accepted', 'attended', 'rejected'];
+      const allowed = await Promise.all(statuses.map((status) => this.permissions.can(userId, this.invitationResource(status), 'view')));
+      if (!allowed.every(Boolean)) throw new ForbiddenException('اختر حالة دعوة مسموحًا لك بعرضها');
+    }
     return this.service.listInvitations(query);
   }
 
   @Get('invitations/status/:status')
-  @RequiresPermission('app-management.invitations:view')
-  listByStatus(@Param('status') status: AmInvitationStatus) {
+  @RequiresPermission(
+    'app-management.invitations.sent:view',
+    'app-management.invitations.accepted:view',
+    'app-management.invitations.attended:view',
+    'app-management.invitations.rejected:view',
+  )
+  async listByStatus(@Param('status') status: AmInvitationStatus, @CurrentUser('sub') userId: number) {
+    await this.assertInvitationPermission(userId, status, 'view');
     return this.service.listInvitationsByStatus(status);
   }
 
   @Post('invitations')
-  @RequiresPermission('app-management.invitations:create')
-  createInvitation(@Body() body: CreateInvitationDto) {
-    return this.service.createInvitation(body);
+  @RequiresPermission('app-management.invitations.sent:create')
+  createInvitation(@Body() body: CreateInvitationDto, @CurrentUser() user: JwtUser) {
+    return this.service.createInvitation(body, user);
   }
 
   @Put('invitations/:id')
-  @RequiresPermission('app-management.invitations:update')
-  updateInvitation(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateInvitationDto, @CurrentUser() user: import('../../common/types/jwt-user').JwtUser) {
-    return this.service.updateInvitation(id, body, user.sub);
+  @RequiresPermission(
+    'app-management.invitations.sent:update',
+    'app-management.invitations.accepted:update',
+    'app-management.invitations.attended:update',
+    'app-management.invitations.rejected:update',
+  )
+  async updateInvitation(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateInvitationDto, @CurrentUser('sub') userId: number) {
+    await this.assertInvitationPermission(userId, await this.service.invitationStatus(id), 'update');
+    return this.service.updateInvitation(id, body);
   }
 
   @Put('invitations/:id/status')
-  @RequiresPermission('app-management.invitations:update')
-  updateInvitationStatus(
+  @RequiresPermission(
+    'app-management.invitations.sent:update',
+    'app-management.invitations.accepted:update',
+    'app-management.invitations.attended:update',
+    'app-management.invitations.rejected:update',
+  )
+  async updateInvitationStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { status: AmInvitationStatus; rejectionReason?: string },
-    @CurrentUser() user: import('../../common/types/jwt-user').JwtUser,
+    @CurrentUser('sub') userId: number,
   ) {
+    await this.assertInvitationPermission(userId, await this.service.invitationStatus(id), 'update');
     return this.service.updateInvitation(id, {
       status: body.status,
       rejectionReason: body.rejectionReason,
-    }, user.sub);
+    });
   }
 
   @Get('offers')
@@ -188,20 +235,6 @@ export class AppManagementController {
     return this.service.listNews(query);
   }
 
-  /** Fixed labels for the typed news filter in the member mobile app. */
-  @Get('news/types')
-  @Public()
-  newsTypes() {
-    return {
-      data: [
-        { value: 'nutrition', label: 'التغذية' },
-        { value: 'championships', label: 'البطولات' },
-        { value: 'exercises', label: 'التمارين' },
-        { value: 'supplements', label: 'المكملات' },
-      ],
-    };
-  }
-
   @Post('news')
   @RequiresPermission('app-management.news:create')
   createNews(@Body() body: UpsertNewsDto) {
@@ -248,22 +281,53 @@ export class AppManagementController {
 
   @Get('notifications')
   @RequiresPermission('app-management.notifications:view')
-  listMemberNotifications(@Query() query: ListMemberNotificationsDto) {
-    return this.service.listMemberNotifications(query);
+  listMemberNotifications(@Query() query: ListMemberNotificationsDto, @CurrentUser() user: JwtUser) {
+    return this.service.listMemberNotifications(query, user);
   }
 
   @Post('notifications')
   @RequiresPermission('app-management.notifications:create')
   createMemberNotification(
     @Body() body: CreateMemberNotificationDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.createMemberNotification(body, userId);
+    return this.service.createMemberNotification(body, user.sub, user);
   }
 
   @Delete('notifications/:id')
   @RequiresPermission('app-management.notifications:delete')
   deleteMemberNotification(@Param('id', ParseIntPipe) id: number) {
     return this.service.deleteMemberNotification(id);
+  }
+
+  @Get('payment-methods/manage')
+  @RequiresPermission('app-management.payment-methods:view')
+  listPaymentMethodsForAdmin(@CurrentUser() user: JwtUser) {
+    return this.service.listPaymentMethodsForAdmin(user);
+  }
+
+  @Get('payment-methods')
+  @Public()
+  listPaymentMethods(@Query('branchId') branchId?: string) {
+    const parsed = branchId != null && branchId !== '' ? Number(branchId) : NaN;
+    return this.service.listPaymentMethodsForMember(Number.isInteger(parsed) ? parsed : undefined);
+  }
+
+  @Post('payment-methods')
+  @RequiresPermission('app-management.payment-methods:create')
+  createPaymentMethod(@Body() body: UpsertPaymentMethodDto, @CurrentUser() user: JwtUser) {
+    return this.service.createPaymentMethod(body, user);
+  }
+
+  @Put('payment-methods/:id')
+  @RequiresPermission('app-management.payment-methods:update')
+  updatePaymentMethod(@Param('id', ParseIntPipe) id: number, @Body() body: UpsertPaymentMethodDto, @CurrentUser() user: JwtUser) {
+    return this.service.updatePaymentMethod(id, body, user);
+  }
+
+  @Delete('payment-methods/:id')
+  @RequiresPermission('app-management.payment-methods:delete')
+  deletePaymentMethod(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.deletePaymentMethod(id, user);
   }
 }

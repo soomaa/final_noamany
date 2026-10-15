@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Settings } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { DataTable } from '@/components/common/data-table';
 import { Money } from '@/components/common/formatters';
 import { FilterBar } from '@/components/common/filter-bar';
@@ -12,9 +13,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getPayrollComponents } from '@/lib/i18n-constants';
 import { isNotImplemented, usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { TaxPolicyPanel } from './tax-policy-panel';
+import { SettlementPolicyPanel } from './settlement-policy-panel';
 
 const CATEGORY_KEYS: Record<string, string> = {
   earning: uiStatic('استحقاق'),
@@ -74,8 +77,12 @@ export function PayrollSetupPage() {
     <div className="space-y-6">
       <PageHeader
         title={ui('إعداد الرواتب')}
-        description={ui('الراتب الأساسي والبدلات والاستقطاعات والتأمينات والضرائب')}
-        actions={<Button variant="brand" size="sm"><Settings className="size-4" />{ui('مكون جديد')}</Button>}
+        description={ui('الكتالوج هنا يغذي تبويب مالية الموظف ومحرك المرتبات — التعديل من مكونات الراتب')}
+        actions={
+          <Button variant="brand" size="sm" asChild>
+            <Link to="/settings/pay-components"><Settings className="size-4" />{ui('مكون جديد')}</Link>
+          </Button>
+        }
       />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -91,6 +98,7 @@ export function PayrollSetupPage() {
 
       <FilterBar searchPlaceholder={ui('بحث في مكونات الراتب…')} />
       <DataTable
+        exportSource={{ resource: 'payroll/components', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -105,6 +113,9 @@ export function PayrollSetupPage() {
         onSearchChange={(s) => setParams({ search: s, page: 1 })}
         emptyTitle={ui('لا توجد مكونات — أضف من البطاقات أعلاه')}
       />
+
+      <TaxPolicyPanel />
+      <SettlementPolicyPanel />
     </div>
   );
 }

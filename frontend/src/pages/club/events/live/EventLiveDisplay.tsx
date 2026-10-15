@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card } from "@/components/ui/card";
@@ -47,7 +48,7 @@ const CountUp = ({ value, className }: { value: number; className?: string }) =>
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [value]);
-  return <span className={className}>{display}</span>;
+  return <span className={className}>{formatDisplayNumber(display)}</span>;
 };
 
 /** Burst of small colored dots that fall + fade — fires when a new attendee arrives. */
@@ -403,7 +404,7 @@ const EventLiveDisplay = () => {
               <div className="absolute inset-0 bg-[hsl(var(--grad-gold))]/30 blur-xl rounded-full animate-pulse" />
               <img
                 src={resolveEventLogo(settings.logo_url)}
-                alt={ui("شعار Noamany")}
+                alt={ui("شعار ONE80")}
                 className="relative h-10 sm:h-14 w-auto object-contain"
                 style={{ animation: "float-y 4s ease-in-out infinite" }}
               />
@@ -445,7 +446,7 @@ const EventLiveDisplay = () => {
                 />
                 <Clock className="relative h-3.5 w-3.5 text-[hsl(var(--grad-gold))]/80" />
                 <span className="relative text-base lg:text-lg font-extrabold tabular-nums leading-none text-[hsl(var(--grad-cream))] [text-shadow:0_1px_8px_rgba(212,162,41,0.35)]">
-                  {now.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", hour12: true })}
+                  {now.toLocaleTimeString("ar-SA-u-nu-latn", { hour: "2-digit", minute: "2-digit", hour12: true })}
                 </span>
               </div>
 
@@ -456,11 +457,11 @@ const EventLiveDisplay = () => {
               <div className="relative flex items-center gap-2 px-3 lg:px-4 whitespace-nowrap">
                 <CalendarDays className="h-3.5 w-3.5 text-[hsl(var(--grad-gold))]/80" />
                 <span className="text-xs lg:text-sm font-bold text-[hsl(var(--grad-cream))]">
-                  {now.toLocaleDateString("ar-SA", { weekday: "long" })}
+                  {now.toLocaleDateString("ar-SA-u-nu-latn", { weekday: "long" })}
                 </span>
                 <span className="text-[hsl(var(--grad-gold))]/60">·</span>
                 <span className="text-xs lg:text-sm font-medium text-[hsl(var(--grad-cream))]/90 tabular-nums">
-                  {now.toLocaleDateString("ar-SA", { day: "numeric", month: "long", year: "numeric" })}
+                  {now.toLocaleDateString("ar-SA-u-nu-latn", { day: "numeric", month: "long", year: "numeric" })}
                 </span>
               </div>
             </div>
@@ -473,11 +474,11 @@ const EventLiveDisplay = () => {
               <div className="flex items-center gap-1.5 text-[hsl(var(--grad-cream))]">
                 <Clock className="h-3 w-3 text-[hsl(var(--grad-gold))]" />
                 <span className="text-xs font-extrabold tabular-nums">
-                  {now.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", hour12: true })}
+                  {now.toLocaleTimeString("ar-SA-u-nu-latn", { hour: "2-digit", minute: "2-digit", hour12: true })}
                 </span>
               </div>
               <span className="text-[9px] text-[hsl(var(--grad-cream))]/80 mt-0.5 tabular-nums">
-                {now.toLocaleDateString("ar-SA", { weekday: "short", day: "numeric", month: "short" })}
+                {now.toLocaleDateString("ar-SA-u-nu-latn", { weekday: "short", day: "numeric", month: "short" })}
               </span>
             </div>
           </div>
@@ -866,7 +867,7 @@ const EventLiveDisplay = () => {
               {ui("آخر الحضور")}
             </span>
             <span className="text-[10px] sm:text-xs font-extrabold text-[hsl(var(--grad-gold))] tabular-nums">
-              · {attendees.length}
+              · {formatDisplayNumber(attendees.length)}
             </span>
           </div>
 
@@ -894,7 +895,7 @@ const EventLiveDisplay = () => {
               const isQr = normalizeSource(a.source) === "qr";
               const time = new Date(a.checked_in_at);
               const minsAgo = Math.max(0, Math.round((Date.now() - time.getTime()) / 60000));
-              const relative = minsAgo < 1 ? ui("الآن") : minsAgo < 60 ? `${ui("قبل")} ${minsAgo} ${ui("د")}` : `${ui("قبل")} ${Math.round(minsAgo / 60)} ${ui("س")}`;
+              const relative = minsAgo < 1 ? ui("الآن") : minsAgo < 60 ? `${ui("قبل")} ${formatDisplayNumber(minsAgo)} ${ui("د")}` : `${ui("قبل")} ${formatDisplayNumber(Math.round(minsAgo / 60))} ${ui("س")}`;
               return (
                 <span
                   key={i}
@@ -1159,9 +1160,9 @@ const AttendeeRow = ({
       </div>
       <div className="text-left shrink-0">
         <div className="text-sm text-[hsl(var(--grad-green))] tabular-nums font-extrabold">
-          {time.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", hour12: true })}
+          {time.toLocaleTimeString("ar-SA-u-nu-latn", { hour: "2-digit", minute: "2-digit", hour12: true })}
         </div>
-        <div className="text-[10px] text-[hsl(var(--grad-cream))]/60 tabular-nums mt-0.5 font-bold">#{i + 1}</div>
+        <div className="text-[10px] text-[hsl(var(--grad-cream))]/60 tabular-nums mt-0.5 font-bold">#{formatDisplayNumber(i + 1)}</div>
       </div>
     </div>
   );

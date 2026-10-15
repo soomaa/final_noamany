@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { MemberCell } from '@/components/club/member-cell';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -32,12 +33,12 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const STATUS_OPTIONS = uiOptions([
-  { value: 'all', label: 'كل الحالات' },
-  { value: 'pending_payment', label: 'بانتظار الدفع' },
-  { value: 'confirmed', label: 'مؤكد' },
-  { value: 'waitlisted', label: 'قائمة الانتظار' },
-  { value: 'cancelled', label: 'ملغى' },
-  { value: 'refunded', label: 'مسترد' },
+  { value: 'all', label: uiStatic('كل الحالات') },
+  { value: 'pending_payment', label: uiStatic('بانتظار الدفع') },
+  { value: 'confirmed', label: uiStatic('مؤكد') },
+  { value: 'waitlisted', label: uiStatic('قائمة الانتظار') },
+  { value: 'cancelled', label: uiStatic('ملغى') },
+  { value: 'refunded', label: uiStatic('مسترد') },
 ]);
 
 interface RegistrationRow {
@@ -134,7 +135,7 @@ export function EventsRegistrationsPage() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {reg.paidAmount} / {reg.price}
+                    {formatDisplayNumber(reg.paidAmount)} / {formatDisplayNumber(reg.price)}
                   </td>
                   <td className="px-4 py-3">
                     <Link to={EVENTS_ROUTES.detail(reg.eventId)} className="text-primary hover:underline text-sm">
@@ -157,7 +158,7 @@ export function EventsRegistrationsPage() {
           >
             {ui('السابق')}
           </button>
-          <span className="text-sm text-muted-foreground">{ui('صفحة')} {page}</span>
+          <span className="text-sm text-muted-foreground">{ui('صفحة')} {formatDisplayNumber(page)}</span>
           <button
             disabled={page * 20 >= total}
             onClick={() => setPage(p => p + 1)}

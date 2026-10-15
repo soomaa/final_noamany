@@ -4,6 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { formatTime, localDateStr, localToday } from '@/lib/formatters';
 import { cn, toArabicDigits, withAlpha } from '@/lib/utils';
+import { useLocale } from '@/store/locale';
+import { uiStatic } from '@/lib/ui-static';
 
 export interface TrainerScheduleItem {
   id: number;
@@ -11,7 +13,7 @@ export interface TrainerScheduleItem {
   classDate: string;
   startTime: string;
   endTime: string;
-  hall: { name: string; hallNumber: string } | null;
+  hall: { name: string; hallNumber: string | null } | null;
   status: 'scheduled' | 'ongoing' | 'completed' | 'cancelled';
   color: string;
 }
@@ -23,13 +25,13 @@ interface TrainerScheduleCalendarProps {
   onRangeChange: (dateFrom: string, dateTo: string) => void;
 }
 
-const weekdayNames = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+const weekdayNames = [uiStatic('الأحد'), uiStatic('الاثنين'), uiStatic('الثلاثاء'), uiStatic('الأربعاء'), uiStatic('الخميس'), uiStatic('الجمعة'), uiStatic('السبت')];
 
 const statusDetails: Record<TrainerScheduleItem['status'], { label: string; className: string }> = {
-  scheduled: { label: 'مجدولة', className: 'bg-amber-500/10 text-amber-700 dark:text-amber-400' },
-  ongoing: { label: 'جارية الآن', className: 'bg-primary/10 text-primary' },
-  completed: { label: 'منفذة', className: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' },
-  cancelled: { label: 'ملغاة', className: 'bg-destructive/10 text-destructive' },
+  scheduled: { label: uiStatic('مجدولة'), className: 'bg-amber-500/10 text-amber-700 dark:text-amber-400' },
+  ongoing: { label: uiStatic('جارية الآن'), className: 'bg-primary/10 text-primary' },
+  completed: { label: uiStatic('منفذة'), className: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400' },
+  cancelled: { label: uiStatic('ملغاة'), className: 'bg-destructive/10 text-destructive' },
 };
 
 function parseLocalDate(value: string, fallback = new Date()) {
@@ -63,6 +65,7 @@ function monthRange(reference: Date) {
 }
 
 function ScheduleEvent({ item, roomy = false }: { item: TrainerScheduleItem; roomy?: boolean }) {
+  const { ui } = useLocale();
   const status = statusDetails[item.status];
   return (
     <div
@@ -89,13 +92,14 @@ function ScheduleEvent({ item, roomy = false }: { item: TrainerScheduleItem; roo
           <span className="truncate">{item.hall.name}{item.hall.hallNumber ? ` · ${item.hall.hallNumber}` : ''}</span>
         </p>
       ) : roomy ? (
-        <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground"><MapPin className="size-3" /> بدون قاعة</p>
+        <p className="mt-1 flex items-center gap-1 text-[10px] text-muted-foreground"><MapPin className="size-3" /> {ui('بدون قاعة')}</p>
       ) : null}
     </div>
   );
 }
 
 export function TrainerScheduleCalendar({ schedule, dateFrom, dateTo, onRangeChange }: TrainerScheduleCalendarProps) {
+  const { ui } = useLocale();
   const today = localToday();
   const days = useMemo(() => calendarDays(dateFrom, dateTo), [dateFrom, dateTo]);
   const byDate = useMemo(() => {
@@ -108,8 +112,8 @@ export function TrainerScheduleCalendar({ schedule, dateFrom, dateTo, onRangeCha
   const lastDate = parseLocalDate(dateTo, firstDate);
   const sameMonth = firstDate.getFullYear() === lastDate.getFullYear() && firstDate.getMonth() === lastDate.getMonth();
   const title = sameMonth
-    ? firstDate.toLocaleDateString('ar-EG', { month: 'long', year: 'numeric' })
-    : `${firstDate.toLocaleDateString('ar-EG', { day: 'numeric', month: 'short' })} – ${lastDate.toLocaleDateString('ar-EG', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+    ? firstDate.toLocaleDateString('ar-EG-u-nu-latn', { month: 'long', year: 'numeric' })
+    : `${firstDate.toLocaleDateString('ar-EG-u-nu-latn', { day: 'numeric', month: 'short' })} – ${lastDate.toLocaleDateString('ar-EG-u-nu-latn', { day: 'numeric', month: 'short', year: 'numeric' })}`;
   const agendaDays = days.filter((day) => day >= dateFrom && day <= dateTo && ((byDate.get(day)?.length ?? 0) > 0 || day === today));
 
   const showMonth = (offset: number) => {
@@ -127,13 +131,13 @@ export function TrainerScheduleCalendar({ schedule, dateFrom, dateTo, onRangeCha
     <Card className="overflow-hidden">
       <CardHeader className="gap-4 border-b bg-card sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <CardTitle className="flex items-center gap-2"><CalendarDays className="size-5 text-primary" /> تقويم مواعيدي</CardTitle>
-          <p className="mt-1 text-sm text-muted-foreground">كل حصة ظاهرة في يومها بموعد البداية والنهاية والقاعة.</p>
+          <CardTitle className="flex items-center gap-2"><CalendarDays className="size-5 text-primary" /> {ui('تقويم مواعيدي')}</CardTitle>
+          <p className="mt-1 text-sm text-muted-foreground">{ui('كل حصة ظاهرة في يومها بموعد البداية والنهاية والقاعة.')}</p>
         </div>
         <div className="flex flex-wrap items-center gap-1">
-          <Button variant="outline" size="icon" aria-label="الشهر السابق" onClick={() => showMonth(-1)}><ChevronRight className="size-4" /></Button>
+          <Button variant="outline" size="icon" aria-label={ui('الشهر السابق')} onClick={() => showMonth(-1)}><ChevronRight className="size-4" /></Button>
           <Button variant="ghost" className="min-w-36 font-semibold" onClick={showCurrentMonth}>{title}</Button>
-          <Button variant="outline" size="icon" aria-label="الشهر التالي" onClick={() => showMonth(1)}><ChevronLeft className="size-4" /></Button>
+          <Button variant="outline" size="icon" aria-label={ui('الشهر التالي')} onClick={() => showMonth(1)}><ChevronLeft className="size-4" /></Button>
           <span className="ms-2 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
             {toArabicDigits(schedule.length)} حصة
           </span>
@@ -167,7 +171,7 @@ export function TrainerScheduleCalendar({ schedule, dateFrom, dateTo, onRangeCha
                       <span className={cn('nums flex size-8 items-center justify-center rounded-full text-xs font-bold', isToday && 'bg-primary text-primary-foreground')}>
                         {toArabicDigits(date.getDate())}
                       </span>
-                      {date.getDate() === 1 ? <span className="text-[10px] text-muted-foreground">{date.toLocaleDateString('ar-EG', { month: 'short' })}</span> : null}
+                      {date.getDate() === 1 ? <span className="text-[10px] text-muted-foreground">{date.toLocaleDateString('ar-EG-u-nu-latn', { month: 'short' })}</span> : null}
                     </div>
                     <div className="space-y-1.5">
                       {daySchedule.slice(0, 3).map((item) => <ScheduleEvent key={item.id} item={item} />)}
@@ -192,14 +196,14 @@ export function TrainerScheduleCalendar({ schedule, dateFrom, dateTo, onRangeCha
                     {toArabicDigits(date.getDate())}
                   </span>
                   <div>
-                    <p className="text-sm font-bold">{date.toLocaleDateString('ar-EG', { weekday: 'long' })}{isToday ? ' · اليوم' : ''}</p>
-                    <p className="text-xs text-muted-foreground">{date.toLocaleDateString('ar-EG', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                    <p className="text-sm font-bold">{date.toLocaleDateString('ar-EG-u-nu-latn', { weekday: 'long' })}{isToday ? ui('· اليوم') : ''}</p>
+                    <p className="text-xs text-muted-foreground">{date.toLocaleDateString('ar-EG-u-nu-latn', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
                   </div>
                   <span className="nums ms-auto text-xs text-muted-foreground">{toArabicDigits(daySchedule.length)} حصة</span>
                 </div>
                 <div className="space-y-2 p-3">
                   {daySchedule.map((item) => <ScheduleEvent key={item.id} item={item} roomy />)}
-                  {!daySchedule.length ? <p className="py-3 text-center text-xs text-muted-foreground">لا توجد حصص اليوم.</p> : null}
+                  {!daySchedule.length ? <p className="py-3 text-center text-xs text-muted-foreground">{ui('لا توجد حصص اليوم.')}</p> : null}
                 </div>
               </section>
             );
@@ -209,8 +213,8 @@ export function TrainerScheduleCalendar({ schedule, dateFrom, dateTo, onRangeCha
         {!schedule.length ? (
           <div className="border-t px-4 py-12 text-center">
             <CalendarDays className="mx-auto size-10 text-muted-foreground/50" />
-            <p className="mt-3 font-semibold">لا توجد حصص في الفترة المحددة</p>
-            <p className="mt-1 text-sm text-muted-foreground">استخدم الأسهم لعرض شهر آخر.</p>
+            <p className="mt-3 font-semibold">{ui('لا توجد حصص في الفترة المحددة')}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{ui('استخدم الأسهم لعرض شهر آخر.')}</p>
           </div>
         ) : null}
       </CardContent>

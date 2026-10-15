@@ -8,7 +8,7 @@ import { SparePartsService } from './spare-parts.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('spare-parts')
-@RequiresPermission('gym-sales.inventory:view')
+@RequiresPermission('gym-sales.inventory.raw_materials:view')
 export class SparePartsController {
   constructor(private readonly service: SparePartsService) {}
 
@@ -33,25 +33,25 @@ export class SparePartsController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.inventory:create')
+  @RequiresPermission('gym-sales.inventory.raw_materials:create')
   create(@Body() body: UpsertSparePartDto) {
     return this.service.create(body);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertSparePartDto>) {
     return this.service.update(id, body);
   }
 
   @Patch(':id/stock')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   updateStock(@Param('id', ParseIntPipe) id: number, @Body('currentStock') currentStock: number) {
     return this.service.updateStock(id, currentStock);
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.inventory:delete')
+  @RequiresPermission('gym-sales.inventory.raw_materials:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

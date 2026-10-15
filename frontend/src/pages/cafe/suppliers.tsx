@@ -186,7 +186,7 @@ export function CafeSuppliersPage() {
               <div className="rounded-xl border bg-muted/20 p-3">
                 <div className="mb-3 flex items-center justify-between">
                   <div><Label>{ui('أرقام الهاتف')}</Label><p className="text-xs text-muted-foreground">{ui('يمكن إضافة أي عدد من الأرقام وتحديد رقم أساسي واحد')}</p></div>
-                  <Button type="button" size="sm" variant="outline" onClick={() => setForm((current) => ({ ...current, phones: [...current.phones, { phone: '', isPrimary: false }] }))}><Plus className="size-4" />{ui('إضافة رقم')}</Button>
+                  <Button permissionAction={null} type="button" size="sm" variant="outline" onClick={() => setForm((current) => ({ ...current, phones: [...current.phones, { phone: '', isPrimary: false }] }))}><Plus className="size-4" />{ui('إضافة رقم')}</Button>
                 </div>
                 <div className="space-y-2">
                   {form.phones.map((row, index) => {
@@ -197,8 +197,8 @@ export function CafeSuppliersPage() {
                           <Input type="tel" inputMode="tel" dir="ltr" placeholder="+20 10 1234 5678" value={row.phone} onChange={(event) => updatePhone(index, event.target.value)} aria-invalid={invalid} className={invalid ? 'border-destructive' : ''} />
                           {invalid && <p className="mt-1 text-xs text-destructive">{ui('رقم الهاتف غير صالح')}</p>}
                         </div>
-                        <Button type="button" variant={row.isPrimary ? 'default' : 'outline'} size="icon" aria-label={ui(row.isPrimary ? 'رقم الهاتف الأساسي' : 'تعيين رقم الهاتف كأساسي')} title={ui('تعيين كأساسي')} onClick={() => makePrimary(index)}><Star className={`size-4 ${row.isPrimary ? 'fill-current' : ''}`} /></Button>
-                        <Button aria-label={ui('حذف رقم الهاتف')} type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => removePhone(index)}><Trash2 className="size-4" /></Button>
+                        <Button type="button" variant={row.isPrimary ? 'default' : 'outline'} size="icon" aria-label={ui(row.isPrimary ? ui('رقم الهاتف الأساسي') : ui('تعيين رقم الهاتف كأساسي'))} title={ui('تعيين كأساسي')} onClick={() => makePrimary(index)}><Star className={`size-4 ${row.isPrimary ? 'fill-current' : ''}`} /></Button>
+                        <Button permissionAction={null} aria-label={ui('حذف رقم الهاتف')} type="button" variant="ghost" size="icon" className="text-destructive" onClick={() => removePhone(index)}><Trash2 className="size-4" /></Button>
                       </div>
                     );
                   })}
@@ -219,7 +219,7 @@ export function CafeSuppliersPage() {
               </div>
             </TabsContent>
           </Tabs>
-          <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>{ui('إلغاء')}</Button><Button disabled={saving || !(editId ? can('gym-sales.procurement.suppliers:update') : can('gym-sales.procurement.suppliers:create'))} onClick={() => void save()}>{saving ? ui('جاري الحفظ…') : ui('حفظ')}</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>{ui('إلغاء')}</Button><Button permissionAction={editId ? 'update' : 'create'} disabled={saving || !(editId ? can('gym-sales.procurement.suppliers:update') : can('gym-sales.procurement.suppliers:create'))} onClick={() => void save()}>{saving ? ui('جاري الحفظ…') : ui('حفظ')}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </GymSalesPageShell>

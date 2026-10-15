@@ -1,11 +1,18 @@
-import { Type } from 'class-transformer';
+import { Type } from "class-transformer";
 import {
   IsArray,
   IsInt,
   IsOptional,
   IsString,
+  Matches,
+  MaxLength,
   ValidateNested,
-} from 'class-validator';
+} from "class-validator";
+
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+export const SCORE_0_TO_100 = /^(?:100(?:\.0{1,2})?|\d{1,2}(?:\.\d{1,2})?)$/;
+const NON_NEGATIVE_MONEY = /^\d{1,10}(?:\.\d{1,2})?$/;
+const NON_NEGATIVE_INTEGER = /^\d{1,6}$/;
 
 /* ------------------------- previous work ------------------------- */
 export class PreviousWorkItemDto {
@@ -167,6 +174,7 @@ export class InterviewDegreeItemDto {
   itemIdFk!: string;
 
   @IsString()
+  @Matches(SCORE_0_TO_100)
   itemDegree!: string;
 }
 
@@ -189,12 +197,14 @@ export class InterviewDto {
   /** overall interview total (legacy `total`) */
   @IsOptional()
   @IsString()
+  @Matches(SCORE_0_TO_100)
   total?: string;
 }
 
 /* ------------------------- interview date ------------------------ */
 export class InterviewDateDto {
   @IsString()
+  @Matches(DATE_ONLY)
   interviewDate!: string;
 }
 
@@ -202,14 +212,17 @@ export class InterviewDateDto {
 export class JobOfferDto {
   @IsOptional()
   @IsString()
+  @Matches(NON_NEGATIVE_MONEY)
   salary?: string;
 
   @IsOptional()
   @IsString()
+  @Matches(NON_NEGATIVE_MONEY)
   bdlSakn?: string;
 
   @IsOptional()
   @IsString()
+  @Matches(NON_NEGATIVE_MONEY)
   bdlMoslat?: string;
 
   @IsOptional()
@@ -218,6 +231,7 @@ export class JobOfferDto {
 
   @IsOptional()
   @IsString()
+  @Matches(NON_NEGATIVE_INTEGER)
   contractPeroid?: string;
 
   @IsOptional()
@@ -226,18 +240,22 @@ export class JobOfferDto {
 
   @IsOptional()
   @IsString()
+  @Matches(NON_NEGATIVE_INTEGER)
   demoDays?: string;
 
   @IsOptional()
   @IsString()
+  @Matches(NON_NEGATIVE_INTEGER)
   yearlyVacation?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(1000)
   other?: string;
 
   @IsOptional()
   @IsString()
+  @MaxLength(2000)
   notes?: string;
 }
 

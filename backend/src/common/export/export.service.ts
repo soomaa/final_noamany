@@ -29,7 +29,7 @@ export class ExportService {
   /** Build multi-sheet XLSX buffer. */
   async toXlsx(sheets: ExportSheet[]): Promise<Buffer> {
     const wb = new ExcelJS.Workbook();
-    wb.creator = 'Noamany Fitness Center';
+    wb.creator = 'ONE80 Gym';
     for (const sheet of sheets) {
       const ws = wb.addWorksheet(sheet.name.slice(0, 31));
       ws.columns = sheet.columns.map((c) => ({

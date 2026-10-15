@@ -4,7 +4,6 @@ export interface Branch {
   parentId: number;
   lat: string | null;
   lng: string | null;
-  distance: number;
 }
 
 export interface DeptNode {
@@ -22,7 +21,7 @@ export interface JobTitle {
   id: number;
   name: string | null;
   parentId: number;
-  edaraId: number | null;
+  edaraId: number;
   code: number | null;
   isTrainer?: boolean;
 }

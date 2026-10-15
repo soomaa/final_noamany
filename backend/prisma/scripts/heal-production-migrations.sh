@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Heal known Noamany production migration drift before prisma migrate deploy.
+# Heal known ONE80 production migration drift before prisma migrate deploy.
 # Safe to run multiple times — it only repairs explicitly known schema objects
 # and _prisma_migrations metadata; it never changes business rows.
 #
@@ -270,7 +270,7 @@ mark_applied_if_schema_ready() {
 
 echo "==> Healing migration drift on database: $DBN"
 
-# Legacy Noamany name (failed on some servers) — replaced by 20260707140000_hr_job_titles_members
+# Legacy ONE80 name (failed on some servers) — replaced by 20260707140000_hr_job_titles_members
 repair_legacy_hr_employment_migration
 
 # This migration is not idempotent SQL. Older production dumps can already
@@ -286,7 +286,7 @@ repair_class_audience_notifications_migration
 # already present, and refuses unknown/session-scoped SQL.
 repair_any_failed_current_migration
 
-# Other legacy Noamany-only migration names superseded in Noamany sync
+# Other legacy ONE80-only migration names superseded in PHAROS sync
 remove_orphan_migration_record "20260709100000_hot_path_indexes"
 remove_orphan_migration_record "20260719150000_cafe_drafts_supplier_phones_feedback"
 

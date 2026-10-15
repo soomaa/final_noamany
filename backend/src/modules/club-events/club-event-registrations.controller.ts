@@ -20,6 +20,7 @@ import { RegisterClubEventDto } from './dto/register-club-event.dto';
 import { PayClubEventRegistrationDto } from './dto/pay-club-event-registration.dto';
 import { RefundClubEventRegistrationDto } from './dto/refund-club-event-registration.dto';
 import { PatchClubEventRegistrationDto } from './dto/patch-club-event-registration.dto';
+import { JwtUser } from '../../common/types/jwt-user';
 
 class CancelRegistrationBody {
   @IsOptional()
@@ -40,19 +41,19 @@ export class ClubEventRegistrationsController {
   constructor(private readonly service: ClubEventRegistrationsService) {}
 
   @Get()
-  list(@Query() query: ListClubEventRegistrationsDto) {
-    return this.service.list(query);
+  list(@Query() query: ListClubEventRegistrationsDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user);
   }
 
   @Post()
   @RequiresPermission('club.events.registrations:create')
-  register(@Body() body: RegisterClubEventDto, @CurrentUser('sub') userId: number) {
-    return this.service.register(body, userId);
+  register(@Body() body: RegisterClubEventDto, @CurrentUser() user: JwtUser) {
+    return this.service.register(body, user.sub, undefined, user);
   }
 
   @Patch(':id')
@@ -60,9 +61,9 @@ export class ClubEventRegistrationsController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: PatchClubEventRegistrationDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.update(id, body, userId);
+    return this.service.update(id, body, user.sub, user);
   }
 
   @Post(':id/pay')
@@ -70,9 +71,9 @@ export class ClubEventRegistrationsController {
   pay(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: PayClubEventRegistrationDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.pay(id, body, userId);
+    return this.service.pay(id, body, user.sub, user);
   }
 
   @Post(':id/refund')
@@ -81,9 +82,9 @@ export class ClubEventRegistrationsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() body: RefundClubEventRegistrationDto,
     @Query() query: RefundQuery,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.refund(id, body, query.cancel === true, userId);
+    return this.service.refund(id, body, query.cancel === true, user.sub, user);
   }
 
   @Post(':id/cancel')
@@ -91,14 +92,15 @@ export class ClubEventRegistrationsController {
   cancel(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: CancelRegistrationBody,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.cancel(id, body.reason, userId);
+    return this.service.cancel(id, body.reason, user.sub, user);
   }
 
   @Post(':id/promote')
   @RequiresPermission('club.events.registrations:update')
-  promote(@Param('id', ParseIntPipe) id: number, @CurrentUser('sub') userId: number) {
-    return this.service.promote(id, userId);
+  promote(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.promote(id, user.sub, user);
   }
 }
+

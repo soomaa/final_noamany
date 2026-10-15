@@ -9,7 +9,7 @@ import { UnifiedTreasuryService } from './unified-treasury.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('treasury')
-@RequiresPermission('club.dashboard:view')
+@RequiresPermission('club.subscriptions.unified_treasury:view')
 export class UnifiedTreasuryController {
   constructor(
     private readonly service: UnifiedTreasuryService,
@@ -36,7 +36,7 @@ export class UnifiedTreasuryController {
   }
 
   @Get('daily/export')
-  @RequiresPermission('club.dashboard:export')
+  @RequiresPermission('club.subscriptions.unified_treasury:export')
   async exportDaily(
     @CurrentUser() user: JwtUser,
     @Query('date') date: string | undefined,

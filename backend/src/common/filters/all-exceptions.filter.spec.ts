@@ -7,7 +7,10 @@ describe('AllExceptionsFilter', () => {
     const json = jest.fn();
     const status = jest.fn().mockReturnValue({ json });
     const host = {
-      switchToHttp: () => ({ getResponse: () => ({ status }) }),
+      switchToHttp: () => ({
+        getResponse: () => ({ status }),
+        getRequest: () => ({ correlationId: 'request_test_123' }),
+      }),
     } as unknown as ArgumentsHost;
 
     new AllExceptionsFilter().catch(new BadRequestException({
@@ -21,29 +24,21 @@ describe('AllExceptionsFilter', () => {
     expect(json).toHaveBeenCalledWith({
       statusCode: 400,
       message: 'بعض خامات الطلب غير متوفرة بالكمية المطلوبة',
+      correlationId: 'request_test_123',
       code: 'CAFE_STOCK_SHORTAGE',
       canContinueWithNegative: true,
       shortages: [{ ingredientId: 7, shortage: 1 }],
     });
   });
 
-  it('includes the Prisma error code in development so a database failure can be diagnosed', () => {
+  it('tells the cashier a timed-out transaction saved nothing instead of a generic DB error', () => {
     const json = jest.fn();
     const status = jest.fn().mockReturnValue({ json });
     const host = {
-      switchToHttp: () => ({ getResponse: () => ({ status }) }),
+      switchToHttp: () => ({ getResponse: () => ({ status }), getRequest: () => ({ correlationId: 'request_tx_1' }) }),
     } as unknown as ArgumentsHost;
-    const error = new Prisma.PrismaClientKnownRequestError('Query failed', {
-      code: 'P2010',
-      clientVersion: '5.22.0',
-    });
-
-    new AllExceptionsFilter().catch(error, host);
-
-    expect(status).toHaveBeenCalledWith(400);
-    expect(json).toHaveBeenCalledWith({
-      statusCode: 400,
-      message: 'خطأ في قاعدة البيانات (P2010)',
-    });
+    new AllExceptionsFilter().catch(new Prisma.PrismaClientKnownRequestError('Transaction already closed', { code: 'P2028', clientVersion: 'test' }), host);
+    expect(status).toHaveBeenCalledWith(503);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({ statusCode: 503, message: expect.stringContaining('لم تُحفظ العملية') }));
   });
 });

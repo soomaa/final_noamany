@@ -1,3 +1,4 @@
+import { AddAdminButton } from '@/components/users/add-admin-button';
 import type { ColumnDef } from '@tanstack/react-table';
 import { KeyRound, Users } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -8,7 +9,7 @@ import { StatusBadge } from '@/components/common/status-badge';
 import { Button } from '@/components/ui/button';
 import { clientPaginate, useArrayResource } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 interface UserApiRow {
@@ -89,7 +90,7 @@ export function UsersPage() {
     <ListPageShell
       eyebrow={ui('الإعدادات')}
       title={ui('المستخدمون')}
-      description={ui('حسابات الدخول وصلاحيات الوصول للنظام — يُنشأ الحساب من الموارد البشرية عند تفعيل «إضافة إلى النظام» في نموذج الموظف')}
+      description={ui('حسابات الدخول وصلاحيات الوصول للنظام')}
       isError={isError}
       error={error}
       notImplementedTitle={ui('المستخدمون قيد الإعداد على الخادم')}
@@ -98,6 +99,7 @@ export function UsersPage() {
         { title: ui('نشطون'), value: activeCount, subtitle: ui('معتمدون للدخول'), colorIndex: 3 },
       ]}
       statsLoading={isLoading}
+      actions={<AddAdminButton />}
       searchPlaceholder={ui('بحث بالاسم أو اسم المستخدم…')}
     >
       <DataTable

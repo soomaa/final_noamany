@@ -140,6 +140,7 @@ export function ProcurementDashboardPage() {
       <div className="rounded-xl border bg-card p-4">
         <h3 className="mb-4 font-semibold">{ui('تقرير الموردين')}</h3>
         <DataTable
+          exportSource={{ resource: 'supplier-reports/reports', params }}
           columns={columns}
           data={reports?.data ?? []}
           total={reports?.total ?? 0}

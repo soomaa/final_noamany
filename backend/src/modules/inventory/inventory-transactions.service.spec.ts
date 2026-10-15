@@ -1,6 +1,6 @@
 import { InventoryTransactionsService } from './inventory-transactions.service';
 
-describe('InventoryTransactionsService Noamany inventory flow', () => {
+describe('InventoryTransactionsService ONE80 inventory flow', () => {
   it('records an internal issue against the signed-in user branch without warehouse input', async () => {
     const create = jest.fn().mockImplementation(({ data }) => ({
       id: 11,
@@ -27,6 +27,8 @@ describe('InventoryTransactionsService Noamany inventory flow', () => {
     const prisma = {
       $transaction: jest.fn(async (callback: (tx: unknown) => unknown) => callback({
         inv_transactions: { create },
+        $queryRaw: jest.fn().mockResolvedValue([]),
+        inv_warehouses: { findMany: jest.fn().mockResolvedValue([{ id: 19, branch_id: 7, status: 'active', is_deleted: false }]) },
       })),
     };
     const location = {
@@ -49,7 +51,7 @@ describe('InventoryTransactionsService Noamany inventory flow', () => {
       items: [{ productId: 3, itemName: 'مياه', quantity: 2 }],
     }, { sub: 5, branch: 7 } as never);
 
-    expect(location.resolveBranchStockLocation).toHaveBeenCalledWith(7);
+    expect(location.resolveBranchStockLocation).toHaveBeenCalledWith(7, expect.any(Object));
     expect(create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         branch_id: 7,

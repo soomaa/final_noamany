@@ -3,7 +3,6 @@ import { AppManagementDashboardBody } from '@/components/hub/app-management-dash
 import { ClubDashboardBody } from '@/components/hub/club-dashboard-body';
 import { GymSalesHubBody } from '@/components/hub/gym-sales-hub-body';
 import { SettingsDashboardBody } from '@/components/hub/settings-dashboard-body';
-import { PortalManagementDashboardBody } from '@/components/hub/portal-management-dashboard-body';
 import { FinanceDashboardBody } from '@/pages/finance/dashboard';
 import { AccountingDashboardBody } from '@/pages/accounting/dashboard';
 import { HrSectionDashboard } from '@/pages/dashboard';
@@ -22,8 +21,6 @@ export function SectionDashboard({ sectionId }: { sectionId: string }) {
       return <HrSectionDashboard />;
     case 'app-management':
       return <AppManagementDashboardBody />;
-    case 'portal-management':
-      return <PortalManagementDashboardBody />;
     case 'settings':
       return <SettingsDashboardBody />;
     default:

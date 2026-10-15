@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { paginated } from '../../common/dto/list-result';
@@ -13,6 +13,8 @@ import { RefundClubEventRegistrationDto } from './dto/refund-club-event-registra
 import { PatchClubEventRegistrationDto } from './dto/patch-club-event-registration.dto';
 import { genCheckinCode, localDateString, roundMoney, toNum } from './club-events.utils';
 import { attachMemberBrief, loadMemberBriefMap, searchMemberIds } from '../club-members/club-member-brief.utils';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 type Tx = Prisma.TransactionClient;
 
@@ -44,7 +46,14 @@ export class ClubEventRegistrationsService {
     private readonly entitlement: EntitlementService,
     private readonly moduleLedger: ModuleLedgerService,
     private readonly audit: BusinessAuditService,
+    private readonly branchScope: BranchScopeService,
   ) {}
+
+  private assertBranchAccess(user: JwtUser | undefined, branchId: number) {
+    if (!this.branchScope.isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
+  }
 
   private mapPayment(p: {
     id: number;
@@ -147,13 +156,15 @@ export class ClubEventRegistrationsService {
     };
   }
 
-  async list(q: ListClubEventRegistrationsDto) {
+  async list(q: ListClubEventRegistrationsDto, user?: JwtUser) {
     const and: Prisma.club_event_registrationsWhereInput[] = [{ is_deleted: false }];
 
     if (q.eventId) and.push({ event_id: Number(q.eventId) });
     if (q.status && q.status !== 'all') and.push({ status: q.status as never });
     if (q.registrantType) and.push({ registrant_type: q.registrantType as never });
     if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) and.push({ branch_id: { in: scope } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       const memberIds = await searchMemberIds(this.prisma, s);
@@ -192,19 +203,21 @@ export class ClubEventRegistrationsService {
     return this.mapRegistration(row, memberMap);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.club_event_registrations.findFirst({
       where: { id, is_deleted: false },
       include: registrationInclude,
     });
     if (!row) throw new NotFoundException('التسجيل غير موجود');
+    this.assertBranchAccess(user, row.branch_id);
     return this.mapRegistrationRow(row);
   }
 
-  private async findRawOrThrow(id: number, tx?: Tx) {
+  private async findRawOrThrow(id: number, tx?: Tx, user?: JwtUser) {
     const client = tx ?? this.prisma;
     const row = await client.club_event_registrations.findFirst({ where: { id, is_deleted: false } });
     if (!row) throw new NotFoundException('التسجيل غير موجود');
+    this.assertBranchAccess(user, row.branch_id);
     return row;
   }
 
@@ -266,7 +279,12 @@ export class ClubEventRegistrationsService {
     return roundMoney(toNum(tier.price));
   }
 
-  async register(dto: RegisterClubEventDto, userId?: number, options?: ClubEventRegisterOptions) {
+  async register(
+    dto: RegisterClubEventDto,
+    userId?: number,
+    options?: ClubEventRegisterOptions,
+    user?: JwtUser,
+  ) {
     const liveSelfCheckin = options?.liveSelfCheckin ?? false;
     const registrantType = dto.registrantType ?? (dto.memberId ? 'member' : 'guest');
 
@@ -281,6 +299,10 @@ export class ClubEventRegistrationsService {
       where: { id: dto.eventId, is_deleted: false },
     });
     if (!event) throw new NotFoundException('الفعالية غير موجودة');
+    this.assertBranchAccess(user, event.branch_id);
+    if (dto.branchId != null && dto.branchId !== event.branch_id) {
+      throw new BadRequestException('فرع التسجيل يجب أن يطابق فرع الفعالية');
+    }
     const allowedStatuses: readonly string[] = liveSelfCheckin ? LIVE_SELF_CHECKIN_STATUSES : STANDARD_REGISTER_STATUSES;
     if (!allowedStatuses.includes(event.status)) {
       throw new BadRequestException('التسجيل غير متاح لهذه الفعالية في حالتها الحالية');
@@ -292,6 +314,9 @@ export class ClubEventRegistrationsService {
     let member: Awaited<ReturnType<ClubMembersService['resolveByIdOrCode']>> | null = null;
     if (dto.memberId) {
       member = await this.members.resolveByIdOrCode(dto.memberId, undefined);
+      if (member.branch_id !== event.branch_id) {
+        throw new ForbiddenException('لا يمكن تسجيل عضو من فرع آخر في هذه الفعالية');
+      }
     }
 
     if (event.requires_active_subscription && member) {
@@ -323,7 +348,7 @@ export class ClubEventRegistrationsService {
       if (!session) throw new NotFoundException('الجلسة غير موجودة');
     }
 
-    const branchId = dto.branchId ?? member?.branch_id ?? event.branch_id;
+    const branchId = event.branch_id;
     const price = tier ? this.computePrice(tier) : 0;
     const isFree = event.is_free || price <= 0;
 
@@ -474,8 +499,8 @@ export class ClubEventRegistrationsService {
     return this.mapRegistrationRow(registration);
   }
 
-  async pay(id: number, dto: PayClubEventRegistrationDto, userId?: number) {
-    const existing = await this.findRawOrThrow(id);
+  async pay(id: number, dto: PayClubEventRegistrationDto, userId?: number, user?: JwtUser) {
+    const existing = await this.findRawOrThrow(id, undefined, user);
 
     const existingPayment = await this.prisma.club_event_payments.findFirst({
       where: { registration_id: id, idempotency_key: dto.idempotencyKey },
@@ -603,8 +628,14 @@ export class ClubEventRegistrationsService {
     return this.mapPayment(result);
   }
 
-  async refund(id: number, dto: RefundClubEventRegistrationDto, cancel: boolean, userId?: number) {
-    const existing = await this.findRawOrThrow(id);
+  async refund(
+    id: number,
+    dto: RefundClubEventRegistrationDto,
+    cancel: boolean,
+    userId?: number,
+    user?: JwtUser,
+  ) {
+    const existing = await this.findRawOrThrow(id, undefined, user);
     const event = await this.prisma.club_events.findFirst({ where: { id: existing.event_id } });
     if (!event) throw new NotFoundException('الفعالية غير موجودة');
 
@@ -696,8 +727,8 @@ export class ClubEventRegistrationsService {
     return this.mapPayment(result.refundPayment);
   }
 
-  async cancel(id: number, reason: string | undefined, userId?: number) {
-    const existing = await this.findRawOrThrow(id);
+  async cancel(id: number, reason: string | undefined, userId?: number, user?: JwtUser) {
+    const existing = await this.findRawOrThrow(id, undefined, user);
     if (existing.status === 'cancelled' || existing.status === 'refunded') {
       throw new BadRequestException('التسجيل ملغى بالفعل');
     }
@@ -738,7 +769,7 @@ export class ClubEventRegistrationsService {
       after: { status: 'cancelled', promotedRegistrationId: result.promoted },
     });
 
-    return this.findOne(id);
+    return this.findOne(id, user);
   }
 
   /**
@@ -778,8 +809,8 @@ export class ClubEventRegistrationsService {
   }
 
   /** Manual promotion of a specific waitlisted registration (same hold logic as the shared helper). */
-  async promote(id: number, userId?: number) {
-    const existing = await this.findRawOrThrow(id);
+  async promote(id: number, userId?: number, user?: JwtUser) {
+    const existing = await this.findRawOrThrow(id, undefined, user);
     if (existing.status !== 'waitlisted') {
       throw new BadRequestException('التسجيل ليس في قائمة الانتظار');
     }
@@ -805,11 +836,11 @@ export class ClubEventRegistrationsService {
       after: { holdExpiresAt },
     });
 
-    return this.findOne(id);
+    return this.findOne(id, user);
   }
 
-  async update(id: number, dto: PatchClubEventRegistrationDto, userId?: number) {
-    const existing = await this.findRawOrThrow(id);
+  async update(id: number, dto: PatchClubEventRegistrationDto, userId?: number, user?: JwtUser) {
+    const existing = await this.findRawOrThrow(id, undefined, user);
     if (existing.status === 'cancelled' || existing.status === 'refunded') {
       throw new BadRequestException('لا يمكن تعديل تسجيل ملغى أو مسترد');
     }
@@ -860,3 +891,4 @@ export class ClubEventRegistrationsService {
     return this.mapRegistrationRow(row);
   }
 }
+

@@ -1,45 +1,40 @@
-import { Suspense, type ReactNode } from 'react';
+import { CafeDashboardPage, FinancePayrollPreparationPage, FinancePayrollApprovalPage } from './lazy-pages';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useParams, Outlet } from 'react-router-dom';
 import { AppShell } from '@/components/layout/app-shell';
 import { HomeRedirect } from '@/components/auth/home-redirect';
 import { ConfirmDialogProvider } from '@/components/common/confirm-dialog';
 import { PageSkeleton } from '@/components/common/page-skeleton';
+import { RouteGuard } from '@/components/auth/route-guard';
 import { LoginPage } from '@/pages/login';
-import { useMyPermissions } from '@/hooks/use-permission';
 import { useAuth } from '@/store/auth';
+import { usePermission } from '@/hooks/use-permission';
 import {
   ArchivePage,
   AttendanceBoardPage,
   AttendanceDevicesPage,
   AttendanceRulesPage,
   AttendanceSettingsPage,
-  AttendanceReportsPage,
-  AttendanceAdjustmentsPage,
-  AttendanceImportPage,
   CircularsPage,
   ClearancePage,
   CompanyPage,
   CustodyPage,
   DashboardPage,
   TrainerPortalPage,
+  SalesPortalPage,
+  SalesCallsLogPage,
+  ClubLeadsPage,
+  ClubSalesReportsPage,
   DepartmentHubPage,
   DocumentsPage,
-  EmployeeAttendancePage,
-  EmployeeFinancePage,
   EmployeeFormPage,
   EmployeeProfilePage,
   EmployeesListPage,
   HrPartnersPage,
   EvaluationsPage,
-  EvaluationCategoriesPage,
-  EvaluationItemsPage,
-  AddEvaluationPage,
-  EvaluationReportPage,
   FormsSettingsPage,
   GymRatesPage,
   HrActionScreenPage,
-  AdministrativeDecisionsPage,
-  AdministrativeDecisionPrintPage,
   JobRequestsPage,
   LeaveBalancesPage,
   LeaveFormPage,
@@ -54,50 +49,28 @@ import {
   OrgDepartmentsPage,
   OrgJobTitlesPage,
   PayComponentsPage,
-  PaymentMethodsPage,
+  InsuranceSettingsPage,
   PayrollRunDetailPage,
   PayrollRunsPage,
-  SalaryIncreasesPage,
-  SalaryIncreasesReportPage,
   PayrollSetupPage,
   PayrollSlipPage,
+  FinalSettlementsPage,
   PenaltiesBylawPage,
   PenaltiesPage,
   PermissionsPage,
   ProfilePage,
-  WorkspacePage,
   ReportDetailPage,
   ReportsHubPage,
-  // Part 6A — club report pages
-  ClubMembersReportPage,
-  ClubSubscriptionsReportPage,
-  ClubSubscriptionsExpiredReportPage,
-  ClubSubscriptionsActiveReportPage,
-  ClubSubscriptionsExpiringReportPage,
-  ClubSubscriptionSessionsReportPage,
   ClubSubscriptionReportsPage,
-  ClubDailyCashierPage,
-  ClubAttendanceReportPage,
-  ClubTrainersReportPage,
-  ClubLockersReportPage,
-  // Part 6B — finance report pages
-  FinanceRevenueReportPage,
-  FinanceExpensesReportPage,
-  FinancePnlReportPage,
-  FinanceCashFlowReportPage,
-  FinanceTreasuryReportPage,
-  FinancePaymentMethodsReportPage,
-  FinanceOutstandingReportPage,
-  DailyClosingReportPage,
-  TargetReportPage,
   RequestDetailPage,
   RequestNewPage,
   RequestsPage,
   RewardsPage,
   SalaryScalePage,
   SiteVisitsPage,
+  UsersPage,
   WarningsPage,
-  WarningTemplatesPage,
+  WeeklyLeavesPage,
   // Wave 4 — parity new pages
   LocationsPage,
   AgentsPage,
@@ -107,7 +80,6 @@ import {
   ActivitiesPage,
   TasksPage,
   LegalFilesPage,
-  HrMobileContentPage,
   AppUsersPage,
   UsersManagePage,
   PushBroadcastPage,
@@ -116,47 +88,30 @@ import {
   BusinessAuditPage,
   BackupSettingsPage,
   WebhooksSettingsPage,
-  CustomerServiceQuestionsPage,
-  CustomerServiceFeedbackPage,
-  CustomerServiceReportsPage,
   ClubMembersManagementPage,
-  ClubMemberMeasurementsPage,
-  ClubMemberDetailsPage,
-  ClubMemberMembershipDocumentPage,
-  ClubMemberAttachmentsPage,
   ClubMembersAttendancePage,
-  ClubMemberFinancialPage,
   ClubReceptionPage,
   ClubReceptionQuickServicesPage,
   ClubBarcodeManagementPage,
-  ClubBarcodeScanTimesPage,
   ClubMemberGroupsPage,
   ClubSurveysPage,
   ClubSubscriptionsPage,
-  OnlineSubscriptionsPage,
+  ClubFreezeRequestsPage,
   ClubSubscriptionsNewPage,
-  ClubSubscriptionsSpecialPage,
+  ClubDailyCashierPage,
   ClubSubscriptionsTransfersPage,
   ClubSubscriptionsRefundsPage,
   ClubSubscriptionsReceiptsPage,
   ClubPackageSettingsPage,
-  ClubBranchGroupsPage,
   ClubCustomerSourcesPage,
   ClubSubscriptionsExpiredPage,
   ClubSubscriptionsOutstandingPage,
   ClubTreasuryPage,
   UnifiedTreasuryPage,
   ClubMemberTransferPage,
-  ClubFinancialReportsPage,
   ClubDiscountsPage,
-  ClubPointsDiscountsManagementPage,
   ClubTimeBasedSubscriptionsPage,
-  ClubMemberFormPage,
   ClubLockersPage,
-  ClubLockersNewPage,
-  ClubLockersSettingsPage,
-  ClubLockerInventoryPage,
-  ClubLockerInventoryReportsPage,
   InventoryIndexPage,
   InventoryDashboardPage,
   InventorySettingsPage,
@@ -165,7 +120,9 @@ import {
   InventoryOpeningStockPage,
   InventoryTransactionsPage,
   InventoryMovementLogPage,
+  InventoryStockHealthPage,
   InventoryStockTakingPage,
+  InventoryStockTakingWorkspacePage,
   InventoryPoliciesPage,
   InventoryAnalyticsPage,
   InventoryGymIssuePage,
@@ -181,10 +138,9 @@ import {
   ProcurementReturnsPage,
   ProcurementSettingsPage,
   SalesIndexPage,
-    SalesBookingsPage,
-    SalesNewReceiptPage,
-    SalesInvoicesPage,
-    SalesDraftsPage,
+  SalesBookingsPage,
+  SalesNewReceiptPage,
+  SalesDraftsPage,
   SalesShiftsPage,
   SalesRevenuePage,
   SalesTreasuryPage,
@@ -210,18 +166,19 @@ import {
   CashFlowPage,
   AccountingSettingsPage,
   AboutAppPage,
+  AppPaymentMethodsPage,
+  AppBranchesPage,
   SentInvitationsPage,
   AcceptedInvitationsPage,
   AttendedInvitationsPage,
   RejectedInvitationsPage,
   AppOffersPage,
+  MemberNotificationsPage,
   AppTrainersPage,
   ExerciseCategoriesPage,
   AppExercisesPage,
   AppNewsPage,
-  AppCommunityPage,
   AppAdsPage,
-  PortalManagementPage,
   FitnessProgramsPage,
   FitnessTemplatesPage,
   FitnessStrengthPage,
@@ -229,29 +186,23 @@ import {
   FitnessAssessmentsPage,
   FitnessRoomBookingsPage,
   FitnessPersonalSessionsPage,
+  FitnessBookingBoardPage,
   FitnessTrainerPaymentsPage,
-  FitnessTrainersPage,
+  FitnessTrainersAdminPage,
+  FitnessTrainerProfilePage,
   FitnessTrainerSearchPage,
   FitnessTrainerRatingsPage,
   FitnessTrainerSettingsPage,
-  FitnessTrainerTargetsPage,
-  FitnessTrainerEvaluationsPage,
-  FitnessTrainerEvaluationCriteriaPage,
-  FitnessBranchAnalysisPage,
-  FitnessReceptionAnalysisPage,
-  FitnessShiftAnalysisPage,
   FitnessFacilitiesPage,
   FitnessEquipmentPage,
   FitnessMaintenancePage,
   FitnessSpaServicesPage,
   FitnessSpaBookingsPage,
   FitnessSpaInvoicesPage,
-  FitnessBarcodeCheckInPage,
-  FitnessSpaAttendancePage,
-  FitnessClassAttendancePage,
-  FitnessInbodyInvoicesPage,
+  FitnessInbodyPage,
   FitnessFacilitySettingsPage,
   ClubEventsPage,
+  GateAccessPage,
   ClubEventWorkspacePage,
   ClubEventsRegistrationsPage,
   ClubEventCheckinPage,
@@ -264,9 +215,12 @@ import {
   ClubEventLiveSettingsPage,
   ClubEventLiveKioskRedirectPage,
   CafeProductsPage,
+  CafeBundlesPage,
   CafeCategoriesPage,
   CafeRawMaterialsPage,
   CafeReportsPage,
+  CafeWastePage,
+  CafeCustomersPage,
   CafeItemFeedbackReportPage,
   CafePurchasesPage,
   CafeSuppliersPage,
@@ -277,31 +231,21 @@ import {
   AuditPage,
 } from '@/app/lazy-pages';
 
+const MembershipAddPage = lazy(() => import('@/pages/club/membership-add').then(module => ({ default: module.MembershipAddPage })));
+
 function Lazy({ children }: { children: ReactNode }) {
   return <Suspense fallback={<PageSkeleton />}>{children}</Suspense>;
 }
 
-function WeeklyLeaveRedirect() {
-  const { id } = useParams();
-  return <Navigate to={id ? `/employees/${id}/attendance` : '/employees'} replace />;
-}
-
-const TRAINER_ALLOWED_PATHS = new Set(['/trainer', '/profile', '/notifications', '/workspace']);
+const TRAINER_ALLOWED_PATHS = new Set(['/trainer', '/trainer/training', '/profile', '/notifications']);
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { status, user } = useAuth();
+  const { can, isReady } = usePermission();
   const { pathname } = useLocation();
-  const { data: permissions, isLoading: permissionsLoading } = useMyPermissions();
   if (status === 'unauthenticated') return <Navigate to="/login" replace />;
   const normalizedPath = pathname.replace(/\/+$/, '') || '/';
-  const hasAdministrativeAccess = !!permissions?.superAdmin || (permissions?.keys.length ?? 0) > 0;
-  const requiresAdministrativeAccess = !!user?.is_trainer && !TRAINER_ALLOWED_PATHS.has(normalizedPath);
-
-  // A trainer may also be assigned administrative permissions. Do not decide their
-  // destination until those permissions are loaded; otherwise a refresh would
-  // incorrectly send an authorised trainer back to the portal.
-  if (requiresAdministrativeAccess && permissionsLoading) return <PageSkeleton />;
-  if (requiresAdministrativeAccess && !hasAdministrativeAccess) {
+  if (user?.is_trainer && isReady && can('trainer.portal:view') && !TRAINER_ALLOWED_PATHS.has(normalizedPath)) {
     return <Navigate to="/trainer" replace />;
   }
   return <>{children}</>;
@@ -324,11 +268,14 @@ export function AppRouter() {
         <Route
           element={
             <ProtectedRoute>
-              <Outlet />
+              <RouteGuard>
+                <Outlet />
+              </RouteGuard>
             </ProtectedRoute>
           }
         >
           <Route path="trainer" element={<Lazy><TrainerPortalPage /></Lazy>} />
+          <Route path="trainer/training" element={<Lazy><TrainerPortalPage /></Lazy>} />
           <Route path="club/events/:id/live/display" element={<Lazy><ClubEventLiveDisplayPage /></Lazy>} />
           <Route path="club/events/:id/live/checkin" element={<Lazy><ClubEventLiveCheckInPage /></Lazy>} />
           <Route path="club/events/:id/live/guest" element={<Lazy><ClubEventLiveGuestPage /></Lazy>} />
@@ -346,29 +293,32 @@ export function AppRouter() {
         >
           <Route index element={<HomeRedirect />} />
           <Route path="dashboard" element={<Lazy><DashboardPage /></Lazy>} />
-          <Route path="workspace" element={<Lazy><WorkspacePage /></Lazy>} />
+          <Route path="sales-portal" element={<Lazy><SalesPortalPage /></Lazy>} />
+          <Route path="sales-portal/leads" element={<Lazy><SalesPortalPage /></Lazy>} />
+          <Route path="sales-portal/renewals" element={<Lazy><SalesPortalPage /></Lazy>} />
+          <Route path="sales-portal/results" element={<Lazy><SalesPortalPage /></Lazy>} />
+          <Route path="sales-portal/reminders" element={<Lazy><SalesPortalPage /></Lazy>} />
+          <Route path="sales-portal/calls" element={<Lazy><SalesCallsLogPage /></Lazy>} />
+          <Route path="club/leads" element={<Lazy><ClubLeadsPage /></Lazy>} />
+          <Route path="club/sales-dashboard" element={<Lazy><ClubSalesReportsPage /></Lazy>} />
+          <Route path="club/sales-settings" element={<Lazy><ClubSalesReportsPage /></Lazy>} />
+          <Route path="club/sales-reports" element={<Lazy><ClubSalesReportsPage /></Lazy>} />
           <Route path="hub/:section" element={<Lazy><DepartmentHubPage /></Lazy>} />
-          <Route path="portal/:screen" element={<Lazy><PortalManagementPage /></Lazy>} />
 
           <Route path="org/branches" element={<Lazy><OrgBranchesPage /></Lazy>} />
           <Route path="org/job-titles" element={<Lazy><OrgJobTitlesPage /></Lazy>} />
           <Route path="org/departments" element={<Lazy><OrgDepartmentsPage /></Lazy>} />
 
-          <Route path="employees/weekly-leaves" element={<Navigate to="/employees" replace />} />
+          <Route path="employees/weekly-leaves" element={<Lazy><WeeklyLeavesPage /></Lazy>} />
           <Route path="employees" element={<Lazy><EmployeesListPage /></Lazy>} />
-          <Route path="employees/active" element={<Navigate to="/employees?status=1" replace />} />
-          <Route path="employees/inactive" element={<Navigate to="/employees?status=2" replace />} />
           <Route path="employees/new" element={<Lazy><EmployeeFormPage /></Lazy>} />
-          <Route path="employees/:id/finance" element={<Lazy><EmployeeFinancePage /></Lazy>} />
-          <Route path="employees/:id/attendance" element={<Lazy><EmployeeAttendancePage /></Lazy>} />
-          <Route path="employees/:id/weekly-leave" element={<WeeklyLeaveRedirect />} />
           <Route path="employees/:id/edit" element={<Lazy><EmployeeFormPage /></Lazy>} />
           <Route path="employees/:id" element={<Lazy><EmployeeProfilePage /></Lazy>} />
           <Route path="hr/partners" element={<Lazy><HrPartnersPage /></Lazy>} />
 
-          <Route path="settings/payment-methods" element={<Lazy><PaymentMethodsPage /></Lazy>} />
           <Route path="settings/forms" element={<Lazy><FormsSettingsPage /></Lazy>} />
           <Route path="settings/pay-components" element={<Lazy><PayComponentsPage /></Lazy>} />
+          <Route path="settings/insurance" element={<Lazy><InsuranceSettingsPage /></Lazy>} />
           <Route path="settings/locations" element={<Lazy><LocationsPage /></Lazy>} />
           <Route path="settings/app-users" element={<Lazy><AppUsersPage /></Lazy>} />
           <Route path="settings/push" element={<Lazy><PushBroadcastPage /></Lazy>} />
@@ -377,32 +327,19 @@ export function AppRouter() {
           <Route path="settings/business-audit" element={<Lazy><BusinessAuditPage /></Lazy>} />
           <Route path="settings/backup" element={<Lazy><BackupSettingsPage /></Lazy>} />
           <Route path="settings/webhooks" element={<Lazy><WebhooksSettingsPage /></Lazy>} />
-          <Route path="customer-service/questions" element={<Lazy><CustomerServiceQuestionsPage /></Lazy>} />
-          <Route path="customer-service/add-feedback" element={<Lazy><CustomerServiceFeedbackPage /></Lazy>} />
-          <Route path="customer-service/reports" element={<Lazy><CustomerServiceReportsPage /></Lazy>} />
           <Route path="agents" element={<Lazy><AgentsPage /></Lazy>} />
 
           <Route path="attendance/devices" element={<Lazy><AttendanceDevicesPage /></Lazy>} />
           <Route path="attendance/settings" element={<Lazy><AttendanceSettingsPage /></Lazy>} />
           <Route path="attendance/rules" element={<Lazy><AttendanceRulesPage /></Lazy>} />
-          <Route path="attendance/reports" element={<Lazy><AttendanceReportsPage /></Lazy>} />
-          <Route path="attendance/adjustments" element={<Lazy><AttendanceAdjustmentsPage /></Lazy>} />
-          <Route path="attendance/import" element={<Lazy><AttendanceImportPage /></Lazy>} />
-          <Route path="reports/attendance-daily" element={<Lazy><AttendanceReportsPage /></Lazy>} />
-          <Route path="reports/attendance-absence" element={<Lazy><AttendanceReportsPage /></Lazy>} />
-          <Route path="reports/attendance-late" element={<Lazy><AttendanceReportsPage /></Lazy>} />
-          <Route path="reports/attendance-hours" element={<Lazy><AttendanceReportsPage /></Lazy>} />
-          <Route path="reports/attendance-overtime" element={<Lazy><AttendanceReportsPage /></Lazy>} />
-          <Route path="reports/attendance-shift" element={<Lazy><AttendanceReportsPage /></Lazy>} />
           <Route path="attendance" element={<Lazy><AttendanceBoardPage /></Lazy>} />
 
           <Route path="payroll/salary-scale" element={<Lazy><SalaryScalePage /></Lazy>} />
           <Route path="payroll/setup" element={<Lazy><PayrollSetupPage /></Lazy>} />
           <Route path="payroll/runs" element={<Lazy><PayrollRunsPage /></Lazy>} />
-          <Route path="payroll/increases" element={<Lazy><SalaryIncreasesPage /></Lazy>} />
-          <Route path="payroll/increases/report" element={<Lazy><SalaryIncreasesReportPage /></Lazy>} />
           <Route path="payroll/runs/:id/slip/:empId" element={<Lazy><PayrollSlipPage /></Lazy>} />
           <Route path="payroll/runs/:id" element={<Lazy><PayrollRunDetailPage /></Lazy>} />
+          <Route path="payroll/final-settlements" element={<Lazy><FinalSettlementsPage /></Lazy>} />
 
           <Route path="leaves" element={<Lazy><LeavesPage /></Lazy>} />
           <Route path="leaves/new" element={<Lazy><LeaveFormPage /></Lazy>} />
@@ -415,17 +352,10 @@ export function AppRouter() {
           <Route path="sites/visits" element={<Lazy><SiteVisitsPage /></Lazy>} />
 
           <Route path="hr/action-screen" element={<Lazy><HrActionScreenPage /></Lazy>} />
-          <Route path="hr/administrative-decisions" element={<Lazy><AdministrativeDecisionsPage /></Lazy>} />
-          <Route path="hr/administrative-decisions/:id/print" element={<Lazy><AdministrativeDecisionPrintPage /></Lazy>} />
           <Route path="hr/gym-rates" element={<Lazy><GymRatesPage /></Lazy>} />
           <Route path="hr/circulars" element={<Lazy><CircularsPage /></Lazy>} />
           <Route path="hr/warnings" element={<Lazy><WarningsPage /></Lazy>} />
-          <Route path="hr/warnings/templates" element={<Lazy><WarningTemplatesPage /></Lazy>} />
           <Route path="hr/evaluations" element={<Lazy><EvaluationsPage /></Lazy>} />
-          <Route path="evaluation-management/categories" element={<Lazy><EvaluationCategoriesPage /></Lazy>} />
-          <Route path="evaluation-management/items" element={<Lazy><EvaluationItemsPage /></Lazy>} />
-          <Route path="evaluation-management/add" element={<Lazy><AddEvaluationPage /></Lazy>} />
-          <Route path="evaluation-management/report" element={<Lazy><EvaluationReportPage /></Lazy>} />
           <Route path="hr/custody" element={<Lazy><CustodyPage /></Lazy>} />
           <Route path="hr/job-requests" element={<Lazy><JobRequestsPage /></Lazy>} />
           <Route path="hr/messages" element={<Lazy><MessagesPage /></Lazy>} />
@@ -434,7 +364,6 @@ export function AppRouter() {
           <Route path="hr/activities" element={<Lazy><ActivitiesPage /></Lazy>} />
           <Route path="hr/tasks" element={<Lazy><TasksPage /></Lazy>} />
           <Route path="hr/legal-files" element={<Lazy><LegalFilesPage /></Lazy>} />
-          <Route path="hr/mobile-content" element={<Lazy><HrMobileContentPage /></Lazy>} />
 
           <Route path="termination/clearance" element={<Lazy><ClearancePage /></Lazy>} />
           <Route path="termination/archive" element={<Lazy><ArchivePage /></Lazy>} />
@@ -452,26 +381,24 @@ export function AppRouter() {
 
           <Route path="reports" element={<Lazy><ReportsHubPage /></Lazy>} />
           {/* Club report pages — added Part 6A */}
-          <Route path="reports/club/members-daily" element={<Lazy><ClubMembersReportPage /></Lazy>} />
-          <Route path="reports/club/subscriptions-daily" element={<Lazy><ClubSubscriptionsReportPage /></Lazy>} />
-          <Route path="reports/club/subscriptions-expired" element={<Lazy><ClubSubscriptionsExpiredReportPage /></Lazy>} />
-          <Route path="reports/club/subscriptions-active" element={<Lazy><ClubSubscriptionsActiveReportPage /></Lazy>} />
-          <Route path="reports/club/subscriptions-expiring" element={<Lazy><ClubSubscriptionsExpiringReportPage /></Lazy>} />
-          <Route path="reports/club/subscription-sessions" element={<Lazy><ClubSubscriptionSessionsReportPage /></Lazy>} />
+          <Route path="reports/club/members-daily" element={<Navigate to="/club/members" replace />} />
+          <Route path="reports/club/subscriptions-daily" element={<Navigate to="/club/subscriptions/reports" replace />} />
+          <Route path="reports/club/subscriptions-expired" element={<Navigate to="/club/subscriptions/reports" replace />} />
+          <Route path="reports/club/subscriptions-active" element={<Navigate to="/club/subscriptions/reports" replace />} />
+          <Route path="reports/club/subscriptions-expiring" element={<Navigate to="/club/subscriptions/reports" replace />} />
+          <Route path="reports/club/subscription-sessions" element={<Navigate to="/club/packages/settings" replace />} />
           <Route path="reports/club/sales-staff" element={<Navigate to="/club/subscriptions/user-analytics" replace />} />
-          <Route path="reports/club/attendance" element={<Lazy><ClubAttendanceReportPage /></Lazy>} />
-          <Route path="reports/club/trainers" element={<Lazy><ClubTrainersReportPage /></Lazy>} />
-          <Route path="reports/club/lockers" element={<Lazy><ClubLockersReportPage /></Lazy>} />
+          <Route path="reports/club/attendance" element={<Navigate to="/club/members/attendance" replace />} />
+          <Route path="reports/club/trainers" element={<Navigate to="/club/fitness/trainers" replace />} />
+          <Route path="reports/club/lockers" element={<Navigate to="/club/lockers" replace />} />
           {/* Finance report pages — added Part 6B */}
-          <Route path="reports/finance/revenue" element={<Lazy><FinanceRevenueReportPage /></Lazy>} />
-          <Route path="reports/finance/expenses" element={<Lazy><FinanceExpensesReportPage /></Lazy>} />
-          <Route path="reports/finance/pnl" element={<Lazy><FinancePnlReportPage /></Lazy>} />
-          <Route path="reports/finance/cash-flow" element={<Lazy><FinanceCashFlowReportPage /></Lazy>} />
-          <Route path="reports/finance/treasury" element={<Lazy><FinanceTreasuryReportPage /></Lazy>} />
-          <Route path="reports/finance/payment-methods" element={<Lazy><FinancePaymentMethodsReportPage /></Lazy>} />
-          <Route path="reports/finance/outstanding" element={<Lazy><FinanceOutstandingReportPage /></Lazy>} />
-          <Route path="reports/finance/daily-closing" element={<Lazy><DailyClosingReportPage /></Lazy>} />
-          <Route path="reports/finance/target" element={<Lazy><TargetReportPage /></Lazy>} />
+          <Route path="reports/finance/revenue" element={<Navigate to="/finance/revenue-reports" replace />} />
+          <Route path="reports/finance/expenses" element={<Navigate to="/finance/expense-reports" replace />} />
+          <Route path="reports/finance/pnl" element={<Navigate to="/finance/profit-loss" replace />} />
+          <Route path="reports/finance/cash-flow" element={<Navigate to="/accounting/cash-flow" replace />} />
+          <Route path="reports/finance/treasury" element={<Navigate to="/club/unified-treasury" replace />} />
+          <Route path="reports/finance/payment-methods" element={<Navigate to="/club/subscriptions/reports" replace />} />
+          <Route path="reports/finance/outstanding" element={<Navigate to="/club/subscriptions/outstanding" replace />} />
           {/* Fallback to legacy HR reports handler */}
           <Route path="reports/:key" element={<Lazy><ReportDetailPage /></Lazy>} />
 
@@ -479,29 +406,16 @@ export function AppRouter() {
           <Route path="club/reception" element={<Lazy><ClubReceptionPage /></Lazy>} />
           <Route path="club/reception/quick-services" element={<Lazy><ClubReceptionQuickServicesPage /></Lazy>} />
           <Route path="club/members/cards" element={<Navigate to="/club/members/barcode-management?tab=membership" replace />} />
-          <Route path="club/members/barcode-management/member-check-in" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
-          <Route path="club/members/barcode-management/print-range" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
-          <Route path="club/members/barcode-management/spa-check-in" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
-          <Route path="club/members/barcode-management/classes-check-in" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
-          <Route path="club/members/barcode-management/spa-attendance" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
-          <Route path="club/members/barcode-management/classes-attendance" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
-          <Route path="club/members/barcode-management/scan-times" element={<Lazy><ClubBarcodeScanTimesPage /></Lazy>} />
           <Route path="club/members/barcode-management" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
           <Route path="club/members/attendance" element={<Lazy><ClubMembersAttendancePage /></Lazy>} />
+          <Route path="club/gate-access" element={<Lazy><GateAccessPage /></Lazy>} />
           <Route path="club/members/groups" element={<Lazy><ClubMemberGroupsPage /></Lazy>} />
           <Route path="club/members/surveys" element={<Lazy><ClubSurveysPage /></Lazy>} />
-          <Route path="club/members/measurements" element={<Lazy><ClubMemberMeasurementsPage /></Lazy>} />
-          <Route path="club/members/settings" element={<Navigate to="/club/packages/settings?tab=membership" replace />} />
-          <Route path="club/members/:id/details" element={<Lazy><ClubMemberDetailsPage /></Lazy>} />
-          <Route path="club/members/:id/membership-document" element={<Lazy><ClubMemberMembershipDocumentPage /></Lazy>} />
-          <Route path="club/members/:id/attachments" element={<Lazy><ClubMemberAttachmentsPage /></Lazy>} />
+          <Route path="club/members/settings" element={<Navigate to="/club/packages/settings" replace />} />
           <Route path="club/members" element={<Lazy><ClubMembersManagementPage /></Lazy>} />
-          <Route path="club/members/:id" element={<Lazy><ClubMembersManagementPage /></Lazy>} />
           <Route path="club/packages/settings" element={<Lazy><ClubPackageSettingsPage /></Lazy>} />
-          <Route path="club/branch-groups" element={<Lazy><ClubBranchGroupsPage /></Lazy>} />
           <Route path="club/subscriptions/new" element={<Lazy><ClubSubscriptionsNewPage /></Lazy>} />
-          <Route path="club/subscriptions/online" element={<Lazy><OnlineSubscriptionsPage /></Lazy>} />
-          <Route path="club/subscriptions/special" element={<Lazy><ClubSubscriptionsSpecialPage /></Lazy>} />
+          <Route path="club/subscriptions/special" element={<Navigate to="/club/packages/settings" replace />} />
           <Route path="club/subscriptions/daily-cashier" element={<Lazy><ClubDailyCashierPage /></Lazy>} />
           <Route path="club/subscriptions/reports" element={<Lazy><ClubSubscriptionReportsPage /></Lazy>} />
           <Route path="club/subscriptions/time-based" element={<Lazy><ClubTimeBasedSubscriptionsPage /></Lazy>} />
@@ -509,56 +423,50 @@ export function AppRouter() {
           <Route path="club/subscriptions/member-transfer" element={<Lazy><ClubMemberTransferPage /></Lazy>} />
           <Route path="club/subscriptions/refunds" element={<Lazy><ClubSubscriptionsRefundsPage /></Lazy>} />
           <Route path="club/subscriptions/receipts" element={<Lazy><ClubSubscriptionsReceiptsPage /></Lazy>} />
-          <Route path="club/subscriptions/financial-reports" element={<Lazy><ClubFinancialReportsPage /></Lazy>} />
+          <Route path="club/subscriptions/financial-reports" element={<Navigate to="/finance/revenue-reports" replace />} />
           <Route path="club/subscriptions/expired" element={<Lazy><ClubSubscriptionsExpiredPage /></Lazy>} />
           <Route path="club/subscriptions/outstanding" element={<Lazy><ClubSubscriptionsOutstandingPage /></Lazy>} />
-          <Route path="club/subscriptions/member-financial" element={<Lazy><ClubMemberFinancialPage /></Lazy>} />
+          <Route path="club/subscriptions/member-financial" element={<Navigate to="/club/members" replace />} />
           <Route path="club/subscriptions/treasury" element={<Lazy><ClubTreasuryPage /></Lazy>} />
           <Route path="club/unified-treasury" element={<Lazy><UnifiedTreasuryPage /></Lazy>} />
           <Route path="club/subscriptions/discounts" element={<Lazy><ClubDiscountsPage /></Lazy>} />
-          <Route path="club/points/*" element={<Lazy><ClubPointsDiscountsManagementPage /></Lazy>} />
-          <Route path="club/discount-codes/*" element={<Lazy><ClubPointsDiscountsManagementPage /></Lazy>} />
           <Route path="club/subscriptions/customer-sources" element={<Lazy><ClubCustomerSourcesPage /></Lazy>} />
           <Route path="club/subscriptions/user-analytics" element={<Navigate to="/club/subscriptions/reports" replace />} />
-          <Route path="club/subscriptions/settings" element={<Navigate to="/club/packages/settings?tab=subscriptions" replace />} />
-          <Route path="club/subscriptions/member-form" element={<Lazy><ClubMemberFormPage /></Lazy>} />
+          <Route path="club/subscriptions/settings" element={<Navigate to="/club/packages/settings" replace />} />
+          <Route path="club/subscriptions/member-form" element={<Navigate to="/club/members" replace />} />
+          <Route path="club/membership-add/new" element={<Lazy><MembershipAddPage form /></Lazy>} />
+          <Route path="club/membership-add" element={<Lazy><MembershipAddPage /></Lazy>} />
           <Route path="club/subscriptions" element={<Lazy><ClubSubscriptionsPage /></Lazy>} />
-          <Route path="club/lockers/new" element={<Lazy><ClubLockersNewPage /></Lazy>} />
-          <Route path="club/lockers/settings" element={<Lazy><ClubLockersSettingsPage /></Lazy>} />
-          <Route path="club/lockers/inventory" element={<Lazy><ClubLockerInventoryPage /></Lazy>} />
-          <Route path="club/lockers/inventory-reports" element={<Lazy><ClubLockerInventoryReportsPage /></Lazy>} />
+          <Route path="club/subscriptions/freeze-requests" element={<Lazy><ClubFreezeRequestsPage /></Lazy>} />
+          <Route path="club/lockers/new" element={<Navigate to="/club/lockers?tab=lockers" replace />} />
+          <Route path="club/lockers/settings" element={<Navigate to="/club/lockers?tab=types" replace />} />
           <Route path="club/lockers" element={<Lazy><ClubLockersPage /></Lazy>} />
 
-          <Route path="club/fitness/trainer-payments" element={<Lazy><FitnessTrainerPaymentsPage /></Lazy>} />
-          <Route path="club/fitness/trainers" element={<Lazy><FitnessTrainersPage /></Lazy>} />
-          <Route path="club/fitness/trainer-search" element={<Lazy><FitnessTrainerSearchPage /></Lazy>} />
-          <Route path="club/fitness/trainer-ratings" element={<Lazy><FitnessTrainerRatingsPage /></Lazy>} />
-          <Route path="club/fitness/trainer-settings" element={<Lazy><FitnessTrainerSettingsPage /></Lazy>} />
-          <Route path="club/fitness/trainer-targets" element={<Lazy><FitnessTrainerTargetsPage /></Lazy>} />
-          <Route path="club/fitness/trainer-evaluations" element={<Lazy><FitnessTrainerEvaluationsPage /></Lazy>} />
-          <Route path="club/fitness/trainer-evaluation-criteria" element={<Lazy><FitnessTrainerEvaluationCriteriaPage /></Lazy>} />
-          <Route path="club/fitness/branch-analysis" element={<Lazy><FitnessBranchAnalysisPage /></Lazy>} />
-          <Route path="club/fitness/reception-analysis" element={<Lazy><FitnessReceptionAnalysisPage /></Lazy>} />
-          <Route path="club/fitness/shift-analysis" element={<Lazy><FitnessShiftAnalysisPage /></Lazy>} />
+          <Route path="club/fitness/trainer-payments" element={<Navigate to="/club/fitness/trainers?tab=overview" replace />} />
+          <Route path="club/fitness/trainer-search" element={<Navigate to="/club/fitness/trainers?tab=team" replace />} />
+          <Route path="club/fitness/trainer-ratings" element={<Navigate to="/club/fitness/trainers?tab=team" replace />} />
+          <Route path="club/fitness/trainer-settings" element={<Navigate to="/club/fitness/trainers?tab=settings" replace />} />
+          <Route path="club/fitness/trainer-performance" element={<Navigate to="/club/fitness/trainers?tab=overview" replace />} />
+          <Route path="club/fitness/trainers/:id" element={<Lazy><FitnessTrainerProfilePage /></Lazy>} />
           <Route path="club/fitness/equipment-maintenance" element={<Lazy><FitnessMaintenancePage /></Lazy>} />
           <Route path="club/fitness/spa-invoices" element={<Lazy><FitnessSpaInvoicesPage /></Lazy>} />
-          <Route path="club/fitness/barcode-check-in" element={<Navigate to="/club/members/barcode-management?tab=spa" replace />} />
-          <Route path="club/fitness/spa-attendance" element={<Navigate to="/club/members/barcode-management?tab=spa-attendance" replace />} />
-          <Route path="club/fitness/classes-attendance" element={<Navigate to="/club/members/barcode-management?tab=class-attendance" replace />} />
           <Route path="club/fitness/spa-bookings" element={<Lazy><FitnessSpaBookingsPage /></Lazy>} />
-          <Route path="club/subscriptions/inbody-invoices" element={<Lazy><FitnessInbodyInvoicesPage /></Lazy>} />
-          <Route path="club/fitness/inbody-invoices" element={<Navigate to="/club/subscriptions/inbody-invoices" replace />} />
+          <Route path="club/fitness/inbody" element={<Lazy><FitnessInbodyPage /></Lazy>} />
+          <Route path="club/subscriptions/inbody-invoices" element={<Navigate to="/club/fitness/inbody" replace />} />
+          <Route path="club/fitness/inbody-invoices" element={<Navigate to="/club/fitness/inbody" replace />} />
           <Route path="club/fitness/facility-settings" element={<Lazy><FitnessFacilitySettingsPage /></Lazy>} />
-          <Route path="club/fitness/class-booking" element={<Navigate to="/club/subscriptions/special?section=scheduling" replace />} />
+          <Route path="club/fitness/class-booking" element={<Navigate to="/club/packages/settings?tab=scheduling" replace />} />
           <Route path="club/fitness/room-bookings" element={<Lazy><FitnessRoomBookingsPage /></Lazy>} />
           <Route path="club/fitness/personal-sessions" element={<Lazy><FitnessPersonalSessionsPage /></Lazy>} />
+          <Route path="club/fitness/booking-board" element={<Lazy><FitnessBookingBoardPage /></Lazy>} />
           <Route path="club/fitness/programs" element={<Lazy><FitnessProgramsPage /></Lazy>} />
           <Route path="club/fitness/templates" element={<Lazy><FitnessTemplatesPage /></Lazy>} />
           <Route path="club/fitness/strength" element={<Lazy><FitnessStrengthPage /></Lazy>} />
           <Route path="club/fitness/progress" element={<Lazy><FitnessProgressPage /></Lazy>} />
           <Route path="club/fitness/assessments" element={<Lazy><FitnessAssessmentsPage /></Lazy>} />
-          <Route path="club/fitness/scheduling" element={<Navigate to="/club/subscriptions/special?section=scheduling" replace />} />
-          <Route path="club/fitness/classes" element={<Navigate to="/club/subscriptions/special" replace />} />
+          <Route path="club/fitness/scheduling" element={<Navigate to="/club/packages/settings?tab=scheduling" replace />} />
+          <Route path="club/fitness/classes" element={<Navigate to="/club/packages/settings" replace />} />
+          <Route path="club/fitness/trainers" element={<Lazy><FitnessTrainersAdminPage /></Lazy>} />
           <Route path="club/fitness/facilities" element={<Lazy><FitnessFacilitiesPage /></Lazy>} />
           <Route path="club/fitness/equipment" element={<Lazy><FitnessEquipmentPage /></Lazy>} />
           <Route path="club/fitness/spa-services" element={<Lazy><FitnessSpaServicesPage /></Lazy>} />
@@ -570,17 +478,26 @@ export function AppRouter() {
           <Route path="club/events/settings" element={<Lazy><ClubEventSettingsPage /></Lazy>} />
           <Route path="club/events/:id" element={<Lazy><ClubEventWorkspacePage /></Lazy>} />
 
+          <Route path="club/cafe/dashboard" element={<Lazy><CafeDashboardPage /></Lazy>} />
+          <Route path="cafe/dashboard" element={<Navigate to="/club/cafe/dashboard" replace />} />
+          <Route path="finance/payroll-preparation" element={<Lazy><FinancePayrollPreparationPage /></Lazy>} />
+          <Route path="finance/payroll-approval" element={<Lazy><FinancePayrollApprovalPage /></Lazy>} />
           <Route path="club/cafe" element={<Navigate to="/sales/new" replace />} />
           <Route path="club/cafe/products" element={<Lazy><CafeProductsPage /></Lazy>} />
+          <Route path="club/cafe/bundles" element={<Lazy><CafeBundlesPage /></Lazy>} />
           <Route path="club/cafe/categories" element={<Lazy><CafeCategoriesPage /></Lazy>} />
           <Route path="club/cafe/raw-materials" element={<Lazy><CafeRawMaterialsPage /></Lazy>} />
           <Route path="club/cafe/reports" element={<Lazy><CafeReportsPage /></Lazy>} />
+          <Route path="club/cafe/waste" element={<Lazy><CafeWastePage /></Lazy>} />
+          <Route path="club/cafe/customers" element={<Lazy><CafeCustomersPage /></Lazy>} />
           <Route path="club/cafe/reports/feedback" element={<Lazy><CafeItemFeedbackReportPage /></Lazy>} />
           <Route path="club/cafe/purchases" element={<Lazy><CafePurchasesPage /></Lazy>} />
           <Route path="club/cafe/suppliers" element={<Lazy><CafeSuppliersPage /></Lazy>} />
           <Route path="club/cafe/supplier-payments" element={<Lazy><CafeSupplierPaymentsPage /></Lazy>} />
           <Route path="club/cafe/stock-taking" element={<Lazy><InventoryStockTakingPage /></Lazy>} />
+          <Route path="club/cafe/stock-taking/:id" element={<Lazy><InventoryStockTakingWorkspacePage /></Lazy>} />
           <Route path="club/cafe/movements" element={<Lazy><InventoryMovementLogPage /></Lazy>} />
+          <Route path="club/cafe/stock-health" element={<Lazy><InventoryStockHealthPage /></Lazy>} />
           <Route path="club/cafe/pos" element={<Navigate to="/sales/new" replace />} />
 
           <Route path="inventory" element={<Navigate to="/club/cafe/raw-materials" replace />} />
@@ -591,29 +508,29 @@ export function AppRouter() {
           <Route path="inventory/opening-stock" element={<Navigate to="/club/cafe/movements" replace />} />
           <Route path="inventory/gym-issue" element={<Lazy><InventoryGymIssuePage /></Lazy>} />
           <Route path="inventory/transactions" element={<Navigate to="/club/cafe/movements" replace />} />
-          <Route path="inventory/movement-log" element={<Lazy><InventoryMovementLogPage /></Lazy>} />
-          <Route path="inventory/stock-taking" element={<Lazy><InventoryStockTakingPage /></Lazy>} />
+          <Route path="inventory/movement-log" element={<Navigate to="/club/cafe/movements" replace />} />
+          <Route path="inventory/stock-taking" element={<Navigate to="/club/cafe/stock-taking" replace />} />
           <Route path="inventory/policies" element={<Navigate to="/club/cafe/raw-materials" replace />} />
           <Route path="inventory/analytics" element={<Navigate to="/club/cafe/reports" replace />} />
 
-          <Route path="procurement" element={<Lazy><ProcurementIndexPage /></Lazy>} />
-          <Route path="procurement/settings" element={<Lazy><ProcurementSettingsPage /></Lazy>} />
-          <Route path="procurement/requisitions" element={<Lazy><ProcurementRequisitionsPage /></Lazy>} />
-          <Route path="procurement/purchase-orders" element={<Lazy><ProcurementPurchaseOrdersPage /></Lazy>} />
-          <Route path="procurement/quick-po" element={<Lazy><ProcurementQuickPoPage /></Lazy>} />
-          <Route path="procurement/goods-receipts" element={<Lazy><ProcurementGoodsReceiptsPage /></Lazy>} />
-          <Route path="procurement/invoices" element={<Lazy><ProcurementInvoicesPage /></Lazy>} />
-          <Route path="procurement/returns" element={<Lazy><ProcurementReturnsPage /></Lazy>} />
-          <Route path="procurement/returns-debit" element={<Lazy><ProcurementReturnsDebitPage /></Lazy>} />
-          <Route path="procurement/dashboard" element={<Lazy><ProcurementDashboardPage /></Lazy>} />
+          <Route path="procurement" element={<Navigate to="/club/cafe/purchases" replace />} />
+          <Route path="procurement/settings" element={<Navigate to="/club/cafe/suppliers" replace />} />
+          <Route path="procurement/requisitions" element={<Navigate to="/club/cafe/purchases" replace />} />
+          <Route path="procurement/purchase-orders" element={<Navigate to="/club/cafe/purchases" replace />} />
+          <Route path="procurement/quick-po" element={<Navigate to="/club/cafe/purchases" replace />} />
+          <Route path="procurement/goods-receipts" element={<Navigate to="/club/cafe/purchases" replace />} />
+          <Route path="procurement/invoices" element={<Navigate to="/club/cafe/purchases" replace />} />
+          <Route path="procurement/returns" element={<Navigate to="/club/cafe/movements" replace />} />
+          <Route path="procurement/returns-debit" element={<Navigate to="/club/cafe/reports" replace />} />
+          <Route path="procurement/dashboard" element={<Navigate to="/club/cafe/purchases" replace />} />
 
           <Route path="sales" element={<Navigate to="/sales/new" replace />} />
           <Route path="sales/bookings" element={<Lazy><SalesBookingsPage /></Lazy>} />
           <Route path="sales/new" element={<Lazy><SalesNewReceiptPage /></Lazy>} />
           <Route path="sales/drafts" element={<Lazy><SalesDraftsPage /></Lazy>} />
-          <Route path="sales/invoices" element={<Lazy><SalesInvoicesPage /></Lazy>} />
+          <Route path="sales/invoices" element={<Navigate to="/sales/drafts" replace />} />
           <Route path="sales/shifts" element={<Lazy><SalesShiftsPage /></Lazy>} />
-          <Route path="sales/revenue" element={<Lazy><SalesRevenuePage /></Lazy>} />
+          <Route path="sales/revenue" element={<Navigate to="/club/cafe/reports" replace />} />
           <Route path="sales/treasury" element={<Lazy><SalesTreasuryPage /></Lazy>} />
           <Route path="sales/settlements" element={<Lazy><SalesSettlementsPage /></Lazy>} />
           <Route path="sales/pos-admin" element={<Lazy><PosAdminPage /></Lazy>} />
@@ -639,19 +556,21 @@ export function AppRouter() {
           <Route path="accounting/settings" element={<Lazy><AccountingSettingsPage /></Lazy>} />
 
           <Route path="app/about" element={<Lazy><AboutAppPage /></Lazy>} />
+          <Route path="app/payment-methods" element={<Lazy><AppPaymentMethodsPage /></Lazy>} />
+          <Route path="app/branches" element={<Lazy><AppBranchesPage /></Lazy>} />
           <Route path="app/invitations/sent" element={<Lazy><SentInvitationsPage /></Lazy>} />
           <Route path="app/invitations/accepted" element={<Lazy><AcceptedInvitationsPage /></Lazy>} />
           <Route path="app/invitations/attended" element={<Lazy><AttendedInvitationsPage /></Lazy>} />
           <Route path="app/invitations/rejected" element={<Lazy><RejectedInvitationsPage /></Lazy>} />
           <Route path="app/offers" element={<Lazy><AppOffersPage /></Lazy>} />
+          <Route path="app/notifications" element={<Lazy><MemberNotificationsPage /></Lazy>} />
           <Route path="app/trainers" element={<Lazy><AppTrainersPage /></Lazy>} />
           <Route path="app/exercise-categories" element={<Lazy><ExerciseCategoriesPage /></Lazy>} />
           <Route path="app/exercises" element={<Lazy><AppExercisesPage /></Lazy>} />
           <Route path="app/news" element={<Lazy><AppNewsPage /></Lazy>} />
-          <Route path="app/community" element={<Lazy><AppCommunityPage /></Lazy>} />
           <Route path="app/ads" element={<Lazy><AppAdsPage /></Lazy>} />
 
-          <Route path="users" element={<Lazy><UsersManagePage /></Lazy>} />
+          <Route path="users" element={<Lazy><UsersPage /></Lazy>} />
           <Route path="users/manage" element={<Lazy><UsersManagePage /></Lazy>} />
           <Route path="users/:id/permissions" element={<LegacyUserPermsRedirect />} />
 

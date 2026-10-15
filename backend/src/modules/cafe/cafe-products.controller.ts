@@ -25,6 +25,7 @@ import { UpdateCafePriceDto } from './dto/update-cafe-price.dto';
 import { ProduceCafeProductDto } from './dto/produce-cafe-product.dto';
 import { MarkCafeProductsUnavailableDto } from './dto/mark-cafe-products-unavailable.dto';
 import { UpdateCafeProductStatusDto } from './dto/update-cafe-product-status.dto';
+import { IngredientSwapDto, RemoveIngredientUsageDto } from './dto/ingredient-swap.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('cafe-products')
@@ -37,6 +38,7 @@ export class CafeProductsController {
   constructor(private readonly service: CafeProductsService) {}
 
   @Get()
+  @RequiresPermission('club.cafe.products:view', 'club.cafe.price_list:view', 'gym-sales.sales.new_receipt:view', 'gym-sales.sales.drafts:update')
   list(
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
@@ -69,6 +71,7 @@ export class CafeProductsController {
   }
 
   @Get('partners/list')
+  @RequiresPermission('club.cafe.products:view', 'club.cafe.price_list:view', 'gym-sales.sales.new_receipt:view', 'gym-sales.sales.drafts:update')
   partners() {
     return this.service.partners();
   }
@@ -91,9 +94,10 @@ export class CafeProductsController {
     @Query('dateFrom') dateFrom: string | undefined,
     @Query('dateTo') dateTo: string | undefined,
     @Query('branchId') branchId: string | undefined,
+    @Query('shiftSessionId') shiftSessionId: string | undefined,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.service.reports(dateFrom, dateTo, branchId, user);
+    return this.service.reports(dateFrom, dateTo, branchId, user, shiftSessionId);
   }
 
   @Get('reports/item-feedback')
@@ -105,6 +109,30 @@ export class CafeProductsController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.service.itemFeedbackReport(dateFrom, dateTo, branchId, user);
+  }
+
+  @Get('ingredient-swap/preview')
+  @RequiresPermission('club.cafe.products:view')
+  previewIngredientSwap(
+    @Query('sourceIngredientId', ParseIntPipe) sourceIngredientId: number,
+    @Query('targetIngredientId', ParseIntPipe) targetIngredientId: number,
+  ) {
+    return this.service.previewIngredientSwap(sourceIngredientId, targetIngredientId);
+  }
+
+  @Post('ingredient-swap')
+  @RequiresPermission('club.cafe.products:update')
+  applyIngredientSwap(@Body() body: IngredientSwapDto, @CurrentUser() user: JwtUser) {
+    return this.service.applyIngredientSwap(body, user);
+  }
+
+  @Post('ingredient-usage/remove')
+  @RequiresPermission('club.cafe.products:update')
+  removeIngredientUsage(
+    @Body() body: RemoveIngredientUsageDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.removeIngredientUsage(body, user);
   }
 
   @Get(':id')

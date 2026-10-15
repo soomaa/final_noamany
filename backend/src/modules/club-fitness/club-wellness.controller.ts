@@ -19,47 +19,72 @@ import { JwtUser } from '../../common/types/jwt-user';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-inbody-services')
-@RequiresPermission('club.fitness:view')
+@RequiresPermission('club.fitness.inbody_invoices:view')
 export class ClubInbodyServicesController {
   constructor(private readonly service: ClubWellnessService) {}
 
   @Get('catalog')
-  catalog() {
-    return this.service.listInbodyServicesCatalog();
+  catalog(@CurrentUser() user: JwtUser) {
+    return this.service.listInbodyServicesCatalog(user);
   }
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listInbodyServices(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listInbodyServices(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findInbodyService(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findInbodyService(id, user);
   }
 
   @Post()
-  @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>) {
-    return this.service.createInbodyService(body);
+  @RequiresPermission('club.fitness.inbody_invoices:create')
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createInbodyService(body, user);
   }
 
   @Put(':id')
-  @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateInbodyService(id, body);
+  @RequiresPermission('club.fitness.inbody_invoices:update')
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateInbodyService(id, body, user);
   }
 
   @Delete(':id')
-  @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeInbodyService(id);
+  @RequiresPermission('club.fitness.inbody_invoices:delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeInbodyService(id, user);
+  }
+}
+
+@UseGuards(JwtAuthGuard)
+@Controller('club-inbody-settings')
+@RequiresPermission('club.fitness.inbody_invoices:view')
+export class ClubInbodySettingsController {
+  constructor(private readonly service: ClubWellnessService) {}
+
+  @Get(':branchId')
+  get(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.getInbodyBranchSettings(branchId, user);
+  }
+
+  @Put(':branchId')
+  @RequiresPermission('club.fitness.inbody_invoices:update')
+  update(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.updateInbodyBranchSettings(branchId, body, user);
   }
 }
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-inbody-measurements')
-@RequiresPermission('club.fitness:view')
+@RequiresPermission('club.fitness.inbody_invoices:view')
 export class ClubInbodyMeasurementsController {
   constructor(private readonly service: ClubWellnessService) {}
 
@@ -68,9 +93,9 @@ export class ClubInbodyMeasurementsController {
     return this.service.listInbodyMeasurements(query, user);
   }
 
-  @Get('next-file-number')
-  nextFileNumber() {
-    return this.service.nextInbodyFileNumber().then((nextFileNumber) => ({ nextFileNumber }));
+  @Get('member-benefits/by-code')
+  benefits(@Query('memberCode') memberCode: string, @CurrentUser() user: JwtUser) {
+    return this.service.getInbodyMemberContext(memberCode, user);
   }
 
   @Get(':id')
@@ -79,19 +104,28 @@ export class ClubInbodyMeasurementsController {
   }
 
   @Post()
-  @RequiresPermission('club.fitness:create')
+  @RequiresPermission('club.fitness.inbody_invoices:create')
   create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
     return this.service.createInbodyMeasurement(body, user);
   }
 
+  @Post('record')
+  @RequiresPermission('club.fitness.inbody_invoices:create')
+  record(
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.recordInbodyMeasurement(body, user.sub, user);
+  }
+
   @Put(':id')
-  @RequiresPermission('club.fitness:update')
+  @RequiresPermission('club.fitness.inbody_invoices:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
     return this.service.updateInbodyMeasurement(id, body, user);
   }
 
   @Delete(':id')
-  @RequiresPermission('club.fitness:delete')
+  @RequiresPermission('club.fitness.inbody_invoices:delete')
   remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
     return this.service.removeInbodyMeasurement(id, user);
   }
@@ -104,7 +138,7 @@ export class AdminInbodyController {
   constructor(private readonly service: ClubWellnessService) {}
 
   @Post('inbody')
-  @RequiresPermission('club.fitness:create')
+  @RequiresPermission('club.fitness.inbody_invoices:create')
   create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
     return this.service.createInbodyMeasurement(body, user);
   }
@@ -112,183 +146,155 @@ export class AdminInbodyController {
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-inbody-invoices')
-@RequiresPermission('club.fitness:view')
+@RequiresPermission('club.fitness.inbody_invoices:view')
 export class ClubInbodyInvoicesController {
   constructor(private readonly service: ClubWellnessService) {}
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listInbodyInvoices(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listInbodyInvoices(query, user);
   }
 
   @Get('member-benefits/by-code')
-  benefits(@Query('memberCode') memberCode: string) {
-    return this.service.getMemberBenefits(memberCode);
+  benefits(@Query('memberCode') memberCode: string, @CurrentUser() user: JwtUser) {
+    return this.service.getMemberBenefits(memberCode, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findInbodyInvoice(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findInbodyInvoice(id, user);
   }
 
   @Post()
-  @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>, @CurrentUser('sub') userId: number) {
-    return this.service.createInbodyInvoice(body, userId);
+  @RequiresPermission('club.fitness.inbody_invoices:create')
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createInbodyInvoice(body, user.sub, user);
   }
 
   @Put(':id')
-  @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateInbodyInvoice(id, body);
+  @RequiresPermission('club.fitness.inbody_invoices:update')
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateInbodyInvoice(id, body, user);
   }
 
   @Delete(':id')
-  @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeInbodyInvoice(id);
+  @RequiresPermission('club.fitness.inbody_invoices:delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeInbodyInvoice(id, user);
   }
 }
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-spa-services')
-@RequiresPermission('club.fitness:view')
+@RequiresPermission('club.fitness.spa_services:view')
 export class ClubSpaServicesController {
   constructor(private readonly service: ClubWellnessService) {}
 
   @Get('catalog')
-  catalog() {
-    return this.service.listSpaServicesCatalog();
+  catalog(@CurrentUser() user: JwtUser) {
+    return this.service.listSpaServicesCatalog(user);
   }
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listSpaServices(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listSpaServices(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findSpaService(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findSpaService(id, user);
   }
 
   @Post()
-  @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>) {
-    return this.service.createSpaService(body);
+  @RequiresPermission('club.fitness.spa_services:create')
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createSpaService(body, user);
   }
 
   @Put(':id')
-  @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateSpaService(id, body);
+  @RequiresPermission('club.fitness.spa_services:update')
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateSpaService(id, body, user);
   }
 
   @Delete(':id')
-  @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeSpaService(id);
+  @RequiresPermission('club.fitness.spa_services:delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeSpaService(id, user);
   }
 }
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-spa-bookings')
-@RequiresPermission('club.fitness:view')
+@RequiresPermission('club.fitness.spa_bookings:view')
 export class ClubSpaBookingsController {
   constructor(private readonly service: ClubWellnessService) {}
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listSpaBookings(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listSpaBookings(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findSpaBooking(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findSpaBooking(id, user);
   }
 
   @Post()
-  @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>) {
-    return this.service.createSpaBooking(body);
+  @RequiresPermission('club.fitness.spa_bookings:create')
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createSpaBooking(body, user);
   }
 
   @Put(':id')
-  @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateSpaBooking(id, body);
+  @RequiresPermission('club.fitness.spa_bookings:update')
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateSpaBooking(id, body, user);
   }
 
   @Delete(':id')
-  @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeSpaBooking(id);
-  }
-}
-
-/**
- * Scanner-only SPA entry point.  It intentionally has no booking input: the
- * active subscription is the authority for admission and available SPA visits.
- */
-@UseGuards(JwtAuthGuard)
-@Controller('club-spa-attendance')
-@RequiresPermission('club.fitness:view')
-export class ClubSpaAttendanceController {
-  constructor(private readonly service: ClubWellnessService) {}
-
-  @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listSpaAttendance(query);
-  }
-
-  @Post('barcode-check-in')
-  @RequiresPermission('club.fitness:create')
-  barcodeCheckIn(@Body('memberCode') memberCode: string, @CurrentUser('sub') userId: number) {
-    return this.service.checkInSpaByBarcode(memberCode, userId);
+  @RequiresPermission('club.fitness.spa_bookings:delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeSpaBooking(id, user);
   }
 }
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-spa-invoices')
-@RequiresPermission('club.fitness:view')
+@RequiresPermission('club.fitness.spa_invoices:view')
 export class ClubSpaInvoicesController {
   constructor(private readonly service: ClubWellnessService) {}
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listSpaInvoices(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listSpaInvoices(query, user);
   }
 
   @Get('member-benefits/by-code')
-  benefits(@Query('memberCode') memberCode: string) {
-    return this.service.getMemberBenefits(memberCode);
-  }
-
-  @Post('barcode-check-in')
-  @RequiresPermission('club.fitness:create')
-  barcodeCheckIn(@Body('memberCode') memberCode: string, @CurrentUser('sub') userId: number) {
-    return this.service.checkInSpaByBarcode(memberCode, userId);
+  benefits(@Query('memberCode') memberCode: string, @CurrentUser() user: JwtUser) {
+    return this.service.getMemberBenefits(memberCode, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findSpaInvoice(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findSpaInvoice(id, user);
   }
 
   @Post()
-  @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>, @CurrentUser('sub') userId: number) {
-    return this.service.createSpaInvoice(body, userId);
+  @RequiresPermission('club.fitness.spa_invoices:create')
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createSpaInvoice(body, user.sub, user);
   }
 
   @Put(':id')
-  @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateSpaInvoice(id, body);
+  @RequiresPermission('club.fitness.spa_invoices:update')
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateSpaInvoice(id, body, user);
   }
 
   @Delete(':id')
-  @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeSpaInvoice(id);
+  @RequiresPermission('club.fitness.spa_invoices:delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeSpaInvoice(id, user);
   }
 }

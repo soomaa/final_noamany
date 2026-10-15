@@ -1,6 +1,8 @@
+import { projectedFreezeEnd, FreezeDates } from '../club-subscriptions/freeze-end-projection';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
+  addDays,
   daysBetween,
   deriveSessionAwareStatus,
   toNum,
@@ -16,18 +18,9 @@ import {
 
 const EGYPT_TZ = 'Africa/Cairo';
 
-function parseYmdLocal(dateStr: string): Date {
-  const [y, m, d] = dateStr.split('-').map(Number);
-  return new Date(y, (m ?? 1) - 1, d ?? 1);
-}
-
-function subscriptionElapsedPercent(startDate: string, endDate: string, at: Date): number {
-  const start = parseYmdLocal(startDate).getTime();
-  const end = parseYmdLocal(endDate).getTime();
-  const now = new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime();
-  const total = end - start;
-  if (total <= 0) return 100;
-  return Math.min(100, Math.max(0, ((now - start) / total) * 100));
+function calendarDayNumber(date: string): number {
+  const [year, month, day] = date.split('-').map(Number);
+  return Date.UTC(year, month - 1, day) / 86_400_000;
 }
 
 function currentLocalTimeHHMM(at: Date): string {
@@ -56,6 +49,8 @@ export class EntitlementService {
   ) {}
 
   private mapSubscription(row: {
+    freezes?: FreezeDates[];
+    renewal_hold?: boolean;
     id: number;
     subscription_number: string;
     subscription_type: string | null;
@@ -73,14 +68,14 @@ export class EntitlementService {
     sessions_used: number;
     allow_multiple_daily_entries: boolean;
     branch_id: number;
-  }): EntitlementSubscriptionSnapshot {
+  }, at = new Date()): EntitlementSubscriptionSnapshot {
     const derivedStatus = deriveSessionAwareStatus({
       startDate: row.subscription_start_date,
       endDate: row.subscription_end_date,
       isLinkedToSessions: row.is_linked_to_sessions,
       sessionsCount: row.sessions_count,
       sessionsUsed: row.sessions_used,
-    });
+    }, at);
     const sessionsRemaining =
       row.is_linked_to_sessions && row.sessions_count != null
         ? Math.max(0, row.sessions_count - row.sessions_used)
@@ -89,16 +84,17 @@ export class EntitlementService {
     // sessions-remaining concept so the scanner can show "متبقي X يوم والاشتراك ينتهي".
     const daysRemaining = row.is_linked_to_sessions
       ? null
-      : Math.max(0, daysBetween(localDateString(), row.subscription_end_date));
+      : Math.max(0, daysBetween(localDateString(at), row.subscription_end_date));
 
     return {
       id: row.id,
       subscriptionNumber: row.subscription_number,
       subscriptionType: row.subscription_type,
-      status: row.status,
+      status: row.renewal_hold || row.freezes?.length ? 'frozen' : row.status,
       derivedStatus,
       startDate: row.subscription_start_date,
       endDate: row.subscription_end_date,
+      projectedEndDate: projectedFreezeEnd(row.subscription_end_date, row.freezes?.[0], localDateString(at)),
       remainingAmount: toNum(row.remaining_amount),
       isTimeBased: row.is_time_based,
       timeFrom: row.time_from,
@@ -124,22 +120,49 @@ export class EntitlementService {
     return { code, messageAr, messageEn, severity };
   }
 
-  async validate(options: ValidateEntitlementOptions): Promise<EntitlementResult> {
+  /**
+   * Every date-active subscription of the member in this branch, each validated on its own
+   * (time window, remaining sessions, dues, freeze). A self-service entry point uses this to
+   * tell "exactly one usable subscription" — safe to apply without a person — from "several",
+   * where only reception knows which one the member came for.
+   */
+  async usableSubscriptions(options: { memberId: number; branchId: number; at?: Date }) {
+    const at = options.at ?? new Date();
+    const [policies, member, subs] = await Promise.all([
+      this.gymPolicies.get(),
+      this.prisma.club_members.findFirst({ where: { id: options.memberId, is_deleted: false } }),
+      this.prisma.club_subscriptions.findMany({
+        include: { freezes: { where: { is_active: true }, orderBy: { id: 'desc' }, take: 1 } },
+        where: { member_id: options.memberId, branch_id: options.branchId },
+        orderBy: { subscription_end_date: 'desc' },
+      }),
+    ]);
+    return Promise.all(subs.filter((s) => s.status !== 'frozen' && s.status !== 'expired' &&
+      deriveSessionAwareStatus({ startDate: s.subscription_start_date, endDate: s.subscription_end_date,
+        isLinkedToSessions: s.is_linked_to_sessions, sessionsCount: s.sessions_count,
+        sessionsUsed: s.sessions_used }, at) === 'active'
+    ).map((sub) => this.validate({ ...options, at, subscriptionId: sub.id }, { policies, member, subs })));
+  }
+
+  async validate(options: ValidateEntitlementOptions, context?: {
+    policies: Awaited<ReturnType<ClubGymPoliciesService['get']>>;
+    member: Awaited<ReturnType<PrismaService['club_members']['findFirst']>>;
+    subs: Awaited<ReturnType<PrismaService['club_subscriptions']['findMany']>>;
+  }): Promise<EntitlementResult> {
     const {
       memberId,
       branchId,
-      branchIds,
       subscriptionId,
       at = new Date(),
       blockOnOutstanding,
       requireActiveSubscription = true,
     } = options;
 
-    const policies = await this.gymPolicies.get();
+    const policies = context?.policies ?? await this.gymPolicies.get();
     const effectiveBlockOnOutstanding =
-      blockOnOutstanding ?? !policies.allowCheckInWithOutstanding;
+      blockOnOutstanding === true || !policies.allowCheckInWithOutstanding;
 
-    const member = await this.prisma.club_members.findFirst({
+    const member = context?.member ?? await this.prisma.club_members.findFirst({
       where: { id: memberId, is_deleted: false },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
@@ -147,13 +170,7 @@ export class EntitlementService {
     const reasons: EntitlementReason[] = [];
     const warnings: EntitlementReason[] = [];
 
-    const permittedBranchIds = branchIds?.length
-      ? [...new Set(branchIds)]
-      : branchId != null
-        ? [branchId]
-        : null;
-
-    if (permittedBranchIds != null && !permittedBranchIds.includes(member.branch_id)) {
+    if (branchId != null && member.branch_id !== branchId) {
       reasons.push(
         this.reason(
           'member_branch_mismatch',
@@ -174,7 +191,34 @@ export class EntitlementService {
           'block',
         ),
       );
-    } else if (!member.is_active) {
+    }
+
+    const subs = context?.subs ?? await this.prisma.club_subscriptions.findMany({
+        include: { freezes: { where: { is_active: true }, orderBy: { id: 'desc' }, take: 1 } },
+      where: {
+        member_id: memberId,
+        ...(branchId != null ? { branch_id: branchId } : {}),
+      },
+      orderBy: { subscription_end_date: 'desc' },
+    });
+
+    // The member flag is only a denormalized summary. Legacy data and older sync logic can leave
+    // it false while another subscription is still usable; the live subscription is the source
+    // of truth for entry, while an explicit member block always remains authoritative.
+    const memberHasUsableSubscription = subs.some(
+      (s) =>
+        s.status !== 'frozen' &&
+        s.status !== 'expired' &&
+        deriveSessionAwareStatus({
+          startDate: s.subscription_start_date,
+          endDate: s.subscription_end_date,
+          isLinkedToSessions: s.is_linked_to_sessions,
+          sessionsCount: s.sessions_count,
+          sessionsUsed: s.sessions_used,
+        }, at) === 'active',
+    );
+
+    if (!member.is_blocked && !member.is_active && !memberHasUsableSubscription) {
       reasons.push(
         this.reason(
           'member_inactive',
@@ -184,14 +228,6 @@ export class EntitlementService {
         ),
       );
     }
-
-    const subs = await this.prisma.club_subscriptions.findMany({
-      where: {
-        member_id: memberId,
-        ...(permittedBranchIds != null ? { branch_id: { in: permittedBranchIds } } : {}),
-      },
-      orderBy: { subscription_end_date: 'desc' },
-    });
 
     let activeSub: (typeof subs)[number] | null;
     if (subscriptionId != null) {
@@ -211,13 +247,15 @@ export class EntitlementService {
     } else {
       const activeCandidates = subs.filter(
         (s) =>
+          s.status !== 'frozen' &&
+          s.status !== 'expired' &&
           deriveSessionAwareStatus({
             startDate: s.subscription_start_date,
             endDate: s.subscription_end_date,
             isLinkedToSessions: s.is_linked_to_sessions,
             sessionsCount: s.sessions_count,
             sessionsUsed: s.sessions_used,
-          }) === 'active',
+          }, at) === 'active',
       );
 
       activeSub = activeCandidates[0] ?? null;
@@ -242,7 +280,7 @@ export class EntitlementService {
 
     let snapshot: EntitlementSubscriptionSnapshot | null = null;
     if (activeSub) {
-      snapshot = this.mapSubscription(activeSub);
+      snapshot = this.mapSubscription(activeSub, at);
 
       // A frozen subscription (stored status) is denied check-in regardless of its date-derived
       // status. The freeze is an explicit hold on the subscription.
@@ -259,7 +297,7 @@ export class EntitlementService {
 
       // A specifically chosen subscription must be date-active (monthly within its period,
       // a session package within its validity). Expired / not-yet-started is denied.
-      if (subscriptionId != null && snapshot.derivedStatus !== 'active') {
+      if (snapshot.derivedStatus !== 'active' || snapshot.status === 'expired') {
         reasons.push(
           this.reason(
             'subscription_not_active',
@@ -270,26 +308,19 @@ export class EntitlementService {
         );
       }
 
-      if (effectiveBlockOnOutstanding && snapshot.remainingAmount > 0) {
-        reasons.push(
-          this.reason(
-            'outstanding_balance',
-            `رصيد مستحق: ${snapshot.remainingAmount}`,
-            `Outstanding balance: ${snapshot.remainingAmount}`,
-            'block',
-          ),
-        );
-      } else if (snapshot.remainingAmount > 0 && policies.outstandingAlertEnabled) {
-        const elapsedPct = subscriptionElapsedPercent(snapshot.startDate, snapshot.endDate, at);
-        if (elapsedPct >= policies.outstandingAlertAfterSubscriptionPercent) {
-          warnings.push(
-            this.reason(
-              'outstanding_balance',
-              `رصيد مستحق: ${snapshot.remainingAmount}`,
-              `Outstanding balance: ${snapshot.remainingAmount}`,
-              'warn',
-            ),
-          );
+      const elapsedDays = Math.max(0, calendarDayNumber(localDateString(at)) - calendarDayNumber(snapshot.startDate));
+      const graceDays = policies.outstandingGraceDays ?? 7;
+      const reachedPaymentDeadline = elapsedDays >= graceDays;
+      const reachedLegacyDeadline = false;
+      if (snapshot.remainingAmount > 0) {
+        if (effectiveBlockOnOutstanding || reachedPaymentDeadline || reachedLegacyDeadline) {
+          reasons.push(this.reason('outstanding_balance',
+            `غير مسموح بالدخول — عليك متبقي ${snapshot.remainingAmount}، مر ${elapsedDays} يوم من بداية الاشتراك (مهلة السداد ${graceDays} يوم)`,
+            `Entry denied: outstanding ${snapshot.remainingAmount}; ${elapsedDays} days since subscription start (payment grace ${graceDays} days)`, 'block'));
+        } else if (policies.outstandingAlertEnabled) {
+          warnings.push(this.reason('outstanding_balance',
+            `عليك متبقي ${snapshot.remainingAmount} — متاح للسداد ${graceDays - elapsedDays} يوم قبل منع الدخول`,
+            `Outstanding ${snapshot.remainingAmount}: ${graceDays - elapsedDays} days left before entry is blocked`, 'warn'));
         }
       }
 
@@ -320,11 +351,7 @@ export class EntitlementService {
         }
       }
 
-      if (
-        branchId != null &&
-        !branchIds?.length &&
-        snapshot.branchId !== branchId
-      ) {
+      if (branchId != null && snapshot.branchId !== branchId) {
         reasons.push(
           this.reason(
             'subscription_branch_mismatch',
@@ -338,17 +365,26 @@ export class EntitlementService {
 
     const blocking = reasons.some((r) => r.severity === 'block');
     const latestSubscription =
-      snapshot ?? (subs[0] ? this.mapSubscription(subs[0]) : null);
+      snapshot ?? (subs[0] ? this.mapSubscription(subs[0], at) : null);
+
+    let accessValidUntil = snapshot?.endDate ?? null;
+    if (snapshot && snapshot.remainingAmount > 0) {
+      const paymentEnd = addDays(snapshot.startDate, (policies.outstandingGraceDays ?? 7) - 1);
+      if (accessValidUntil == null || paymentEnd < accessValidUntil) accessValidUntil = paymentEnd;
+    }
 
     return {
+      accessValidUntil,
       allowed: !blocking,
+      allowGraceSessions: policies.allowGraceSessions === true && !reasons.some((r) =>
+        ['no_active_subscription', 'subscription_not_active', 'outstanding_balance', 'member_blocked'].includes(r.code)),
       member: {
         id: member.id,
         memberCode: member.member_code,
         name: member.name,
         phone: member.phone,
         branchId: member.branch_id,
-        isActive: member.is_active,
+        isActive: !member.is_blocked && (member.is_active || memberHasUsableSubscription),
       },
       // Keep returning the evaluated snapshot even when blocked so force/grace can attach it.
       activeSubscription: snapshot,

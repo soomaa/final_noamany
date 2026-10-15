@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpsertClubMemberDto {
   @Transform(({ value }) => (value != null && value !== '' ? Number(value) : undefined))
@@ -18,6 +18,12 @@ export class UpsertClubMemberDto {
   @IsOptional()
   @IsString()
   cardNumber?: string;
+
+  /** Exact scanner output. Kept as text because leading zeroes are significant. */
+  @IsOptional()
+  @IsString()
+  @MaxLength(20)
+  scannerCode?: string;
 
   @IsOptional()
   @IsEmail()

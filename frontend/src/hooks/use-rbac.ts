@@ -11,7 +11,6 @@ import type {
   RoleMatrixResponse,
   RolesResponse,
   UserRolesResponse,
-  OperationalScopeResponse,
 } from '@/types/rbac';
 
 const keys = {
@@ -22,7 +21,6 @@ const keys = {
   users: (search: string) => ['rbac', 'users', search] as const,
   userRoles: (id: number) => ['rbac', 'user-roles', id] as const,
   exceptions: (id: number) => ['rbac', 'exceptions', id] as const,
-  operationalScope: (id: number) => ['rbac', 'operational-scope', id] as const,
   audit: (skip: number) => ['rbac', 'audit', skip] as const,
 };
 
@@ -159,28 +157,6 @@ export function useClearExceptions(userId: number) {
     success: uiStatic('تم مسح كل الاستثناءات'),
     invalidate: [keys.exceptions(userId), currentSessionQueries],
   });
-}
-
-export function useOperationalScope(userId: number | null) {
-  return useQuery({
-    queryKey: keys.operationalScope(userId ?? 0),
-    queryFn: async () => (await api.get<OperationalScopeResponse>(`/rbac/users/${userId}/operational-scope`)).data,
-    enabled: userId != null,
-  });
-}
-
-export function useSetOperationalScope(userId: number) {
-  return toastMutation(
-    (body: { branchId: number; section: 'female' | 'male' }) => api.put(`/rbac/users/${userId}/operational-scope`, body),
-    { success: uiStatic('تم حفظ نطاق القسم'), invalidate: [keys.operationalScope(userId), currentSessionQueries] },
-  );
-}
-
-export function useSetSectionException(userId: number) {
-  return toastMutation(
-    (body: { branchId: number; section: 'female' | 'male'; reason: string; expiresAt?: string }) => api.put(`/rbac/users/${userId}/section-exception`, body),
-    { success: uiStatic('تم حفظ استثناء القسم'), invalidate: [keys.operationalScope(userId), currentSessionQueries] },
-  );
 }
 
 export function useAudit(skip = 0, take = 50) {

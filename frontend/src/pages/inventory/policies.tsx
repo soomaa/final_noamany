@@ -78,7 +78,7 @@ export function InventoryPoliciesPage() {
           <Label htmlFor="auto">{ui('اعتماد الرصيد الافتتاحي تلقائياً عند الإنشاء')}</Label>
         </div>
         <div className="grid gap-2">
-          <Label>{ui('يتطلب اعتماداً إدارياً للحركات فوق (جنيه)')}</Label>
+          <Label>{ui('يتطلب اعتماداً إدارياً للحركات فوق (EGP)')}</Label>
           <Input
             type="number"
             className="nums max-w-xs"

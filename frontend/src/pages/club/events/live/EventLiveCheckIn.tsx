@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useEffect, useMemo, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { Card } from "@/components/ui/card";
@@ -97,8 +98,8 @@ const EventLiveCheckIn = () => {
     const id = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(id);
   }, []);
-  const dateStr = now.toLocaleDateString("ar-SA", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
-  const timeStr = now.toLocaleTimeString("ar-SA", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
+  const dateStr = now.toLocaleDateString("ar-SA-u-nu-latn", { weekday: "long", year: "numeric", month: "long", day: "numeric" });
+  const timeStr = now.toLocaleTimeString("ar-SA-u-nu-latn", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
 
   const resetDialog = () => {
     setName("");
@@ -122,7 +123,7 @@ const EventLiveCheckIn = () => {
       if (existing) {
         setSubmitting(false);
         const at = existing.checkedInAt ?? existing.checked_in_at ?? existing.createdAt;
-        const t = new Date(at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const t = new Date(at).toLocaleTimeString('ar-SA-u-nu-latn', { hour: '2-digit', minute: '2-digit', hour12: true });
         toast.error(`${ui("هذا الرقم مسجل باسم")} ${existing.title ? `${existing.title} / ${existing.name}` : existing.name} ${ui("في الساعة")} ${t}`);
         return;
       }
@@ -218,7 +219,7 @@ const EventLiveCheckIn = () => {
               <div className="absolute inset-0 bg-[hsl(var(--grad-green))]/25 blur-xl rounded-full animate-pulse" />
               <img
                 src={resolveEventLogo(settings.logo_url)}
-                alt={ui("شعار Noamany")}
+                alt={ui("شعار ONE80")}
                 className="relative h-16 sm:h-24 w-auto object-contain"
                 style={{ animation: "ck-float 4s ease-in-out infinite" }}
               />
@@ -381,7 +382,7 @@ const EventLiveCheckIn = () => {
                   className="flex items-center gap-3 rounded-full bg-[hsl(var(--grad-green-ink))]/20 backdrop-blur-sm border border-[hsl(var(--grad-gold))]/40 px-4 py-2.5 shadow-lg shadow-black/30 group"
                 >
                   <span className="w-8 h-8 rounded-full bg-gradient-to-br from-[hsl(var(--grad-gold))] to-[hsl(var(--grad-gold-dark))] text-white text-sm font-extrabold flex items-center justify-center shrink-0 shadow-md shadow-[hsl(var(--grad-gold))]/40 ring-2 ring-white/20 group-hover:scale-110 transition-transform">
-                    {i + 1}
+                    {formatDisplayNumber(i + 1)}
                   </span>
                   <span className="text-white font-extrabold text-sm sm:text-base flex-1 text-right" style={{ textShadow: "0 2px 6px rgba(0,0,0,0.85), 0 0 12px rgba(0,0,0,0.5)" }}>{step}</span>
                 </li>
@@ -463,7 +464,7 @@ const EventLiveCheckIn = () => {
             {resolveEventLogo(settings.logo_url) && (
               <img
                 src={resolveEventLogo(settings.logo_url)}
-                alt={ui("شعار Noamany")}
+                alt={ui("شعار ONE80")}
                 style={{ height: 78, margin: "0 auto 10px", display: "block" }}
               />
             )}
@@ -611,7 +612,7 @@ const EventLiveCheckIn = () => {
             }}
           >
             <span style={{ fontWeight: 800 }}>{settings.footer_text}</span>
-            <span style={{ color: APP_LIVE_THEME.accentGold, fontWeight: 800, letterSpacing: 2 }}>Noamany</span>
+            <span style={{ color: APP_LIVE_THEME.accentGold, fontWeight: 800, letterSpacing: 2 }}>ONE80</span>
             <span style={{ fontWeight: 800 }}>© {new Date().getFullYear()}</span>
           </div>
         </div>

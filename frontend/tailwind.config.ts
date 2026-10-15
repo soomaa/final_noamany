@@ -15,19 +15,19 @@ const config: Config = {
         sans: ['Tajawal', 'system-ui', 'sans-serif'],
       },
       colors: {
-        // Noamany brand scale — derived from the logo (red, charcoal, white).
+        // ONE80 brand scale — derived from the logo gradient (navy → sky).
         brand: {
-          50: '#FFF1F2',
-          100: '#FFE1E3',
-          200: '#FFC7CA',
-          300: '#FF9A9F',
-          400: '#F75D64',
-          500: '#ED1C24',
-          600: '#D3121A',
-          700: '#B00F16',
-          800: '#911218',
-          900: '#78151A',
-          950: '#42070A',
+          50: '#F0F7FC',
+          100: '#E1EFFA',
+          200: '#B6DCF2',
+          300: '#7FC0E8',
+          400: '#4FA3DD',
+          500: '#2D89C8',
+          600: '#1E6BA8',
+          700: '#123F77',
+          800: '#0E2F57',
+          900: '#0A2342',
+          950: '#07182E',
         },
         // Semantic tokens (HSL CSS vars; flip in .dark)
         border: 'hsl(var(--border))',
@@ -85,8 +85,8 @@ const config: Config = {
         sm: 'calc(var(--radius) - 4px)',
       },
       backgroundImage: {
-        'brand-gradient': 'linear-gradient(135deg, #151515 0%, #2A1012 42%, #ED1C24 100%)',
-        'brand-gradient-soft': 'linear-gradient(135deg, #242424 0%, #911218 58%, #ED1C24 100%)',
+        'brand-gradient': 'linear-gradient(135deg, #0A2342 0%, #1E6BA8 55%, #4FA3DD 100%)',
+        'brand-gradient-soft': 'linear-gradient(135deg, #123F77 0%, #2D89C8 60%, #4FA3DD 100%)',
       },
       keyframes: {
         'accordion-down': {

@@ -3,7 +3,8 @@ import { api, apiError } from '@/lib/api';
 import { toast } from 'sonner';
 
 /** Backend upload categories (POST /api/uploads/:category → { path, filename, url }). */
-export type UploadCategory = 'emp-photo' | 'emp-bank' | 'signature' | 'document' | 'club-member' | 'membership-document' | 'product-image' | 'portal-image' | 'portal-file' | 'storage-doc' | 'inbody' | 'circular' | 'warning';
+export type HrUploadCategory = 'emp-photo' | 'emp-bank' | 'signature' | 'document';
+export type UploadCategory = 'equipment-image' | HrUploadCategory | (string & Record<never, never>);
 
 interface UploadResult {
   path: string;
@@ -13,7 +14,7 @@ interface UploadResult {
 
 /**
  * Uploads a single file to /api/uploads/:category and returns the stored
- * relative path (served at /uploads/<path>). Surfaces the API's Arabic error
+ * opaque file reference. Surfaces the API's Arabic error
  * message via a toast and resolves to null on failure.
  */
 export function useFileUpload() {
@@ -37,18 +38,18 @@ export function useFileUpload() {
   return { upload, uploading };
 }
 
-/** Public URL for a stored upload path (handles already-absolute paths). */
+/** Authenticated URL for an opaque upload reference. */
 export function uploadUrl(path?: string | null): string | null {
   if (!path || path === '0') return null;
-  if (path.startsWith('http')) return path;
-  if (path.startsWith('/uploads/')) return path;
-  const normalized = path.replace(/^uploads\//, '');
-  return `/uploads/${normalized}`;
+  if (path.startsWith('public-file:')) return `/api/uploads/public/${path.slice(12)}`;
+  if (path.startsWith('file:')) return `/api/uploads/files/${path.slice(5)}`;
+  // Legacy static paths are intentionally not reconstructed: the backend no longer
+  // exposes the upload root. They must be migrated to opaque file metadata.
+  return null;
 }
 
 /** Session/user avatar — employee upload paths or legacy users.image filename. */
 export function userAvatarUrl(image?: string | null): string | null {
   if (!image || image === '0') return null;
-  if (image.includes('/')) return uploadUrl(image);
-  return `/uploads/user/${image}`;
+  return uploadUrl(image);
 }

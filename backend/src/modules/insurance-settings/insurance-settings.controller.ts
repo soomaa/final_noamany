@@ -41,7 +41,7 @@ export class InsuranceSettingsController {
   }
 
   @Delete(':nationalityType')
-  @RequiresPermission('admin.insurance:update')
+  @RequiresPermission('admin.insurance:delete')
   remove(@Param('nationalityType', ParseIntPipe) nationalityType: number) {
     return this.insurance.removeByNationality(nationalityType);
   }

@@ -1,58 +1,65 @@
-# Dependencies and generated output
-node_modules/
-dist/
-dist-ssr/
-coverage/
-*.tsbuildinfo
-.npm-cache/
-backend/public/
 
-# Local credentials and runtime data
+# Local dependencies, generated output, and private runtime files
+node_modules/
+node_modules.*/
+dist/
+dist-release/
+build/
+release/
+releases/
+coverage/
+.cache/
+.next/
+.vinext/
+.dart_tool/
+.gradle/
+.worktrees/
+.codex-tmp/
+.DS_Store
+*.log
+*.tsbuildinfo
+*.zip
+*.zip.sha256
+*.tar.gz
+*.tgz
 .env
 .env.*
+*.env
 !.env.example
-env_server.txt
+!.env.*.example
+!.env.*.template
+!*.env.example
+.dev.vars
 *.pem
 *.key
 *.p12
 *.pfx
+*.sqlite
+*.sqlite3
 *.db
-*.sqlite*
-*.sql
-*.sql.gz
-uploads/
 backups/
-.migration-backups/
-.codex-backup/
-.superpowers/
-.codex-*
-.recovery*/
-.release-*/
-.tmp-*
-*.log
-*.exit
-*.local
-*.pid
-.jest-permissions-result.json
+uploads/
+!backend/src/modules/uploads/
+!backend/src/modules/uploads/**
+playwright-report/
+test-results/
+/tmp/
+/data/
+/reports/
+/db-import.sql
+/one80-deploy/
 
-# Local reports, deployment bundles and archives
-/audit/
-/output/
-/release/
-backend/release/
-backend/deploy-packages/
-tmp/
-*.zip
-*.rar
-*.7z
-*.tar
-*.tar.gz
-*.bundle
-*.test-results.json
-*.postman_environment.json
-*.production.environment.json
-.DS_Store
-Thumbs.db
+# Published separately as one80-desktop
+/one80 desktop/
 
-# Local upload audit and backup
+# Local setup script contains deployment credentials
+/server-setup.sh
+
+# Versioned gate connector shipped as a frontend download (no runtime secrets).
+!frontend/public/downloads/ONE80-GateAgent-Windows-1.1.0.zip
+
+# Local upload audit leftover from this workspace
 /github-upload-20261013/
+
+# Local member-data backup
+/caffe/backend/prisma/scripts/deleted-no-phone-members-backup.json

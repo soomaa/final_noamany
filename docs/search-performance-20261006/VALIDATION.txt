@@ -1,0 +1,36 @@
+ONE80 search performance update — 6 October 2026
+
+Scope
+- Shared table search: local typing state, 300 ms debounce, immediate Enter.
+- Reception: same typing controller, scanner normalization, shared in-flight search request; entry entitlement remains checked after selection.
+- Subscription/member suggestions and refund search: scoped brief API response and cancellation.
+- Cafe member input: typing isolated from the full POS; explicit search reads the current draft; stale suggestions are not selected by Enter.
+- Reception class/locker suggestions: abort superseded requests and clear stale scoped results.
+- Backend: identity/code-prefix lookup before substring fallback; brief search omits all history; full search ranks before loading metadata and returns only selected columns/latest attendance.
+- Member lists/search: Arabic/Persian digits, formatted phones, case-normalized member codes.
+- No schema or index migration added for this fix.
+
+Verification
+- Frontend production build passed, including required Radix modal runtime checks.
+- Backend production build passed.
+- Backend: 40 relevant tests passed across member search, branch/scanner integrity, member-list scope, gate QR, entitlement and payment grace.
+- Frontend: 13 search/response-normalization/scanner/class-search regressions passed.
+- Browser: 10 checks passed for typing isolation, Arabic paste/Enter, acknowledgement races, external reset, IME, unmount, scanner/button submission, brief scoped suggestions, cancellation/out-of-order responses and desktop/mobile layout.
+- Typing comparison in the browser fixture: 11 digits generated 11 baseline parent renders; the improved table generated zero while typing and one after the pause.
+- Impeccable detector returned no findings on changed UI targets. RTL desktop/mobile fixture inspection verified search control layout and keyboard/accessibility attributes.
+- git diff --check passed for modified tracked sources.
+- Final ZIP passes integrity and the code-only release gate. Packaged backend sources and public/index.html match the checked source/build.
+- Installer and generated upload/install command pass bash -n.
+
+Limits and deployment
+- Browser measurements use a local fixture with synthetic member data, not live production records.
+- Production database latency was not measured. Verify it after installation on the affected reception devices.
+- The ZIP includes the complete current local backend and compiled frontend, including changes already present before this task.
+- The upload command verifies SHA-256, backs up application code and invokes server-deploy.sh with no data-reset/import flags.
+- The standard installer backs up the database, applies any existing pending migrations/RBAC metadata, builds the backend, restarts ONE80 and checks health.
+- No production deployment was executed during preparation.
+
+Artifacts
+one80-search-performance-20261006.zip
+deploy-one80-search-performance-20261006.command
+one80-search-performance-20261006.zip.sha256

@@ -101,6 +101,7 @@ export function InventoryPriceListPage() {
       description={ui('كل منتج يتم بيعه في الكافيه يظهر هنا، وأي تعديل ينعكس فوراً في نقطة البيع')}
     >
       <DataTable
+        exportSource={{ resource: 'cafe-products', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}

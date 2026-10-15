@@ -19,11 +19,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
 
@@ -62,6 +63,10 @@ const STATUS_OPTIONS = [
 
 export function CustodyPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('affairs.custody:create');
+  const canUpdate = can('affairs.custody:update');
+  const canDelete = can('affairs.custody:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<CustodyRow>('hr/custody', params);
   const { data: empOptions = [] } = useEmployeeOptions();
@@ -180,64 +185,71 @@ export function CustodyPage() {
     {
       id: 'actions',
       header: ui('الإجراءات'),
-      cell: ({ row }) => (
-        <div className="flex gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={ui('نقل')}
-            onClick={() => {
-              setTransferForm({ custodyId: String(row.original.id), fromEmpId: '', toEmpId: '' });
-              setTransferOpen(true);
-            }}
-          >
-            <ArrowRightLeft className="size-4" />
-          </Button>
-          {row.original.status === 1 && (
+      cell: ({ row }) => {
+        const showReturn = row.original.status === 1;
+        return (
+          <div className="flex gap-1">
             <Button
               variant="ghost"
               size="icon"
-              aria-label={ui('استرجاع')}
-              onClick={async () => {
-                const ok = await confirm({
-                  title: ui('استرجاع العهدة'),
-                  description: ui('تأكيد استرجاع هذه العهدة من الموظف؟ ستتحول حالتها إلى «مُسترجعة».'),
-                  confirmLabel: ui('استرجاع'),
-                });
-                if (!ok) return;
-                try {
-                  await api.patch(`/hr/custody/${row.original.id}/return`, {});
-                  toast.success(ui('تم استرجاع العهدة'));
-                  void refetch();
-                } catch (e) {
-                  toast.error(apiError(e));
-                }
+              aria-label={ui('نقل')}
+              onClick={() => {
+                setTransferForm({ custodyId: String(row.original.id), fromEmpId: '', toEmpId: '' });
+                setTransferOpen(true);
               }}
             >
-              <Undo2 className="size-4" />
+              <ArrowRightLeft className="size-4" />
             </Button>
-          )}
-          <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
-            <Pencil className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={ui('حذف')}
-            onClick={async () => {
-              const ok = await confirm({
-                title: ui('حذف العهدة'),
-                description: ui('هل تريد حذف هذه العهدة؟'),
-                confirmLabel: ui('حذف'),
-                variant: 'destructive',
-              });
-              if (ok) deleteMutation.mutate(row.original.id);
-            }}
-          >
-            <Trash2 className="size-4 text-destructive" />
-          </Button>
-        </div>
-      ),
+            {showReturn ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={ui('استرجاع')}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: ui('استرجاع العهدة'),
+                    description: ui('تأكيد استرجاع هذه العهدة من الموظف؟ ستتحول حالتها إلى «مُسترجعة».'),
+                    confirmLabel: ui('استرجاع'),
+                  });
+                  if (!ok) return;
+                  try {
+                    await api.patch(`/hr/custody/${row.original.id}/return`, {});
+                    toast.success(ui('تم استرجاع العهدة'));
+                    void refetch();
+                  } catch (e) {
+                    toast.error(apiError(e));
+                  }
+                }}
+              >
+                <Undo2 className="size-4" />
+              </Button>
+            ) : null}
+            {canUpdate ? (
+              <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+                <Pencil className="size-4" />
+              </Button>
+            ) : null}
+            {canDelete ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={ui('حذف')}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: ui('حذف العهدة'),
+                    description: ui('هل تريد حذف هذه العهدة؟'),
+                    confirmLabel: ui('حذف'),
+                    variant: 'destructive',
+                  });
+                  if (ok) deleteMutation.mutate(row.original.id);
+                }}
+              >
+                <Trash2 className="size-4 text-destructive" />
+              </Button>
+            ) : null}
+          </div>
+        );
+      },
     },
   ];
 
@@ -252,12 +264,15 @@ export function CustodyPage() {
         isError={isError}
         error={error}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('عهدة جديدة')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCreate}>
+              <Plus className="size-4" /> {ui('عهدة جديدة')}
+            </Button>
+          ) : undefined
         }
       >
         <DataTable
+          exportSource={{ resource: 'hr/custody', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -350,7 +365,7 @@ export function CustodyPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
-            <Button onClick={() => void save()}>{ui('حفظ')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()}>{ui('حفظ')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1,0 +1,1 @@
+function t(i){return["contractExpiring","residencyExpiring","insuranceExpiring","probationEnding","birthdays"].map(n=>({key:n,label:i(`constants.alerts.${n}`),icon:n==="contractExpiring"?"contract":n==="residencyExpiring"?"iqama":n==="insuranceExpiring"?"insurance":n==="probationEnding"?"probation":"birthday"}))}export{t as g};

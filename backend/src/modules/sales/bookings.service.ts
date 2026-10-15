@@ -375,11 +375,10 @@ export class BookingsService {
         const session = await this.sessions.findBranchSessionForSale(
           tx,
           booking.branch_id,
-          userId,
         );
         if (!session) {
           throw new BadRequestException(
-            "افتح وردية باسم المستخدم الحالي قبل تحصيل دفعة الحجز",
+            "لا توجد وردية مفتوحة لهذا الفرع؛ افتح وردية قبل تحصيل دفعة الحجز",
           );
         }
         const paymentNumber = await this.generatePaymentNumber(tx, "payment");
@@ -470,11 +469,10 @@ export class BookingsService {
         const session = await this.sessions.findBranchSessionForSale(
           tx,
           booking.branch_id,
-          userId,
         );
         if (!session) {
           throw new BadRequestException(
-            "افتح وردية باسم المستخدم الحالي قبل استرداد دفعة الحجز",
+            "لا توجد وردية مفتوحة لهذا الفرع؛ افتح وردية قبل استرداد دفعة الحجز",
           );
         }
         const refundNumber = await this.generatePaymentNumber(tx, "refund");

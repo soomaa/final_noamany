@@ -1,4 +1,5 @@
 {
+  "brand": {"poweredBy": "Powered by"},
   "shared": {
     "save": "Save",
     "cancel": "Cancel",

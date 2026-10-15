@@ -38,6 +38,7 @@ export class SupplierInvoicesService {
     return {
       id: item.id,
       productId: item.product_id,
+      packageId: item.package_id,
       productName: item.product_name,
       quantity: toNumber(item.quantity),
       unit: item.unit,
@@ -87,6 +88,27 @@ export class SupplierInvoicesService {
   private resolveLineTotal(item: SupplierInvoiceItemDto) {
     if (item.lineTotal != null) return Math.round(Number(item.lineTotal) * 100) / 100;
     return lineTotal(item.quantity, this.resolveUnitPrice(item));
+  }
+
+  private toBasePurchaseQuantity(
+    quantity: number,
+    unit: string,
+    product: {
+      name_ar: string;
+      unit_of_measure: string;
+      is_packaged: boolean;
+    },
+    productPackage?: { product_id: number; package_base_quantity: Prisma.Decimal } | null,
+  ) {
+    if (unit.trim().toLowerCase() === 'package') {
+      const packageQuantity = toNumber(productPackage?.package_base_quantity);
+      if (!product.is_packaged || !productPackage || packageQuantity <= 0) {
+        throw new BadRequestException(`اختر حجم العبوة المطلوب للخامة ${product.name_ar}`);
+      }
+      return quantity * packageQuantity;
+    }
+    if (unit.toLowerCase() === product.unit_of_measure.toLowerCase()) return quantity;
+    return convertToBaseUnit(quantity, unit as RecipeUnit, product.unit_of_measure);
   }
 
   private computeTotals(
@@ -177,7 +199,9 @@ export class SupplierInvoicesService {
       lineTotal: this.resolveLineTotal(item),
     }));
     const productIds = [...new Set(pricedItems.map((item) => item.productId).filter((id): id is number => !!id))];
-    if (productIds.length !== pricedItems.length) throw new BadRequestException('اختر خامة مخزنية لكل بند');
+    if (pricedItems.some((item) => !item.productId)) {
+      throw new BadRequestException('اختر خامة مخزنية لكل بند');
+    }
     const links = await this.prisma.inv_supplier_products.findMany({
       where: { supplier_id: dto.supplierId, product_id: { in: productIds }, is_active: true },
     });
@@ -189,16 +213,28 @@ export class SupplierInvoicesService {
     });
     if (products.length !== productIds.length) throw new BadRequestException('إحدى الخامات غير موجودة');
     const productMap = new Map(products.map((product) => [product.id, product]));
+    const packageIds = [...new Set(pricedItems.map((item) => item.packageId).filter((id): id is number => !!id))];
+    const packageRows = packageIds.length
+      ? await this.prisma.inv_product_packages.findMany({
+          where: { id: { in: packageIds }, is_active: true },
+        })
+      : [];
+    if (packageRows.length !== packageIds.length) {
+      throw new BadRequestException('أحد أحجام العبوات غير موجود أو غير نشط');
+    }
+    const packageMap = new Map(packageRows.map((pack) => [pack.id, pack]));
     const normalizedItems = pricedItems.map((item) => {
       const product = productMap.get(item.productId!)!;
-      const unit = item.unit?.trim() || product.unit_of_measure;
-      const baseQuantity = unit.toLowerCase() === product.unit_of_measure.toLowerCase()
-        ? item.quantity
-        : convertToBaseUnit(item.quantity, unit as RecipeUnit, product.unit_of_measure);
+      const productPackage = item.packageId ? packageMap.get(item.packageId) : null;
+      if (productPackage && productPackage.product_id !== product.id) {
+        throw new BadRequestException(`حجم العبوة المحدد لا يخص الخامة ${product.name_ar}`);
+      }
+      const unit = productPackage ? 'package' : item.unit?.trim() || product.unit_of_measure;
+      const baseQuantity = this.toBasePurchaseQuantity(item.quantity, unit, product, productPackage);
       if (baseQuantity == null) {
         throw new BadRequestException(`وحدة شراء ${product.name_ar} غير متوافقة مع وحدة المخزون`);
       }
-      return { ...item, product, unit, baseQuantity };
+      return { ...item, product, productPackage, unit, baseQuantity };
     });
     const totals = this.computeTotals(pricedItems, dto);
     if (totals.remainingAmount < 0) throw new BadRequestException('المدفوع أكبر من إجمالي الفاتورة');
@@ -233,7 +269,10 @@ export class SupplierInvoicesService {
             ? {
                 create: normalizedItems.map((i) => ({
                   product_id: i.productId ?? null,
-                  product_name: i.productName ?? i.product.name_ar,
+                  package_id: i.packageId ?? null,
+                  product_name: i.productName ?? (i.productPackage
+                    ? `${i.product.name_ar} — ${toNumber(i.productPackage.package_size)} ${i.productPackage.package_unit}`
+                    : i.product.name_ar),
                   quantity: i.quantity,
                   unit: i.unit,
                   base_quantity: i.baseQuantity,
@@ -246,42 +285,60 @@ export class SupplierInvoicesService {
         include: { items: true },
       });
 
+      const receivedByProduct = new Map<number, typeof normalizedItems>();
       for (const item of normalizedItems) {
+        receivedByProduct.set(item.productId!, [
+          ...(receivedByProduct.get(item.productId!) ?? []),
+          item,
+        ]);
+      }
+      for (const [productId, receivedItems] of receivedByProduct) {
         const totalStock = await tx.inv_stock_balances.aggregate({
-          where: { product_id: item.productId },
+          where: { product_id: productId },
           _sum: { current_stock: true },
         });
         const oldQuantity = toNumber(totalStock._sum.current_stock);
-        const oldCost = toNumber(item.product.cost_price);
-        const receivedCostPerBase = item.lineTotal / item.baseQuantity;
-        const weightedCost = oldQuantity + item.baseQuantity > 0
-          ? ((oldQuantity * oldCost) + (item.baseQuantity * receivedCostPerBase)) / (oldQuantity + item.baseQuantity)
+        const oldCost = toNumber(receivedItems[0].product.cost_price);
+        const receivedQuantity = receivedItems.reduce((sum, item) => sum + item.baseQuantity, 0);
+        const receivedValue = receivedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+        const receivedCostPerBase = receivedValue / receivedQuantity;
+        const weightedCost = oldQuantity + receivedQuantity > 0
+          ? ((oldQuantity * oldCost) + receivedValue) / (oldQuantity + receivedQuantity)
           : receivedCostPerBase;
-        const nextCost = item.costUpdateMode === 'keep'
+        const costUpdateMode = receivedItems[0].costUpdateMode;
+        const nextCost = costUpdateMode === 'keep'
           ? oldCost
-          : item.costUpdateMode === 'replace'
+          : costUpdateMode === 'replace'
             ? receivedCostPerBase
             : weightedCost;
         await tx.inv_products.update({
-          where: { id: item.productId! },
-          data: { cost_price: Math.round(nextCost * 10000) / 10000 },
+          where: { id: productId },
+          data: { cost_price: Math.round(nextCost * 1_000_000) / 1_000_000 },
         });
-        await tx.inv_supplier_products.update({
-          where: { supplier_id_product_id: { supplier_id: dto.supplierId, product_id: item.productId! } },
-          data: { purchase_unit: item.unit, last_unit_cost: item.unitPrice },
-        });
-        await this.stock.applyMovement({
-          productId: item.productId!,
-          warehouseId,
-          direction: MovementDirection.in,
-          quantity: item.baseQuantity,
-          unitCost: receivedCostPerBase,
-          txnType: InventoryTxnType.receipt,
-          docType: 'supplier_invoice',
-          docRef: invoiceNumber,
-          branchId,
-          createdBy: userId,
-        }, tx);
+        for (const item of receivedItems) {
+          if (item.packageId) {
+            await tx.inv_product_packages.update({
+              where: { id: item.packageId },
+              data: { package_price: item.lineTotal / item.quantity },
+            });
+          }
+          await tx.inv_supplier_products.update({
+            where: { supplier_id_product_id: { supplier_id: dto.supplierId, product_id: productId } },
+            data: { purchase_unit: item.unit, last_unit_cost: item.unitPrice },
+          });
+          await this.stock.applyMovement({
+            productId,
+            warehouseId,
+            direction: MovementDirection.in,
+            quantity: item.baseQuantity,
+            unitCost: item.lineTotal / item.baseQuantity,
+            txnType: InventoryTxnType.receipt,
+            docType: 'supplier_invoice',
+            docRef: invoiceNumber,
+            branchId,
+            createdBy: userId,
+          }, tx);
+        }
       }
 
       // Receipt raises inventory and supplier liability. The paid part then settles AP/cash.
@@ -347,6 +404,7 @@ export class SupplierInvoicesService {
     const warehouseId = dto.warehouseId ?? existing.warehouse_id;
     const items = dto.items ?? existing.items.map((item) => ({
       productId: item.product_id ?? undefined,
+      packageId: item.package_id ?? undefined,
       productName: item.product_name ?? undefined,
       quantity: toNumber(item.quantity),
       unit: item.unit ?? undefined,
@@ -370,7 +428,9 @@ export class SupplierInvoicesService {
       lineTotal: this.resolveLineTotal(item),
     }));
     const newProductIds = [...new Set(pricedItems.map((item) => item.productId).filter((value): value is number => !!value))];
-    if (newProductIds.length !== pricedItems.length) throw new BadRequestException('اختر خامة مخزنية لكل بند ولا تكرر الخامة');
+    if (pricedItems.some((item) => !item.productId)) {
+      throw new BadRequestException('اختر خامة مخزنية لكل بند');
+    }
     const links = await this.prisma.inv_supplier_products.findMany({
       where: { supplier_id: supplierId, product_id: { in: newProductIds }, is_active: true },
     });
@@ -381,14 +441,27 @@ export class SupplierInvoicesService {
     const products = await this.prisma.inv_products.findMany({ where: { id: { in: allProductIds }, is_deleted: false } });
     if (products.length !== allProductIds.length) throw new BadRequestException('إحدى الخامات غير موجودة');
     const productMap = new Map(products.map((product) => [product.id, product]));
+    const allPackageIds = [...new Set([
+      ...pricedItems.map((item) => item.packageId),
+      ...existing.items.map((item) => item.package_id),
+    ].filter((id): id is number => !!id))];
+    const packageRows = allPackageIds.length
+      ? await this.prisma.inv_product_packages.findMany({ where: { id: { in: allPackageIds } } })
+      : [];
+    if (packageRows.length !== allPackageIds.length) {
+      throw new BadRequestException('تعذر العثور على أحد أحجام العبوات المرتبطة بالفاتورة');
+    }
+    const packageMap = new Map(packageRows.map((pack) => [pack.id, pack]));
     const normalizedItems = pricedItems.map((item) => {
       const product = productMap.get(item.productId!)!;
-      const unit = item.unit?.trim() || product.unit_of_measure;
-      const baseQuantity = unit.toLowerCase() === product.unit_of_measure.toLowerCase()
-        ? item.quantity
-        : convertToBaseUnit(item.quantity, unit as RecipeUnit, product.unit_of_measure);
+      const productPackage = item.packageId ? packageMap.get(item.packageId) : null;
+      if (productPackage && productPackage.product_id !== product.id) {
+        throw new BadRequestException(`حجم العبوة المحدد لا يخص الخامة ${product.name_ar}`);
+      }
+      const unit = productPackage ? 'package' : item.unit?.trim() || product.unit_of_measure;
+      const baseQuantity = this.toBasePurchaseQuantity(item.quantity, unit, product, productPackage);
       if (baseQuantity == null) throw new BadRequestException(`وحدة شراء ${product.name_ar} غير متوافقة مع وحدة المخزون`);
-      return { ...item, product, unit, baseQuantity };
+      return { ...item, product, productPackage, unit, baseQuantity };
     });
     const totals = this.computeTotals(pricedItems, {
       ...dto,
@@ -401,12 +474,11 @@ export class SupplierInvoicesService {
     const oldRows = existing.items.map((item) => {
       if (!item.product_id) throw new BadRequestException('فاتورة الشراء القديمة تحتوي بندًا غير مخزني ولا يمكن تصحيحها تلقائيًا');
       const product = productMap.get(item.product_id)!;
-      const unit = item.unit?.trim() || product.unit_of_measure;
+      const productPackage = item.package_id ? packageMap.get(item.package_id) : null;
+      const unit = productPackage ? 'package' : item.unit?.trim() || product.unit_of_measure;
       const baseQuantity = item.base_quantity != null
         ? toNumber(item.base_quantity)
-        : unit.toLowerCase() === product.unit_of_measure.toLowerCase()
-          ? toNumber(item.quantity)
-          : convertToBaseUnit(toNumber(item.quantity), unit as RecipeUnit, product.unit_of_measure);
+        : this.toBasePurchaseQuantity(toNumber(item.quantity), unit, product, productPackage);
       if (baseQuantity == null) throw new BadRequestException(`تعذر تحويل وحدة ${product.name_ar} في الفاتورة القديمة`);
       return { item, product, baseQuantity };
     });
@@ -498,7 +570,10 @@ export class SupplierInvoicesService {
           notes: dto.notes !== undefined ? dto.notes?.trim() || null : existing.notes,
           items: { create: normalizedItems.map((item) => ({
             product_id: item.productId!,
-            product_name: item.productName ?? item.product.name_ar,
+            package_id: item.packageId ?? null,
+            product_name: item.productName ?? (item.productPackage
+              ? `${item.product.name_ar} — ${toNumber(item.productPackage.package_size)} ${item.productPackage.package_unit}`
+              : item.product.name_ar),
             quantity: item.quantity,
             unit: item.unit,
             base_quantity: item.baseQuantity,
@@ -509,34 +584,55 @@ export class SupplierInvoicesService {
         include: { items: true },
       });
 
+      const correctedByProduct = new Map<number, typeof normalizedItems>();
       for (const item of normalizedItems) {
+        correctedByProduct.set(item.productId!, [
+          ...(correctedByProduct.get(item.productId!) ?? []),
+          item,
+        ]);
+      }
+      for (const [productId, correctedItems] of correctedByProduct) {
         const aggregate = await tx.inv_stock_balances.aggregate({
-          where: { product_id: item.productId },
+          where: { product_id: productId },
           _sum: { current_stock: true },
         });
         const oldQuantity = toNumber(aggregate._sum.current_stock);
-        const oldCost = toNumber(item.product.cost_price);
-        const receivedCostPerBase = item.lineTotal / item.baseQuantity;
-        const weightedCost = oldQuantity + item.baseQuantity > 0
-          ? ((oldQuantity * oldCost) + item.lineTotal) / (oldQuantity + item.baseQuantity)
+        const oldCost = toNumber(correctedItems[0].product.cost_price);
+        const receivedQuantity = correctedItems.reduce((sum, item) => sum + item.baseQuantity, 0);
+        const receivedValue = correctedItems.reduce((sum, item) => sum + item.lineTotal, 0);
+        const receivedCostPerBase = receivedValue / receivedQuantity;
+        const weightedCost = oldQuantity + receivedQuantity > 0
+          ? ((oldQuantity * oldCost) + receivedValue) / (oldQuantity + receivedQuantity)
           : receivedCostPerBase;
-        const nextCost = item.costUpdateMode === 'keep'
+        const costUpdateMode = correctedItems[0].costUpdateMode;
+        const nextCost = costUpdateMode === 'keep'
           ? oldCost
-          : item.costUpdateMode === 'replace'
+          : costUpdateMode === 'replace'
             ? receivedCostPerBase
             : weightedCost;
-        await tx.inv_products.update({ where: { id: item.productId! }, data: { cost_price: Math.round(nextCost * 10000) / 10000 } });
-        item.product.cost_price = new Prisma.Decimal(nextCost);
-        await tx.inv_supplier_products.update({
-          where: { supplier_id_product_id: { supplier_id: supplierId, product_id: item.productId! } },
-          data: { purchase_unit: item.unit, last_unit_cost: item.unitPrice },
+        await tx.inv_products.update({
+          where: { id: productId },
+          data: { cost_price: Math.round(nextCost * 1_000_000) / 1_000_000 },
         });
-        await this.stock.applyMovement({
-          productId: item.productId!, warehouseId, direction: MovementDirection.in,
-          quantity: item.baseQuantity, unitCost: receivedCostPerBase,
-          txnType: InventoryTxnType.receipt, docType: 'supplier_invoice_correction',
-          docRef: correctionRef, branchId, createdBy: userId,
-        }, tx);
+        correctedItems[0].product.cost_price = new Prisma.Decimal(nextCost);
+        for (const item of correctedItems) {
+          if (item.packageId) {
+            await tx.inv_product_packages.update({
+              where: { id: item.packageId },
+              data: { package_price: item.lineTotal / item.quantity },
+            });
+          }
+          await tx.inv_supplier_products.update({
+            where: { supplier_id_product_id: { supplier_id: supplierId, product_id: productId } },
+            data: { purchase_unit: item.unit, last_unit_cost: item.unitPrice },
+          });
+          await this.stock.applyMovement({
+            productId, warehouseId, direction: MovementDirection.in,
+            quantity: item.baseQuantity, unitCost: item.lineTotal / item.baseQuantity,
+            txnType: InventoryTxnType.receipt, docType: 'supplier_invoice_correction',
+            docRef: correctionRef, branchId, createdBy: userId,
+          }, tx);
+        }
       }
 
       await this.moduleLedger.postPurchaseInvoiceApproved({
@@ -594,6 +690,7 @@ export class SupplierInvoicesService {
     const warehouseId = existing.warehouse_id ?? await this.location.resolveBranchStockLocation(userBranchId);
     const items = dto.items ?? existing.items.map((i) => ({
       productId: i.product_id ?? undefined,
+      packageId: i.package_id ?? undefined,
       productName: i.product_name ?? undefined,
       quantity: toNumber(i.quantity),
       unit: i.unit ?? undefined,
@@ -640,6 +737,7 @@ export class SupplierInvoicesService {
                 items: {
                   create: pricedItems.map((i) => ({
                     product_id: i.productId ?? null,
+                    package_id: i.packageId ?? null,
                     product_name: i.productName ?? null,
                     quantity: i.quantity,
                     unit: i.unit ?? null,

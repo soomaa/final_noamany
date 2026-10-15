@@ -6,10 +6,10 @@ import { formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 function TimeOfDayIcon({ hour }: { hour: number }) {
-  if (hour >= 5 && hour < 8) return <Sunrise className="size-5 text-brand-200" />;
-  if (hour >= 8 && hour < 17) return <Sun className="size-5 text-brand-300" />;
-  if (hour >= 17 && hour < 20) return <Sunset className="size-5 text-brand-400" />;
-  return <Moon className="size-5 text-brand-200" />;
+  if (hour >= 5 && hour < 8) return <Sunrise className="size-5 text-amber-200" />;
+  if (hour >= 8 && hour < 17) return <Sun className="size-5 text-yellow-200" />;
+  if (hour >= 17 && hour < 20) return <Sunset className="size-5 text-orange-200" />;
+  return <Moon className="size-5 text-indigo-200" />;
 }
 
 export function BannerClockWidget() {
@@ -94,7 +94,7 @@ export function BannerClockWidget() {
               />
               <line
                 x1="50" y1="50" x2="50" y2="18"
-                stroke="#ED1C24"
+                stroke="#FBBF24"
                 strokeWidth="1.5"
                 strokeLinecap="round"
                 transform={`rotate(${secondAngle}, 50, 50)`}
@@ -118,7 +118,7 @@ export function BannerClockWidget() {
               <span className="nums text-[2.75rem] font-bold leading-none tabular-nums tracking-tight text-white md:text-5xl">
                 {timeMain}
               </span>
-              <span className="nums mb-1 text-2xl font-semibold tabular-nums text-brand-300 md:text-3xl">
+              <span className="nums mb-1 text-2xl font-semibold tabular-nums text-amber-200/90 md:text-3xl">
                 {timeSec}
               </span>
             </div>

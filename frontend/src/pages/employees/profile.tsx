@@ -7,22 +7,28 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { PageHeader } from '@/components/common/page-header';
 import { StatusBadge, GenderBadge } from '@/components/common/status-badge';
-import { DateText, Num } from '@/components/common/formatters';
+import { DateText } from '@/components/common/formatters';
 import { ErrorState, NotImplementedState } from '@/components/common/states';
 import {
+  AppAccountTab,
+  AttendanceTab,
   BanksTab,
   ContractTab,
   DocumentsTab,
+  FinanceTab,
   InsuranceTab,
 } from '@/components/employees/employee-profile-tabs';
+import { usePermission } from '@/hooks/use-permission';
 import { useResource, isNotImplemented } from '@/lib/api-hooks';
 import type {
+  DwamData,
   EmployeeBankRow,
   EmployeeContract,
   EmployeeDocumentFile,
   EmployeeInsurance,
+  FinanceData,
 } from '@/types/employees';
-import { initials, toArabicDigits } from '@/lib/utils';
+import { initials, toArabicDigits, formatDigits } from '@/lib/utils';
 import { uploadUrl } from '@/components/employees/use-uploads';
 import { useLocale } from '@/store/locale';
 
@@ -36,7 +42,7 @@ interface EmployeeProfile {
   qsm_n: string | null;
   mosma_wazefy_n: string | null;
   employee_type: 0 | 1 | 2;
-  emp_type: 1 | 2 | 3;
+  emp_type: 1 | 2;
   gender: number | null;
   birth_date: string | null;
   email: string | null;
@@ -46,6 +52,7 @@ interface EmployeeProfile {
   previous_experience?: string | null;
   skills?: string | null;
   languages?: string | null;
+  app_user_id?: number | null;
 }
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
@@ -60,11 +67,16 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 export function EmployeeProfilePage() {
   const { ui } = useLocale();
   const { id } = useParams<{ id: string }>();
+  const { can } = usePermission();
+  const canUpdateEmployee = can('employees.list:update');
+  const canPrintEmployee = can('employees.list:print');
   const { data, isLoading, isError, error, refetch } = useResource<EmployeeProfile>('employees', id, 'profile');
+  const { data: finance, isLoading: financeLoading } = useResource<FinanceData>('employees', id, 'finance');
   const { data: insurance, isLoading: insuranceLoading } = useResource<EmployeeInsurance>('employees', id, 'insurance');
   const { data: documents, isLoading: docsLoading } = useResource<EmployeeDocumentFile[]>('employees', id, 'documents');
   const { data: banks, isLoading: banksLoading } = useResource<EmployeeBankRow[]>('employees', id, 'banks');
   const { data: contract, isLoading: contractLoading } = useResource<EmployeeContract | null>('employees', id, 'contract');
+  const { data: dwam, isLoading: dwamLoading } = useResource<DwamData>('employees', id, 'dwam');
 
   if (isError && isNotImplemented(error)) {
     return (
@@ -95,17 +107,19 @@ export function EmployeeProfilePage() {
     <div className="space-y-6">
       <PageHeader
         title={data.employee}
-        description={`${ui('كود الموظف:')} ${toArabicDigits(data.emp_code)}`}
+        description={`${ui('كود الموظف:')} ${formatDigits(data.emp_code)}`}
         actions={
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => window.print()} aria-label={ui('طباعة بطاقة الموظف')}>
+            {canPrintEmployee ? <Button variant="outline" onClick={() => window.print()} aria-label={ui('طباعة بطاقة الموظف')}>
               <Printer className="size-4" /> {ui('بطاقة الموظف')}
-            </Button>
-            <Button asChild>
-              <Link to={`/employees/${id}/edit`}>
-                <Pencil className="size-4" /> {ui('تعديل')}
-              </Link>
-            </Button>
+            </Button> : null}
+            {canUpdateEmployee ? (
+              <Button asChild>
+                <Link to={`/employees/${id}/edit`}>
+                  <Pencil className="size-4" /> {ui('تعديل')}
+                </Link>
+              </Button>
+            ) : null}
           </div>
         }
       />
@@ -135,16 +149,19 @@ export function EmployeeProfilePage() {
             <TabsList className="mb-4 flex-wrap">
               <TabsTrigger value="personal">{ui('البيانات الشخصية')}</TabsTrigger>
               <TabsTrigger value="work">{ui('الوظيفية')}</TabsTrigger>
+              <TabsTrigger value="finance">{ui('المالية')}</TabsTrigger>
               <TabsTrigger value="banks">{ui('البنوك')}</TabsTrigger>
               <TabsTrigger value="contract">{ui('العقد')}</TabsTrigger>
               <TabsTrigger value="insurance">{ui('التأمينات')}</TabsTrigger>
               <TabsTrigger value="documents">{ui('المستندات')}</TabsTrigger>
+              <TabsTrigger value="attendance">{ui('الدوام')}</TabsTrigger>
+              <TabsTrigger value="app-account">{ui('حساب التطبيق')}</TabsTrigger>
             </TabsList>
 
             <TabsContent value="personal">
               <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                <Field label={ui('رقم الجوال')} value={data.phone ? toArabicDigits(data.phone) : '—'} />
-                <Field label={ui('رقم الهوية')} value={data.card_num ? toArabicDigits(data.card_num) : '—'} />
+                <Field label={ui('رقم الجوال')} value={data.phone ? formatDigits(data.phone) : '—'} />
+                <Field label={ui('رقم الهوية')} value={data.card_num ? formatDigits(data.card_num) : '—'} />
                 <Field label={ui('تاريخ الميلاد')} value={<DateText value={data.birth_date} />} />
                 <Field label={ui('المؤهل الدراسي')} value={data.employee_qualification ?? '—'} />
                 <Field label={ui('الخبرات السابقة')} value={data.previous_experience ?? '—'} />
@@ -160,8 +177,12 @@ export function EmployeeProfilePage() {
                 <Field label={ui('الإدارة')} value={data.edara_n ?? '—'} />
                 <Field label={ui('القسم')} value={data.qsm_n ?? '—'} />
                 <Field label={ui('المسمى الوظيفي')} value={data.mosma_wazefy_n ?? '—'} />
-                <Field label={ui('كود الموظف')} value={<Num value={data.emp_code} />} />
+                <Field label={ui('كود الموظف')} value={<span className="nums">{formatDigits(data.emp_code)}</span>} />
               </dl>
+            </TabsContent>
+
+            <TabsContent value="finance">
+              <FinanceTab data={finance} loading={financeLoading} empId={id!} />
             </TabsContent>
 
             <TabsContent value="banks">
@@ -180,6 +201,17 @@ export function EmployeeProfilePage() {
               <DocumentsTab data={documents} loading={docsLoading} />
             </TabsContent>
 
+            <TabsContent value="attendance">
+              <AttendanceTab
+                data={dwam}
+                loading={dwamLoading}
+                editHref={canUpdateEmployee ? `/employees/${id}/edit` : undefined}
+              />
+            </TabsContent>
+
+            <TabsContent value="app-account">
+              <AppAccountTab empId={id!} appUserId={data.app_user_id} />
+            </TabsContent>
           </Tabs>
         </CardContent>
       </Card>

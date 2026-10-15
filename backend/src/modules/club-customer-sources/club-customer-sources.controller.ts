@@ -17,7 +17,7 @@ import { UpsertCustomerSourceDto } from './dto/upsert-customer-source.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-customer-sources')
-@RequiresPermission('club.subscriptions:view')
+@RequiresPermission('club.subscriptions.customer_sources:view')
 export class ClubCustomerSourcesController {
   constructor(private readonly service: ClubCustomerSourcesService) {}
 
@@ -27,19 +27,19 @@ export class ClubCustomerSourcesController {
   }
 
   @Post()
-  @RequiresPermission('club.subscriptions:create')
+  @RequiresPermission('club.subscriptions.customer_sources:create')
   create(@Body() body: UpsertCustomerSourceDto) {
     return this.service.create(body);
   }
 
   @Put(':id')
-  @RequiresPermission('club.subscriptions:update')
+  @RequiresPermission('club.subscriptions.customer_sources:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: UpsertCustomerSourceDto) {
     return this.service.update(id, body);
   }
 
   @Delete(':id')
-  @RequiresPermission('club.subscriptions:delete')
+  @RequiresPermission('club.subscriptions.customer_sources:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

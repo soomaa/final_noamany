@@ -1,5 +1,7 @@
+import { syncDrawerFinance } from '../finance/drawer-finance.util';
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
@@ -37,6 +39,7 @@ import {
   drawerDifference,
   expectedDrawerBalance,
 } from "./cash-drawer.math";
+import { buildShiftCloseReport, ShiftClosePaymentLine } from "./shift-close-report";
 
 type SessionRow = Prisma.sales_shift_sessionsGetPayload<{
   include: { shift: true };
@@ -47,6 +50,15 @@ export interface PaymentBreakdown {
   card: number;
   wallet: number;
   transfer: number;
+}
+
+interface SaleEditSessionSnapshot {
+  totalAmount: number;
+  collectedAmount: number;
+  discountAmount: number;
+  taxAmount: number;
+  paymentMethod: SalesPaymentMethod;
+  payments?: { method: SalesPaymentMethod; amount: Prisma.Decimal | number }[];
 }
 
 @Injectable()
@@ -182,6 +194,17 @@ export class ShiftSessionsService {
     const saleAdjustments = await db.sales_shift_sale_adjustments.findMany({
       where: { shift_session_id: session.id },
     });
+    const accountSettlements = await db.sales_billing_statements.findMany({
+      where: {
+        shift_session_id: session.id,
+        status: "settled",
+      },
+      select: {
+        total_amount: true,
+        settlement_method: true,
+        payment_method: true,
+      },
+    });
 
     let totalCash = 0;
     let totalCard = 0;
@@ -215,6 +238,20 @@ export class ShiftSessionsService {
       totalCard -= toNumber(adjustment.card_amount);
       totalWallet -= toNumber(adjustment.wallet_amount);
       totalTransfer -= toNumber(adjustment.transfer_amount);
+    }
+    for (const settlement of accountSettlements) {
+      if (
+        settlement.settlement_method !== "direct_payment"
+        || !settlement.payment_method
+      ) continue;
+      const bd = this.breakdownFromSale(
+        settlement.payment_method,
+        toNumber(settlement.total_amount),
+      );
+      totalCash += bd.cash;
+      totalCard += bd.card;
+      totalWallet += bd.wallet;
+      totalTransfer += bd.transfer;
     }
 
     const quickSalesTotal = linkedSales.reduce(
@@ -253,14 +290,16 @@ export class ShiftSessionsService {
           0,
         ),
       transactionsCount:
-        linkedSales.length + bookingPayments.length + saleAdjustments.length,
+        linkedSales.length
+        + bookingPayments.length
+        + saleAdjustments.length
+        + accountSettlements.length,
     };
   }
 
   async findBranchSessionForSale(
     tx: Prisma.TransactionClient,
     branchId: number,
-    userId: number,
   ) {
     // An open shift remains authoritative until it is handed over or closed.
     // Do not filter by session_date: a night shift opened before midnight must
@@ -268,7 +307,6 @@ export class ShiftSessionsService {
     return tx.sales_shift_sessions.findFirst({
       where: {
         branch_id: branchId,
-        user_id: userId,
         status: ShiftSessionStatus.open,
       },
       orderBy: { id: "desc" },
@@ -324,6 +362,103 @@ export class ShiftSessionsService {
         total_transfer: { increment: toDecimal(bd.transfer) },
         total_discount: { increment: toDecimal(data.discountAmount) },
         total_tax: { increment: toDecimal(data.taxAmount) },
+        transactions_count: { increment: 1 },
+        expected_closing_balance: toDecimal(expectedClosing),
+      },
+    });
+  }
+
+  /** Amend the original open session; an edit is not another transaction. */
+  async applySaleEditToSession(
+    tx: Prisma.TransactionClient,
+    sessionId: number,
+    data: { before: SaleEditSessionSnapshot; after: SaleEditSessionSnapshot },
+    options: { allowClosedSession?: boolean } = {},
+  ) {
+    await tx.$queryRaw(Prisma.sql`
+      SELECT id FROM sales_shift_sessions WHERE id = ${sessionId} FOR UPDATE
+    `);
+    const session = await tx.sales_shift_sessions.findUnique({ where: { id: sessionId } });
+    if (!session) {
+      throw new BadRequestException('وردية الفاتورة غير موجودة');
+    }
+    const sessionClosed = session.status !== ShiftSessionStatus.open;
+    if (sessionClosed && !options.allowClosedSession) {
+      throw new BadRequestException('تم إغلاق الوردية الأصلية؛ لا يمكن تعديل فواتيرها بعد التسليم');
+    }
+    const before = this.breakdownFromSale(data.before.paymentMethod, data.before.collectedAmount, data.before.payments);
+    const after = this.breakdownFromSale(data.after.paymentMethod, data.after.collectedAmount, data.after.payments);
+    const cashDelta = roundMoney(after.cash - before.cash);
+    const adjustments = await this.drawerAdjustments(sessionId, tx);
+    const availableCash = expectedDrawerBalance(toNumber(session.opening_balance), toNumber(session.total_cash), adjustments);
+    const expectedClosing = expectedDrawerBalance(toNumber(session.opening_balance), toNumber(session.total_cash) + cashDelta, adjustments);
+    // A closed shift's drawer was already handed over: the correction is booked
+    // against the shift's figures (its close report re-reads the invoice), but
+    // there is no live drawer to guard, so the cash-sufficiency check is skipped.
+    if (!sessionClosed && cashDelta < 0 && expectedClosing < -0.001) {
+      throw new BadRequestException(`النقدية المتاحة في الدرج ${availableCash.toFixed(2)} ج.م ولا تكفي لرد فرق تعديل الفاتورة`);
+    }
+    // No adjustment row: close reports re-read the updated invoice itself. A
+    // separate reversal row here would deduct the same difference a second time.
+    await tx.sales_shift_sessions.update({
+      where: { id: sessionId },
+      data: {
+        total_sales: { increment: toDecimal(roundMoney(data.after.totalAmount - data.before.totalAmount)) },
+        total_cash: { increment: toDecimal(cashDelta) },
+        total_card: { increment: toDecimal(roundMoney(after.card - before.card)) },
+        total_wallet: { increment: toDecimal(roundMoney(after.wallet - before.wallet)) },
+        total_transfer: { increment: toDecimal(roundMoney(after.transfer - before.transfer)) },
+        total_discount: { increment: toDecimal(roundMoney(data.after.discountAmount - data.before.discountAmount)) },
+        total_tax: { increment: toDecimal(roundMoney(data.after.taxAmount - data.before.taxAmount)) },
+        expected_closing_balance: toDecimal(expectedClosing),
+      },
+    });
+  }
+
+  /**
+   * Record an employee/partner statement settlement against the collecting shift.
+   *
+   * Only the payment-method totals move: the underlying orders already added their
+   * full value to `total_sales` on the day they were rung up, so incrementing it
+   * again here would double count the same sale.
+   */
+  async applyStatementSettlementToSession(
+    tx: Prisma.TransactionClient,
+    sessionId: number,
+    data: {
+      amount: number;
+      settlementMethod: string;
+      paymentMethod?: SalesPaymentMethod;
+    },
+  ) {
+    await tx.$queryRaw(Prisma.sql`
+      SELECT id FROM sales_shift_sessions WHERE id = ${sessionId} FOR UPDATE
+    `);
+    const session = await tx.sales_shift_sessions.findUnique({
+      where: { id: sessionId },
+    });
+    if (!session || session.status !== ShiftSessionStatus.open) {
+      throw new BadRequestException(
+        "وردية التحصيل لم تعد مفتوحة؛ أعد المحاولة على الوردية الحالية",
+      );
+    }
+    const breakdown = data.settlementMethod === "direct_payment"
+      && data.paymentMethod
+      ? this.breakdownFromSale(data.paymentMethod, data.amount)
+      : { cash: 0, card: 0, wallet: 0, transfer: 0 };
+    const adjustments = await this.drawerAdjustments(sessionId, tx);
+    const expectedClosing = expectedDrawerBalance(
+      toNumber(session.opening_balance),
+      toNumber(session.total_cash) + breakdown.cash,
+      adjustments,
+    );
+    await tx.sales_shift_sessions.update({
+      where: { id: sessionId },
+      data: {
+        total_cash: { increment: toDecimal(breakdown.cash) },
+        total_card: { increment: toDecimal(breakdown.card) },
+        total_wallet: { increment: toDecimal(breakdown.wallet) },
+        total_transfer: { increment: toDecimal(breakdown.transfer) },
         transactions_count: { increment: 1 },
         expected_closing_balance: toDecimal(expectedClosing),
       },
@@ -398,7 +533,7 @@ export class ShiftSessionsService {
     });
     if (!session || session.status !== ShiftSessionStatus.open) {
       throw new BadRequestException(
-        "افتح وردية باسم المستخدم الحالي قبل استرداد أو إلغاء الفاتورة",
+        "وردية الفرع لم تعد مفتوحة؛ أعد المحاولة بعد فتح الوردية الحالية",
       );
     }
     const bd = this.breakdownFromSale(
@@ -496,9 +631,12 @@ export class ShiftSessionsService {
     const branchId = dto.branchId ?? shift.branch_id ?? null;
     if (!branchId)
       throw new BadRequestException("حدد فرع الوردية قبل فتح الدرج");
+    if (shift.branch_id && shift.branch_id !== branchId) {
+      throw new BadRequestException("الوردية المحددة غير مرتبطة بهذا الفرع");
+    }
     const eligible = await this.shifts.eligibleUsers(branchId ?? undefined);
     if (!eligible.some((user) => user.id === userId)) {
-      throw new BadRequestException("المستخدم الحالي غير مرتبط بإدارة الكافيه");
+      throw new BadRequestException("المستخدم الحالي غير مصرح له بفتح وردية الكافيه");
     }
 
     try {
@@ -588,7 +726,6 @@ export class ShiftSessionsService {
       status: ShiftSessionStatus.open,
     };
     if (q.branchId !== undefined) where.branch_id = q.branchId;
-    if (q.userId !== undefined) where.user_id = q.userId;
 
     const row = await this.prisma.sales_shift_sessions.findFirst({
       where,
@@ -671,6 +808,225 @@ export class ShiftSessionsService {
     });
     if (!row) throw new NotFoundException("الجلسة غير موجودة");
     return this.mapSession(row);
+  }
+
+  async closeReport(id: number) {
+    const session = await this.prisma.sales_shift_sessions.findUnique({
+      where: { id },
+      include: { shift: true },
+    });
+    if (!session) throw new NotFoundException("الجلسة غير موجودة");
+
+    const [sales, adjustments, drawerAdjustment, cashier, branch, settlements] =
+      await Promise.all([
+        this.prisma.sales_quick_sales.findMany({
+          where: {
+            shift_session_id: id,
+            status: {
+              in: [
+                QuickSaleStatus.completed,
+                QuickSaleStatus.refunded,
+                QuickSaleStatus.cancelled,
+              ],
+            },
+          },
+          include: { payments: true, items: true },
+          orderBy: [{ sale_date: "asc" }, { sale_time: "asc" }],
+        }),
+        this.prisma.sales_shift_sale_adjustments.findMany({
+          where: { shift_session_id: id },
+          include: { sale: { include: { payments: true, items: true } } },
+          orderBy: { created_at: "asc" },
+        }),
+        this.drawerAdjustments(id),
+        this.prisma.users.findUnique({
+          where: { user_id: session.user_id },
+          select: { name: true, username: true },
+        }),
+        session.branch_id != null
+          ? this.prisma.tbl_branches.findUnique({
+              where: { branch_id: session.branch_id },
+              select: { branch_name: true },
+            })
+          : Promise.resolve(null),
+        this.prisma.sales_billing_statements.findMany({
+          where: { shift_session_id: id, status: "settled" },
+          select: {
+            statement_number: true,
+            settled_at: true,
+            account_type: true,
+            employee_id: true,
+            partner_id: true,
+            total_amount: true,
+            settlement_method: true,
+            payment_method: true,
+          },
+          orderBy: { settled_at: "asc" },
+        }),
+      ]);
+
+    const employeeIds = settlements.flatMap((row) =>
+      row.employee_id ? [row.employee_id] : [],
+    );
+    const partnerIds = settlements.flatMap((row) =>
+      row.partner_id ? [row.partner_id] : [],
+    );
+    const employees: Array<{ id: number; employee: string | null }> =
+      employeeIds.length
+        ? await this.prisma.employees.findMany({
+            where: { id: { in: employeeIds } },
+            select: { id: true, employee: true },
+          })
+        : [];
+    const partners: Array<{ id: number; name: string }> = partnerIds.length
+      ? await this.prisma.cafe_partners.findMany({
+          where: { id: { in: partnerIds } },
+          select: { id: true, name: true },
+        })
+      : [];
+    const employeeNames = new Map<number, string | null>(
+      employees.map((employee) => [employee.id, employee.employee]),
+    );
+    const partnerNames = new Map<number, string>(
+      partners.map((partner) => [partner.id, partner.name]),
+    );
+
+    const paymentLines = (sale: (typeof sales)[number]): ShiftClosePaymentLine[] =>
+      sale.payments.length
+        ? sale.payments.map((payment) => ({
+            baseMethod: payment.method,
+            amount: toNumber(payment.amount),
+            methodCode: payment.method_code,
+            methodName: payment.method_name,
+          }))
+        : toNumber(sale.collected_amount) > 0
+          ? [{
+              baseMethod: sale.payment_method,
+              amount: toNumber(sale.collected_amount),
+            }]
+          : [];
+
+    const productLines = (sale: (typeof sales)[number]) =>
+      (sale.items ?? []).map((item) => ({
+        key: [
+          item.item_type,
+          item.cafe_product_id ?? item.product_id,
+          item.cafe_variant_id ?? 0,
+        ].join(':'),
+        itemType: item.item_type,
+        name: item.name,
+        variantName: item.variant_name,
+        quantity: toNumber(item.quantity),
+        unitPrice: toNumber(item.unit_price),
+        lineTotal: toNumber(item.line_total),
+      }));
+
+    const report = buildShiftCloseReport({
+      sales: sales.map((sale) => ({
+        invoiceNumber: sale.sale_number,
+        saleDate: sale.sale_date,
+        saleTime: sale.sale_time,
+        customerName: sale.customer_name,
+        status: sale.status,
+        subtotalAmount: toNumber(sale.subtotal),
+        totalAmount: toNumber(sale.total_amount),
+        collectedAmount: toNumber(sale.collected_amount),
+        discountAmount: toNumber(sale.discount_amount),
+        taxAmount: toNumber(sale.tax_amount),
+        saleType: sale.sale_type,
+        paymentMethod: sale.payment_method,
+        payments: paymentLines(sale),
+        items: productLines(sale),
+      })),
+      adjustments: adjustments.map((adjustment) => {
+        const originalTotal = toNumber(adjustment.sale.total_amount);
+        const adjustmentTotal = toNumber(adjustment.total_amount);
+        const ratio = originalTotal > 0
+          ? Math.min(1, adjustmentTotal / originalTotal)
+          : 1;
+        const originalInternal = Math.max(
+          0,
+          originalTotal - toNumber(adjustment.sale.collected_amount),
+        );
+        return {
+          eventType: adjustment.event_type,
+          totalAmount: adjustmentTotal,
+          discountAmount: toNumber(adjustment.discount_amount),
+          taxAmount: toNumber(adjustment.tax_amount),
+          paymentLines: paymentLines(adjustment.sale).map((line) => ({
+            ...line,
+            amount: roundMoney(line.amount * ratio),
+          })),
+          internalAccountAmount: roundMoney(originalInternal * ratio),
+          items: productLines(adjustment.sale),
+        };
+      }),
+      accountSettlements: settlements.map((settlement) => ({
+        statementNumber: settlement.statement_number,
+        settledAt: settlement.settled_at,
+        accountType: settlement.account_type,
+        accountName: settlement.employee_id
+          ? employeeNames.get(settlement.employee_id)
+          : settlement.partner_id
+            ? partnerNames.get(settlement.partner_id)
+            : null,
+        totalAmount: toNumber(settlement.total_amount),
+        settlementMethod: settlement.settlement_method ?? "direct_payment",
+        paymentMethod: settlement.payment_method,
+      })),
+    });
+
+    const cashCollected = report.paymentMethods
+      .filter((method) => method.baseMethod === SalesPaymentMethod.cash)
+      .reduce((sum, method) => sum + method.netAmount, 0);
+    const expectedClosing = expectedDrawerBalance(
+      toNumber(session.opening_balance),
+      cashCollected,
+      drawerAdjustment,
+    );
+    const closingBalance = session.closing_balance != null
+      ? toNumber(session.closing_balance)
+      : null;
+
+    return {
+      generatedAt: new Date(),
+      session: {
+        id: session.id,
+        shiftName: session.shift.shift_name,
+        branchId: session.branch_id,
+        branchName: branch?.branch_name ?? null,
+        cashierId: session.user_id,
+        cashierName: cashier?.name || cashier?.username || null,
+        sessionDate: session.session_date,
+        startTime: session.start_time,
+        endTime: session.end_time,
+        status: session.status,
+      },
+      ...report,
+      drawer: {
+        openingBalance: toNumber(session.opening_balance),
+        expectedClosingBalance: expectedClosing,
+        closingBalance,
+        cashDifference:
+          closingBalance != null
+            ? drawerDifference(closingBalance, expectedClosing)
+            : null,
+        cashDropAmount: toNumber(session.cash_drop_amount),
+        retainedAmount: toNumber(session.retained_amount),
+      },
+    };
+  }
+
+  async closeOwn(id: number, dto: CloseShiftSessionDto, userId: number, dryRun = false) {
+    const session = await this.prisma.sales_shift_sessions.findUnique({
+      where: { id },
+      select: { user_id: true },
+    });
+    if (!session) throw new NotFoundException("جلسة الوردية غير موجودة");
+    if (session.user_id !== userId) {
+      throw new ForbiddenException("يمكنك تسليم وإغلاق ورديتك فقط");
+    }
+    return this.close(id, dto, userId, dryRun);
   }
 
   async close(
@@ -817,18 +1173,21 @@ export class ShiftSessionsService {
     return this.mapSession(row);
   }
 
-  async switchShift(dto: SwitchShiftSessionDto, currentUserId: number) {
-    const authResult = await this.auth.authenticateStaff(
+  async switchShift(
+    dto: SwitchShiftSessionDto,
+    currentUserId: number,
+    currentSessionId?: string,
+  ) {
+    const nextUser = await this.auth.verifyStaffCredentials(
       dto.username,
       dto.password,
     );
-    const nextUser = authResult.user as JwtUser;
     const eligible = await this.shifts.eligibleUsers(
       dto.branchId || nextUser.branch || undefined,
     );
     if (!eligible.some((user) => user.id === nextUser.sub)) {
       throw new BadRequestException(
-        "هذا المستخدم غير مرتبط بإدارة الكافيه ولا يمكنه استلام نقطة البيع",
+        "هذا المستخدم غير مصرح له باستلام نقطة البيع",
       );
     }
     const targetShift = await this.prisma.sales_shifts.findUnique({
@@ -838,6 +1197,9 @@ export class ShiftSessionsService {
       throw new BadRequestException("الوردية المستهدفة غير متاحة");
     const branchId = dto.branchId ?? targetShift.branch_id ?? nextUser.branch;
     if (!branchId) throw new BadRequestException("حدد فرع الوردية");
+    if (targetShift.branch_id && targetShift.branch_id !== branchId) {
+      throw new BadRequestException("الوردية المحددة غير مرتبطة بهذا الفرع");
+    }
     if (
       nextUser.level !== 1 &&
       nextUser.branch &&
@@ -860,7 +1222,6 @@ export class ShiftSessionsService {
       const current = await tx.sales_shift_sessions.findFirst({
         where: {
           branch_id: branchId,
-          user_id: currentUserId,
           status: ShiftSessionStatus.open,
         },
         include: { shift: true },
@@ -868,7 +1229,7 @@ export class ShiftSessionsService {
       });
       if (!current)
         throw new BadRequestException(
-          "لا توجد وردية مفتوحة للمستخدم الحالي في هذا الفرع",
+          "لا توجد وردية مفتوحة في هذا الفرع",
         );
       await tx.$queryRaw(Prisma.sql`
         SELECT id FROM sales_shift_sessions WHERE id = ${current.id} FOR UPDATE
@@ -995,7 +1356,19 @@ export class ShiftSessionsService {
         cashDifference: difference,
       };
     });
-    return { ...result, ...authResult };
+    const nextSession = await this.auth.signTokens(nextUser);
+    try {
+      await this.auth.logout(currentUserId, currentSessionId);
+    } catch (error) {
+      await this.auth.logout(nextUser.sub, nextSession.sessionId).catch(() => undefined);
+      throw error;
+    }
+    return {
+      ...result,
+      ...nextSession,
+      user: nextUser,
+      message: "تم تسليم الوردية وتبديل المستخدم بنجاح",
+    };
   }
 
   async createDrawerMovement(dto: CreateDrawerMovementDto, userId: number) {
@@ -1131,6 +1504,7 @@ export class ShiftSessionsService {
         },
         tx,
       );
+      await syncDrawerFinance(tx, created);
       const signedAmount = direction === "in" ? amount : -amount;
       await tx.sales_shift_sessions.update({
         where: { id: session.id },

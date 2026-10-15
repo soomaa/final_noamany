@@ -23,10 +23,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { api, apiError } from '@/lib/api';
+import { usePermission } from '@/hooks/use-permission';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
 
@@ -64,6 +65,10 @@ const emptyForm = () => ({
 
 export function SalaryScalePage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('payroll.salary_scale:create');
+  const canUpdate = can('payroll.salary_scale:update');
+  const canDelete = can('payroll.salary_scale:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<SalaryScaleRow>('payroll/salary-scale', params);
 
@@ -96,6 +101,7 @@ export function SalaryScalePage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.mo2hel || !form.martba || !form.dawamType) {
       toast.error(ui('يرجى تعبئة المؤهل والمرتبة ونوع الدوام'));
       return;
@@ -121,7 +127,24 @@ export function SalaryScalePage() {
     }
   };
 
+  const applyScale = async (row: SalaryScaleRow) => {
+    if (!canUpdate) return;
+    const ok = await confirm({
+      title: ui('تطبيق السلم'),
+      description: ui('سيتم تعبئة الراتب الأساسي الفارغ للموظفين المطابقين للمرتبة أو المؤهل، حسب سنوات الخدمة.'),
+      confirmLabel: ui('تطبيق'),
+    });
+    if (!ok) return;
+    try {
+      const { data: result } = await api.post<{ updated: number }>(`/payroll/salary-scale/${row.id}/apply`);
+      toast.success(`${ui('تم التطبيق')} (${toArabicDigits(result?.updated ?? 0)})`);
+    } catch (e) {
+      toast.error(apiError(e));
+    }
+  };
+
   const handleDelete = async (row: SalaryScaleRow) => {
+    if (!canDelete) return;
     const ok = await confirm({
       title: ui('حذف بند سلم الرواتب'),
       description: `${ui('هل تريد حذف «')}${row.mo2hel ?? ''} — ${row.martba ?? ''}${ui('»؟')}`,
@@ -153,16 +176,17 @@ export function SalaryScalePage() {
     {
       id: 'actions',
       header: ui('الإجراءات'),
-      cell: ({ row }) => (
+      cell: ({ row }) => (canUpdate || canDelete) ? (
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+          {canUpdate && <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
             <Pencil className="size-4" />
-          </Button>
-          <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
+          </Button>}
+          {canUpdate && <Button variant="ghost" size="sm" onClick={() => void applyScale(row.original)}>{ui('تطبيق')}</Button>}
+          {canDelete && <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
             <Trash2 className="size-4 text-destructive" />
-          </Button>
+          </Button>}
         </div>
-      ),
+      ) : null,
     },
   ];
 
@@ -170,15 +194,15 @@ export function SalaryScalePage() {
     <>
       <ListPageShell
         title={ui('سلم الرواتب')}
-        description={ui('درجات ومراتب الرواتب حسب اللائحة')}
+        description={ui('تطبيق الدرجة يملأ الراتب الأساسي الفارغ حسب المرتبة أو المؤهل وسنوات الخدمة')}
         searchPlaceholder={ui('بحث في سلم الرواتب…')}
         isError={isError}
         error={error}
         notImplementedTitle={ui('سلم الرواتب — قيد الإعداد على الخادم')}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
+          canCreate ? <Button variant="brand" size="sm" onClick={openCreate}>
             <Plus className="size-4" /> {ui('بند جديد')}
-          </Button>
+          </Button> : undefined
         }
         stats={[
           {
@@ -191,6 +215,7 @@ export function SalaryScalePage() {
         statsLoading={isLoading}
       >
         <DataTable
+          exportSource={{ resource: 'payroll/salary-scale', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -287,9 +312,9 @@ export function SalaryScalePage() {
             <Button variant="outline" onClick={() => setFormOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()} disabled={saving}>
+            {(editId ? canUpdate : canCreate) && <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>
               {ui('حفظ')}
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>

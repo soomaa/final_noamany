@@ -21,6 +21,7 @@ import { api, apiError } from '@/lib/api';
 import { useMutationWithToast } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { toast } from 'sonner';
+import { usePermission } from '@/hooks/use-permission';
 
 interface CustomerSourceRow {
   id: number;
@@ -30,6 +31,10 @@ interface CustomerSourceRow {
 
 export function ClubCustomerSourcesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('club.subscriptions.customer_sources:create');
+  const canUpdate = can('club.subscriptions.customer_sources:update');
+  const canDelete = can('club.subscriptions.customer_sources:delete');
   const qc = useQueryClient();
   const { data: sources, isLoading, isError, refetch } = useQuery({
     queryKey: ['club-customer-sources', 'admin'],
@@ -67,6 +72,7 @@ export function ClubCustomerSourcesPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!name.trim()) {
       toast.error(ui('اسم المصدر مطلوب'));
       return;
@@ -97,14 +103,15 @@ export function ClubCustomerSourcesPage() {
       {
         id: 'actions',
         header: ui('إجراءات'),
-        cell: ({ row }) => (
+        cell: ({ row }) => !canUpdate && !canDelete ? null : (
           <div className="flex gap-1">
-            <Button variant="ghost" size="icon" onClick={() => openEdit(row.original)}>
+            {canUpdate ? <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
               <Pencil className="h-4 w-4" />
-            </Button>
-            <Button
+            </Button> : null}
+            {canDelete ? <Button
               variant="ghost"
               size="icon"
+              aria-label={ui('حذف')}
               onClick={() => {
                 void (async () => {
                   const ok = await confirm({
@@ -112,17 +119,17 @@ export function ClubCustomerSourcesPage() {
                     description: ui('هل تريد حذف هذا المصدر؟'),
                     variant: 'destructive',
                   });
-                  if (ok) deleteMutation.mutate(row.original.id);
+                  if (ok && canDelete) deleteMutation.mutate(row.original.id);
                 })();
               }}
             >
               <Trash2 className="h-4 w-4 text-destructive" />
-            </Button>
+            </Button> : null}
           </div>
         ),
       },
     ],
-    [ui, deleteMutation],
+    [ui, deleteMutation, canUpdate, canDelete],
   );
 
   return (
@@ -130,12 +137,12 @@ export function ClubCustomerSourcesPage() {
       <PageHeader
         title={ui('مصادر العملاء')}
         description={ui('إدارة مصادر العملاء المستخدمة في الاشتراكات')}
-        actions={
+        actions={canCreate ? (
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4" />
             {ui('مصدر جديد')}
           </Button>
-        }
+        ) : undefined}
       />
       <DataTable
         columns={columns}
@@ -170,9 +177,9 @@ export function ClubCustomerSourcesPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()} disabled={saving}>
+            {(editId ? canUpdate : canCreate) ? <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>
               {saving ? ui('جاري الحفظ…') : ui('حفظ')}
-            </Button>
+            </Button> : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

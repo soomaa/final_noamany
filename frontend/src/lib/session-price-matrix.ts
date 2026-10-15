@@ -55,4 +55,3 @@ export function resolveSessionMatrixPrice(opts: {
   if (hit && Number.isFinite(hit.price)) return roundSessionMoney(hit.price);
   return roundSessionMoney((opts.packagePrice / max) * clamped);
 }
-

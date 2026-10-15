@@ -1,7 +1,9 @@
+import { TouchKeypadProvider } from '@/components/ui/touch-keypad-context';
 import { ChevronsLeft, ChevronsRight, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { RouteGuard } from '@/components/auth/route-guard';
+import { PersistentScannerProvider } from '@/components/club/persistent-scanner';
 import { Button } from '@/components/ui/button';
 import { recordNavVisit } from '@/lib/nav-visit-tracker';
 import { cn } from '@/lib/utils';
@@ -12,12 +14,12 @@ import { Topbar } from './topbar';
 export function AppShell() {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [desktopCollapsed, setDesktopCollapsed] = useState(() => localStorage.getItem('one80.sidebar.collapsed') === '1');
-  const { t, isRtl, locale } = useLocale();
+  const { t, ui, isRtl, locale } = useLocale();
   const { pathname } = useLocation();
   const isCafePos = pathname === '/sales/new';
   const sidebarToggleLabel = desktopCollapsed
-    ? (locale === 'ar' ? 'فتح القائمة الجانبية' : 'Expand sidebar')
-    : (locale === 'ar' ? 'طي القائمة الجانبية' : 'Collapse sidebar');
+    ? (locale === 'ar' ? ui('فتح القائمة الجانبية') : 'Expand sidebar')
+    : (locale === 'ar' ? ui('طي القائمة الجانبية') : 'Collapse sidebar');
 
   useEffect(() => {
     recordNavVisit(pathname);
@@ -28,7 +30,7 @@ export function AppShell() {
   }, [desktopCollapsed]);
 
   return (
-    <div className="app-shell-bg flex h-screen overflow-hidden">
+    <TouchKeypadProvider><PersistentScannerProvider><div className="app-shell-bg flex h-dvh min-h-dvh overflow-hidden">
       <div className={cn('relative hidden shrink-0 transition-[width] duration-300 lg:block', desktopCollapsed ? 'w-0' : 'w-[288px]')}>
         <div className="h-full overflow-hidden">
           <Sidebar onNavigate={() => setMobileOpen(false)} />
@@ -75,7 +77,7 @@ export function AppShell() {
         </div>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <div
           className={cn(
             'relative z-40 shrink-0 overflow-hidden transition-[height] duration-300',
@@ -83,11 +85,11 @@ export function AppShell() {
               ? 'h-[5.75rem] lg:h-2 lg:hover:h-[5.75rem] lg:focus-within:h-[5.75rem]'
               : 'h-[5.75rem]',
           )}
-          title={isCafePos ? (locale === 'ar' ? 'مرري المؤشر هنا لإظهار الهيدر' : 'Hover here to show the header') : undefined}
+          title={isCafePos ? (locale === 'ar' ? ui('مرري المؤشر هنا لإظهار الهيدر') : 'Hover here to show the header') : undefined}
         >
           <Topbar onMenuClick={() => setMobileOpen(true)} />
         </div>
-        <main className="app-main-scroll flex-1 overflow-y-auto">
+        <main className="app-main-scroll min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[1800px] p-3 sm:p-4 lg:p-5 xl:p-6 animate-fade-in">
             <RouteGuard>
               <Outlet />
@@ -95,6 +97,6 @@ export function AppShell() {
           </div>
         </main>
       </div>
-    </div>
+    </div></PersistentScannerProvider></TouchKeypadProvider>
   );
 }

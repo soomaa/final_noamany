@@ -24,21 +24,24 @@ import { ShiftsService } from './shifts.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('shifts')
-@RequiresPermission('gym-sales.sales:view')
+@RequiresPermission('gym-sales.sales.shifts:view')
 export class ShiftsController {
   constructor(private readonly service: ShiftsService) {}
 
   @Get()
+  @RequiresPermission()
   list(@Query() query: ListShiftsDto) {
     return this.service.list(query);
   }
 
   @Get('current')
+  @RequiresPermission()
   getCurrent(@Query() query: CurrentShiftQueryDto) {
     return this.service.getCurrent(query);
   }
 
   @Get('schedule-status')
+  @RequiresPermission()
   scheduleStatus(@Query() query: CurrentShiftQueryDto) {
     return this.service.getScheduleStatus(query);
   }
@@ -67,19 +70,19 @@ export class ShiftsController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.sales:create')
+  @RequiresPermission('gym-sales.sales.shifts:create')
   create(@Body() body: CreateShiftDto, @CurrentUser('sub') userId: number) {
     return this.service.create(body, userId);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.sales:update')
+  @RequiresPermission('gym-sales.sales.shifts:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateShiftDto) {
     return this.service.update(id, body);
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.sales:delete')
+  @RequiresPermission('gym-sales.sales.shifts:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

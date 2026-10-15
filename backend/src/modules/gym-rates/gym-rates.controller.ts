@@ -5,6 +5,7 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { JwtUser } from '../../common/types/jwt-user';
 import { GymRatesService } from './gym-rates.service';
+import { CreateGymRateDto, UpdateGymRateDto } from './dto/gym-rate.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('hr/gym-rates')
@@ -18,10 +19,9 @@ export class GymRatesController {
   }
 
   // affairs.gym_rates is a SETTINGS resource (view/update/configure/audit) —
-  // all mutations map to the `update` action.
   @Post()
-  @RequiresPermission('affairs.gym_rates:update')
-  create(@Body() body: { ttype: string; forUser: number; forGym: number }, @CurrentUser() user: JwtUser) {
+  @RequiresPermission('affairs.gym_rates:create')
+  create(@Body() body: CreateGymRateDto, @CurrentUser() user: JwtUser) {
     return this.service.create(body, user.sub, user.name);
   }
 
@@ -29,14 +29,14 @@ export class GymRatesController {
   @RequiresPermission('affairs.gym_rates:update')
   update(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { ttype?: string; forUser?: number; forGym?: number },
+    @Body() body: UpdateGymRateDto,
     @CurrentUser() user: JwtUser,
   ) {
     return this.service.update(id, body, user.sub, user.name);
   }
 
   @Delete(':id')
-  @RequiresPermission('affairs.gym_rates:update')
+  @RequiresPermission('affairs.gym_rates:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

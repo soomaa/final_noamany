@@ -95,7 +95,7 @@ export function ProcurementReturnsPage() {
         { title: ui('اعتماد المرتجع'), confirmLabel: ui('اعتماد') },
         async () => {
           const { data } = await api.patch(`/purchase-returns/${id}/status?dryRun=true`, {
-            status: 'معتمد',
+            status: ui('معتمد'),
           });
           return {
             rows: (data as { rows?: { label: string; before?: string; after?: string }[] }).rows,
@@ -103,7 +103,7 @@ export function ProcurementReturnsPage() {
           };
         },
         async () => {
-          await api.patch(`/purchase-returns/${id}/status`, { status: 'معتمد' });
+          await api.patch(`/purchase-returns/${id}/status`, { status: ui('معتمد') });
         },
       );
       if (ok) {
@@ -136,7 +136,7 @@ export function ProcurementReturnsPage() {
         header: ui('الإجراءات'),
         cell: ({ row }) => (
           <div className="flex gap-1">
-            {row.original.status === 'مسودة' && (
+            {row.original.status === ui('مسودة') && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -146,7 +146,7 @@ export function ProcurementReturnsPage() {
                 <Check className="h-4 w-4 text-success" />
               </Button>
             )}
-            {row.original.status === 'مسودة' && (
+            {row.original.status === ui('مسودة') && (
               <Button variant="ghost" size="icon" onClick={() => void deleteMutation.mutate(row.original.id)}>
                 <Trash2 className="h-4 w-4 text-destructive" />
               </Button>
@@ -210,6 +210,7 @@ export function ProcurementReturnsPage() {
       }
     >
       <DataTable
+        exportSource={{ resource: 'purchase-returns', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}

@@ -57,6 +57,7 @@ export class JobRequestsController {
   }
 
   @Post('applications')
+  @RequiresPermission('affairs.job_requests:create')
   createApplication(@Body() dto: CreateApplicationDto) {
     return this.jobRequests.createApplication(dto);
   }
@@ -66,44 +67,67 @@ export class JobRequestsController {
     return this.jobRequests.getApplication(id);
   }
 
+  @Post('applications/:id/accept')
+  @RequiresPermission('affairs.job_requests:approve')
+  acceptApplication(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.jobRequests.acceptApplication(id, user.sub, user.name ?? undefined);
+  }
+
+  @Get('applications/:id/onboarding-draft')
+  @RequiresPermission('affairs.job_requests:approve')
+  onboardingDraft(@Param('id', ParseIntPipe) id: number) {
+    return this.jobRequests.onboardingDraft(id);
+  }
+
   @Patch('applications/:id')
+  @RequiresPermission('affairs.job_requests:update')
   updateApplication(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateApplicationDto) {
     return this.jobRequests.updateApplication(id, dto);
   }
 
   @Delete('applications/:id')
+  @RequiresPermission('affairs.job_requests:delete')
   removeApplication(@Param('id', ParseIntPipe) id: number) {
     return this.jobRequests.removeApplication(id);
   }
 
   /* --------------------- intake sub-forms ------------------------- */
   @Post('applications/:id/previous-work')
+  @RequiresPermission('affairs.job_requests:update')
   savePreviousWork(@Param('id', ParseIntPipe) id: number, @Body() dto: PreviousWorkDto) {
     return this.jobRequests.savePreviousWork(id, dto);
   }
 
   @Post('applications/:id/qualifications')
+  @RequiresPermission('affairs.job_requests:update')
   saveQualifications(@Param('id', ParseIntPipe) id: number, @Body() dto: QualificationsDto) {
     return this.jobRequests.saveQualifications(id, dto);
   }
 
   @Post('applications/:id/courses')
+  @RequiresPermission('affairs.job_requests:update')
   saveCourses(@Param('id', ParseIntPipe) id: number, @Body() dto: CoursesDto) {
     return this.jobRequests.saveCourses(id, dto);
   }
 
   @Post('applications/:id/skills')
+  @RequiresPermission('affairs.job_requests:update')
   saveSkills(@Param('id', ParseIntPipe) id: number, @Body() dto: SkillsDto) {
     return this.jobRequests.saveSkills(id, dto);
   }
 
   @Post('applications/:id/references')
+  @RequiresPermission('affairs.job_requests:update')
   savePersons(@Param('id', ParseIntPipe) id: number, @Body() dto: PersonsDto) {
     return this.jobRequests.savePersons(id, dto);
   }
 
   /* ------------------------- interview ---------------------------- */
   @Patch('applications/:id/interview-date')
+  @RequiresPermission('affairs.job_requests:update')
   setInterviewDate(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: InterviewDateDto,
@@ -118,6 +142,7 @@ export class JobRequestsController {
   }
 
   @Post('applications/:id/interview')
+  @RequiresPermission('affairs.job_requests:update')
   saveInterview(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: InterviewDto,
@@ -133,6 +158,7 @@ export class JobRequestsController {
   }
 
   @Post('applications/:id/offer')
+  @RequiresPermission('affairs.job_requests:update')
   saveJobOffer(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: JobOfferDto,
@@ -148,16 +174,19 @@ export class JobRequestsController {
   }
 
   @Post()
+  @RequiresPermission('affairs.job_requests:create')
   create(@Body() dto: CreateJobRequestDto, @CurrentUser() user: JwtUser) {
     return this.jobRequests.create(dto, user.sub);
   }
 
   @Patch(':id')
+  @RequiresPermission('affairs.job_requests:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateJobRequestDto) {
     return this.jobRequests.update(id, dto);
   }
 
   @Delete(':id')
+  @RequiresPermission('affairs.job_requests:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.jobRequests.remove(id);
   }

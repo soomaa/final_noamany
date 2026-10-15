@@ -40,11 +40,11 @@ export async function resolveSettingsIdsToTitles(
 /** DB title → dropdown id for edit form prefill. */
 export async function resolveSettingsTitlesToIds(
   prisma: PrismaService,
-  form: Record<string, string>,
-): Promise<Record<string, string>> {
+  form: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
   const out = { ...form };
   for (const { formKey, type, typeName } of SETTINGS_STRING_LOOKUPS) {
-    const raw = out[formKey]?.trim();
+    const raw = typeof out[formKey] === 'string' ? out[formKey].trim() : '';
     if (!raw || /^\d+$/.test(raw)) continue;
     const title = normalizeTitle(formKey, raw);
     const row = await prisma.employees_settings.findFirst({

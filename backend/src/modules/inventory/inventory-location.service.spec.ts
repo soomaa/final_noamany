@@ -34,7 +34,7 @@ describe('InventoryLocationService', () => {
 
     await expect(service.resolveBranchStockLocation(4)).resolves.toBe(23);
     expect(upsert).toHaveBeenCalledWith(expect.objectContaining({
-      where: { warehouse_code: 'Noamany-STOCK-4' },
+      where: { warehouse_code: 'ONE80-STOCK-4' },
       create: expect.objectContaining({ branch_id: 4, name_ar: 'مخزون الفرع' }),
       update: { branch_id: 4, status: 'active', is_deleted: false },
     }));

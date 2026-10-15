@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { uiStatic } from '@/lib/ui-static';
 import { useClubT } from '@/hooks/use-club-t';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useArrayResource } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
@@ -72,6 +73,10 @@ function surveyQuestionMeta(question: SurveyQuestion): string | null {
 
 export function ClubSurveysPage() {
   const ct = useClubT();
+  const { can } = usePermission();
+  const canCreate = can('club.members.surveys:create');
+  const canUpdate = can('club.members.surveys:update');
+  const canDelete = can('club.members.surveys:delete');
   const { data: surveys, refetch } = useArrayResource<SurveyRow>('club-surveys');
   const [open, setOpen] = useState(false);
   const [title, setTitle] = useState('');
@@ -122,12 +127,12 @@ export function ClubSurveysPage() {
       <PageHeader
         title={ct('members.surveysTitle')}
         description={ct('members.surveysDesc')}
-        actions={
+        actions={canCreate ? (
           <Button variant="brand" onClick={() => setOpen(true)}>
             <Plus className="size-4" />
             {ct('common.add')}
           </Button>
-        }
+        ) : undefined}
       />
       <div className="grid gap-4">
         {(surveys ?? []).map((s) => {
@@ -145,14 +150,16 @@ export function ClubSurveysPage() {
                 </div>
               </div>
               <div className="flex gap-1">
-                {s.status !== 'active' && (
-                  <Button variant="outline" size="sm" onClick={() => void activate(s.id)}>
+                {canUpdate && s.status !== 'active' && (
+                  <Button permissionAction="update" variant="outline" size="sm" onClick={() => void activate(s.id)}>
                     {ct('common.activate')}
                   </Button>
                 )}
-                <Button variant="ghost" size="icon" className="text-destructive" onClick={() => void remove(s.id)}>
-                  <Trash2 className="size-4" />
-                </Button>
+                {canDelete && (
+                  <Button permissionAction="delete" aria-label={ct('common.delete')} variant="ghost" size="icon" className="text-destructive" onClick={() => void remove(s.id)}>
+                    <Trash2 className="size-4" />
+                  </Button>
+                )}
               </div>
             </div>
             {questionItems.length > 0 && (
@@ -175,7 +182,7 @@ export function ClubSurveysPage() {
           <p className="text-center text-sm text-muted-foreground">{ct('common.noData')}</p>
         )}
       </div>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={canCreate && open} onOpenChange={setOpen}>
         <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{ct('common.add')}</DialogTitle>
@@ -196,7 +203,7 @@ export function ClubSurveysPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="brand" onClick={() => void save()}>
+            <Button permissionAction="create" variant="brand" onClick={() => void save()}>
               {ct('common.save')}
             </Button>
           </DialogFooter>

@@ -15,13 +15,16 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
 import { useFitnessT } from '@/hooks/use-fitness-t';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { formatTime, localToday } from '@/lib/formatters';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
-import type { ClubClassDetail, ClubClassRow, ClubClassStatistics, ClubHallRow, ClubTrainerRow } from '@/types/fitness';
+import type { ClassAudience, ClubClassDetail, ClubClassRow, ClubClassStatistics, ClubHallRow, ClubTrainerRow } from '@/types/fitness';
+import { CLASS_AUDIENCE_OPTIONS } from '@/lib/class-audience';
+import { uiStatic } from '@/lib/ui-static';
 import { MemberCell } from '@/components/club/member-cell';
 import { RowActions, SELECT_CLS, useFitnessResourceList } from './shared';
 
@@ -31,6 +34,11 @@ export interface FitnessClassesPageProps {
 
 export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageProps = {}) {
   const ft = useFitnessT();
+  const { can } = usePermission();
+  const permissionResource = personalOnly ? 'club.fitness.personal_sessions' : 'club.subscriptions.special';
+  const canCreate = can(`${permissionResource}:create`);
+  const canUpdate = can(`${permissionResource}:update`);
+  const canDelete = can(`${permissionResource}:delete`);
   const { params, setParams } = useListQuery(
     personalOnly ? { filters: { personalOnly: 'true' } } : undefined,
   );
@@ -63,6 +71,14 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
         { value: 'cancelled', label: ft('classes.statusCancelled') },
       ],
     },
+    ...(!personalOnly
+      ? [{
+          key: 'audience',
+          label: uiStatic('الفئة'),
+          type: 'select' as const,
+          options: CLASS_AUDIENCE_OPTIONS.map((option) => ({ value: option.value, label: uiStatic(option.label) })),
+        }]
+      : []),
   ];
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -83,6 +99,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
     endTime: '10:00',
     maxCapacity: personalOnly ? '1' : '10',
     price: '0',
+    audience: 'mixed' as ClassAudience,
     description: '',
     notes: '',
   });
@@ -93,6 +110,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
   );
 
   const openCreate = () => {
+    if (!canCreate) return;
     setEditId(null);
     setForm({
       className: '',
@@ -104,6 +122,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
       endTime: '10:00',
       maxCapacity: personalOnly ? '1' : '10',
       price: '0',
+      audience: 'mixed',
       description: '',
       notes: '',
     });
@@ -111,6 +130,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
   };
 
   const openEdit = (row: ClubClassRow) => {
+    if (!canUpdate) return;
     setEditId(row.id);
     setForm({
       className: row.className,
@@ -122,6 +142,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
       endTime: row.endTime,
       maxCapacity: String(row.maxCapacity),
       price: String(row.price),
+      audience: row.audience ?? 'mixed',
       description: row.description ?? '',
       notes: row.notes ?? '',
     });
@@ -129,6 +150,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.className.trim() || !form.trainerId || !form.branchId) {
       toast.error(ft('classes.className'));
       return;
@@ -145,6 +167,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
         endTime: form.endTime,
         maxCapacity: Number(form.maxCapacity),
         price: Number(form.price),
+        audience: form.audience,
         description: form.description || undefined,
         notes: form.notes || undefined,
       };
@@ -175,7 +198,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
   };
 
   const markAttendance = async (memberId: number, status: 'attended' | 'absent') => {
-    if (!rosterClassId) return;
+    if (!rosterClassId || !canUpdate) return;
     setSaving(true);
     try {
       await api.patch(`/club-classes/${rosterClassId}/attendance/${memberId}`, {
@@ -193,7 +216,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
   };
 
   const unenroll = async (memberId: number) => {
-    if (!rosterClassId) return;
+    if (!rosterClassId || !canDelete) return;
     const ok = await confirm({ title: ft('classes.unenrollConfirm'), variant: 'destructive' });
     if (!ok) return;
     setSaving(true);
@@ -210,31 +233,26 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
   };
 
   const openEnroll = (classId: number) => {
+    if (!canCreate) return;
     setEnrollClassId(classId);
     setMemberIdInput('');
     setEnrollOpen(true);
   };
 
-  const enroll = async (waitlistIfFull = false) => {
+  // Class capacity is a planned headcount, not a limit — enrolment never gets refused for it.
+  const enroll = async () => {
+    if (!canCreate) return;
     if (!enrollClassId || !memberIdInput.trim()) {
       toast.error(ft('common.member'));
       return;
     }
     setSaving(true);
     try {
-      await api.post(`/club-classes/${enrollClassId}/enroll/${memberIdInput.trim()}`, null, {
-        params: waitlistIfFull ? { waitlistIfFull: 'true' } : undefined,
-      });
+      await api.post(`/club-classes/${enrollClassId}/enroll/${memberIdInput.trim()}`);
       toast.success(ft('common.success'));
       setEnrollOpen(false);
       void qc.invalidateQueries({ queryKey: ['club-classes'] });
     } catch (e) {
-      const err = e as { response?: { data?: { code?: string; waitlistAvailable?: boolean } } };
-      if (err.response?.data?.code === 'CLASS_FULL' || err.response?.data?.waitlistAvailable) {
-        const ok = await confirm({ title: ft('classes.waitlistPrompt') });
-        if (ok) await enroll(true);
-        return;
-      }
       toast.error(apiError(e));
     } finally {
       setSaving(false);
@@ -293,35 +311,35 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
             <Button size="sm" variant="outline" onClick={() => openRoster(row.original.id)}>
               <Users className="size-4" /> {ft('classes.roster')}
             </Button>
-            <Button size="sm" variant="outline" onClick={() => openEnroll(row.original.id)}>
+            {canCreate ? <Button permissionAction="create" size="sm" variant="outline" onClick={() => openEnroll(row.original.id)}>
               <UserPlus className="size-4" /> {ft('common.enroll')}
-            </Button>
+            </Button> : null}
             <RowActions
               editLabel={ft('common.edit')}
               deleteLabel={ft('common.delete')}
-              onEdit={() => openEdit(row.original)}
-              onDelete={() =>
+              onEdit={canUpdate ? () => openEdit(row.original) : undefined}
+              onDelete={canDelete ? () =>
                 void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
-                  if (ok) deleteMutation.mutate(row.original.id);
+                  if (ok && canDelete) deleteMutation.mutate(row.original.id);
                 })
-              }
+              : undefined}
             />
           </div>
         ),
       },
     ],
-    [ft],
+    [ft, canCreate, canUpdate, canDelete, deleteMutation],
   );
 
   return (
     <div className="space-y-6">
       <PageHeader
         title={personalOnly ? ft('personalSessions.title') : ft('classes.title')}
-        actions={
+        actions={canCreate ? (
           <Button variant="brand" onClick={openCreate}>
             <Plus className="size-4" /> {personalOnly ? ft('personalSessions.newSession') : ft('classes.newClass')}
           </Button>
-        }
+        ) : undefined}
       />
 
       {stats && !personalOnly && (
@@ -336,6 +354,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
       {!personalOnly && <FilterBar fields={filters} />}
 
       <DataTable
+        exportSource={{ resource: 'club-classes', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -351,7 +370,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
         emptyTitle={ft('common.noData')}
       />
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen && (editId ? canUpdate : canCreate)} onOpenChange={setDialogOpen}>
         <DialogContent size="lg" className="max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editId ? ft('common.edit') : personalOnly ? ft('personalSessions.newSession') : ft('classes.newClass')}</DialogTitle>
@@ -417,6 +436,20 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
                 <Input className="nums" value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))} />
               </div>
             </div>
+            {!personalOnly ? (
+              <div className="grid gap-2">
+                <Label>{uiStatic('الفئة')}</Label>
+                <select
+                  className={SELECT_CLS}
+                  value={form.audience}
+                  onChange={(e) => setForm((f) => ({ ...f, audience: e.target.value as ClassAudience }))}
+                >
+                  {CLASS_AUDIENCE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{uiStatic(option.label)}</option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <div className="grid gap-2">
               <Label>{ft('common.notes')}</Label>
               <Input value={form.notes} onChange={(e) => setForm((f) => ({ ...f, notes: e.target.value }))} />
@@ -424,12 +457,12 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
+            <Button variant="brand" permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={enrollOpen} onOpenChange={setEnrollOpen}>
+      <Dialog open={enrollOpen && canCreate} onOpenChange={setEnrollOpen}>
         <DialogContent size="sm" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{ft('common.enroll')}</DialogTitle>
@@ -440,7 +473,7 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEnrollOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void enroll()} disabled={saving}>{ft('common.enroll')}</Button>
+            <Button variant="brand" permissionAction="create" onClick={() => void enroll()} disabled={saving}>{ft('common.enroll')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -467,15 +500,15 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
                     <p className="text-muted-foreground">{e.attendanceStatus}</p>
                   </div>
                   <div className="flex flex-wrap gap-1">
-                    <Button size="sm" variant="outline" disabled={saving} onClick={() => void markAttendance(e.memberId, 'attended')}>
+                    {canUpdate ? <Button permissionAction="update" size="sm" variant="outline" disabled={saving} onClick={() => void markAttendance(e.memberId, 'attended')}>
                       {ft('classes.markPresent')}
-                    </Button>
-                    <Button size="sm" variant="ghost" disabled={saving} onClick={() => void markAttendance(e.memberId, 'absent')}>
+                    </Button> : null}
+                    {canUpdate ? <Button permissionAction="update" size="sm" variant="ghost" disabled={saving} onClick={() => void markAttendance(e.memberId, 'absent')}>
                       {ft('classes.markAbsent')}
-                    </Button>
-                    <Button size="sm" variant="destructive" disabled={saving} onClick={() => void unenroll(e.memberId)}>
+                    </Button> : null}
+                    {canDelete ? <Button permissionAction="delete" size="sm" variant="destructive" disabled={saving} onClick={() => void unenroll(e.memberId)}>
                       {ft('classes.unenroll')}
-                    </Button>
+                    </Button> : null}
                   </div>
                 </div>
               ))}

@@ -15,7 +15,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { JwtUser } from '../../common/types/jwt-user';
 import { CircularsService } from './circulars.service';
-import { CreateCircularDto, ListCircularsDto, UpdateCircularDto } from './dto/circular.dto';
+import { CreateCircularDto, ListCircularsDto } from './dto/circular.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('hr/circulars')
@@ -41,20 +41,11 @@ export class CircularsController {
   @Post()
   @RequiresPermission('affairs.circulars:create')
   create(@Body() dto: CreateCircularDto, @CurrentUser() user: JwtUser) {
-    return this.circulars.create(dto, user.sub, user.name);
-  }
-
-  @Patch(':id')
-  @RequiresPermission('affairs.circulars:update')
-  update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateCircularDto,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.circulars.update(id, dto, user.sub, user.name);
+    return this.circulars.create(dto, user.sub);
   }
 
   @Patch(':id/seen')
+  @RequiresPermission('affairs.circulars:update')
   markSeen(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
     return this.circulars.markSeen(id, user.emp_code);
   }

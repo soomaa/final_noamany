@@ -15,7 +15,7 @@ export class ClubSubscriptionStatusCron {
     private readonly prisma: PrismaService,
   ) {}
 
-  @Cron('0 2 * * *', { timeZone: 'Africa/Cairo' })
+  @Cron('0 */5 * * * *', { timeZone: 'Africa/Cairo' })
   async handleExpired() {
     const ran = await runWithMysqlLock(this.prisma, 'cron:club-subscription-status', 0, () =>
       this.handleExpiredLocked(),
@@ -24,8 +24,8 @@ export class ClubSubscriptionStatusCron {
   }
 
   private async handleExpiredLocked() {
-    const releasedFreezeCount = await this.subscriptions.releaseFinishedFreezes();
-    if (releasedFreezeCount > 0) this.log.log(`Released ${releasedFreezeCount} finished subscription freezes`);
+    const resumeErrors = await this.subscriptions.resumeDueFreezes();
+    for (const error of resumeErrors) this.log.error(`Could not resume frozen subscription: ${error}`);
     const expiredSubs = await this.subscriptions.findNewlyExpired();
     const count = await this.subscriptions.updateExpiredStatuses();
     if (count > 0) this.log.log(`Marked ${count} subscriptions as expired`);

@@ -16,103 +16,118 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ListEmployeesDto } from './dto/list-employees.dto';
 import { EmployeesService } from './employees.service';
-import { PutWeeklyScheduleDto } from './dto/weekly-schedule.dto';
+import { EmployeeRecordScopeGuard } from '../../common/hr-scope/employee-record-scope.guard';
+import { ScopedHrData } from '../../common/hr-scope/scoped-hr-data.decorator';
+import { HrScopeSafeLookup } from '../../common/hr-scope/hr-scope-safe-lookup.decorator';
+import { JwtUser } from '../../common/types/jwt-user';
+import {
+  EmployeeContractDto,
+  EmployeePayloadDto,
+  UpdateEmployeeBanksDto,
+  UpdateEmployeeDocumentsDto,
+  UpdateEmployeeDwamDto,
+  UpdateEmployeeFinanceDto,
+} from './dto/employee-mutation.dto';
 
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, EmployeeRecordScopeGuard)
 @Controller('employees')
 @RequiresPermission('employees.list:view')
 export class EmployeesController {
   constructor(private readonly employees: EmployeesService) {}
 
   @Get()
-  list(@Query() query: ListEmployeesDto) {
-    return this.employees.list(query);
+  @ScopedHrData()
+  list(@Query() query: ListEmployeesDto, @CurrentUser() user: JwtUser) {
+    return this.employees.list(query, user);
   }
 
   // Static route must precede ':id'
   @Get('next-code')
+  @HrScopeSafeLookup()
+  @RequiresPermission(
+    'employees.list:view',
+    'employees.list:create',
+    'employees.new:create',
+  )
   nextCode(@Query('edaraId') edaraId?: string) {
     const id = edaraId ? Number(edaraId) : undefined;
     return this.employees.nextCode(Number.isNaN(id as number) ? undefined : id);
   }
 
-  @Get('sales-reps')
-  @RequiresPermission('club.members:view', 'club.members:create')
-  salesReps() {
-    return this.employees.salesReps();
-  }
-
-  @Get('pos-options')
-  @RequiresPermission('gym-sales.sales.new_receipt:view', 'gym-sales.sales.treasury:view', 'gym-sales.sales.settlements:view')
-  posOptions() {
-    return this.employees.posOptions();
-  }
-
-  // Static route must precede ':id'.
-  @Get('subscription-options')
-  @RequiresPermission('club.subscriptions:create', 'club.subscriptions.list:create', 'club.subscriptions.new:create')
-  subscriptionOptions() {
-    return this.employees.subscriptionOptions();
-  }
-
-  @Get(':id/identity')
-  identity(@Param('id', ParseIntPipe) id: number) {
-    return this.employees.identity(id);
-  }
-
   @Get(':id')
+  @ScopedHrData()
   findForForm(@Param('id', ParseIntPipe) id: number) {
     return this.employees.findForForm(id);
   }
 
   @Get(':id/profile')
+  @ScopedHrData()
   profile(@Param('id', ParseIntPipe) id: number) {
     return this.employees.profile(id);
   }
 
   @Post()
-  @RequiresPermission('employees.list:create')
-  create(@Body() body: Record<string, unknown>, @CurrentUser('sub') userId: number) {
+  @ScopedHrData()
+  @RequiresPermission('employees.list:create', 'employees.new:create')
+  create(@Body() body: EmployeePayloadDto, @CurrentUser('sub') userId: number) {
     return this.employees.create(body, userId);
   }
 
   @Put(':id')
+  @ScopedHrData()
   @RequiresPermission('employees.list:update')
   update(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: Record<string, unknown>,
+    @Body() body: EmployeePayloadDto,
     @CurrentUser('sub') userId: number,
   ) {
     return this.employees.update(id, body, userId);
   }
 
   @Patch(':id/status')
+  @ScopedHrData()
   @RequiresPermission('employees.list:update')
   setStatus(@Param('id', ParseIntPipe) id: number, @Body('employee_type', ParseIntPipe) employeeType: number) {
     return this.employees.setStatus(id, employeeType);
   }
 
   @Delete(':id')
+  @ScopedHrData()
   @RequiresPermission('employees.list:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.employees.remove(id);
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser('sub') userId: number,
+  ) {
+    return this.employees.remove(id, userId);
+  }
+
+  @Post(':id/restore')
+  @ScopedHrData()
+  @RequiresPermission('employees.list:update')
+  restore(@Param('id', ParseIntPipe) id: number) {
+    return this.employees.restore(id);
   }
 
   @Get(':id/finance')
+  @ScopedHrData()
   getFinance(@Param('id', ParseIntPipe) id: number) {
     return this.employees.getFinance(id);
   }
 
   @Put(':id/finance')
+  @ScopedHrData()
+  @RequiresPermission('employees.list:update')
   putFinance(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { rows?: unknown[]; basic_salary?: string },
+    @Body() body: UpdateEmployeeFinanceDto,
     @CurrentUser('sub') userId: number,
   ) {
     return this.employees.putFinance(id, body, userId);
   }
 
   @Delete(':id/finance/:rowId')
+  @ScopedHrData()
+  @RequiresPermission('employees.list:delete')
   deleteFinanceRow(
     @Param('id', ParseIntPipe) id: number,
     @Param('rowId', ParseIntPipe) rowId: number,
@@ -121,120 +136,83 @@ export class EmployeesController {
   }
 
   @Get(':id/dwam')
+  @ScopedHrData()
   getDwam(@Param('id', ParseIntPipe) id: number) {
     return this.employees.getDwam(id);
   }
 
-  @Get(':id/weekly-schedule')
-  getWeeklySchedule(@Param('id', ParseIntPipe) id: number, @Query('date') date?: string) {
-    return this.employees.getWeeklySchedule(id, date);
-  }
-
-  @Put(':id/weekly-schedule')
-  @RequiresPermission('employees.list:update')
-  putWeeklySchedule(@Param('id', ParseIntPipe) id: number, @Body() dto: PutWeeklyScheduleDto, @CurrentUser('sub') userId: number) {
-    return this.employees.putWeeklySchedule(id, dto, userId);
-  }
-
-  @Post(':id/weekly-schedule/validate')
-  @RequiresPermission('employees.list:update')
-  validateWeeklySchedule(@Param('id', ParseIntPipe) id: number, @Body() dto: PutWeeklyScheduleDto) {
-    return this.employees.validateWeeklySchedule(id, dto);
-  }
-
   @Put(':id/dwam')
-  putDwam(@Param('id', ParseIntPipe) id: number, @Body() body: {
-    shiftId?: number | string;
-    branchId?: number | string;
-    hdoorFromTime?: string;
-    hdoorToTime?: string;
-    hdoorKhasmFrom?: string;
-    ensrafFromTime?: string;
-    ensrafToTime?: string;
-    ensrafKhasmFrom?: string;
-    schedule?: unknown[];
-    shift_type?: string;
-  }) {
+  @ScopedHrData()
+  @RequiresPermission('employees.list:update')
+  putDwam(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateEmployeeDwamDto) {
     return this.employees.putDwam(id, body);
   }
 
-  @Delete(':id/dwam/:assignmentId')
-  deleteDwamAssignment(
-    @Param('id', ParseIntPipe) id: number,
-    @Param('assignmentId', ParseIntPipe) assignmentId: number,
-  ) {
-    return this.employees.deleteDwamAssignment(id, assignmentId);
-  }
-
   @Get(':id/banks')
+  @ScopedHrData()
   getBanks(@Param('id', ParseIntPipe) id: number) {
     return this.employees.getBanks(id);
   }
 
   @Put(':id/banks')
+  @ScopedHrData()
+  @RequiresPermission('employees.list:update')
   putBanks(
     @Param('id', ParseIntPipe) id: number,
-    @Body()
-    body: {
-      rows?: Array<{
-        bank_id_fk: number;
-        bank_account_num: string;
-        bank_code?: string;
-        approved_for_sarf?: number | boolean;
-        emp_bank_name?: string;
-      }>;
-    },
+    @Body() body: UpdateEmployeeBanksDto,
+    @CurrentUser('sub') userId: number,
   ) {
-    return this.employees.putBanks(id, body);
+    return this.employees.putBanks(id, body, userId);
   }
 
   @Get(':id/contract')
+  @ScopedHrData()
   getContract(@Param('id', ParseIntPipe) id: number) {
     return this.employees.getContract(id);
   }
 
   @Put(':id/contract')
+  @ScopedHrData()
+  @RequiresPermission('employees.list:update')
   putContract(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: Record<string, unknown>,
+    @Body() body: EmployeeContractDto,
   ) {
     return this.employees.putContract(id, body);
   }
 
   @Get(':id/documents')
+  @ScopedHrData()
   getDocuments(@Param('id', ParseIntPipe) id: number) {
     return this.employees.getDocuments(id);
   }
 
   @Put(':id/documents')
+  @ScopedHrData()
+  @RequiresPermission('employees.list:update')
   putDocuments(
     @Param('id', ParseIntPipe) id: number,
-    @Body()
-    body: {
-      rows?: Array<{
-        id?: number;
-        file_type?: string;
-        file_name?: string;
-        file_path?: string;
-        expire_date?: string;
-      }>;
-    },
+    @Body() body: UpdateEmployeeDocumentsDto,
+    @CurrentUser('sub') userId: number,
   ) {
-    return this.employees.putDocuments(id, body);
+    return this.employees.putDocuments(id, body, userId);
   }
 
   @Get(':id/insurance')
+  @ScopedHrData()
   getInsurance(@Param('id', ParseIntPipe) id: number) {
     return this.employees.getInsurance(id);
   }
 
   @Post(':id/app-user')
+  @ScopedHrData()
   @RequiresPermission('employees.list:update')
   convertToAppUser(@Param('id', ParseIntPipe) id: number) {
     return this.employees.convertToAppUser(id);
   }
 
   @Delete(':id/app-user')
+  @ScopedHrData()
   @RequiresPermission('employees.list:delete')
   removeAppUser(@Param('id', ParseIntPipe) id: number) {
     return this.employees.removeAppUser(id);

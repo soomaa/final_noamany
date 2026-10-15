@@ -5,7 +5,7 @@ export class CreateJobTitleDto {
   @MinLength(1, { message: 'الاسم حقل ضرورى' })
   name!: string;
 
-  /** Marks this job title as a gym trainer role (employees holding it sync into club_trainers). */
+  /** Optional workforce-provider role marker. */
   @IsOptional()
   @IsBoolean()
   isTrainer?: boolean;

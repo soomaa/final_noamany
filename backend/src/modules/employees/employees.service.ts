@@ -1,132 +1,106 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { randomBytes } from 'crypto';
-import * as bcrypt from 'bcryptjs';
-import { Prisma } from '@prisma/client';
-import { parseShiftType, shiftTypeToLabel } from '../../common/constants/shift-type.util';
-import { PrismaService } from '../../common/prisma/prisma.service';
-import { PaginationDto } from '../../common/dto/pagination.dto';
-import { paginated } from '../../common/dto/list-result';
-import { formToData, rowToForm } from './employees.fieldmap';
 import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Inject,
+  Injectable,
+  NotFoundException,
+  Optional,
+} from "@nestjs/common";
+import { randomBytes } from "crypto";
+import * as bcrypt from "bcryptjs";
+import { Prisma } from "@prisma/client";
+import {
+  parseShiftType,
+  shiftTypeToLabel,
+} from "../../common/constants/shift-type.util";
+import { PrismaService } from "../../common/prisma/prisma.service";
+import { PaginationDto } from "../../common/dto/pagination.dto";
+import { paginated } from "../../common/dto/list-result";
+import { formToData, rowToForm } from "./employees.fieldmap";
+import {
+  resolveAdditionalSalesRoleId,
   resolveRoleIdForJobTitleId,
-} from '../rbac/job-title-role.util';
-import { syncEmployeeTrainer } from '../club-fitness/trainer-sync.util';
-import { PutWeeklyScheduleDto, WeeklyScheduleSlotDto } from './dto/weekly-schedule.dto';
-import { resolveSettingsIdsToTitles, resolveSettingsTitlesToIds } from './employees.lookup-resolver';
+  syncAdditionalSalesRole,
+  syncEmployeeUserRole,
+} from "../rbac/job-title-role.util";
+import { PermissionEngineService } from "../rbac/engine/permission-engine.service";
+import {
+  resolveSettingsIdsToTitles,
+  resolveSettingsTitlesToIds,
+} from "./employees.lookup-resolver";
 import {
   isMarketingRepJobTitle,
   marketingRepEmployeeWhere,
   marketingRepJobTitleWhere,
-} from './marketing-rep.util';
+} from "./marketing-rep.util";
+import { cairoDateString } from "../../common/utils/cairo-date";
+import { resolveEngineBadlCode } from "../payroll/salary-component.util";
+import { markEmployeeExited, restoreEmployee } from "./employee-exit.util";
+import { HrDataScopeService } from "../../common/hr-scope/hr-data-scope.service";
+import { JwtUser } from "../../common/types/jwt-user";
+import { claimEmployeePrivateFile } from "../uploads/private-file-reference.util";
+import {
+  claimAcceptedRecruitmentApplication,
+  completeRecruitmentConversion,
+} from "../job-requests/recruitment-conversion.util";
+import {
+  DisabledWorkforceAdapter,
+  WORKFORCE_ADAPTER,
+  WorkforceAdapter,
+} from "../../ports/workforce/workforce.adapter";
 
-/** Fixed password for the single employee account (fingerprint app + dashboard). */
-const EMPLOYEE_DEFAULT_PASSWORD = '102030';
-
-const DAY_COL: Record<number, 'saturday' | 'sunday' | 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday'> = {
-  6: 'saturday',
-  0: 'sunday',
-  1: 'monday',
-  2: 'tuesday',
-  3: 'wednesday',
-  4: 'thursday',
-  5: 'friday',
+const DAY_COL: Record<
+  number,
+  | "saturday"
+  | "sunday"
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+> = {
+  6: "saturday",
+  0: "sunday",
+  1: "monday",
+  2: "tuesday",
+  3: "wednesday",
+  4: "thursday",
+  5: "friday",
 };
 const METHOD_TO_NUM: Record<string, number> = { fixed: 1, percent: 2, days: 3 };
-const METHOD_FROM_NUM: Record<number, string> = { 1: 'fixed', 2: 'percent', 3: 'days' };
+const METHOD_FROM_NUM: Record<number, string> = {
+  1: "fixed",
+  2: "percent",
+  3: "days",
+};
 
 @Injectable()
 export class EmployeesService {
-  private readonly logger = new Logger(EmployeesService.name);
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly permissionEngine: PermissionEngineService,
+    private readonly hrScope: HrDataScopeService,
+    @Optional() @Inject(WORKFORCE_ADAPTER)
+    private readonly workforce: WorkforceAdapter = new DisabledWorkforceAdapter(),
+  ) {}
 
-  constructor(private readonly prisma: PrismaService) {}
-
-  private async normalizeWeeklyScheduleSlots(slots: WeeklyScheduleSlotDto[]) {
-    const days = slots.map((slot) => Number(slot.weekday));
-    if (slots.length !== 7 || new Set(days).size !== 7 || days.some((day) => day < 0 || day > 6)) {
-      throw new BadRequestException('يجب تحديد أيام الأسبوع السبعة بدون تكرار');
-    }
-    for (const slot of slots) {
-      const hasBranch = slot.branchId != null;
-      const hasShift = slot.shiftId != null;
-      if (hasBranch !== hasShift) throw new BadRequestException('يوم الدوام يجب أن يحتوي على فرع ودوام معًا');
-    }
-    const branchIds = [...new Set(slots.flatMap((slot) => slot.branchId == null ? [] : [Number(slot.branchId)]))];
-    const shiftIds = [...new Set(slots.flatMap((slot) => slot.shiftId == null ? [] : [Number(slot.shiftId)]))];
-    const [branches, shifts] = await Promise.all([
-      branchIds.length ? this.prisma.tbl_branches.findMany({ where: { branch_id: { in: branchIds } }, select: { branch_id: true } }) : [],
-      shiftIds.length ? this.prisma.tbl_hdodr_setting.findMany({ where: { id: { in: shiftIds } }, select: { id: true } }) : [],
-    ]);
-    if (branches.length !== branchIds.length) throw new BadRequestException('الفرع المحدد غير موجود');
-    if (shifts.length !== shiftIds.length) throw new BadRequestException('الدوام المحدد غير موجود');
-    return [...slots].sort((a, b) => a.weekday - b.weekday).map((slot) => ({
-      weekday: slot.weekday,
-      branch_id: slot.branchId ?? null,
-      shift_id: slot.shiftId ?? null,
-    }));
-  }
-
-  async getWeeklySchedule(id: number, date?: string) {
-    const employee = await this.prisma.employees.findUnique({ where: { id }, select: { id: true } });
-    if (!employee) throw new NotFoundException('الموظف غير موجود');
-    const when = (date ?? new Date().toISOString().slice(0, 10)).slice(0, 10);
-    const schedule = await this.prisma.employee_weekly_schedules.findFirst({
-      where: { employee_id: id, status: 'active', effective_from: { lte: when }, OR: [{ effective_to: null }, { effective_to: { gte: when } }] },
-      orderBy: { effective_from: 'desc' }, include: { slots: { orderBy: { weekday: 'asc' } } },
-    });
-    return schedule ? { id: schedule.id, effectiveFrom: schedule.effective_from, effectiveTo: schedule.effective_to, slots: schedule.slots.map((slot) => ({ weekday: slot.weekday, branchId: slot.branch_id, shiftId: slot.shift_id })) } : { slots: [] };
-  }
-
-  async validateWeeklySchedule(id: number, dto: PutWeeklyScheduleDto) {
-    const employee = await this.prisma.employees.findUnique({ where: { id }, select: { id: true } });
-    if (!employee) throw new NotFoundException('الموظف غير موجود');
-    await this.normalizeWeeklyScheduleSlots(dto.slots);
-    return { valid: true, errors: [] as string[] };
-  }
-
-  async putWeeklySchedule(id: number, dto: PutWeeklyScheduleDto, userId?: number) {
-    await this.validateWeeklySchedule(id, dto);
-    const slots = await this.normalizeWeeklyScheduleSlots(dto.slots);
-    return this.prisma.$transaction(async (tx) => {
-      const existing = await tx.employee_weekly_schedules.findFirst({ where: { employee_id: id, status: 'active', effective_to: null }, orderBy: { effective_from: 'desc' } });
-      // Saving again for the same effective date is an edit, not a conflicting
-      // second schedule. This is needed while the administrator is setting up
-      // every employee before activating the weekly-schedule rollout.
-      if (existing?.effective_from === dto.effectiveFrom) {
-        const schedule = await tx.employee_weekly_schedules.update({
-          where: { id: existing.id },
-          data: {
-            created_by: userId ?? existing.created_by,
-            slots: { deleteMany: {}, create: slots },
-          },
-          include: { slots: { orderBy: { weekday: 'asc' } } },
-        });
-        return { employeeId: id, id: schedule.id, effectiveFrom: schedule.effective_from, slots: schedule.slots.map((slot) => ({ weekday: slot.weekday, branchId: slot.branch_id, shiftId: slot.shift_id })) };
-      }
-      if (existing) {
-        const previous = new Date(`${dto.effectiveFrom}T12:00:00Z`); previous.setUTCDate(previous.getUTCDate() - 1);
-        await tx.employee_weekly_schedules.update({ where: { id: existing.id }, data: { effective_to: previous.toISOString().slice(0, 10), status: 'archived' } });
-      }
-      const schedule = await tx.employee_weekly_schedules.create({ data: { employee_id: id, effective_from: dto.effectiveFrom, status: 'active', created_by: userId, slots: { create: slots } }, include: { slots: { orderBy: { weekday: 'asc' } } } });
-      return { employeeId: id, id: schedule.id, effectiveFrom: schedule.effective_from, slots: schedule.slots.map((slot) => ({ weekday: slot.weekday, branchId: slot.branch_id, shiftId: slot.shift_id })) };
-    });
-  }
-
-  /**
-   * Read the legacy employee row without asking Prisma to project every column
-   * from the generated model. Some imported production databases can lag behind
-   * the platform-only employee columns; a normal `findUnique()` then fails the
-   * whole read even though the core employee row is present.
-   */
-  private async findLegacyEmployeeRow(id: number): Promise<Record<string, unknown> | null> {
-    const rows = await this.prisma.$queryRaw<Array<Record<string, unknown>>>(
-      Prisma.sql`SELECT * FROM employees WHERE id = ${id} LIMIT 1`,
-    );
-    return rows[0] ?? null;
-  }
-
-  async list(q: PaginationDto & { branch?: string; edara?: string; gender?: string; emp_type?: string; status?: string }) {
-    const where: Prisma.employeesWhereInput = { OR: [{ leave_emp: null }, { leave_emp: 0 }] };
+  async list(
+    q: PaginationDto & {
+      branch?: string;
+      edara?: string;
+      gender?: string;
+      emp_type?: string;
+      status?: string;
+    },
+    user: JwtUser,
+  ) {
+    const resigned = q.status === "resigned" || q.status === "left";
+    const where: Prisma.employeesWhereInput = resigned
+      ? { leave_emp: 1 }
+      : { OR: [{ leave_emp: null }, { leave_emp: 0 }] };
     const and: Prisma.employeesWhereInput[] = [];
+    and.push(await this.hrScope.employeeWhere(user));
 
     if (q.search?.trim()) {
       const s = q.search.trim();
@@ -139,11 +113,28 @@ export class EmployeesService {
         ],
       });
     }
-    if (q.branch && q.branch !== 'all') and.push({ branch_id_fk: Number(q.branch) });
-    if (q.edara && q.edara !== 'all') and.push({ edara_id: Number(q.edara) });
-    if (q.gender && q.gender !== 'all') and.push({ gender: Number(q.gender) });
-    if (q.emp_type && q.emp_type !== 'all') and.push({ emp_type: Number(q.emp_type) });
-    if (q.status && q.status !== 'all') and.push({ employee_type: Number(q.status) });
+    if (q.branch && q.branch !== "all") {
+      const branchId = Number(q.branch);
+      if (Number.isFinite(branchId)) and.push({ branch_id_fk: branchId });
+    }
+    if (q.edara && q.edara !== "all") {
+      const edaraId = Number(q.edara);
+      if (Number.isFinite(edaraId)) and.push({ edara_id: edaraId });
+    }
+    if (q.gender && q.gender !== "all") {
+      const gender = Number(q.gender);
+      if (Number.isFinite(gender)) and.push({ gender });
+    }
+    if (q.emp_type && q.emp_type !== "all") {
+      const empType = Number(q.emp_type);
+      if (Number.isFinite(empType)) and.push({ emp_type: empType });
+    }
+    // Skip non-numeric status (e.g. resigned/left already handled) — Number('resigned') is NaN and breaks Prisma.
+    if (q.status && q.status !== "all" && !resigned) {
+      const employeeType = Number(q.status);
+      if (Number.isFinite(employeeType))
+        and.push({ employee_type: employeeType });
+    }
     if (and.length) where.AND = and;
 
     const [rows, total] = await Promise.all([
@@ -163,38 +154,16 @@ export class EmployeesService {
           nationality: true,
           branch_id_fk: true,
           gender: true,
+          leave_emp: true,
+          end_service_date_m: true,
         },
-        orderBy: { id: 'desc' },
+        orderBy: { id: "desc" },
         skip: q.skip,
         take: q.take,
       }),
       this.prisma.employees.count({ where }),
     ]);
     return paginated(rows, total, q.page, q.pageSize);
-  }
-
-  /** Minimal active-employee directory for POS account sales; no HR-sensitive fields. */
-  async posOptions() {
-    return this.prisma.employees.findMany({
-      where: {
-        employee_type: 1,
-        OR: [{ leave_emp: null }, { leave_emp: 0 }],
-      },
-      select: { id: true, employee: true, emp_code: true },
-      orderBy: [{ employee: 'asc' }, { emp_code: 'asc' }],
-    });
-  }
-
-  /** Active employees that may be assigned to ordinary club subscriptions. */
-  async subscriptionOptions() {
-    return this.prisma.employees.findMany({
-      where: {
-        employee_type: 1,
-        OR: [{ leave_emp: null }, { leave_emp: 0 }],
-      },
-      select: { id: true, employee: true, emp_code: true },
-      orderBy: [{ employee: 'asc' }, { emp_code: 'asc' }],
-    });
   }
 
   /**
@@ -205,15 +174,21 @@ export class EmployeesService {
    * Throws "exceeded range" when the range is full. Falls back to the global
    * MAX+1 when no edara is supplied (legacy add-form default).
    */
-  async nextCode(edaraId?: number): Promise<{ nextCode: number; status: string }> {
+  async nextCode(
+    edaraId?: number,
+  ): Promise<{ nextCode: number; status: string }> {
     if (!edaraId) {
-      const max = await this.prisma.employees.aggregate({ _max: { emp_code: true } });
-      return { nextCode: (max._max.emp_code ?? 1000) + 1, status: 'ok' };
+      const max = await this.prisma.employees.aggregate({
+        _max: { emp_code: true },
+      });
+      return { nextCode: (max._max.emp_code ?? 1000) + 1, status: "ok" };
     }
 
-    const edara = await this.prisma.hr_edarat_aqsam.findUnique({ where: { id: edaraId } });
+    const edara = await this.prisma.hr_edarat_aqsam.findUnique({
+      where: { id: edaraId },
+    });
     if (!edara || edara.from_code == null || edara.to_code == null) {
-      throw new BadRequestException('بيانات ناقصة');
+      throw new BadRequestException("بيانات ناقصة");
     }
     const fromCode = edara.from_code;
     const toCode = edara.to_code;
@@ -234,151 +209,40 @@ export class EmployeesService {
     } else {
       nextCode = maxCode + 1;
       if (nextCode > toCode) {
-        throw new BadRequestException('تم الوصول إلى الحد الأقصى للأكواد في هذه الإدارة');
+        throw new BadRequestException(
+          "تم الوصول إلى الحد الأقصى للأكواد في هذه الإدارة",
+        );
       }
     }
-    return { nextCode, status: 'ok' };
+    return { nextCode, status: "ok" };
   }
 
   /** Edit form prefill — DB row reverse-mapped to the form's field names. */
   async findForForm(id: number) {
-    const row = await this.findLegacyEmployeeRow(id);
-    if (!row) throw new NotFoundException('الموظف غير موجود');
-    const form = rowToForm(row);
-    const resolved = await resolveSettingsTitlesToIds(this.prisma, form).catch((error: unknown) => {
-      this.logger.warn(
-        `Could not resolve optional employee lookups for employee ${id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return { ...form };
-    });
-    if (row.mosma_wazefy_code) {
+    const row = await this.prisma.employees.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("الموظف غير موجود");
+    const form = rowToForm(row as unknown as Record<string, unknown>);
+    const resolved = await resolveSettingsTitlesToIds(this.prisma, form);
+    if (row.mosma_wazefy_code)
       resolved.job_title_id_fk = String(row.mosma_wazefy_code);
-    } else if (String(row.mosma_wazefy_n ?? '').trim()) {
-      const job = await this.prisma.department_jobs.findFirst({
-        where: { name: String(row.mosma_wazefy_n).trim() },
-        select: { id: true },
-      });
-      if (job) resolved.job_title_id_fk = String(job.id);
-    }
-    resolved.branch_name = '';
-    if (row.branch_id_fk != null) {
-      const branch = await this.prisma.tbl_branches.findUnique({
-        where: { branch_id: Number(row.branch_id_fk) },
-        select: { branch_name: true },
-      });
-      resolved.branch_name = branch?.branch_name ?? '';
-    }
-    resolved.edara_name = String(row.edara_n ?? '');
-    resolved.qsm_name = String(row.qsm_n ?? '');
-    resolved.job_title_name = String(row.mosma_wazefy_n ?? '');
     const loginUser = await this.prisma.users.findFirst({
       where: { emp_code: id },
       select: { role_id_fk: true, user_id: true, username: true },
-    }).catch((error: unknown) => {
-      this.logger.warn(
-        `Could not load optional login metadata for employee ${id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return null;
     });
-    if (loginUser?.role_id_fk != null) {
-      // Every employee now has one login account. This toggle only indicates whether
-      // that account was granted dashboard permissions.
-      resolved.addToSystem = 'true';
-      resolved.systemUsername = loginUser.username ?? '';
+    if (loginUser) {
+      resolved.addToSystem = "true";
+      resolved.systemUsername = loginUser.username ?? "";
     } else {
-      resolved.addToSystem = 'false';
+      resolved.addToSystem = "false";
     }
-    // This is optional enrichment. A legacy production database can briefly
-    // lag behind the trainer-compensation schema during a rolling upgrade; it
-    // must not prevent the core employee form from loading.
-    const trainer = await this.prisma.club_trainers.findUnique({
-      where: { employee_id: id },
-      select: {
-        salaries: {
-          where: { is_active: true },
-          orderBy: { effective_date: 'desc' },
-          take: 1,
-          select: { class_commission_percentage: true, monthly_target: true },
-        },
-      },
-    }).catch((error: unknown) => {
-      this.logger.warn(
-        `Could not load optional trainer compensation for employee ${id}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      return null;
-    });
-    resolved.class_commission_percentage = trainer?.salaries[0]
-      ? String(trainer.salaries[0].class_commission_percentage)
-      : '0';
-    resolved.monthly_target = trainer?.salaries[0] ? String(trainer.salaries[0].monthly_target) : '0';
-    return { id: Number(row.id), ...resolved };
-  }
-
-  /** Small, stable payload for employee finance, attendance and weekly-leave pages. */
-  async identity(id: number) {
-    const row = await this.prisma.employees.findUnique({
-      where: { id },
-      select: {
-        id: true,
-        emp_code: true,
-        employee: true,
-        branch_id_fk: true,
-      },
-    });
-    if (!row) throw new NotFoundException('الموظف غير موجود');
-    return row;
-  }
-
-  private async syncTrainerCommission(employeeId: number, body: Record<string, unknown>) {
-    const trainerId = await syncEmployeeTrainer(this.prisma, employeeId);
-    if (!trainerId) return;
-    const trainer = await this.prisma.club_trainers.findUnique({ where: { id: trainerId } });
-    if (!trainer?.is_active) return;
-    const commission = Number(body.class_commission_percentage ?? body.classCommissionPercentage ?? 0);
-    const monthlyTarget = Number(body.monthly_target ?? body.monthlyTarget ?? 0);
-    const rawBasicSalary = String(body.basic_salary ?? '').trim();
-    const basicSalary = rawBasicSalary === '' ? null : Number(rawBasicSalary);
-    if (!Number.isFinite(commission) || commission < 0 || commission > 100) {
-      throw new BadRequestException('عمولة الحصص يجب أن تكون بين 0 و100');
-    }
-    if (!Number.isFinite(monthlyTarget) || monthlyTarget < 0) {
-      throw new BadRequestException('التارجت الشهري يجب أن يكون رقمًا موجبًا أو صفرًا');
-    }
-    if (basicSalary != null && (!Number.isFinite(basicSalary) || basicSalary <= 0)) {
-      throw new BadRequestException('الراتب الأساسي يجب أن يكون رقمًا أكبر من صفر');
-    }
-    const active = await this.prisma.club_trainer_salaries.findFirst({
-      where: { trainer_id: trainerId, is_active: true },
-      orderBy: { effective_date: 'desc' },
-    });
-    if (active) {
-      await this.prisma.club_trainer_salaries.update({
-        where: { id: active.id },
-        data: {
-          base_salary: basicSalary ?? active.base_salary,
-          class_commission_percentage: commission,
-          monthly_target: monthlyTarget,
-        },
-      });
-      return;
-    }
-    await this.prisma.club_trainer_salaries.create({
-      data: {
-        trainer_id: trainerId,
-        base_salary: basicSalary ?? 0,
-        class_commission_percentage: commission,
-        monthly_target: monthlyTarget,
-        subscription_commission_percentage: 0,
-        effective_date: new Date().toISOString().slice(0, 10),
-        is_active: true,
-      },
-    });
+    Object.assign(resolved, await this.workforce.employeeFormFields(id));
+    return { id: row.id, ...resolved };
   }
 
   /** Profile view — raw columns (the profile page reads these directly). */
   async profile(id: number) {
-    const row = await this.findLegacyEmployeeRow(id);
-    if (!row) throw new NotFoundException('الموظف غير موجود');
+    const row = await this.prisma.employees.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("الموظف غير موجود");
     return row;
   }
 
@@ -389,60 +253,90 @@ export class EmployeesService {
    * `isEdit` relaxes emp_code (the business key is not reassigned on edit).
    */
   private validateEmployeeBody(body: Record<string, unknown>, isEdit = false) {
-    const str = (v: unknown) => String(v ?? '').trim();
+    const str = (v: unknown) => String(v ?? "").trim();
     const required: Array<[string, string]> = [
-      ['job_title_id_fk', 'المسمى الوظيفي'],
-      ['emp_name', 'اسم الموظف'],
-      ['branch_id_fk', 'الفرع'],
-      ['jwal', 'رقم الجوال'],
-      ['emp_type', 'النوع (رجالى/حريمى)'],
-      ['edara_id_fk', 'الإدارة'],
-      ['qsm_id_fk', 'القسم'],
+      ["job_title_id_fk", "المسمى الوظيفي"],
+      ["employment_type", "نوع العقد"],
+      ["emp_name", "اسم الموظف"],
+      ["branch_id_fk", "الفرع"],
+      ["jwal", "رقم الجوال"],
+      ["emp_type", "النوع (رجالى/حريمى)"],
+      ["basic_salary", "الراتب الأساسي"],
     ];
-    if (!isEdit) {
-      required.push(['emp_code', 'كود الموظف']);
-      required.push(['emp_sign', 'مكان البصمة']);
-    }
+    if (!isEdit) required.push(["emp_code", "كود الموظف"]);
     for (const [field, label] of required) {
-      if (str(body[field]) === '') throw new BadRequestException(`${label} حقل مطلوب`);
-    }
-    const empType = Number(str(body.emp_type));
-    if (![1, 2, 3].includes(empType)) {
-      throw new BadRequestException('النوع يجب أن يكون رجالى أو حريمى أو الكل');
+      if (str(body[field]) === "")
+        throw new BadRequestException(`${label} حقل مطلوب`);
     }
     // Phone format: Egyptian mobile (01xxxxxxxxx) or international digits (9–15).
     const phone = str(body.jwal);
-    if (phone !== '' && !/^\+?\d{9,15}$/.test(phone.replace(/[\s-]/g, ''))) {
-      throw new BadRequestException('رقم الجوال غير صحيح');
+    if (phone !== "" && !/^\+?\d{9,15}$/.test(phone.replace(/[\s-]/g, ""))) {
+      throw new BadRequestException("رقم الجوال غير صحيح");
     }
-    const fingerprintBranch = str(body.emp_sign).toLowerCase();
-    if (fingerprintBranch && fingerprintBranch !== 'all' && !/^\d+$/.test(fingerprintBranch)) {
-      throw new BadRequestException('مكان البصمة غير صحيح');
-    }
-    const rawBasicSalary = str(body.basic_salary);
-    const basicSalary = Number(rawBasicSalary);
-    if (rawBasicSalary !== '' && (!Number.isFinite(basicSalary) || basicSalary <= 0)) {
-      throw new BadRequestException('الراتب الأساسي يجب أن يكون رقمًا أكبر من صفر');
+    const basicSalary = Number(str(body.basic_salary));
+    if (!Number.isFinite(basicSalary) || basicSalary <= 0) {
+      throw new BadRequestException(
+        "الراتب الأساسي يجب أن يكون رقمًا أكبر من صفر",
+      );
     }
   }
 
   /** date_ar (Y-m-d) + date_s (unix epoch as string) mirrors + publisher stamp. */
   private dualDateStamps(userId?: number): Record<string, unknown> {
     const now = new Date();
-    const dateAr = now.toISOString().slice(0, 10); // Y-m-d (legacy date('Y-m-d'))
+    const dateAr = cairoDateString(now); // Cairo business date (legacy date('Y-m-d'))
     const dateS = String(Math.floor(now.getTime() / 1000)); // strtotime() epoch
     return { date_ar: dateAr, date_s: dateS, publisher: userId ?? null };
   }
 
   async create(body: Record<string, unknown>, userId?: number) {
     this.validateEmployeeBody(body, false);
-    const resolvedBody = await this.applyJobTitle(await resolveSettingsIdsToTitles(this.prisma, body));
+    const recruitmentRaw = body.recruitmentApplicationId;
+    const recruitmentApplicationId =
+      recruitmentRaw == null || recruitmentRaw === ""
+        ? null
+        : Number(recruitmentRaw);
+    if (
+      recruitmentApplicationId != null &&
+      (!Number.isInteger(recruitmentApplicationId) ||
+        recruitmentApplicationId < 1)
+    ) {
+      throw new BadRequestException("رقم طلب التوظيف غير صالح");
+    }
+    const resolvedBody = await this.applyJobTitle(
+      await resolveSettingsIdsToTitles(this.prisma, body),
+    );
     const data = formToData(resolvedBody);
+    const shouldProvision = this.parseAddToSystem(body);
+    const additionalSalesRoleId = shouldProvision && data.is_sales === true
+      ? await resolveAdditionalSalesRoleId(this.prisma)
+      : undefined;
+    const provisionRoleId = shouldProvision
+      ? await this.resolveRoleIdForJobTitle(resolvedBody)
+      : undefined;
+    if (provisionRoleId != null) {
+      await this.assertCanAssignRole(userId, undefined, provisionRoleId, true);
+    }
+    if (additionalSalesRoleId != null) {
+      await this.assertCanAssignRole(userId, undefined, additionalSalesRoleId, true);
+    }
+    const provisionCredentials = shouldProvision
+      ? this.parseSystemCredentials(body, (data.phone as string) ?? "", true)
+      : undefined;
+    if (shouldProvision && provisionCredentials) {
+      await this.preflightProvisionUser(
+        null,
+        (data.phone as string) ?? "",
+        provisionCredentials,
+      );
+    }
 
     // Manual emp_code: reject duplicates up-front.
     if (data.emp_code != null) {
-      const dup = await this.prisma.employees.findFirst({ where: { emp_code: data.emp_code as number } });
-      if (dup) throw new BadRequestException('كود الموظف مُستخدم مسبقًا');
+      const dup = await this.prisma.employees.findFirst({
+        where: { emp_code: data.emp_code as number },
+      });
+      if (dup) throw new BadRequestException("كود الموظف مُستخدم مسبقًا");
     }
 
     const buildData = (): Prisma.employeesCreateInput =>
@@ -450,100 +344,181 @@ export class EmployeesService {
         ...data,
         ...this.dualDateStamps(userId),
         neqat_total: 7000, // legacy new-flow seed
-        demo_card: (data.demo_card as string) ?? '',
-        shahadt_jaish: (data.shahadt_jaish as 'yes' | 'no') ?? 'no',
+        demo_card: (data.demo_card as string) ?? "",
+        shahadt_jaish: (data.shahadt_jaish as "yes" | "no") ?? "no",
         tamin_rkm: (data.tamin_rkm as number) ?? 0,
         khedma_year: 0,
         age: (data.age as number) ?? 0,
       }) as Prisma.employeesCreateInput;
 
-    // Auto-generated emp_code (max+1) must be serialized — a MySQL advisory lock on the
-    // same pooled connection stops two concurrent creates from minting the same code.
-    // Manual codes were already de-duplicated above, so they skip the lock.
-    const created =
-      data.emp_code == null
-        ? await this.prisma.$transaction(async (tx) => {
-            await tx.$queryRaw`SELECT GET_LOCK('employee_code', 10)`;
-            try {
-              const max = await tx.employees.aggregate({ _max: { emp_code: true } });
-              const createData = buildData();
-              createData.emp_code = (max._max.emp_code ?? 1000) + 1;
-              return tx.employees.create({ data: createData });
-            } finally {
-              await tx.$queryRaw`SELECT RELEASE_LOCK('employee_code')`;
-            }
-          })
-        : await this.prisma.employees.create({ data: buildData() });
+    // Serialize both automatic and manual business codes on the same stable
+    // InnoDB sentinel used by account identity writers. The row lock is held by
+    // MySQL until COMMIT, unlike a named lock released inside Prisma's callback.
+    const created = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT user_id FROM users WHERE level = 1 ORDER BY user_id LIMIT 1 FOR UPDATE`;
+      if (recruitmentApplicationId != null) {
+        await claimAcceptedRecruitmentApplication(
+          tx,
+          recruitmentApplicationId,
+          String(body.card_num ?? ""),
+        );
+      }
+      const finalizeRecruitment = async <T extends { id: number }>(
+        row: T,
+      ): Promise<T> => {
+        if (recruitmentApplicationId != null) {
+          await completeRecruitmentConversion(
+            tx,
+            recruitmentApplicationId,
+            row.id,
+          );
+          await tx.business_audit_log.create({
+            data: {
+              entity_type: "recruitment_application",
+              entity_id: String(recruitmentApplicationId),
+              action: "applicant.converted_to_employee",
+              actor_user_id: userId ?? null,
+              after_json: { employeeId: row.id },
+              changed_fields: ["pipelineStatus", "convertedEmployeeId"],
+            },
+          });
+        }
+        return row;
+      };
+      if (data.emp_code == null) {
+        const max = await tx.employees.aggregate({ _max: { emp_code: true } });
+        const createData = buildData();
+        createData.emp_code = (max._max.emp_code ?? 1000) + 1;
+        const row = await tx.employees.create({ data: createData });
+        await claimEmployeePrivateFile(
+          tx,
+          createData.personal_photo,
+          row.id,
+          userId,
+          ["emp-photo"],
+        );
+        if (shouldProvision) {
+          await this.provisionUser(
+            row.id,
+            (data.employee as string) ?? "",
+            (data.phone as string) ?? "",
+            (data.branch_id_fk as number) ?? null,
+            provisionRoleId,
+            undefined,
+            provisionCredentials,
+            tx,
+          );
+        }
+        return finalizeRecruitment(row);
+      }
+      const duplicateCode = await tx.employees.findFirst({
+        where: { emp_code: data.emp_code as number },
+        select: { id: true },
+      });
+      if (duplicateCode)
+        throw new BadRequestException("كود الموظف مُستخدم مسبقًا");
+      const row = await tx.employees.create({ data: buildData() });
+      await claimEmployeePrivateFile(tx, data.personal_photo, row.id, userId, [
+        "emp-photo",
+      ]);
+      if (shouldProvision) {
+        await this.provisionUser(
+          row.id,
+          (data.employee as string) ?? "",
+          (data.phone as string) ?? "",
+          (data.branch_id_fk as number) ?? null,
+          provisionRoleId,
+          undefined,
+          provisionCredentials,
+          tx,
+        );
+      }
+      return finalizeRecruitment(row);
+    });
 
-    // Every employee receives exactly one account. It is used by the fingerprint
-    // application and, when enabled below, the management dashboard as well.
-    const roleId = this.parseAddToSystem(body)
-      ? await this.resolveRoleIdForJobTitle(resolvedBody)
-      : undefined;
-    await this.provisionUser(
-      created.id,
-      (data.employee as string) ?? '',
-      (data.phone as string) ?? '',
-      (data.branch_id_fk as number) ?? null,
-      roleId,
-      undefined,
-      { username: (data.phone as string) ?? '', password: EMPLOYEE_DEFAULT_PASSWORD },
-    );
+    if (shouldProvision) {
+      const createdLogin = await this.prisma.users.findFirst({
+        where: { emp_code: created.id },
+        select: { user_id: true },
+      });
+      if (createdLogin)
+        this.permissionEngine.invalidateUser(createdLogin.user_id);
+    }
 
-    // Trainer job title → mirror into the club_trainers roster (class trainer picker).
-    await this.syncTrainerCommission(created.id, body);
+    await this.workforce.syncEmployee(created.id, body);
 
     return { id: created.id, emp_code: created.emp_code };
   }
 
-  /** Sales specialists (أخصائي مبيعات) for member registration dropdown. */
-  async salesReps() {
+  /** Active personal-sales specialists used by CRM assignment and target screens. */
+  async salesReps(options: { includeInactive?: boolean } = {}) {
     const marketingJobs = await this.prisma.department_jobs.findMany({
       where: marketingRepJobTitleWhere,
       select: { id: true },
     });
-    const jobIds = marketingJobs.map((j) => j.id);
     const rows = await this.prisma.employees.findMany({
       where: {
         AND: [
           { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
           { employee_type: 1 },
-          marketingRepEmployeeWhere(jobIds),
+          marketingRepEmployeeWhere(marketingJobs.map((job) => job.id)),
         ],
       },
       select: { id: true, employee: true, emp_code: true, branch_id_fk: true },
-      orderBy: { employee: 'asc' },
+      orderBy: { employee: "asc" },
     });
-    return rows.map((r) => ({
-      id: r.id,
-      name: r.employee,
-      empCode: r.emp_code,
-      branchId: r.branch_id_fk,
-    }));
+    const ids = rows.map((row) => row.id);
+    const [settings, branchRows] = ids.length
+      ? await Promise.all([
+          this.prisma.club_sales_rep_settings.findMany({
+            where: { employee_id: { in: ids } },
+            select: { employee_id: true, is_active: true },
+          }),
+          this.prisma.club_sales_rep_branches.findMany({
+            where: { employee_id: { in: ids } },
+            select: { employee_id: true, branch_id: true },
+          }),
+        ])
+      : [[], []];
+    const activeById = new Map(settings.map((row) => [row.employee_id, row.is_active]));
+    const branchesById = new Map<number, number[]>();
+    branchRows.forEach((row) => branchesById.set(row.employee_id, [...(branchesById.get(row.employee_id) ?? []), row.branch_id]));
+    return rows.map((row) => {
+      const explicitBranches = branchesById.get(row.id) ?? [];
+      const branchIds = explicitBranches.length
+        ? explicitBranches
+        : row.branch_id_fk != null ? [row.branch_id_fk] : [];
+      return {
+        id: row.id,
+        name: row.employee,
+        empCode: row.emp_code,
+        branchId: row.branch_id_fk,
+        branchIds,
+        isActive: activeById.get(row.id) ?? true,
+      };
+    }).filter((row) => options.includeInactive || row.isActive);
   }
 
-  /** Whether the logged-in user is a sales specialist (أخصائي مبيعات). */
+  /** Whether the signed-in employee belongs to the personal-sales workforce. */
   async isSalesEmployee(userEmpId: number | null): Promise<boolean> {
     if (!userEmpId) return false;
-    const emp = await this.prisma.employees.findUnique({
+    const employee = await this.prisma.employees.findUnique({
       where: { id: userEmpId },
-      select: { mosma_wazefy_code: true, mosma_wazefy_n: true },
+      select: { mosma_wazefy_code: true, mosma_wazefy_n: true, is_sales: true },
     });
-    if (!emp) return false;
-    if (isMarketingRepJobTitle(emp.mosma_wazefy_n)) return true;
-    if (emp.mosma_wazefy_code) {
-      const job = await this.prisma.department_jobs.findUnique({
-        where: { id: emp.mosma_wazefy_code },
-        select: { name: true },
-      });
-      if (isMarketingRepJobTitle(job?.name)) return true;
-    }
-    return false;
+    if (!employee) return false;
+    if (employee.is_sales || isMarketingRepJobTitle(employee.mosma_wazefy_n)) return true;
+    if (!employee.mosma_wazefy_code) return false;
+    const job = await this.prisma.department_jobs.findUnique({
+      where: { id: employee.mosma_wazefy_code },
+      select: { name: true },
+    });
+    return isMarketingRepJobTitle(job?.name);
   }
 
   private parseAddToSystem(body: Record<string, unknown>): boolean {
     const raw = body.addToSystem ?? body.add_to_system;
-    return raw === true || raw === 'true' || raw === 1 || raw === '1';
+    return raw === true || raw === "true" || raw === 1 || raw === "1";
   }
 
   private parseSystemCredentials(
@@ -551,22 +526,90 @@ export class EmployeesService {
     phone: string,
     requirePassword = true,
   ): { username: string; password?: string } {
-    const username = String(body.systemUsername ?? body.username ?? '').trim();
-    const password = String(body.systemPassword ?? body.password ?? '').trim();
-    if (!username) throw new BadRequestException('اسم المستخدم مطلوب عند إضافة الموظف للنظام');
+    const username = String(body.systemUsername ?? body.username ?? "").trim();
+    const password = String(body.systemPassword ?? body.password ?? "").trim();
+    if (!username)
+      throw new BadRequestException(
+        "اسم المستخدم مطلوب عند إضافة الموظف للنظام",
+      );
     if (requirePassword && !password) {
-      throw new BadRequestException('كلمة المرور مطلوبة عند إضافة الموظف للنظام');
+      throw new BadRequestException(
+        "كلمة المرور مطلوبة عند إضافة الموظف للنظام",
+      );
     }
     return { username, password: password || undefined };
   }
 
-  private async applyJobTitle(body: Record<string, unknown>): Promise<Record<string, unknown>> {
+  /**
+   * `employees` is a legacy MyISAM table, so its write cannot be rolled back if
+   * account provisioning later rejects a duplicate. Run all deterministic
+   * ownership checks before touching that row; provisionUser repeats them to
+   * defend against a concurrent change.
+   */
+  private async preflightProvisionUser(
+    employeeId: number | null,
+    phone: string,
+    credentials: { username: string; password?: string },
+  ) {
+    const username = credentials.username.trim() || phone;
+    const otherEmp = await this.prisma.employees.findFirst({
+      where: {
+        phone,
+        ...(employeeId != null ? { id: { not: employeeId } } : {}),
+      },
+      select: { id: true, employee: true },
+    });
+    if (otherEmp) {
+      throw new ConflictException(
+        `رقم الجوال مُستخدم لموظف آخر: ${otherEmp.employee ?? otherEmp.id}`,
+      );
+    }
+
+    const dupApp = await this.prisma.api_users.findFirst({
+      where: { user_phone: phone },
+    });
+    const linkedAppEmployee = dupApp
+      ? await this.prisma.employees.findFirst({
+          where: { app_user_id: dupApp.user_id },
+          select: { id: true },
+        })
+      : null;
+    if (linkedAppEmployee && linkedAppEmployee.id !== employeeId) {
+      throw new ConflictException("رقم الجوال مُستخدم لحساب تطبيق موظف آخر");
+    }
+
+    const linkedUser =
+      employeeId != null
+        ? await this.prisma.users.findFirst({
+            where: { emp_code: employeeId },
+            select: { user_id: true },
+          })
+        : null;
+    const conflictingUser = await this.prisma.users.findFirst({
+      where: {
+        // Staff authentication uses the saved username, not a separate phone
+        // alias. Phone ownership was checked against employees/app users above.
+        username,
+        ...(linkedUser ? { user_id: { not: linkedUser.user_id } } : {}),
+      },
+      select: { user_id: true },
+    });
+    if (conflictingUser) {
+      throw new ConflictException(
+        "اسم المستخدم مستخدم لحساب نظام آخر",
+      );
+    }
+  }
+
+  private async applyJobTitle(
+    body: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
     const raw = body.job_title_id_fk ?? body.mosma_wazefy_code;
-    if (raw == null || raw === '') return body;
+    if (raw == null || raw === "") return body;
     const id = Number(raw);
     if (!Number.isFinite(id) || id <= 0) return body;
     const job = await this.prisma.department_jobs.findUnique({ where: { id } });
-    if (!job) throw new BadRequestException('المسمى الوظيفي المحدد غير موجود');
+    if (!job) throw new BadRequestException("المسمى الوظيفي المحدد غير موجود");
     return {
       ...body,
       job_title_id_fk: String(id),
@@ -576,11 +619,13 @@ export class EmployeesService {
   }
 
   /** Map job title → RBAC role (1:1 linked role per المسمى الوظيفي). */
-  private async resolveRoleIdForJobTitle(body: Record<string, unknown>): Promise<number> {
+  private async resolveRoleIdForJobTitle(
+    body: Record<string, unknown>,
+  ): Promise<number> {
     const raw = body.job_title_id_fk ?? body.mosma_wazefy_code;
     const id = Number(raw);
     if (!Number.isFinite(id) || id <= 0) {
-      throw new BadRequestException('المسمى الوظيفي مطلوب لربط صلاحيات النظام');
+      throw new BadRequestException("المسمى الوظيفي مطلوب لربط صلاحيات النظام");
     }
     return resolveRoleIdForJobTitleId(this.prisma, id);
   }
@@ -588,69 +633,116 @@ export class EmployeesService {
   /** Extract an optional RBAC roleId from a raw employee form body (legacy override). */
   private parseRoleId(body: Record<string, unknown>): number | undefined {
     const raw = body.roleId ?? body.role_id ?? body.role_id_fk;
-    if (raw == null || raw === '') return undefined;
+    if (raw == null || raw === "") return undefined;
     const n = Number(raw);
     return Number.isFinite(n) && n > 0 ? n : undefined;
   }
 
   async update(id: number, body: Record<string, unknown>, userId?: number) {
-    const existing = await this.prisma.employees.findUnique({
-      where: { id },
-      select: { id: true, employee: true, phone: true, branch_id_fk: true },
-    });
-    if (!existing) throw new NotFoundException('الموظف غير موجود');
+    const existing = await this.prisma.employees.findUnique({ where: { id } });
+    if (!existing) throw new NotFoundException("الموظف غير موجود");
     this.validateEmployeeBody(body, true);
-    const resolvedBody = await this.applyJobTitle(await resolveSettingsIdsToTitles(this.prisma, body));
+    const resolvedBody = await this.applyJobTitle(
+      await resolveSettingsIdsToTitles(this.prisma, body),
+    );
     const data = formToData(resolvedBody);
     delete data.emp_code; // never reassign the business key on edit
-    // Legacy MySQL rows can contain an empty string in a YesNo column. Prisma
-    // can write the requested fields, then throws while deserializing that
-    // unchanged legacy value from the returned row. updateMany returns only a
-    // count, so it persists the edit without reading unrelated legacy fields.
-    await this.prisma.employees.updateMany({
-      where: { id },
-      data: { ...data, ...this.dualDateStamps(userId) },
+    const linkedUser = await this.prisma.users.findFirst({
+      where: { emp_code: id },
+      select: { user_id: true, role_id_fk: true },
+    });
+    const targetJobTitleId = Number(
+      data.mosma_wazefy_code ?? existing.mosma_wazefy_code,
+    );
+    const targetRoleId =
+      Number.isFinite(targetJobTitleId) && targetJobTitleId > 0
+        ? await resolveRoleIdForJobTitleId(this.prisma, targetJobTitleId)
+        : undefined;
+    const targetAlreadyAssigned =
+      linkedUser && targetRoleId != null
+        ? (await this.prisma.rbac_user_roles.count({
+            where: { user_id: linkedUser.user_id, role_id: targetRoleId },
+          })) > 0
+        : false;
+    const shouldProvision = this.parseAddToSystem(body);
+    if (targetRoleId != null && (linkedUser || this.parseAddToSystem(body))) {
+      const assignmentChanges =
+        !linkedUser ||
+        linkedUser.role_id_fk !== targetRoleId ||
+        !targetAlreadyAssigned;
+      await this.assertCanAssignRole(
+        userId,
+        linkedUser?.user_id,
+        targetRoleId,
+        assignmentChanges,
+      );
+    }
+    const targetIsSales = data.is_sales == null ? existing.is_sales : data.is_sales === true;
+    if (targetIsSales && (linkedUser || shouldProvision)) {
+      const additionalSalesRoleId = await resolveAdditionalSalesRoleId(this.prisma);
+      const salesRoleAssigned = linkedUser
+        ? (await this.prisma.rbac_user_roles.count({
+            where: { user_id: linkedUser.user_id, role_id: additionalSalesRoleId },
+          })) > 0
+        : false;
+      await this.assertCanAssignRole(
+        userId,
+        linkedUser?.user_id,
+        additionalSalesRoleId,
+        !salesRoleAssigned,
+      );
+    }
+    const newPhone = (data.phone as string) ?? existing.phone ?? "";
+    const credentials = shouldProvision
+      ? this.parseSystemCredentials(body, newPhone, false)
+      : undefined;
+    if (shouldProvision && credentials) {
+      await this.preflightProvisionUser(id, newPhone, credentials);
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await claimEmployeePrivateFile(tx, data.personal_photo, id, userId, [
+        "emp-photo",
+      ]);
+      await tx.employees.update({
+        where: { id },
+        data: { ...data, ...this.dualDateStamps(userId) },
+      });
+
+      if (data.personal_photo != null) {
+        const photo = String(data.personal_photo).trim();
+        if (linkedUser && photo && photo !== "0") {
+          await tx.users.update({
+            where: { user_id: linkedUser.user_id },
+            data: { image: photo },
+          });
+        }
+      }
+
+      if (shouldProvision) {
+        await this.provisionUser(
+          id,
+          (data.employee as string) ?? existing.employee ?? "",
+          newPhone,
+          (data.branch_id_fk as number) ?? existing.branch_id_fk ?? null,
+          targetRoleId,
+          existing.phone ?? undefined,
+          credentials,
+          tx,
+        );
+      } else {
+        await syncEmployeeUserRole(tx, id);
+        await syncAdditionalSalesRole(tx, id);
+      }
     });
 
-    if (data.personal_photo != null) {
-      const photo = String(data.personal_photo).trim();
-      const linkedUser = await this.prisma.users.findFirst({ where: { emp_code: id } });
-      if (linkedUser && photo && photo !== '0') {
-        await this.prisma.users.update({
-          where: { user_id: linkedUser.user_id },
-          data: { image: photo },
-        });
-      }
-    }
+    const syncedLogin = await this.prisma.users.findFirst({
+      where: { emp_code: id },
+      select: { user_id: true },
+    });
+    if (syncedLogin) this.permissionEngine.invalidateUser(syncedLogin.user_id);
 
-    const newPhone = (data.phone as string) ?? existing.phone ?? '';
-    const roleId = this.parseAddToSystem(body)
-      ? await this.resolveRoleIdForJobTitle(resolvedBody)
-      : undefined;
-    // Do not supply a password on edit: existing employees keep their chosen
-    // password, while a legacy employee without an account receives 102030.
-    // Account/role and trainer synchronization must not roll back a valid
-    // employee profile edit (for example, changing only the fingerprint place).
-    // Older databases can contain an orphaned or duplicate legacy account;
-    // log that for an administrator but keep the employee data saved.
-    let syncWarning: string | undefined;
-    try {
-      await this.provisionUser(
-        id,
-        (data.employee as string) ?? existing.employee ?? '',
-        newPhone,
-        (data.branch_id_fk as number) ?? existing.branch_id_fk ?? null,
-        roleId,
-        existing.phone ?? undefined,
-        { username: newPhone },
-      );
-      if (roleId == null) await this.revokeDashboardAccess(id);
-      await this.syncTrainerCommission(id, body);
-    } catch (error) {
-      syncWarning = 'تم حفظ بيانات الموظف، لكن تعذرت مزامنة حساب النظام تلقائيًا';
-      this.logger.error(`Employee ${id} profile saved but account synchronization failed`, error);
-    }
-    return { id, ...(syncWarning ? { warning: syncWarning } : {}) };
+    await this.workforce.syncEmployee(id, body);
+    return { id };
   }
 
   /**
@@ -658,9 +750,8 @@ export class EmployeesService {
    * to the employee. Permissions are resolved automatically from the job title (المسمى الوظيفي).
    * users.emp_code stores employees.id (legacy convention).
    *
-   * Idempotent on phone: if a user already exists for this phone, we only update its
-   * role when a new roleId was explicitly provided (so re-assigning permissions on
-   * employee edit works), otherwise leave it untouched.
+   * Updates the account linked to this employee in place. An omitted password
+   * preserves its current password; another account's username is never reused.
    */
   private async provisionUser(
     empId: number,
@@ -670,85 +761,115 @@ export class EmployeesService {
     roleId?: number,
     previousPhone?: string,
     credentials?: { username: string; password?: string },
+    db: PrismaService | Prisma.TransactionClient = this.prisma,
   ) {
     if (!phone && !credentials?.username) return;
 
-    const empRow = await this.prisma.employees.findUnique({
+    const empRow = await db.employees.findUnique({
       where: { id: empId },
-      select: { personal_photo: true },
+      select: { personal_photo: true, mosma_wazefy_code: true },
     });
     const avatarFromEmp = empRow?.personal_photo?.trim();
     const avatarImage =
-      avatarFromEmp && avatarFromEmp !== '0' ? avatarFromEmp : 'user-20250803a67b668cca.png';
+      avatarFromEmp && avatarFromEmp !== "0"
+        ? avatarFromEmp
+        : "user-20250803a67b668cca.png";
 
     const username = credentials?.username?.trim() || phone;
-    const plainPassword = credentials?.password?.trim() || EMPLOYEE_DEFAULT_PASSWORD;
+    const plainPassword =
+      credentials?.password?.trim() || phone.replace(/\D/g, "") || phone;
+
+    // Serialize every login identity writer on the same stable InnoDB row. The
+    // legacy users table has no UNIQUE(username/emp_code), so a preflight alone
+    // cannot stop two simultaneous employee provisions from creating duplicates.
+    await db.$queryRaw`SELECT user_id FROM users WHERE level = 1 ORDER BY user_id LIMIT 1 FOR UPDATE`;
 
     // Block duplicate phone on another employee's app/login account.
-    const otherEmp = await this.prisma.employees.findFirst({
+    const otherEmp = await db.employees.findFirst({
       where: { phone, id: { not: empId } },
       select: { id: true, employee: true },
     });
     if (otherEmp) {
-      throw new ConflictException(`رقم الجوال مُستخدم لموظف آخر: ${otherEmp.employee ?? otherEmp.id}`);
+      throw new ConflictException(
+        `رقم الجوال مُستخدم لموظف آخر: ${otherEmp.employee ?? otherEmp.id}`,
+      );
     }
 
-    const dupApp = await this.prisma.api_users.findFirst({ where: { user_phone: phone } });
-    // Do not pass `undefined` to Prisma here: it removes the app_user_id filter
-    // and turns this into an unbounded employee read. Besides being logically
-    // wrong, legacy rows can contain enum values that an unrestricted Prisma
-    // projection cannot deserialize. Only resolve an owner when an app account
-    // was actually found, and project the stable primary key alone.
-    const linkedEmp = dupApp
-      ? await this.prisma.employees.findFirst({
-          where: { app_user_id: dupApp.user_id },
-          select: { id: true },
-        })
-      : null;
+    const dupApp = await db.api_users.findFirst({
+      where: { user_phone: phone },
+    });
+    const linkedEmp = await db.employees.findFirst({
+      where: { app_user_id: dupApp?.user_id },
+    });
     if (dupApp && linkedEmp && linkedEmp.id !== empId) {
-      throw new ConflictException('رقم الجوال مُستخدم لحساب تطبيق موظف آخر');
+      throw new ConflictException("رقم الجوال مُستخدم لحساب تطبيق موظف آخر");
     }
 
     // Resolve the account by its employee link first. A username/phone match alone is never
     // ownership proof: reassigning such a row could turn an employee edit into an account takeover.
-    const linkedUser = await this.prisma.users.findFirst({ where: { emp_code: empId } });
-    const conflictingUser = await this.prisma.users.findFirst({
+    const linkedUser = await db.users.findFirst({ where: { emp_code: empId } });
+    const conflictingUser = await db.users.findFirst({
       where: {
-        OR: [{ username }, ...(phone && phone !== username ? [{ username: phone }] : [])],
+        // Match the preflight: reserve only the username that will be saved.
+        username,
         ...(linkedUser ? { user_id: { not: linkedUser.user_id } } : {}),
       },
     });
     if (conflictingUser) {
-      throw new ConflictException('اسم المستخدم أو رقم الجوال مستخدم لحساب نظام آخر');
+      throw new ConflictException(
+        "اسم المستخدم مستخدم لحساب نظام آخر",
+      );
     }
 
     if (linkedUser) {
-      await this.prisma.users.update({
+      await db.users.update({
         where: { user_id: linkedUser.user_id },
-        data: { name, branch_id_fk: branchId, username },
+        data: {
+          name,
+          branch_id_fk: branchId,
+          username,
+          ...(credentials?.password ? { approved: 1 } : {}),
+        },
       });
       if (avatarFromEmp) {
-        await this.prisma.users.update({
+        await db.users.update({
           where: { user_id: linkedUser.user_id },
           data: { image: avatarFromEmp },
         });
       }
       if (credentials?.password) {
         const pwd = await bcrypt.hash(plainPassword, 12);
-        await this.prisma.users.update({
+        await db.users.update({
           where: { user_id: linkedUser.user_id },
-          data: { password: pwd, app_pass: null, pass_demo: null, user_pass: null, x_y_z: null },
+          data: {
+            password: pwd,
+            app_pass: null,
+            pass_demo: null,
+            user_pass: null,
+            x_y_z: null,
+          },
         });
       }
       if (roleId != null) {
-        await this.prisma.users.update({ where: { user_id: linkedUser.user_id }, data: { role_id_fk: roleId } });
-        await this.grantRbacRole(linkedUser.user_id, roleId);
+        // Replace only the former job-title assignment while preserving manual
+        // and temporary roles. A plain upsert used to keep the old job role too.
+        await syncEmployeeUserRole(db, empId);
+      } else {
+        await syncEmployeeUserRole(db, empId);
       }
+      await syncAdditionalSalesRole(db, empId);
       return;
     }
 
+    const resolvedRoleId = roleId ?? (
+      empRow?.mosma_wazefy_code
+        ? await resolveRoleIdForJobTitleId(db, empRow.mosma_wazefy_code)
+        : null
+    );
+    if (resolvedRoleId == null) throw new BadRequestException("يجب تحديد المسمى الوظيفي قبل إنشاء حساب التطبيق");
+
     const pwd = await bcrypt.hash(plainPassword, 12);
-    const createdUser = await this.prisma.users.create({
+    const createdUser = await db.users.create({
       data: {
         username,
         approved: 1,
@@ -759,15 +880,15 @@ export class EmployeesService {
         image: avatarImage,
         x_y_z: null,
         level: 2,
-        role_id_fk: roleId,
+        role_id_fk: resolvedRoleId,
         name,
         emp_code: empId,
         branch_id_fk: branchId,
-        must_change_password: false,
       },
       select: { user_id: true },
     });
-    if (roleId != null) await this.grantRbacRole(createdUser.user_id, roleId);
+    await this.grantRbacRole(createdUser.user_id, resolvedRoleId, db);
+    await syncAdditionalSalesRole(db, empId);
   }
 
   /**
@@ -775,132 +896,334 @@ export class EmployeesService {
    * Non-destructive (upsert on the unique user+role pair) and guarded: a non-existent
    * roleId is ignored rather than throwing an FK error mid employee-create.
    */
-  private async grantRbacRole(userId: number, roleId: number) {
-    const role = await this.prisma.rbac_roles.findUnique({ where: { id: roleId }, select: { id: true } });
+  private async grantRbacRole(
+    userId: number,
+    roleId: number,
+    db: PrismaService | Prisma.TransactionClient = this.prisma,
+  ) {
+    const role = await db.rbac_roles.findUnique({
+      where: { id: roleId },
+      select: { id: true },
+    });
     if (!role) return;
-    await this.prisma.rbac_user_roles.deleteMany({ where: { user_id: userId } });
-    await this.prisma.rbac_user_roles.create({ data: { user_id: userId, role_id: roleId } });
+    await db.rbac_user_roles.upsert({
+      where: { user_id_role_id: { user_id: userId, role_id: roleId } },
+      update: {},
+      create: { user_id: userId, role_id: roleId },
+    });
+    this.permissionEngine.invalidateUser(userId);
   }
 
-  /** Remove dashboard privileges while retaining the employee's fingerprint-app login. */
-  private async revokeDashboardAccess(empId: number) {
-    const user = await this.prisma.users.findFirst({
-      where: { emp_code: empId },
-      select: { user_id: true },
-    });
-    if (!user) return;
-    await this.prisma.users.update({ where: { user_id: user.user_id }, data: { role_id_fk: null } });
-    await this.prisma.rbac_user_roles.deleteMany({ where: { user_id: user.user_id } });
+  /** Prevent delegated HR operators from assigning permissions above their own ceiling. */
+  private async assertCanAssignRole(
+    actorUserId: number | undefined,
+    targetUserId: number | undefined,
+    roleId: number,
+    assignmentChanges: boolean,
+  ) {
+    if (!actorUserId)
+      throw new ForbiddenException("تعذر التحقق من منفذ تغيير الصلاحيات");
+    if (targetUserId === actorUserId && assignmentChanges) {
+      throw new ForbiddenException(
+        "لا يمكنك تغيير المسمى بما يعدل صلاحيات حسابك بنفسك",
+      );
+    }
+    if (!assignmentChanges) return;
+
+    const [actor, targetRole] = await Promise.all([
+      this.permissionEngine.getEffective(actorUserId),
+      this.permissionEngine.effectiveForRoleIds([roleId]),
+    ]);
+    if (targetRole.superAdmin && !actor.superAdmin) {
+      throw new ForbiddenException(
+        "إسناد دور المدير العام متاح للمدير العام فقط",
+      );
+    }
+    if (!actor.superAdmin) {
+      const missing = [...targetRole.keys].filter(
+        (key) => !actor.keys.has(key),
+      );
+      if (missing.length) {
+        throw new ForbiddenException(
+          "لا يمكنك إسناد مسمى وظيفي يمنح صلاحيات لا تملكها",
+        );
+      }
+    }
   }
 
   /** Delete the linked mobile-app account and clear the employee link. */
   async removeAppUser(id: number) {
-    const emp = await this.prisma.employees.findUnique({ where: { id } });
-    if (!emp) throw new NotFoundException('الموظف غير موجود');
-    if (emp.app_user_id) {
-      await this.prisma.api_users.delete({ where: { user_id: emp.app_user_id } }).catch(() => null);
-      await this.prisma.employees.update({ where: { id }, data: { app_user_id: null } });
+    const disabledAppUser = await this.prisma.$transaction(
+      async (
+        tx,
+      ): Promise<{ user_id: number; status: number | null } | null> => {
+        // The legacy api_users table has no unique phone constraint. Serialize app
+        // account writers on a stable InnoDB row and hold it until commit.
+        await tx.$queryRaw`SELECT user_id FROM users WHERE level = 1 ORDER BY user_id LIMIT 1 FOR UPDATE`;
+        const emp = await tx.employees.findUnique({ where: { id } });
+        if (!emp) throw new NotFoundException("الموظف غير موجود");
+        if (!emp.app_user_id) return null;
+
+        // Mobile authentication uses the canonical staff `users` row, not the
+        // legacy api_users compatibility table. Disable it and revoke every
+        // refresh session in the same transaction before touching the legacy row.
+        const canonicalUser = await tx.users.findFirst({
+          where: { emp_code: id },
+          select: { user_id: true },
+        });
+        if (canonicalUser) {
+          await tx.users.update({
+            where: { user_id: canonicalUser.user_id },
+            data: { approved: 0 },
+          });
+          await tx.staff_auth_sessions.updateMany({
+            where: { user_id: canonicalUser.user_id, revoked_at: null },
+            data: { revoked_at: new Date(), revocation_reason: 'app-user-removed' },
+          });
+        }
+        const appUser = await tx.api_users.findUnique({
+          where: { user_id: emp.app_user_id },
+        });
+        if (appUser) {
+          // Disable first so a failed physical cleanup never leaves an orphaned
+          // account that can still authenticate.
+          await tx.api_users.update({
+            where: { user_id: appUser.user_id },
+            data: { status: 0 },
+          });
+        }
+        await tx.employees.update({
+          where: { id },
+          data: { app_user_id: null },
+        });
+        return appUser
+          ? { user_id: appUser.user_id, status: appUser.status }
+          : null;
+      },
+    );
+
+    let legacyCleanupPending = false;
+    if (disabledAppUser) {
+      try {
+        await this.prisma.api_users.delete({
+          where: { user_id: disabledAppUser.user_id },
+        });
+      } catch {
+        // api_users may be a legacy non-transactional table. Security state is
+        // already fail-closed (canonical identity disabled, sessions revoked,
+        // legacy row disabled, employee link cleared). Never compensate by
+        // silently re-enabling a partially removed identity.
+        legacyCleanupPending = true;
+      }
     }
-    return { success: true };
+    return { success: true, ...(legacyCleanupPending ? { legacyCleanupPending } : {}) };
   }
 
-  /** Convert an HR employee into a mobile-app user (api_users). Idempotent. */
+  /** Convert an HR employee into a mobile self-service user. Idempotent. */
   async convertToAppUser(id: number) {
-    const emp = await this.prisma.employees.findUnique({ where: { id } });
-    if (!emp) throw new NotFoundException('الموظف غير موجود');
-    if (!emp.phone) {
-      throw new BadRequestException('لا يمكن إنشاء حساب تطبيق بدون رقم جوال');
-    }
-
-    if (emp.app_user_id) {
-      const existing = await this.prisma.api_users.findUnique({
-        where: { user_id: emp.app_user_id },
-      });
-      if (existing) {
-        return { appUserId: existing.user_id, phone: existing.user_phone, alreadyExists: true };
-      }
-    }
-
-    const phoneTaken = await this.prisma.api_users.findFirst({ where: { user_phone: emp.phone } });
-    if (phoneTaken) {
-      const owner = await this.prisma.employees.findFirst({ where: { app_user_id: phoneTaken.user_id } });
-      if (owner && owner.id !== id) {
-        throw new ConflictException('رقم الجوال مُستخدم لحساب تطبيق موظف آخر');
-      }
-    }
-
-    const loginTaken = await this.prisma.users.findFirst({ where: { username: emp.phone } });
-    if (loginTaken && loginTaken.emp_code !== id) {
-      throw new ConflictException('رقم الجوال مُستخدم لحساب دخول موظف آخر');
-    }
-
-    const plainPassword = randomBytes(9).toString('base64url');
+    const plainPassword = randomBytes(9).toString("base64url");
     const user_pass = await bcrypt.hash(plainPassword, 12);
+    let createdAppUserId: number | null = null;
+    let result: { appUserId: number; phone: string; alreadyExists: boolean };
+    try {
+      result = await this.prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT user_id FROM users WHERE level = 1 ORDER BY user_id LIMIT 1 FOR UPDATE`;
+        const emp = await tx.employees.findUnique({ where: { id } });
+        if (!emp) throw new NotFoundException("الموظف غير موجود");
+        if (!emp.phone)
+          throw new BadRequestException(
+            "لا يمكن إنشاء حساب تطبيق بدون رقم جوال",
+          );
 
-    const appUser = await this.prisma.api_users.create({
-      data: {
-        user_name: emp.employee ?? emp.phone,
-        user_phone: emp.phone,
-        user_email: emp.email ?? null,
-        user_city: null,
-        user_pass,
-        status: 1,
-      },
-    });
+        if (emp.app_user_id) {
+          const existing = await tx.api_users.findUnique({
+            where: { user_id: emp.app_user_id },
+          });
+          if (existing) {
+            return {
+              appUserId: existing.user_id,
+              phone: existing.user_phone ?? emp.phone,
+              alreadyExists: true,
+            };
+          }
+        }
 
-    await this.prisma.employees.update({
-      where: { id },
-      data: { app_user_id: appUser.user_id },
-    });
+        const phoneTaken = await tx.api_users.findFirst({
+          where: { user_phone: emp.phone },
+        });
+        if (phoneTaken) {
+          const owner = await tx.employees.findFirst({
+            where: { app_user_id: phoneTaken.user_id },
+          });
+          if (owner?.id === id) {
+            await tx.employees.update({
+              where: { id },
+              data: { app_user_id: phoneTaken.user_id },
+            });
+            return {
+              appUserId: phoneTaken.user_id,
+              phone: phoneTaken.user_phone ?? emp.phone,
+              alreadyExists: true,
+            };
+          }
+          throw new ConflictException("رقم الجوال مُستخدم لحساب تطبيق آخر");
+        }
+
+        const loginTaken = await tx.users.findFirst({
+          where: { username: emp.phone },
+        });
+        if (loginTaken && loginTaken.emp_code !== id) {
+          throw new ConflictException("رقم الجوال مُستخدم لحساب دخول موظف آخر");
+        }
+
+        // MobileService authenticates through the canonical staff `users`
+        // table. Provision the exact same generated credential there before
+        // creating the legacy api_users compatibility row; otherwise the
+        // password returned to HR could never be used by the mobile login API.
+        await this.provisionUser(
+          id,
+          emp.employee ?? emp.phone,
+          emp.phone,
+          emp.branch_id_fk,
+          undefined,
+          undefined,
+          { username: emp.phone, password: plainPassword },
+          tx,
+        );
+
+        const appUser = await tx.api_users.create({
+          data: {
+            user_name: emp.employee ?? emp.phone,
+            user_phone: emp.phone,
+            user_email: emp.email ?? null,
+            user_city: null,
+            user_pass,
+            status: 1,
+          },
+        });
+        createdAppUserId = appUser.user_id;
+        await tx.employees.update({
+          where: { id },
+          data: { app_user_id: appUser.user_id },
+        });
+        return {
+          appUserId: appUser.user_id,
+          phone: appUser.user_phone ?? emp.phone,
+          alreadyExists: false,
+        };
+      });
+    } catch (error) {
+      // api_users is legacy/non-transactional in some deployments. Remove a row
+      // created by this attempt if the employee link could not be committed.
+      if (createdAppUserId != null) {
+        await this.prisma.api_users
+          .delete({ where: { user_id: createdAppUserId } })
+          .catch(() => undefined);
+      }
+      throw error;
+    }
 
     return {
-      appUserId: appUser.user_id,
-      phone: appUser.user_phone,
-      password: plainPassword,
-      alreadyExists: false,
+      ...result,
+      ...(result.alreadyExists ? {} : { password: plainPassword }),
     };
   }
 
   async setStatus(id: number, employeeType: number) {
-    await this.prisma.employees.update({ where: { id }, data: { employee_type: employeeType } });
+    await this.prisma.employees.update({
+      where: { id },
+      data: { employee_type: employeeType },
+    });
     return { id, employee_type: employeeType };
   }
 
-  /** Soft delete (recoverable) — better than the legacy hard delete. */
-  async remove(id: number) {
-    await this.prisma.employees.update({ where: { id }, data: { leave_emp: 1 } });
-    return { id };
+  /** Soft delete (recoverable) — same exit effect as archive / clearance. */
+  async remove(id: number, actorUserId?: number) {
+    const emp = await this.prisma.employees.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!emp) throw new NotFoundException("الموظف غير موجود");
+    await markEmployeeExited(this.prisma, {
+      employeeId: id,
+      lastWorkingDate: cairoDateString(),
+      reason: "إنهاء خدمة",
+      actorUserId,
+    });
+    return { id, leave_emp: 1 };
+  }
+
+  async restore(id: number) {
+    const emp = await this.prisma.employees.findUnique({
+      where: { id },
+      select: { id: true, leave_emp: true },
+    });
+    if (!emp) throw new NotFoundException("الموظف غير موجود");
+    await restoreEmployee(this.prisma, id);
+    return { id, leave_emp: 0 };
   }
 
   // ---- Finance (allowances / deductions + basic salary) ----
   async getFinance(id: number) {
-    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { emp_code: true, basic_salary: true } });
-    if (!emp) throw new NotFoundException('الموظف غير موجود');
-    const rows = await this.prisma.hr_finance_employes.findMany({ where: { emp_id: id } });
+    const emp = await this.prisma.employees.findUnique({
+      where: { id },
+      select: { emp_code: true, basic_salary: true },
+    });
+    if (!emp) throw new NotFoundException("الموظف غير موجود");
+    const rows = await this.prisma.hr_finance_employes.findMany({
+      where: { emp_id: id },
+    });
     return {
-      basic_salary: emp.basic_salary?.toString() ?? '',
+      basic_salary: emp.basic_salary?.toString() ?? "",
       rows: rows.map((r) => ({
         id: String(r.id),
-        badl_type: String(r.badl_type) as '1' | '2',
+        badl_type: String(r.badl_type) as "1" | "2",
         badl_discount_id_fk: String(r.badl_discount_id_fk),
         value: String(r.value),
-        method_to_count: METHOD_FROM_NUM[r.method_to_count] ?? 'fixed',
-        specific_period: r.specific_period === '1',
-        date_from: r.date_from ?? '',
-        date_to: r.date_to ?? '',
+        method_to_count: METHOD_FROM_NUM[r.method_to_count] ?? "fixed",
+        date_from: r.date_from ?? "",
+        date_to: r.date_to ?? "",
         insurance_affect: r.insurance_affect === 1,
       })),
     };
   }
 
-  async putFinance(id: number, body: { rows?: any[]; basic_salary?: string }, userId?: number) {
-    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { emp_code: true } });
-    if (!emp) throw new NotFoundException('الموظف غير موجود');
+  async putFinance(
+    id: number,
+    body: { rows?: any[]; basic_salary?: string },
+    userId?: number,
+  ) {
+    const emp = await this.prisma.employees.findUnique({
+      where: { id },
+      select: { emp_code: true },
+    });
+    if (!emp) throw new NotFoundException("الموظف غير موجود");
     const empCode = emp.emp_code ?? 0;
     const rows = Array.isArray(body.rows) ? body.rows : [];
-    const basicSalary = Number(String(body.basic_salary ?? '').trim());
+    const existingFinanceIds = await this.prisma.hr_finance_employes.findMany({
+      where: { emp_id: id },
+      select: { id: true },
+    });
+    const submittedIds = new Set(
+      rows
+        .map((row) => Number(row.id))
+        .filter((rowId) => Number.isFinite(rowId)),
+    );
+    const removesPersistedRows = existingFinanceIds.some(
+      (row) => !submittedIds.has(row.id),
+    );
+    if (
+      removesPersistedRows &&
+      (!userId ||
+        !(await this.permissionEngine.can(userId, "employees.list", "delete")))
+    ) {
+      throw new ForbiddenException("حذف بند مالي يتطلب صلاحية حذف الموظفين");
+    }
+    const basicSalary = Number(String(body.basic_salary ?? "").trim());
     if (!Number.isFinite(basicSalary) || basicSalary <= 0) {
-      throw new BadRequestException('الراتب الأساسي يجب أن يكون رقمًا أكبر من صفر');
+      throw new BadRequestException(
+        "الراتب الأساسي يجب أن يكون رقمًا أكبر من صفر",
+      );
     }
 
     // Running totals (denormalized on every row, legacy parity):
@@ -913,7 +1236,10 @@ export class EmployeesService {
     for (const r of rows) {
       const v = Number(r.value) || 0;
       const t = Number(r.badl_type) || 1;
-      const aff = r.insurance_affect === true || r.insurance_affect === 1 || r.insurance_affect === '1';
+      const aff =
+        r.insurance_affect === true ||
+        r.insurance_affect === 1 ||
+        r.insurance_affect === "1";
       if (t === 1) {
         havingAll += v;
         if (aff) havingTamin += v;
@@ -921,6 +1247,21 @@ export class EmployeesService {
         discutAll += v;
       }
     }
+
+    const catalogIds = [
+      ...new Set(
+        rows
+          .map((r) => Number(r.badl_discount_id_fk))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    ];
+    const catalogs = catalogIds.length
+      ? await this.prisma.all_defined_setting.findMany({
+          where: { defined_id: { in: catalogIds } },
+          select: { defined_id: true, defined_title: true, defined_type: true },
+        })
+      : [];
+    const catalogById = new Map(catalogs.map((c) => [c.defined_id, c]));
 
     await this.prisma.$transaction([
       this.prisma.employees.update({
@@ -931,21 +1272,30 @@ export class EmployeesService {
       this.prisma.hr_finance_employes.createMany({
         data: rows.map((r) => {
           const badlId = Number(r.badl_discount_id_fk) || 0;
+          const catalog = catalogById.get(badlId);
+          const engineCode = resolveEngineBadlCode({
+            badlCode: Number(r.badl_code) || null,
+            catalogId: badlId,
+            title: catalog?.defined_title,
+          });
           return {
             emp_id: id,
             emp_code: empCode,
             badl_discount_id_fk: badlId,
-            // legacy badal_code came from emp_badlat_discount_settings (absent in
-            // new schema); the catalog id is the code here.
-            badl_code: badlId || null,
-            badl_type: Number(r.badl_type) || 1,
+            // Same identity the engine and loan ceiling consume (100–106 when known).
+            badl_code: engineCode,
+            badl_type: Number(r.badl_type) || catalog?.defined_type || 1,
             value: Number(r.value) || 0,
             method_to_count: METHOD_TO_NUM[r.method_to_count as string] ?? 1,
-            specific_period: r.specific_period === true || r.specific_period === 1 || r.specific_period === '1' ? '1' : '0',
-            date_from: r.specific_period ? (r.date_from || null) : null,
-            date_to: r.specific_period ? (r.date_to || null) : null,
+            specific_period: r.date_from ? "1" : "0",
+            date_from: r.date_from || null,
+            date_to: r.date_to || null,
             insurance_affect:
-              r.insurance_affect === true || r.insurance_affect === 1 || r.insurance_affect === '1' ? 1 : 0,
+              r.insurance_affect === true ||
+              r.insurance_affect === 1 ||
+              r.insurance_affect === "1"
+                ? 1
+                : 0,
             having_all_value: havingAll,
             discut_all_value: discutAll,
             having_tamin_value: havingTamin,
@@ -968,7 +1318,7 @@ export class EmployeesService {
     const row = await this.prisma.hr_finance_employes.findFirst({
       where: { id: rowId, emp_id: empId },
     });
-    if (!row) throw new NotFoundException('البند غير موجود');
+    if (!row) throw new NotFoundException("البند غير موجود");
     const empCode = row.emp_code;
     const value = row.value ?? 0;
     const type = row.badl_type;
@@ -977,231 +1327,120 @@ export class EmployeesService {
     await this.prisma.hr_finance_employes.delete({ where: { id: rowId } });
 
     // Read a surviving row to get the current running totals (legacy get_new_value).
-    const surviving = await this.prisma.hr_finance_employes.findFirst({ where: { emp_code: empCode } });
+    const surviving = await this.prisma.hr_finance_employes.findFirst({
+      where: { emp_code: empCode },
+    });
     if (!surviving) return { id: empId, deleted: rowId };
 
     const data: Prisma.hr_finance_employesUpdateManyMutationInput = {};
     if (type === 1) {
-      data.having_all_value = Number(surviving.having_all_value ?? 0) - Number(value);
+      data.having_all_value =
+        Number(surviving.having_all_value ?? 0) - Number(value);
       if (affectedTamin) {
-        data.having_tamin_value = Number(surviving.having_tamin_value ?? 0) - Number(value);
+        data.having_tamin_value =
+          Number(surviving.having_tamin_value ?? 0) - Number(value);
       }
     } else if (type === 2) {
-      data.discut_all_value = Number(surviving.discut_all_value ?? 0) - Number(value);
+      data.discut_all_value =
+        Number(surviving.discut_all_value ?? 0) - Number(value);
     }
     if (Object.keys(data).length) {
-      await this.prisma.hr_finance_employes.updateMany({ where: { emp_code: empCode }, data });
+      await this.prisma.hr_finance_employes.updateMany({
+        where: { emp_code: empCode },
+        data,
+      });
     }
     return { id: empId, deleted: rowId };
   }
 
   // ---- Dwam (work schedule) ----
   async getDwam(id: number) {
-    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { emp_code: true, branch_id_fk: true } });
-    if (!emp) throw new NotFoundException('الموظف غير موجود');
-    const [row, assignmentRows] = await Promise.all([
-      this.prisma.hr_emp_dwam.findFirst({ where: { emp_id: id } }),
-      this.prisma.tbl_hdoor_dawms_emps.findMany({
-        where: { OR: [{ emp_id_fk: id }, ...(emp.emp_code ? [{ emp_code_fk: emp.emp_code }] : [])] },
-        orderBy: { id: 'desc' },
-      }),
-    ]);
-    const shiftIds = [...new Set(assignmentRows.map((item) => item.dwam_id_fk).filter((value): value is number => Boolean(value)))];
-    const branchIds = [...new Set(assignmentRows
-      .map((item) => String(item.branch_id_fk ?? ''))
-      .filter((value) => /^\d+$/.test(value))
-      .map(Number))];
-    const [assignmentShifts, assignmentBranches] = await Promise.all([
-      shiftIds.length ? this.prisma.tbl_hdodr_setting.findMany({ where: { id: { in: shiftIds } } }) : [],
-      branchIds.length ? this.prisma.tbl_branches.findMany({ where: { branch_id: { in: branchIds } } }) : [],
-    ]);
-    const shiftById = new Map(assignmentShifts.map((item) => [item.id, item] as const));
-    const branchById = new Map(assignmentBranches.map((item) => [item.branch_id, item.branch_name] as const));
-    const shift = row?.always_id_fk
-      ? await this.prisma.tbl_hdodr_setting.findUnique({ where: { id: row.always_id_fk } })
-      : null;
-    const hdoorFromTime = row?.start_enter || shift?.hdoor_from_time || row?.attend_time || '';
-    const hdoorToTime = row?.end_enter || shift?.hdoor_to_time || row?.attend_time || '';
-    const hdoorKhasmFrom = row?.attend_time || shift?.hdoor_khasm_from || '';
-    const ensrafFromTime = row?.start_out || shift?.ensraf_from_time || row?.leave_time || '';
-    const ensrafToTime = row?.end_out || shift?.ensraf_to_time || row?.leave_time || '';
-    const ensrafKhasmFrom = row?.leave_time || shift?.ensraf_khasm_from || '';
+    const row = await this.prisma.hr_emp_dwam.findFirst({
+      where: { emp_id: id },
+    });
     const schedule = Object.entries(DAY_COL).map(([day, col]) => ({
       day: Number(day),
       enabled: row ? (row[col] as number) === 1 : false,
-      startTime: hdoorFromTime || '08:00',
-      endTime: ensrafToTime || '17:00',
+      startTime: row?.attend_time ?? "08:00",
+      endTime: row?.leave_time ?? "17:00",
     }));
-    return {
-      id: row?.id,
-      shiftId: row?.always_id_fk ? String(row.always_id_fk) : '',
-      shiftName: shift?.title ?? undefined,
-      branchId: String(row?.period_id_fk || emp.branch_id_fk || ''),
-      hdoorFromTime,
-      hdoorToTime,
-      hdoorKhasmFrom,
-      ensrafFromTime,
-      ensrafToTime,
-      ensrafKhasmFrom,
-      shift_type: shiftTypeToLabel(row?.always_id_fk),
-      schedule,
-      assignments: assignmentRows.map((assignment) => {
-        const assignedShift = assignment.dwam_id_fk ? shiftById.get(assignment.dwam_id_fk) : undefined;
-        const branchKey = String(assignment.branch_id_fk ?? '');
-        const numericBranch = /^\d+$/.test(branchKey) ? Number(branchKey) : null;
-        return {
-          id: assignment.id,
-          shiftId: String(assignment.dwam_id_fk ?? ''),
-          shiftName: assignedShift?.title ?? assignment.type ?? undefined,
-          branchId: branchKey,
-          branchName: branchKey.toLowerCase() === 'all'
-            ? 'إدارة'
-            : (numericBranch ? branchById.get(numericBranch) : assignment.b_name) ?? assignment.b_name ?? undefined,
-          hdoorFromTime: assignedShift?.hdoor_from_time ?? '',
-          hdoorToTime: assignedShift?.hdoor_to_time ?? '',
-          hdoorKhasmFrom: assignedShift?.hdoor_khasm_from ?? '',
-          ensrafFromTime: assignedShift?.ensraf_from_time ?? '',
-          ensrafToTime: assignedShift?.ensraf_to_time ?? '',
-          ensrafKhasmFrom: assignedShift?.ensraf_khasm_from ?? '',
-        };
-      }),
-    };
+    return { shift_type: shiftTypeToLabel(row?.always_id_fk), schedule };
   }
 
-  async putDwam(id: number, body: {
-    shiftId?: number | string;
-    branchId?: number | string;
-    hdoorFromTime?: string;
-    hdoorToTime?: string;
-    hdoorKhasmFrom?: string;
-    ensrafFromTime?: string;
-    ensrafToTime?: string;
-    ensrafKhasmFrom?: string;
-    schedule?: any[];
-    shift_type?: string;
-  }) {
-    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { emp_code: true, branch_id_fk: true } });
-    if (!emp) throw new NotFoundException('الموظف غير موجود');
-    const existing = await this.prisma.hr_emp_dwam.findFirst({ where: { emp_id: id } });
+  async putDwam(id: number, body: { schedule?: any[]; shift_type?: string }) {
+    const emp = await this.prisma.employees.findUnique({
+      where: { id },
+      select: { emp_code: true },
+    });
+    if (!emp) throw new NotFoundException("الموظف غير موجود");
     const schedule = Array.isArray(body.schedule) ? body.schedule : [];
     const flags: Record<string, number> = {
-      saturday: existing?.saturday ?? 0,
-      sunday: existing?.sunday ?? 0,
-      monday: existing?.monday ?? 0,
-      tuesday: existing?.tuesday ?? 0,
-      wednesday: existing?.wednesday ?? 0,
-      thursday: existing?.thursday ?? 0,
-      friday: existing?.friday ?? 0,
+      saturday: 0,
+      sunday: 0,
+      monday: 0,
+      tuesday: 0,
+      wednesday: 0,
+      thursday: 0,
+      friday: 0,
     };
+    let attend = "08:00";
+    let leave = "17:00";
     for (const d of schedule) {
       const col = DAY_COL[Number(d.day)];
       if (col) flags[col] = d.enabled ? 1 : 0;
+      if (d.enabled && d.startTime) {
+        attend = d.startTime;
+        leave = d.endTime ?? leave;
+      }
     }
-    const shiftCode = Number(body.shiftId) || (body.shift_type != null ? parseShiftType(body.shift_type) : existing?.always_id_fk ?? 0);
-    const shift = shiftCode
-      ? await this.prisma.tbl_hdodr_setting.findUnique({ where: { id: shiftCode } })
-      : null;
-    if (!shiftCode || !shift) throw new BadRequestException('الدوام المحدد غير موجود');
-    const rawBranch = String(body.branchId ?? '').trim().toLowerCase();
-    const branchKey = rawBranch === 'all' ? 'all' : String(Number(rawBranch));
-    if (branchKey !== 'all' && (!/^\d+$/.test(branchKey) || Number(branchKey) <= 0)) {
-      throw new BadRequestException('الفرع المحدد غير صحيح');
-    }
-    const branch = branchKey === 'all'
-      ? null
-      : await this.prisma.tbl_branches.findUnique({ where: { branch_id: Number(branchKey) } });
-    if (branchKey !== 'all' && !branch) throw new BadRequestException('الفرع المحدد غير موجود');
-    const duplicate = await this.prisma.tbl_hdoor_dawms_emps.findFirst({
-      where: {
-        OR: [{ emp_id_fk: id }, ...(emp.emp_code ? [{ emp_code_fk: emp.emp_code }] : [])],
-        dwam_id_fk: shiftCode,
-        branch_id_fk: branchKey,
-      },
-    });
-    if (duplicate) throw new ConflictException('الموظف مربوط بالفعل بهذا الدوام والفرع');
-    const hdoorFromTime = body.hdoorFromTime ?? shift?.hdoor_from_time ?? existing?.start_enter ?? existing?.attend_time ?? '';
-    const hdoorToTime = body.hdoorToTime ?? shift?.hdoor_to_time ?? existing?.end_enter ?? existing?.attend_time ?? '';
-    const hdoorKhasmFrom = body.hdoorKhasmFrom ?? shift?.hdoor_khasm_from ?? existing?.attend_time ?? '';
-    const ensrafFromTime = body.ensrafFromTime ?? shift?.ensraf_from_time ?? existing?.start_out ?? existing?.leave_time ?? '';
-    const ensrafToTime = body.ensrafToTime ?? shift?.ensraf_to_time ?? existing?.end_out ?? existing?.leave_time ?? '';
-    const ensrafKhasmFrom = body.ensrafKhasmFrom ?? shift?.ensraf_khasm_from ?? existing?.leave_time ?? '';
+    const shiftCode =
+      body.shift_type != null ? parseShiftType(body.shift_type) : 0;
     const base = {
-      emp_code: String(emp.emp_code ?? ''),
+      emp_code: String(emp.emp_code ?? ""),
       always_id_fk: shiftCode,
-      period_id_fk: branchKey === 'all' ? (emp.branch_id_fk || existing?.period_id_fk || 0) : Number(branchKey),
-      attend_time: hdoorKhasmFrom,
-      leave_time: ensrafKhasmFrom,
-      start_enter: hdoorFromTime,
-      end_enter: hdoorToTime,
-      start_out: ensrafFromTime,
-      end_out: ensrafToTime,
+      period_id_fk: 0,
+      attend_time: attend,
+      leave_time: leave,
       ...flags,
     };
+    const existing = await this.prisma.hr_emp_dwam.findFirst({
+      where: { emp_id: id },
+    });
     if (existing) {
-      await this.prisma.hr_emp_dwam.update({ where: { id: existing.id }, data: base });
+      await this.prisma.hr_emp_dwam.update({
+        where: { id: existing.id },
+        data: base,
+      });
     } else {
       await this.prisma.hr_emp_dwam.create({
         data: {
           emp_id: id,
           ...base,
           // legacy NOT-NULL columns without defaults
+          start_enter: "",
+          end_enter: "",
+          start_out: "",
+          end_out: "",
           from_date: 0,
-          from_date_ar: '',
+          from_date_ar: "",
           to_date: 0,
-          to_date_ar: '',
+          to_date_ar: "",
         },
       });
     }
-    const assignment = await this.prisma.tbl_hdoor_dawms_emps.create({
-      data: {
-        dwam_id_fk: shiftCode,
-        emp_id_fk: id,
-        emp_code_fk: emp.emp_code,
-        type: shift.title,
-        b_name: branchKey === 'all' ? 'إدارة' : branch?.branch_name,
-        branch_id_fk: branchKey,
-      },
-    });
-    return { id, assignmentId: assignment.id };
-  }
-
-  async deleteDwamAssignment(id: number, assignmentId: number) {
-    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { emp_code: true } });
-    if (!emp) throw new NotFoundException('الموظف غير موجود');
-    const assignment = await this.prisma.tbl_hdoor_dawms_emps.findFirst({
-      where: {
-        id: assignmentId,
-        OR: [{ emp_id_fk: id }, ...(emp.emp_code ? [{ emp_code_fk: emp.emp_code }] : [])],
-      },
-    });
-    if (!assignment) throw new NotFoundException('ربط الدوام غير موجود');
-    await this.prisma.tbl_hdoor_dawms_emps.delete({ where: { id: assignmentId } });
-    const remaining = await this.prisma.tbl_hdoor_dawms_emps.findFirst({
-      where: { OR: [{ emp_id_fk: id }, ...(emp.emp_code ? [{ emp_code_fk: emp.emp_code }] : [])] },
-      orderBy: { id: 'desc' },
-    });
-    if (remaining?.dwam_id_fk) {
-      const periodId = /^\d+$/.test(String(remaining.branch_id_fk ?? ''))
-        ? Number(remaining.branch_id_fk)
-        : undefined;
-      await this.prisma.hr_emp_dwam.updateMany({
-        where: { emp_id: id },
-        data: {
-          always_id_fk: remaining.dwam_id_fk,
-          ...(periodId ? { period_id_fk: periodId } : {}),
-        },
-      });
-    } else {
-      await this.prisma.hr_emp_dwam.deleteMany({ where: { emp_id: id } });
-    }
-    return { id, deleted: assignmentId };
+    return { id };
   }
 
   // ---- Read-only sub-resources for the profile tabs ----
   async getBanks(id: number) {
-    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { emp_code: true } });
+    const emp = await this.prisma.employees.findUnique({
+      where: { id },
+      select: { emp_code: true },
+    });
     if (!emp?.emp_code) return [];
-    return this.prisma.bank_employes_details.findMany({ where: { emp_code: emp.emp_code } });
+    return this.prisma.bank_employes_details.findMany({
+      where: { emp_code: emp.emp_code },
+    });
   }
 
   async putBanks(
@@ -1216,77 +1455,122 @@ export class EmployeesService {
         bank_id_fk_image?: string;
       }>;
     },
+    userId?: number,
   ) {
-    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { emp_code: true } });
-    if (!emp) throw new NotFoundException('الموظف غير موجود');
+    const emp = await this.prisma.employees.findUnique({
+      where: { id },
+      select: { emp_code: true },
+    });
+    if (!emp) throw new NotFoundException("الموظف غير موجود");
     const empCode = emp.emp_code ?? 0;
     const rows = Array.isArray(body.rows) ? body.rows : [];
 
-    await this.prisma.$transaction([
-      this.prisma.bank_employes_details.deleteMany({ where: { emp_code: empCode } }),
-      ...(rows.length
-        ? [
-            this.prisma.bank_employes_details.createMany({
-              data: rows.map((r) => ({
-                emp_code: empCode,
-                bank_id_fk: Number(r.bank_id_fk) || 0,
-                bank_account_num: String(r.bank_account_num ?? '0'),
-                bank_code: r.bank_code ?? null,
-                approved_for_sarf: r.approved_for_sarf === true || r.approved_for_sarf === 1 ? 1 : 0,
-                emp_bank_name: r.emp_bank_name ?? null,
-                bank_id_fk_image: r.bank_id_fk_image ?? null,
-              })),
-            }),
-          ]
-        : []),
-    ]);
+    await this.prisma.$transaction(async (tx) => {
+      for (const row of rows) {
+        await claimEmployeePrivateFile(tx, row.bank_id_fk_image, id, userId, [
+          "emp-bank",
+        ]);
+      }
+      await tx.bank_employes_details.deleteMany({
+        where: { emp_code: empCode },
+      });
+      if (rows.length) {
+        await tx.bank_employes_details.createMany({
+          data: rows.map((r) => ({
+            emp_code: empCode,
+            bank_id_fk: Number(r.bank_id_fk) || 0,
+            bank_account_num: String(r.bank_account_num ?? "0"),
+            bank_code: r.bank_code ?? null,
+            approved_for_sarf:
+              r.approved_for_sarf === true || r.approved_for_sarf === 1 ? 1 : 0,
+            emp_bank_name: r.emp_bank_name ?? null,
+            bank_id_fk_image: r.bank_id_fk_image ?? null,
+          })),
+        });
+      }
+    });
 
     return { id, count: rows.length };
   }
 
   async getContract(id: number) {
-    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { emp_code: true } });
+    const emp = await this.prisma.employees.findUnique({
+      where: { id },
+      select: { emp_code: true },
+    });
     if (!emp?.emp_code) return null;
-    return this.prisma.contract_employe.findFirst({ where: { emp_code: String(emp.emp_code) } });
+    return this.prisma.contract_employe.findUnique({
+      where: { emp_code: String(emp.emp_code) },
+    });
   }
 
   private static CONTRACT_STR = [
-    'num_days_in_month', 'hours_work', 'hour_value', 'work_period_id_fk', 'job_type',
-    'pay_method_id_fk', 'bank_id_fk', 'bank_code', 'bank_account_num', 'year_vacation_num',
-    'year_vacation_period', 'casual_vacation_num', 'travel_ticket', 'travel_type_fk',
-    'travel_period', 'vacation_start_ar', 'vacation_start_m', 'vacation_start_h', 'travel_type_name',
+    "num_days_in_month",
+    "hours_work",
+    "hour_value",
+    "work_period_id_fk",
+    "job_type",
+    "pay_method_id_fk",
+    "bank_id_fk",
+    "bank_code",
+    "bank_account_num",
+    "year_vacation_num",
+    "year_vacation_period",
+    "casual_vacation_num",
+    "travel_ticket",
+    "travel_type_fk",
+    "travel_period",
+    "vacation_start_ar",
+    "vacation_start_m",
+    "vacation_start_h",
+    "travel_type_name",
   ];
-  private static CONTRACT_NUM = ['contract_nature', 'reward_end_work', 'vacation_previous_balance'];
+  private static CONTRACT_NUM = [
+    "contract_nature",
+    "reward_end_work",
+    "vacation_previous_balance",
+  ];
 
   /** Create or update the employment contract (contract_employe) — the previously read-only tab. */
   async putContract(id: number, body: Record<string, unknown>) {
-    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { emp_code: true } });
-    if (!emp?.emp_code) throw new NotFoundException('الموظف غير موجود');
+    const emp = await this.prisma.employees.findUnique({
+      where: { id },
+      select: { emp_code: true },
+    });
+    if (!emp?.emp_code) throw new NotFoundException("الموظف غير موجود");
     const empCode = String(emp.emp_code);
 
     const data: Record<string, unknown> = {};
-    for (const k of EmployeesService.CONTRACT_STR) if (body[k] != null) data[k] = String(body[k]);
-    for (const k of EmployeesService.CONTRACT_NUM) if (body[k] != null) data[k] = Number(body[k]);
+    for (const k of EmployeesService.CONTRACT_STR)
+      if (body[k] != null) data[k] = String(body[k]);
+    for (const k of EmployeesService.CONTRACT_NUM)
+      if (body[k] != null) data[k] = Number(body[k]);
 
-    const existing = await this.prisma.contract_employe.findFirst({ where: { emp_code: empCode } });
-    if (existing) {
-      return this.prisma.contract_employe.update({ where: { id: existing.id }, data: data as never });
-    }
-    return this.prisma.contract_employe.create({
-      data: {
+    return this.prisma.contract_employe.upsert({
+      where: { emp_code: empCode },
+      update: data as never,
+      create: {
         emp_code: empCode,
         vacation_previous_balance: 0,
-        vacation_start_ar: '',
+        vacation_start_ar: "",
         ...data,
       } as never,
     });
   }
 
   async getDocuments(id: number) {
-    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { emp_code: true } });
+    const emp = await this.prisma.employees.findUnique({
+      where: { id },
+      select: { emp_code: true },
+    });
     return this.prisma.emp_files.findMany({
-      where: { OR: [{ emp_id: id }, ...(emp?.emp_code ? [{ emp_code: String(emp.emp_code) }] : [])] },
-      orderBy: { id: 'desc' },
+      where: {
+        OR: [
+          { emp_id: id },
+          ...(emp?.emp_code ? [{ emp_code: String(emp.emp_code) }] : []),
+        ],
+      },
+      orderBy: { id: "desc" },
     });
   }
 
@@ -1301,42 +1585,50 @@ export class EmployeesService {
         expire_date?: string;
       }>;
     },
+    userId?: number,
   ) {
-    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { emp_code: true } });
-    if (!emp) throw new NotFoundException('الموظف غير موجود');
+    const emp = await this.prisma.employees.findUnique({
+      where: { id },
+      select: { emp_code: true },
+    });
+    if (!emp) throw new NotFoundException("الموظف غير موجود");
     const rows = Array.isArray(body.rows) ? body.rows : [];
-    const empCode = String(emp.emp_code ?? '0');
+    const empCode = String(emp.emp_code ?? "0");
 
-    const ops: Prisma.PrismaPromise<unknown>[] = [];
-    for (const r of rows) {
-      const data = {
-        emp_id: id,
-        emp_code: empCode,
-        title: r.file_type ?? r.file_name ?? '',
-        emp_file: r.file_path ?? '',
-        to_date: r.expire_date ?? null,
-        have_date: r.expire_date ? 1 : 0,
-      };
-      const rowId = r.id != null ? Number(r.id) : NaN;
-      if (!Number.isNaN(rowId) && rowId > 0) {
-        const existing = await this.prisma.emp_files.findFirst({ where: { id: rowId, emp_id: id } });
-        if (existing) {
-          ops.push(this.prisma.emp_files.update({ where: { id: rowId }, data }));
+    await this.prisma.$transaction(async (tx) => {
+      for (const r of rows) {
+        await claimEmployeePrivateFile(tx, r.file_path, id, userId, [
+          "document",
+        ]);
+        const data = {
+          emp_id: id,
+          emp_code: empCode,
+          title: r.file_type ?? r.file_name ?? "",
+          emp_file: r.file_path ?? "",
+          to_date: r.expire_date ?? null,
+          have_date: r.expire_date ? 1 : 0,
+        };
+        const rowId = r.id != null ? Number(r.id) : NaN;
+        if (!Number.isNaN(rowId) && rowId > 0) {
+          const existing = await this.prisma.emp_files.findFirst({
+            where: { id: rowId, emp_id: id },
+          });
+          if (existing) {
+            await tx.emp_files.update({ where: { id: rowId }, data });
+          } else {
+            await tx.emp_files.create({ data });
+          }
         } else {
-          ops.push(this.prisma.emp_files.create({ data }));
+          await tx.emp_files.create({ data });
         }
-      } else {
-        ops.push(this.prisma.emp_files.create({ data }));
       }
-    }
-
-    if (ops.length) await this.prisma.$transaction(ops);
+    });
     return { id, count: rows.length };
   }
 
   async getInsurance(id: number) {
     const e = await this.prisma.employees.findUnique({ where: { id } });
-    if (!e) throw new NotFoundException('الموظف غير موجود');
+    if (!e) throw new NotFoundException("الموظف غير موجود");
     return {
       tamin_rkm: e.tamin_rkm,
       type_tamin: e.type_tamin,

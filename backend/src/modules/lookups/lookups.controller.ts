@@ -48,7 +48,7 @@ export class LookupsController {
   }
 
   @Post(':type')
-  @RequiresPermission('admin.forms:update')
+  @RequiresPermission('admin.forms:create')
   create(@Param('type') type: string, @Body() dto: LookupItemDto) {
     return this.lookups.create(type, dto.title, { order: dto.order, parentId: dto.parentId });
   }
@@ -60,7 +60,7 @@ export class LookupsController {
   }
 
   @Delete(':type/:id')
-  @RequiresPermission('admin.forms:update')
+  @RequiresPermission('admin.forms:delete')
   remove(@Param('type') type: string, @Param('id', ParseIntPipe) id: number) {
     return this.lookups.remove(type, id);
   }

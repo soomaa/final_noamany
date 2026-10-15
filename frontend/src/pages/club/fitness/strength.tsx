@@ -16,9 +16,14 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import type { ExerciseRow } from '@/types/fitness';
 import { RowActions, SELECT_CLS } from './shared';
+import { usePermission } from '@/hooks/use-permission';
 
 export function FitnessStrengthPage() {
   const ft = useFitnessT();
+  const { can } = usePermission();
+  const canCreate = can('club.fitness.strength:create');
+  const canUpdate = can('club.fitness.strength:update');
+  const canDelete = can('club.fitness.strength:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<ExerciseRow>('club-exercises', params);
   const [open, setOpen] = useState(false);
@@ -40,12 +45,14 @@ export function FitnessStrengthPage() {
   );
 
   const openCreate = () => {
+    if (!canCreate) return;
     setEditId(null);
     setForm({ name: '', category: '', muscleGroup: '', setsDefault: '', repsDefault: '', difficulty: 'medium', description: '' });
     setOpen(true);
   };
 
   const openEdit = (row: ExerciseRow) => {
+    if (!canUpdate) return;
     setEditId(row.id);
     setForm({
       name: row.name,
@@ -60,6 +67,7 @@ export function FitnessStrengthPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.name.trim()) {
       toast.error(ft('common.name'));
       return;
@@ -115,17 +123,17 @@ export function FitnessStrengthPage() {
           <RowActions
             editLabel={ft('common.edit')}
             deleteLabel={ft('common.delete')}
-            onEdit={() => openEdit(row.original)}
-            onDelete={() =>
+            onEdit={canUpdate ? () => openEdit(row.original) : undefined}
+            onDelete={canDelete ? () =>
               void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
                 if (ok) deleteMutation.mutate(row.original.id);
               })
-            }
+            : undefined}
           />
         ),
       },
     ],
-    [ft],
+    [canDelete, canUpdate, ft],
   );
 
   return (
@@ -133,12 +141,13 @@ export function FitnessStrengthPage() {
       <PageHeader
         title={ft('strength.title')}
         actions={
-          <Button variant="brand" onClick={openCreate}>
+          canCreate ? <Button variant="brand" onClick={openCreate}>
             <Plus className="size-4" /> {ft('common.add')}
-          </Button>
+          </Button> : null
         }
       />
       <DataTable
+        exportSource={{ resource: 'club-exercises', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -153,7 +162,7 @@ export function FitnessStrengthPage() {
         onRetry={() => void refetch()}
         emptyTitle={ft('common.noData')}
       />
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open && (editId ? canUpdate : canCreate)} onOpenChange={setOpen}>
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editId ? ft('common.edit') : ft('common.add')}</DialogTitle>
@@ -196,7 +205,7 @@ export function FitnessStrengthPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

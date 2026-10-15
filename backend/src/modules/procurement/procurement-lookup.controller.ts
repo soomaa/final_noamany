@@ -6,7 +6,7 @@ import { ProcurementLookupService } from './procurement-lookup.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('procurement/search')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.cafe_purchases:view')
 export class ProcurementLookupController {
   constructor(private readonly service: ProcurementLookupService) {}
 

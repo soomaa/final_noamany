@@ -42,7 +42,15 @@ export interface FinanceDashboard {
 }
 
 export interface ExpenseRow {
+  paymentNeedsReview?: boolean;
+  businessUnit?: 'gym' | 'cafe';
+  paidAmount?: number;
+  remainingAmount?: number;
+  payments?: { method: string; amount: number }[] | null;
+  createdAt?: string;
+  systemManaged?: boolean;
   id: number;
+  expenseNumber: string;
   expenseDate: string;
   category: string;
   subCategory?: string | null;
@@ -55,19 +63,17 @@ export interface ExpenseRow {
   invoiceNumber?: string | null;
   receiptNumber?: string | null;
   taxAmount?: number | null;
+  totalAmount: number;
   notes?: string | null;
   branchId?: number | null;
-  /** نطاق الجنس للمصروف (رجالي/حريمي) */
-  genderScope?: 'male' | 'female' | null;
-  /** معرف المصروف الأب (عند التوزيع بالنسب) */
-  parentId?: number | null;
-  /** نسبة هذا السجل من إجمالي المصروف المشترك */
-  nesba?: number | null;
-  /** القيمة الإجمالية قبل التوزيع */
-  mainValue?: number | null;
+  createdBy?: number | null;
+  createdByName?: string | null;
 }
 
 export interface ExpenseFormPayload {
+  businessUnit?: 'gym' | 'cafe';
+  paidAmount?: number;
+  payments?: { method: string; amount: number }[];
   expenseDate: string;
   category: string;
   subCategory?: string;
@@ -81,10 +87,7 @@ export interface ExpenseFormPayload {
   taxAmount?: number;
   notes?: string;
   branchId?: number;
-  genderScope?: 'male' | 'female';
-  hasPercentage?: boolean;
-  malePercentage?: number;
-  femalePercentage?: number;
+  deductFromDrawer?: boolean;
 }
 
 export interface RevenueRow {
@@ -144,6 +147,9 @@ export interface RevenueSyncResult {
 }
 
 export interface ExpenseReportData {
+  paymentsNeedingReview?: number;
+  paidAmount?: number;
+  remainingAmount?: number;
   totalAmount: number;
   totalExpenses: number;
   expensesByCategory: CategoryBreakdown[];
@@ -180,6 +186,7 @@ export interface ProfitLossLineItem {
 }
 
 export interface ProfitLossData {
+  daily?: { date: string; revenue: number; expenses: number; net: number }[];
   period: { startDate: string; endDate: string };
   revenue: { items: ProfitLossLineItem[]; total: number };
   expenses: { items: ProfitLossLineItem[]; total: number };

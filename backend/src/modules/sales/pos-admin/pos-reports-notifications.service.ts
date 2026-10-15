@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../../common/dto/list-result';
 import { PrismaService } from '../../../common/prisma/prisma.service';
@@ -288,12 +288,18 @@ export class PosSettingsService {
     general: [
       { key: 'default_discount_percentage', value: 0, type: 'number' },
       { key: 'employee_discount_percentage', value: 0, type: 'number' },
+      { key: 'employee_discount_enabled', value: true, type: 'boolean' },
+      { key: 'employee_free_drinks_enabled', value: false, type: 'boolean' },
+      { key: 'employee_free_drinks_daily', value: 1, type: 'number' },
+      { key: 'employee_free_drink_categories', value: [], type: 'json' },
+      { key: 'touch_keypad_enabled', value: false, type: 'boolean' },
       { key: 'partner_discount_percentage', value: 0, type: 'number' },
       { key: 'tax_rate', value: 15, type: 'number' },
       { key: 'enable_tax', value: true, type: 'boolean' },
+      { key: 'inventory_tracking_enabled', value: true, type: 'boolean' },
       { key: 'currency', value: 'EGP', type: 'string' },
-      { key: 'receipt_business_name', value: 'Noamany CLUB · CAFE', type: 'string' },
-      { key: 'receipt_logo_url', value: '/noamany-logo.png', type: 'string' },
+      { key: 'receipt_business_name', value: 'ONE80 CLUB · CAFE', type: 'string' },
+      { key: 'receipt_logo_url', value: '/one-logo.jpeg', type: 'string' },
       { key: 'receipt_footer', value: 'شكراً لزيارتكم', type: 'string' },
     ],
   };
@@ -325,8 +331,19 @@ export class PosSettingsService {
 
   async saveCategory(category: string, settings: Array<{ key: string; value: unknown; type?: string; description?: string }>, branchId?: number, userId?: number, user?: JwtUser) {
     branchId = this.resolveBranch(user, branchId);
-    await this.prisma.sales_pos_settings.deleteMany({ where: { category, branch_id: branchId ?? null } });
-    await this.prisma.sales_pos_settings.createMany({
+    if (category === 'general') {
+      const values = Object.fromEntries(settings.map((row) => [row.key, row.value]));
+      for (const key of ['employee_discount_enabled', 'employee_free_drinks_enabled', 'touch_keypad_enabled']) {
+        if (values[key] !== undefined && typeof values[key] !== 'boolean') throw new BadRequestException('قيمة التفعيل غير صحيحة');
+      }
+      if (values.employee_free_drinks_daily !== undefined && (typeof values.employee_free_drinks_daily !== 'number' || !Number.isInteger(values.employee_free_drinks_daily) || values.employee_free_drinks_daily < 1 || values.employee_free_drinks_daily > 100)) throw new BadRequestException('عدد المشروبات اليومي يجب أن يكون من 1 إلى 100');
+      const ids = values.employee_free_drink_categories;
+      if (ids !== undefined && (!Array.isArray(ids) || ids.some((id) => !Number.isInteger(id) || id < 1))) throw new BadRequestException('أقسام المشروبات غير صحيحة');
+      if (values.employee_free_drinks_enabled === true && (!Array.isArray(ids) || !ids.length || values.employee_free_drinks_daily === undefined)) throw new BadRequestException('حدد عدد المشروبات وأقسامها قبل تفعيل المجاني');
+    }
+    await this.prisma.$transaction(async (tx) => {
+    await tx.sales_pos_settings.deleteMany({ where: { category, branch_id: branchId ?? null } });
+    await tx.sales_pos_settings.createMany({
       data: settings.map((s, i) => ({
         category,
         branch_id: branchId ?? null,
@@ -337,6 +354,7 @@ export class PosSettingsService {
         sort_order: i,
         created_by: userId,
       })),
+    });
     });
     return this.getCategory(category, branchId, user);
   }
@@ -411,6 +429,30 @@ export class PosSettingsService {
     return null;
   }
 
+  async getBooleanSetting(
+    category: string,
+    key: string,
+    branchId?: number,
+  ): Promise<boolean | null> {
+    const row = await this.prisma.sales_pos_settings.findFirst({
+      where: {
+        category,
+        setting_key: key,
+        branch_id: branchId ?? null,
+        is_active: true,
+      },
+    });
+    if (row) return this.coerce(row.setting_value, row.setting_type) === true;
+    if (branchId != null) {
+      const globalRow = await this.prisma.sales_pos_settings.findFirst({
+        where: { category, setting_key: key, branch_id: null, is_active: true },
+      });
+      if (globalRow) return this.coerce(globalRow.setting_value, globalRow.setting_type) === true;
+    }
+    const fallback = (this.DEFAULTS[category] ?? []).find((item) => item.key === key);
+    return fallback && typeof fallback.value === 'boolean' ? fallback.value : null;
+  }
+
   /** VAT rate from pos-settings/general (falls back to 15%). */
   async getTaxRate(branchId?: number): Promise<number> {
     const rate = await this.getNumericSetting('general', 'tax_rate', branchId);
@@ -430,5 +472,9 @@ export class PosSettingsService {
     }
     const fallback = (this.DEFAULTS.general ?? []).find((d) => d.key === 'enable_tax');
     return fallback?.value === true;
+  }
+
+  async isInventoryTrackingEnabled(branchId?: number): Promise<boolean> {
+    return (await this.getBooleanSetting('general', 'inventory_tracking_enabled', branchId)) ?? true;
   }
 }

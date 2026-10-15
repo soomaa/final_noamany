@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
@@ -6,6 +7,7 @@ import { clubEventsApi } from '@/lib/api/club-events';
 import { EVENTS_ROUTES } from '@/lib/events-routes';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { usePermission } from '@/hooks/use-permission';
 
 const STATUS_TABS = [
   { key: '', label: uiStatic('الكل') },
@@ -50,6 +52,8 @@ interface EventRow {
 }
 
 export function EventsBoard() {
+  const { can } = usePermission();
+  const canCreate = can('club.events.list:create');
   const { ui, dir } = useLocale();
   const [statusFilter, setStatusFilter] = useState('');
 
@@ -66,13 +70,13 @@ export function EventsBoard() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold">{ui('الفعاليات والأنشطة')}</h1>
-        <Link
+        {canCreate ? <Link
           to={EVENTS_ROUTES.create}
           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
         >
           <Plus className="h-4 w-4" />
           {ui('إنشاء فعالية')}
-        </Link>
+        </Link> : null}
       </div>
 
       {/* Status Tabs */}
@@ -131,7 +135,7 @@ export function EventsBoard() {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{event.startDate ?? '—'}</td>
-                  <td className="px-4 py-3 text-muted-foreground">{event.registrationsCount ?? 0}</td>
+                  <td className="px-4 py-3 text-muted-foreground">{formatDisplayNumber(event.registrationsCount ?? 0)}</td>
                   <td className="px-4 py-3">
                     <Link
                       to={EVENTS_ROUTES.detail(event.id)}

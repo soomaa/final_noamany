@@ -6,7 +6,15 @@ import {
 import { AccountType, Prisma } from "@prisma/client";
 import { paginated } from "../../common/dto/list-result";
 import { PrismaService } from "../../common/prisma/prisma.service";
-import { buildAccountTree, normalBalanceForType } from "./accounting.utils";
+import {
+  accountLevelForDepth,
+  buildAccountTree,
+  netBalance,
+  normalBalanceForType,
+  roundMoney,
+  LEDGER_REPORT_STATUSES,
+  type AccountLevel,
+} from "./accounting.utils";
 import { DEFAULT_CHART, seedAccountPayload } from "./accounts.seed";
 import { FULL_GYM_CHART } from "./accounts.full-seed";
 import {
@@ -77,12 +85,110 @@ export class AccountsService {
     };
   }
 
+  /**
+   * Rolled-up balance and depth-derived level for every active account, in one pass.
+   *
+   * The chart-of-accounts screen shows a balance on parent rows too, so a child's
+   * movements have to roll into its ancestors. Debits and credits are rolled up raw
+   * and only netted at the end, so a parent is always read in its own normal-balance
+   * sign even if a descendant were ever typed differently.
+   */
+  private async accountMetrics(): Promise<
+    Map<number, { balance: number; accountLevel: AccountLevel }>
+  > {
+    const [accounts, sums] = await Promise.all([
+      this.prisma.acc_accounts.findMany({
+        where: { is_active: true },
+        select: { id: true, parent_id: true, normal_balance: true },
+      }),
+      this.prisma.acc_journal_entry_lines.groupBy({
+        by: ["account_id"],
+        where: { entry: { status: { in: LEDGER_REPORT_STATUSES } } },
+        _sum: { debit: true, credit: true },
+      }),
+    ]);
+
+    const own = new Map<number, { debit: number; credit: number }>();
+    for (const row of sums) {
+      own.set(row.account_id, {
+        debit: roundMoney(row._sum.debit ?? 0),
+        credit: roundMoney(row._sum.credit ?? 0),
+      });
+    }
+
+    const childrenOf = new Map<number, number[]>();
+    const roots: number[] = [];
+    const byId = new Map(accounts.map((a) => [a.id, a]));
+    for (const a of accounts) {
+      if (a.parent_id != null && byId.has(a.parent_id)) {
+        const siblings = childrenOf.get(a.parent_id);
+        if (siblings) siblings.push(a.id);
+        else childrenOf.set(a.parent_id, [a.id]);
+      } else {
+        roots.push(a.id);
+      }
+    }
+
+    const metrics = new Map<number, { balance: number; accountLevel: AccountLevel }>();
+    // Iterative post-order walk: a deep chart must not risk a recursion overflow,
+    // and a cycle in parent_id must not hang the request.
+    const seen = new Set<number>();
+    const rollUp = (rootId: number, rootDepth: number) => {
+      const stack: Array<{ id: number; depth: number; expanded: boolean }> = [
+        { id: rootId, depth: rootDepth, expanded: false },
+      ];
+      const totals = new Map<number, { debit: number; credit: number }>();
+      while (stack.length) {
+        const frame = stack.pop()!;
+        if (!frame.expanded) {
+          if (seen.has(frame.id)) continue;
+          seen.add(frame.id);
+          stack.push({ ...frame, expanded: true });
+          for (const child of childrenOf.get(frame.id) ?? []) {
+            stack.push({ id: child, depth: frame.depth + 1, expanded: false });
+          }
+          continue;
+        }
+        const self = own.get(frame.id) ?? { debit: 0, credit: 0 };
+        let debit = self.debit;
+        let credit = self.credit;
+        for (const child of childrenOf.get(frame.id) ?? []) {
+          const childTotal = totals.get(child);
+          if (!childTotal) continue;
+          debit += childTotal.debit;
+          credit += childTotal.credit;
+        }
+        totals.set(frame.id, { debit, credit });
+        metrics.set(frame.id, {
+          balance: netBalance(
+            roundMoney(debit),
+            roundMoney(credit),
+            byId.get(frame.id)?.normal_balance ?? "debit",
+          ),
+          accountLevel: accountLevelForDepth(frame.depth),
+        });
+      }
+    };
+    for (const rootId of roots) rollUp(rootId, 0);
+    // Any account orphaned by a parent_id cycle still needs a metric entry.
+    for (const a of accounts) {
+      if (!metrics.has(a.id)) rollUp(a.id, 0);
+    }
+    return metrics;
+  }
+
   async tree() {
-    const rows = await this.prisma.acc_accounts.findMany({
-      where: { is_active: true },
-      orderBy: { code: "asc" },
-    });
-    return buildAccountTree(rows, (r) => this.mapAccount(r));
+    const [rows, metrics] = await Promise.all([
+      this.prisma.acc_accounts.findMany({
+        where: { is_active: true },
+        orderBy: { code: "asc" },
+      }),
+      this.accountMetrics(),
+    ]);
+    return buildAccountTree(rows, (r) => ({
+      ...this.mapAccount(r),
+      ...(metrics.get(r.id) ?? { balance: 0, accountLevel: "main" as AccountLevel }),
+    }));
   }
 
   async list(q: ListAccountsDto) {
@@ -94,17 +200,23 @@ export class AccountsService {
       const s = q.search.trim();
       where.OR = [{ code: { contains: s } }, { name: { contains: s } }];
     }
-    const [total, rows] = await this.prisma.$transaction([
-      this.prisma.acc_accounts.count({ where }),
-      this.prisma.acc_accounts.findMany({
-        where,
-        skip: q.skip,
-        take: q.take,
-        orderBy: { code: "asc" },
-      }),
+    const [[total, rows], metrics] = await Promise.all([
+      this.prisma.$transaction([
+        this.prisma.acc_accounts.count({ where }),
+        this.prisma.acc_accounts.findMany({
+          where,
+          skip: q.skip,
+          take: q.take,
+          orderBy: { code: "asc" },
+        }),
+      ]),
+      this.accountMetrics(),
     ]);
     return paginated(
-      rows.map((r) => this.mapAccount(r)),
+      rows.map((r) => ({
+        ...this.mapAccount(r),
+        ...(metrics.get(r.id) ?? { balance: 0, accountLevel: "main" as AccountLevel }),
+      })),
       total,
       q.page,
       q.pageSize,
@@ -171,13 +283,14 @@ export class AccountsService {
           "لا يمكن جعل الحساب الأب غير قابل للترحيل — توجد حركات مباشرة عليه",
         );
       }
-      await this.prisma.acc_accounts.update({
-        where: { id: parent.id },
-        data: { is_postable: false },
-      });
+      if (dto.type && dto.type !== parent.account_type) {
+        throw new BadRequestException(
+          "الحساب الفرعي يرث نوع الحساب الأب ولا يمكن تغييره",
+        );
+      }
     }
-    const accountType = (parent?.account_type ?? "asset") as
-      "asset" | "liability" | "equity" | "revenue" | "expense";
+    // A root account takes the requested type; a child always inherits its parent's.
+    const accountType = (parent?.account_type ?? dto.type ?? "asset") as AccountType;
     let code = dto.code?.trim();
     if (!code) {
       const suggested = await this.nextCode({ parentId: dto.parentId });
@@ -198,6 +311,14 @@ export class AccountsService {
             branch_id: dto.branchId ?? null,
           },
         });
+        // Only demote the parent once the child actually exists, so a failed
+        // create can no longer leave a postable parent stranded as a group account.
+        if (parent) {
+          await this.prisma.acc_accounts.update({
+            where: { id: parent.id },
+            data: { is_postable: false },
+          });
+        }
         return this.mapAccount(row);
       } catch (e) {
         if (!(
@@ -328,21 +449,7 @@ export class AccountsService {
     if (!settings) {
       await this.prisma.acc_settings.create({ data: {} });
     }
-    const year = new Date().getFullYear();
-    const periodName = String(year);
-    const existingPeriod = await this.prisma.acc_accounting_periods.findFirst({
-      where: { name: periodName },
-    });
-    if (!existingPeriod) {
-      await this.prisma.acc_accounting_periods.create({
-        data: {
-          name: periodName,
-          start_date: `${year}-01-01`,
-          end_date: `${year}-12-31`,
-          status: "open",
-        },
-      });
-    }
+    await this.ensureCurrentPeriod();
     return { ok: true, accounts: DEFAULT_CHART.length };
   }
 
@@ -389,20 +496,33 @@ export class AccountsService {
   private async ensureSettingsAndPeriod() {
     const settings = await this.prisma.acc_settings.findFirst();
     if (!settings) await this.prisma.acc_settings.create({ data: {} });
+    await this.ensureCurrentPeriod();
+  }
+
+  /**
+   * Opens this year's period if it is not there yet.
+   *
+   * The lookup is by date range, not by name: the table is unique on
+   * (start_date, end_date), so a period the owner named themselves — "السنة المالية 2026"
+   * rather than "2026" — used to be missed here and the insert then failed the unique
+   * constraint, turning both seed actions into a 500.
+   */
+  private async ensureCurrentPeriod() {
     const year = new Date().getFullYear();
-    const existingPeriod = await this.prisma.acc_accounting_periods.findFirst({
-      where: { name: String(year) },
+    const startDate = `${year}-01-01`;
+    const endDate = `${year}-12-31`;
+    const existing = await this.prisma.acc_accounting_periods.findUnique({
+      where: { start_date_end_date: { start_date: startDate, end_date: endDate } },
     });
-    if (!existingPeriod) {
-      await this.prisma.acc_accounting_periods.create({
-        data: {
-          name: String(year),
-          start_date: `${year}-01-01`,
-          end_date: `${year}-12-31`,
-          status: "open",
-        },
-      });
-    }
+    if (existing) return;
+    await this.prisma.acc_accounting_periods.create({
+      data: {
+        name: String(year),
+        start_date: startDate,
+        end_date: endDate,
+        status: "open",
+      },
+    });
   }
 
   async getSettings() {

@@ -44,6 +44,7 @@ export class JournalEntriesService {
     branch_id: number | null;
     description: string | null;
     reference: string | null;
+    entry_type: string;
     status: string;
     source_module: string | null;
     source_doc_type: string | null;
@@ -74,6 +75,7 @@ export class JournalEntriesService {
       branchId: row.branch_id,
       description: row.description,
       reference: row.reference,
+      entryType: row.entry_type,
       status: row.status,
       sourceModule: row.source_module,
       sourceDocType: row.source_doc_type,
@@ -103,6 +105,7 @@ export class JournalEntriesService {
   async list(q: ListJournalEntriesDto, user?: JwtUser) {
     const where: Prisma.acc_journal_entriesWhereInput = {};
     if (q.status) where.status = q.status;
+    if (q.entryType) where.entry_type = q.entryType;
     const branchIds = this.branchScope.resolveListFilter(user, q.branchId ?? null);
     if (branchIds !== null) where.branch_id = { in: branchIds };
     else if (q.branchId != null) where.branch_id = q.branchId;
@@ -196,30 +199,40 @@ export class JournalEntriesService {
     const effectiveDto = { ...dto, branchId };
     await this.ledger.assertPeriodOpenForDate(effectiveDto.date);
     const { resolved, totalDebit, totalCredit } = await this.buildLines(effectiveDto);
-    const entryNo = await this.ledger.nextManualEntryNo(effectiveDto.date);
-    const row = await this.prisma.acc_journal_entries.create({
-      data: {
-        entry_no: entryNo,
-        date: effectiveDto.date,
-        branch_id: effectiveDto.branchId ?? null,
-        description: effectiveDto.description ?? null,
-        reference: effectiveDto.reference ?? null,
-        status: 'draft',
-        source_module: 'manual',
-        source_doc_type: 'manual',
-        source_doc_id: entryNo,
-        total_debit: totalDebit,
-        total_credit: totalCredit,
-        created_by: userId,
-        lines: { create: resolved },
-      },
-      include: {
-        lines: {
-          include: { account: { select: { code: true, name: true } } },
-          orderBy: { line_order: 'asc' },
-        },
-      },
-    });
+    const row = await (async () => {
+      for (let attempt = 0; ; attempt++) {
+        const entryNo = await this.ledger.nextManualEntryNo(effectiveDto.date);
+        try {
+          return await this.prisma.acc_journal_entries.create({
+          data: {
+            entry_no: entryNo,
+            date: effectiveDto.date,
+            branch_id: effectiveDto.branchId ?? null,
+            description: effectiveDto.description ?? null,
+            reference: effectiveDto.reference ?? null,
+            entry_type: effectiveDto.entryType ?? 'daily',
+            status: 'draft',
+            source_module: 'manual',
+            source_doc_type: 'manual',
+            source_doc_id: entryNo,
+            total_debit: totalDebit,
+            total_credit: totalCredit,
+            created_by: userId,
+            lines: { create: resolved },
+          },
+          include: {
+            lines: {
+              include: { account: { select: { code: true, name: true } } },
+              orderBy: { line_order: 'asc' },
+            },
+          },
+          });
+        } catch (error) {
+          const collision = error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+          if (!collision || attempt >= 4) throw error;
+        }
+      }
+    })();
     return this.mapEntry(row);
   }
 
@@ -244,6 +257,7 @@ export class JournalEntriesService {
           branch_id: effectiveDto.branchId ?? null,
           description: effectiveDto.description ?? null,
           reference: effectiveDto.reference ?? null,
+          entry_type: effectiveDto.entryType ?? 'daily',
           total_debit: totalDebit,
           total_credit: totalCredit,
           lines: { create: resolved },

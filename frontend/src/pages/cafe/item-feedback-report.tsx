@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { endOfMonth, endOfWeek, format, startOfMonth, startOfWeek, subDays } from 'date-fns';
@@ -119,11 +120,11 @@ export function CafeItemFeedbackReportPage() {
         <CardContent className="flex flex-wrap items-end gap-3 p-4">
           <div className="flex flex-wrap gap-2">
             {([
-              ['today', 'اليوم'],
-              ['yesterday', 'أمس'],
-              ['week', 'هذا الأسبوع'],
-              ['month', 'هذا الشهر'],
-              ['custom', 'فترة مخصصة'],
+              ['today', ui('اليوم')],
+              ['yesterday', ui('أمس')],
+              ['week', ui('هذا الأسبوع')],
+              ['month', ui('هذا الشهر')],
+              ['custom', ui('فترة مخصصة')],
             ] as Array<[Preset, string]>).map(([value, label]) => (
               <Button key={value} size="sm" variant={preset === value ? 'default' : 'outline'} onClick={() => selectPreset(value)}>
                 {ui(label)}
@@ -141,8 +142,8 @@ export function CafeItemFeedbackReportPage() {
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <Metric icon={MessageSquareText} label={ui('إجمالي التقييمات')} value={toArabicDigits(data?.totalRatings ?? 0)} />
-        <Metric icon={Star} label={ui('متوسط التقييم')} value={`${toArabicDigits((data?.averageRating ?? 0).toFixed(1))} / ٥`} tone="amber" />
-        <Metric icon={Sparkles} label={ui('تقييمات إيجابية')} value={`${toArabicDigits(positiveRate)}٪`} tone="emerald" />
+        <Metric icon={Star} label={ui('متوسط التقييم')} value={`${toArabicDigits((data?.averageRating ?? 0).toFixed(1))}${ui(' / ٥')}`} tone="amber" />
+        <Metric icon={Sparkles} label={ui('تقييمات إيجابية')} value={`${toArabicDigits(positiveRate)}${ui('٪')}`} tone="emerald" />
         <Metric icon={AlertTriangle} label={ui('منتجات تحتاج اهتمامًا')} value={toArabicDigits(data?.needsAttention.length ?? 0)} tone="rose" />
       </div>
 
@@ -154,7 +155,7 @@ export function CafeItemFeedbackReportPage() {
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartRows} layout="vertical" margin={{ left: 8, right: 16 }}>
                   <CartesianGrid strokeDasharray="3 3" horizontal={false} />
-                  <XAxis type="number" allowDecimals={false} />
+                  <XAxis tickFormatter={formatDisplayNumber} type="number" allowDecimals={false} />
                   <YAxis type="category" dataKey="label" width={46} tick={{ fontSize: 13 }} />
                   <Tooltip formatter={(value) => [toArabicDigits(Number(value)), ui('تقييم')]} />
                   <Bar dataKey="count" fill="#F59E0B" radius={[0, 8, 8, 0]} />
@@ -212,7 +213,7 @@ export function CafeItemFeedbackReportPage() {
 }
 
 function Stars({ value, compact = false }: { value: number; compact?: boolean }) {
-  return <div dir="ltr" className="inline-flex items-center gap-0.5" aria-label={`${value} / 5`}>
+  return <div dir="ltr" className="inline-flex items-center gap-0.5" aria-label={`${formatDisplayNumber(value)} / 5`}>
     {[1, 2, 3, 4, 5].map((star) => <Star key={star} className={`${compact ? 'size-3.5' : 'size-4'} ${star <= Math.round(value) ? 'fill-amber-400 text-amber-400' : 'text-muted-foreground/25'}`} />)}
     {!compact && <span className="nums ms-1 text-xs font-bold">{toArabicDigits(value.toFixed(1))}</span>}
   </div>;

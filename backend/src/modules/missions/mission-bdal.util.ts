@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { dateOnlyOrdinal } from '../../common/utils/cairo-date';
 
 /**
  * Mission expense (بدل المأمورية) computation.
@@ -18,14 +19,12 @@ export const BDAL_METHOD_LUMP_SUM = '2';
 /** Inclusive number of days between two ISO date strings. */
 export function missionNumDays(fromDate?: string | null, toDate?: string | null): number {
   if (!fromDate || !toDate) return 0;
-  const from = new Date(fromDate);
-  const to = new Date(toDate);
-  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return 0;
+  const from = dateOnlyOrdinal(fromDate);
+  const to = dateOnlyOrdinal(toDate);
   if (to < from) {
     throw new BadRequestException('تاريخ نهاية المأمورية يجب أن يكون بعد تاريخ البداية');
   }
-  const diff = (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24);
-  return Math.round(diff) + 1;
+  return to - from + 1;
 }
 
 /** Compute total allowance from method, per-unit value and day count. */

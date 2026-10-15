@@ -23,7 +23,6 @@ import {
 @UseGuards(JwtAuthGuard)
 @Controller('club-receipts')
 @RequiresPermission(
-  'club.subscriptions:view',
   'club.subscriptions.receipts:view',
   'club.reception:view',
 )
@@ -33,11 +32,6 @@ export class ClubReceiptsController {
   @Get('statistics')
   statistics(@CurrentUser() user: JwtUser) {
     return this.service.statistics(user);
-  }
-
-  @Get('next-number')
-  nextNumber() {
-    return this.service.nextNumber();
   }
 
   @Get()
@@ -51,13 +45,13 @@ export class ClubReceiptsController {
   }
 
   @Post()
-  @RequiresPermission('club.subscriptions:create')
+  @RequiresPermission('club.subscriptions.receipts:create')
   create(@Body() body: CreateClubReceiptDto, @CurrentUser() user: JwtUser) {
     return this.service.create(body, user);
   }
 
   @Put(':id')
-  @RequiresPermission('club.subscriptions:update')
+  @RequiresPermission('club.subscriptions.receipts:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateClubReceiptDto,

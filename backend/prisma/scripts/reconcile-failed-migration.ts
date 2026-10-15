@@ -7,6 +7,50 @@ type Queryable = Pick<PrismaClient, "$queryRawUnsafe" | "$executeRawUnsafe">;
 
 const BACKTICK = String.fromCharCode(96);
 
+const SALES_CRM_SESSION_STATEMENTS = [
+  /^SET\s+@(?:creates_sales_lead_exists|creates_sales_lead_sql|legacy_leads_required_columns|legacy_leads_copy_sql)\b/i,
+  /^PREPARE\s+(?:creates_sales_lead_stmt|legacy_leads_copy_stmt)\b/i,
+  /^EXECUTE\s+(?:creates_sales_lead_stmt|legacy_leads_copy_stmt)\b/i,
+  /^DEALLOCATE\s+PREPARE\s+(?:creates_sales_lead_stmt|legacy_leads_copy_stmt)\b/i,
+];
+
+const LEGACY_LEADS_COPY_SQL = `
+INSERT INTO club_sales_crm_leads
+  (full_name, phone, source, status, assigned_to_id, branch_id, notes, created_at, updated_at)
+SELECT
+  TRIM(src.name),
+  TRIM(src.phone),
+  'walk_in',
+  CASE
+    WHEN src.status IN ('new', 'in_progress', 'follow_later', 'qualified', 'converted', 'lost')
+      THEN src.status
+    ELSE 'new'
+  END,
+  src.assigned_to,
+  src.branch_id,
+  src.notes,
+  src.created_at,
+  src.updated_at
+FROM club_leads src
+WHERE src.is_deleted = false
+  AND src.branch_id IS NOT NULL
+  AND src.phone IS NOT NULL
+  AND TRIM(src.phone) <> ''
+  AND TRIM(src.name) <> ''
+  AND NOT EXISTS (
+    SELECT 1
+    FROM club_sales_crm_leads dst
+    WHERE dst.branch_id = src.branch_id
+      AND dst.phone = TRIM(src.phone)
+      AND dst.full_name = TRIM(src.name)
+      AND dst.created_at = src.created_at
+  )
+`;
+
+function isKnownSalesCrmSessionStatement(statement: string) {
+  return SALES_CRM_SESSION_STATEMENTS.some((pattern) => pattern.test(statement));
+}
+
 function identifier(value: string) {
   const trimmed = value.trim();
   const unquoted =
@@ -164,7 +208,7 @@ function matchingParen(value: string, openIndex: number) {
   throw new Error("Unbalanced parenthesis");
 }
 
-class Reconciler {
+export class Reconciler {
   constructor(private readonly db: Queryable) {}
 
   private async count(sql: string, ...values: unknown[]) {
@@ -370,9 +414,25 @@ class Reconciler {
     await this.db.$executeRawUnsafe(statement);
   }
 
+  private async reconcileSalesCrmSessionSql() {
+    await this.alterTable(
+      'ALTER TABLE `club_quick_services` ADD COLUMN `creates_sales_lead` BOOLEAN NOT NULL DEFAULT false',
+    );
+
+    const requiredLegacyColumns = await this.count(
+      "SELECT COUNT(DISTINCT column_name) AS count FROM information_schema.columns WHERE table_schema=DATABASE() AND table_name='club_leads' AND column_name IN ('name','phone','status','assigned_to','branch_id','notes','created_at','updated_at','is_deleted')",
+    );
+    if (requiredLegacyColumns === 9) {
+      await this.db.$executeRawUnsafe(LEGACY_LEADS_COPY_SQL);
+    } else {
+      console.log('      compatible legacy club_leads columns not present; copy skipped');
+    }
+  }
+
   async apply(sql: string) {
     const statements = splitSqlStatements(sql);
     if (!statements.length) throw new Error("Migration SQL is empty");
+    let salesCrmSessionSqlReconciled = false;
     for (const [index, statement] of statements.entries()) {
       console.log(
         "      statement " + (index + 1) + "/" + statements.length + ": " +
@@ -383,7 +443,13 @@ class Reconciler {
       else if (/^CREATE\s+(?:UNIQUE\s+)?INDEX\b/i.test(statement)) await this.createIndex(statement);
       else if (/^DROP\s+INDEX\b/i.test(statement)) await this.dropIndex(statement);
       else if (/^(?:SET\s+@|PREPARE\b|EXECUTE\b|DEALLOCATE\s+PREPARE\b)/i.test(statement)) {
-        throw new Error("Session-scoped PREPARE SQL must remain self-idempotent");
+        if (!isKnownSalesCrmSessionStatement(statement)) {
+          throw new Error("Session-scoped PREPARE SQL must remain self-idempotent");
+        }
+        if (!salesCrmSessionSqlReconciled) {
+          await this.reconcileSalesCrmSessionSql();
+          salesCrmSessionSqlReconciled = true;
+        }
       } else if (
         /^INSERT\s+INTO\s+[`]?inv_supplier_phones[`]?\b/i.test(statement) &&
         /\bFROM\s+[`]?inv_suppliers[`]?\b/i.test(statement) &&

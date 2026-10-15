@@ -1,4 +1,4 @@
-import { IsDateString, IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Min } from 'class-validator';
 
 export class CreateLoanDto {
   @IsInt()
@@ -13,22 +13,15 @@ export class CreateLoanDto {
   installments!: number;
 
   @IsString()
-  @IsDateString()
   deductionStartDate!: string;
 
   @IsOptional()
   @IsString()
-  @IsDateString()
-  requestDate?: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(100)
   reason?: string;
 
+  @IsOptional()
   @IsInt()
-  @IsIn([1, 2, 3])
-  sadadSolfa!: number;
+  sadadSolfa?: number;
 
   @IsOptional()
   @IsInt()

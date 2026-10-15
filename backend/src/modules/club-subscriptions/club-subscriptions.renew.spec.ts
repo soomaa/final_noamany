@@ -12,6 +12,7 @@ import { localDateString } from '../club-members/club-member.utils';
 
 describe('ClubSubscriptionsService.renew history safety', () => {
   const tx = {
+      club_subscription_types: { findUnique: jest.fn().mockResolvedValue({ class_types: [], is_linked_to_freeze: true }) },
     club_subscriptions: {
       create: jest.fn(),
       findUniqueOrThrow: jest.fn(),
@@ -22,6 +23,7 @@ describe('ClubSubscriptionsService.renew history safety', () => {
     },
   };
   const prisma = {
+      club_subscription_types: { findUnique: jest.fn().mockResolvedValue({ class_types: [], is_linked_to_freeze: true }) },
     club_subscriptions: {
       findUnique: jest.fn(),
     },
@@ -62,7 +64,6 @@ describe('ClubSubscriptionsService.renew history safety', () => {
     branchScope as unknown as BranchScopeService,
     permissions as unknown as PermissionEngineService,
     { resolveDiscount: jest.fn() } as unknown as import('./club-discount-codes.service').ClubDiscountCodesService,
-    {} as never,
   );
 
   const today = localDateString();
@@ -174,4 +175,22 @@ describe('ClubSubscriptionsService.renew history safety', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(tx.club_subscriptions.create).not.toHaveBeenCalled();
   });
+  it('counts an explicit one-day renewal as exactly one active calendar day', async () => {
+    await service.renew(41, 1);
+    const start = addDays(oldSubscription.subscription_end_date, 1);
+    expect(tx.club_subscriptions.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ subscription_start_date: start, subscription_end_date: start }),
+    });
+  });
+
+  it('preserves the full purchased calendar span when no duration override is given', async () => {
+    await service.renew(41);
+    expect(tx.club_subscriptions.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        subscription_start_date: addDays(oldSubscription.subscription_end_date, 1),
+        subscription_end_date: addDays(oldSubscription.subscription_end_date, 31),
+      }),
+    });
+  });
+
 });

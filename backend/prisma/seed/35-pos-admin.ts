@@ -43,12 +43,11 @@ export async function seedPosAdmin(): Promise<void> {
 
   // Payment methods
   const methods = [
-    { name: 'نقداً', code: 'cash', icon: 'cash' },
-    { name: 'مدى', code: 'mada', icon: 'card' },
-    { name: 'فيزا / ماستركارد', code: 'visa', icon: 'card' },
-    { name: 'Apple Pay', code: 'apple_pay', icon: 'apple' },
-    { name: 'تحويل بنكي', code: 'bank_transfer', icon: 'bank' },
-    { name: 'محفظة العميل', code: 'wallet', icon: 'wallet' },
+    { name: 'كاش', code: 'cash', icon: 'cash', baseMethod: 'cash', requiresReference: false },
+    { name: 'فيزا / بطاقة', code: 'visa', icon: 'card', baseMethod: 'card', requiresReference: false },
+    { name: 'تحويل بنكي', code: 'bank_transfer', icon: 'bank', baseMethod: 'transfer', requiresReference: true },
+    { name: 'InstaPay', code: 'instapay', icon: 'bank', baseMethod: 'transfer', requiresReference: true },
+    { name: 'محفظة إلكترونية', code: 'wallet', icon: 'wallet', baseMethod: 'wallet', requiresReference: true },
   ];
   for (let i = 0; i < methods.length; i++) {
     await prisma.sales_pos_payment_methods.create({
@@ -57,6 +56,8 @@ export async function seedPosAdmin(): Promise<void> {
         name_en: methods[i].code,
         code: methods[i].code,
         icon: methods[i].icon,
+        base_method: methods[i].baseMethod as any,
+        requires_reference: methods[i].requiresReference,
         fees: methods[i].code === 'visa' ? 2.5 : 0,
         supports_mixed_payment: true,
         is_enabled: true,
@@ -140,7 +141,7 @@ export async function seedPosAdmin(): Promise<void> {
     { cat: 'general', key: 'currency', val: 'EGP', type: 'string', grp: 'عام' },
     { cat: 'general', key: 'tax_rate', val: '15', type: 'number', grp: 'الضريبة' },
     { cat: 'general', key: 'enable_tax', val: 'true', type: 'boolean', grp: 'الضريبة' },
-    { cat: 'receipt', key: 'receipt_footer', val: 'شكراً لزيارتكم Noamany Fitness Center', type: 'string', grp: 'الإيصال' },
+    { cat: 'receipt', key: 'receipt_footer', val: 'شكراً لزيارتكم ONE80 Gym', type: 'string', grp: 'الإيصال' },
     { cat: 'receipt', key: 'print_auto', val: 'true', type: 'boolean', grp: 'الإيصال' },
     { cat: 'shift', key: 'require_open_count', val: 'true', type: 'boolean', grp: 'الورديات' },
     { cat: 'shift', key: 'max_cash_variance', val: '50', type: 'number', grp: 'الورديات' },

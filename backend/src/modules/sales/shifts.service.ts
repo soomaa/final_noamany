@@ -128,33 +128,24 @@ export class ShiftsService {
       : [];
     const employeeById = new Map(employees.map((employee) => [employee.id, employee]));
     const jobById = new Map(jobs.map((job) => [job.id, job.name]));
-    const isCafeManagement = (value?: string | null) => {
-      const normalized = (value ?? '')
-        .trim()
-        .toLocaleLowerCase()
-        .replace(/[إأآ]/g, 'ا')
-        .replace(/ة/g, 'ه');
-      return normalized === 'اداره الكافيه' || normalized === 'cafe management';
-    };
-    return users
-      .map((user) => {
-        const employee = user.emp_code ? employeeById.get(user.emp_code) : undefined;
-        const jobTitle = employee?.mosma_wazefy_n?.trim()
-          || (employee?.mosma_wazefy_code ? jobById.get(employee.mosma_wazefy_code)?.trim() : null)
-          || null;
-        const department = employee?.edara_n?.trim() || null;
-        return {
-          id: user.user_id,
-          name: user.name || employee?.employee || user.username,
-          username: user.username,
-          branchId: user.branch_id_fk,
-          jobTitle,
-          department,
-          isAdmin: user.level === 1,
-          eligible: user.level === 1 || isCafeManagement(jobTitle),
-        };
-      })
-      .filter((user) => user.eligible);
+    // All approved users can be assigned to cafe shifts / POS sessions.
+    return users.map((user) => {
+      const employee = user.emp_code ? employeeById.get(user.emp_code) : undefined;
+      const jobTitle = employee?.mosma_wazefy_n?.trim()
+        || (employee?.mosma_wazefy_code ? jobById.get(employee.mosma_wazefy_code)?.trim() : null)
+        || null;
+      const department = employee?.edara_n?.trim() || null;
+      return {
+        id: user.user_id,
+        name: user.name || employee?.employee || user.username,
+        username: user.username,
+        branchId: user.branch_id_fk,
+        jobTitle,
+        department,
+        isAdmin: user.level === 1,
+        eligible: true,
+      };
+    });
   }
 
   async getScheduleStatus(q: CurrentShiftQueryDto) {
@@ -374,7 +365,7 @@ export class ShiftsService {
     if (dto.responsibleUserId != null) {
       const eligible = await this.eligibleUsers(branchId ?? undefined);
       if (!eligible.some((user) => user.id === dto.responsibleUserId)) {
-        throw new BadRequestException('المستخدم المحدد يجب أن يكون مرتبطاً بمسمى إدارة الكافيه');
+        throw new BadRequestException('المستخدم المحدد غير متاح لهذه الوردية');
       }
     }
 

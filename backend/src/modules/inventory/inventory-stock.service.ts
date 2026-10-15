@@ -12,6 +12,13 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { toDecimal, toNumber } from './inventory.utils';
+import { transactionLocations } from './transaction-locations.util';
+
+/** Decimal places persisted for stock quantities (schema DECIMAL(18,6)). */
+export const STOCK_SCALE = 6;
+export function roundStock(value: number): number {
+  return Number(new Prisma.Decimal(value).toDecimalPlaces(STOCK_SCALE, Prisma.Decimal.ROUND_HALF_UP));
+}
 
 export type StockOperation = 'add' | 'subtract' | 'set';
 
@@ -70,7 +77,10 @@ export class InventoryStockService {
       return this.prisma.$transaction((t) => this.applyMovement(dto, t));
     }
     const db = this.client(tx);
-    const qty = toDecimal(dto.quantity);
+    // Quantities are persisted at STOCK_SCALE decimals (DECIMAL(18,6)). Round once here so the
+    // balance delta and the movement row carry the identical figure instead of each being
+    // rounded by MySQL on its own (which let a sale + cancellation drift by a gram).
+    const qty = toDecimal(dto.quantity).toDecimalPlaces(STOCK_SCALE, Prisma.Decimal.ROUND_HALF_UP);
     const absQty = Math.abs(toNumber(qty));
     if (dto.operation !== 'set' && absQty <= 0) {
       throw new BadRequestException('كمية حركة المخزون يجب أن تكون أكبر من صفر');
@@ -112,7 +122,7 @@ export class InventoryStockService {
       if (target < 0 && !dto.allowNegative) {
         throw new BadRequestException('لا يمكن تعيين رصيد سالب للمخزون');
       }
-      signedQty = target - toNumber(balance.current_stock);
+      signedQty = roundStock(target - toNumber(balance.current_stock));
       newStock = target;
       direction = signedQty >= 0 ? MovementDirection.in : MovementDirection.out;
       updated = await db.inv_stock_balances.update({
@@ -126,7 +136,7 @@ export class InventoryStockService {
         where: { id: balance.id },
         data: { current_stock: { increment: signedQty } },
       });
-      newStock = toNumber(updated.current_stock);
+      newStock = roundStock(toNumber(updated.current_stock));
       if (newStock < 0 && !dto.allowNegative) {
         // Rolls back the increment above (we are guaranteed to be inside a transaction).
         throw new BadRequestException('الكمية غير كافية بالمخزون');
@@ -212,6 +222,10 @@ export class InventoryStockService {
     });
     if (!txn) throw new NotFoundException('الحركة المخزنية غير موجودة');
 
+    const transferLocations = dto.txnType === InventoryTxnType.transfer
+      ? await transactionLocations(tx, dto.txnType, dto.branchId, dto.sourceWarehouseId, dto.targetWarehouseId)
+      : null;
+
     const lines = dto.lines.length
       ? dto.lines
       : txn.items
@@ -231,7 +245,7 @@ export class InventoryStockService {
       if (!line.productId) {
         throw new BadRequestException('معرف المنتج مطلوب لكل بند');
       }
-      await this.dispatchLine(tx, dto, line);
+      await this.dispatchLine(tx, dto, line, transferLocations?.target?.branch_id);
     }
 
     return txn;
@@ -241,6 +255,7 @@ export class InventoryStockService {
     tx: Prisma.TransactionClient,
     dto: ApplyTransactionDto,
     line: ApplyTransactionLineDto,
+    targetBranchId?: number,
   ) {
     const base = {
       productId: line.productId,
@@ -335,6 +350,7 @@ export class InventoryStockService {
           {
             ...base,
             warehouseId: dto.targetWarehouseId,
+            branchId: targetBranchId!,
             direction: MovementDirection.in,
           },
           tx,

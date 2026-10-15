@@ -1,0 +1,28 @@
+ONE80 Gate Agent — محتويات الباكدج
+===================================
+
+ابدأ بقراءة:
+- ENGINEER-HANDOFF-AR.pdf
+
+ملفات التنفيذ:
+- Install-One80GateAgent.ps1      تثبيت الـAgent كـScheduled Task عند بدء Windows
+- One80.GateAgent.ps1             برنامج الربط المحلي
+- Test-One80GateAgent.ps1         اختبار API + C3 بعد التركيب
+- Collect-One80NetworkInfo.ps1    جمع بيانات الشبكة قبل اختيار Static IP
+- config.example.json             مثال فقط؛ Installer ينشئ الإعداد الفعلي
+- OFFICIAL-DOWNLOADS.txt          روابط ZKTeco الرسمية للـSDK وإعداد QR50BE
+- sdk\                            ملفات Pull SDK X64 التي أرسلها وكيل البوابة
+- SDK-PROVENANCE.txt              إصدار وبصمة مصدر ملفات الـSDK المرفقة
+
+بيانات يجب أن ترسلها مالكة النظام للمهندس بشكل خاص:
+- INSTALLER-VALUES.template.txt بعد ملء القيم.
+- Agent Token لا يُرسل في مجموعة عامة.
+
+ملفات Pull SDK اللازمة موجودة داخل مجلد sdk. عند تشغيل Installer استخدم:
+-SdkSourcePath ".\sdk"
+
+لا تشغّل ملفات Demo أو Register SDK؛ الـAgent يستخدم plcommpro.dll مباشرة.
+التوافق النهائي يعتمد على اختبار الباكدج مع Firmware الكنترول المركب فعليًا.
+
+لا يحتاج التشغيل اليومي إلى شراء أو تشغيل ZKAccess. يستخدم البرنامج الرسمي
+Device Setting Tool/QR Config Demo وقت الإعداد فقط، ثم يُغلق قبل تشغيل Agent.

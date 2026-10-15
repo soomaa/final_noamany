@@ -10,5 +10,4 @@ export class ListLeavesDto extends PaginationDto {
   @IsOptional()
   @IsString()
   status?: string;
-
 }

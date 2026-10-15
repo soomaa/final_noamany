@@ -2,10 +2,12 @@ const EGYPT_TZ = 'Africa/Cairo';
 
 /**
  * Mobile numbers are stored as digits only.  We deliberately do not tie this
- * to a specific country: the gym registers Egyptian mobile numbers only.
+ * to a specific country: a member may enter a local number or an international
+ * number with its country code (for example +971 50 123 4567).
  */
-const PHONE_REGEX = /^\d{11}$/;
-const PHONE_FORMAT_ERROR = 'رقم الموبايل غير صحيح — يجب أن يكون 11 رقمًا';
+const PHONE_REGEX = /^(?=.*[1-9])\d{7,15}$/;
+const PHONE_FORMAT_ERROR =
+  'رقم الموبايل غير صحيح — أدخل من 7 إلى 15 رقمًا، مع رمز الدولة عند الحاجة (مثال: +971 50 123 4567)';
 const STANDARD_NATIONAL_ID_REGEX = /^\d{14}$/;
 const CHILD_NATIONAL_ID_REGEX = /^(\d{14})-C(\d{2})$/i;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -19,6 +21,14 @@ export function normalizeName(name: string): string {
   return String(name)
     .replace(/[\s\u00A0\u2000-\u200B\uFEFF]+/g, ' ')
     .trim();
+}
+
+/** Match Arabic/Persian digits and mixed-case scanner codes consistently across screens. */
+export function normalizeMemberSearchQuery(value: string): string {
+  const query = normalizeName(value ?? '')
+    .replace(/[\u0660-\u0669]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
+    .replace(/[\u06f0-\u06f9]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0));
+  return /^[a-z]{1,3}\d+$/i.test(query) ? query.toUpperCase() : query;
 }
 
 export function normalizePhoneInput(phone: string): string {
@@ -82,13 +92,22 @@ export function buildChildNationalId(parentId: string, childCode: string): strin
 
 /** Ensure member exists before linking to subscription/receipt. */
 export async function assertMemberExists(
-  prisma: { club_members: { findFirst: (args: object) => Promise<{ id: number; name: string; card_number: string | null } | null> } },
+  prisma: {
+    club_members: {
+      findFirst: (args: object) => Promise<{
+        id: number;
+        name: string;
+        card_number: string | null;
+        branch_id: number;
+      } | null>;
+    };
+  },
   memberId: number | null | undefined,
-): Promise<{ id: number; name: string; card_number: string | null }> {
+): Promise<{ id: number; name: string; card_number: string | null; branch_id: number }> {
   if (!memberId || memberId <= 0) throw new Error('كود العضو غير صالح');
   const member = await prisma.club_members.findFirst({
     where: { id: memberId, is_deleted: false },
-    select: { id: true, name: true, card_number: true },
+    select: { id: true, name: true, card_number: true, branch_id: true },
   });
   if (!member) throw new Error('العضو غير موجود');
   return member;
@@ -114,6 +133,11 @@ export function computeSubscriptionStatus(startDate: string, endDate: string): '
   return 'active';
 }
 
+/**
+ * Branch prefix for member codes / barcodes.
+ * Branch 1 -> "A", 2 -> "B", ... 26 -> "Z", 27 -> "AA", 28 -> "AB", ...
+ * So every branch's members get a distinct leading letter (e.g. A000123, B000045).
+ */
 /** MySQL UNSIGNED aggregates may return bigint — normalize before arithmetic. */
 export function nextSeqFromMax(maxNum: unknown): number {
   if (maxNum == null) return 1;
@@ -123,7 +147,49 @@ export function nextSeqFromMax(maxNum: unknown): number {
   return Number.isFinite(n) ? n + 1 : 1;
 }
 
-/** Member code: configured branch letter + its running sequence (e.g. A12253). */
-export function formatBranchMemberCode(prefix: string, seq: number): string {
-  return `${prefix}${seq}`;
+export function branchCodePrefix(branchId: number): string {
+  let n = Math.max(1, Math.floor(branchId));
+  let out = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    out = String.fromCharCode(65 + rem) + out;
+    n = Math.floor((n - 1) / 26);
+  }
+  return out;
+}
+
+/** Legacy member code: branch letter(s) + 6-digit sequence (e.g. A012253 for branch 1). */
+export function formatBranchMemberCode(branchId: number, seq: number): string {
+  return `${branchCodePrefix(branchId)}${String(seq).padStart(6, '0')}`;
+}
+
+/** Indexed prefixes for numeric input, including ONE80's padded branch codes. */
+export function memberCodeSearchTerms(query: string, branchIds: number[] | null) {
+  const exact = new Set([query]);
+  const prefixes = new Set([query]);
+  if (/^\d{1,6}$/.test(query)) {
+    for (const branchId of branchIds ?? []) {
+      const prefix = branchCodePrefix(branchId);
+      exact.add(`${prefix}${query.padStart(6, '0')}`);
+      for (let width = query.length; width <= 6; width++) {
+        prefixes.add(`${prefix}${query.padStart(width, '0')}`);
+      }
+    }
+  }
+  return { exact: [...exact], prefixes: [...prefixes] };
+}
+
+export function memberCodeSearchRank(code: string, query: string): number {
+  const lower = code.toLowerCase();
+  const needle = query.toLowerCase();
+  if (lower === needle) return 0;
+  if (/^\d{1,6}$/.test(query)) {
+    const digits = code.match(/^[a-z]{1,3}(\d{6})$/i)?.[1];
+    if (digits === query.padStart(6, '0')) return 0;
+    const numericPart = digits?.replace(/^0+(?=\d)/, '');
+    if (digits?.startsWith(query) || numericPart?.startsWith(query.replace(/^0+(?=\d)/, ''))) return 1;
+  }
+  if (lower.startsWith(needle)) return 1;
+  if (lower.includes(needle)) return 2;
+  return 3;
 }

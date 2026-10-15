@@ -1,8 +1,8 @@
 # Demo Seed — Module Contract (read fully before writing code)
 
-We are building a **comprehensive demo dataset** so every page of the Noamany Fitness Center app shows
+We are building a **comprehensive demo dataset** so every page of the PHAROS Club app shows
 realistic, coherent data. The **foundation is already seeded** in the live DB
-(`noamany_hr`): branches, departments (`hr_edarat_aqsam`), job titles (`department_jobs`),
+(`one80_hr`): branches, departments (`hr_edarat_aqsam`), job titles (`department_jobs`),
 banks, `employees` (~36, Arabic names, `emp_code` 1001+), and `users` (login accounts).
 **Do not reseed or clear foundation tables.** RBAC (`rbac_*`) is seeded separately — never touch it.
 
@@ -70,7 +70,7 @@ if (require.main === module) {
    `_shared.ts`, `package.json`, other modules, or the schema.
 10. **Test before finishing**: run `npx ts-node prisma/seed/<NN>-<name>.ts` from the backend
     dir; fix every error until it completes; then confirm row counts with
-    `mysql -u root -N -e "SELECT COUNT(*) FROM noamany_hr.<table>;"`. Prisma validates field
+    `mysql -u root -N -e "SELECT COUNT(*) FROM one80_hr.<table>;"`. Prisma validates field
     names/types/enums at runtime, so a clean run means your fields are correct.
 
 ## Tips

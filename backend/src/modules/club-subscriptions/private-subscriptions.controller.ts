@@ -12,7 +12,7 @@ import { PrivateSubscriptionsService } from './private-subscriptions.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-private-subscriptions')
-@RequiresPermission('club.subscriptions.special:view', 'club.subscriptions:view')
+@RequiresPermission('club.subscriptions.special:view')
 export class PrivateSubscriptionsController {
   constructor(private readonly service: PrivateSubscriptionsService) {}
 
@@ -26,13 +26,13 @@ export class PrivateSubscriptionsController {
   }
 
   @Post('packages')
-  @RequiresPermission('club.subscriptions.special:create', 'club.subscriptions:create')
+  @RequiresPermission('club.subscriptions.special:create')
   createPackage(@Body() body: UpsertPrivatePackageDto, @CurrentUser() user: JwtUser) {
     return this.service.createPackage(body, user);
   }
 
   @Put('packages/:id')
-  @RequiresPermission('club.subscriptions.special:update', 'club.subscriptions:update')
+  @RequiresPermission('club.subscriptions.special:update')
   updatePackage(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpsertPrivatePackageDto,
@@ -42,7 +42,7 @@ export class PrivateSubscriptionsController {
   }
 
   @Delete('packages/:id')
-  @RequiresPermission('club.subscriptions.special:delete', 'club.subscriptions:delete')
+  @RequiresPermission('club.subscriptions.special:delete')
   deactivatePackage(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtUser,
@@ -61,7 +61,7 @@ export class PrivateSubscriptionsController {
   }
 
   @Post('enrollments')
-  @RequiresPermission('club.subscriptions.special:create', 'club.subscriptions:create')
+  @RequiresPermission('club.subscriptions.special:create')
   createEnrollment(@Body() body: CreatePrivateEnrollmentDto, @CurrentUser() user: JwtUser) {
     return this.service.createEnrollment(body, user);
   }

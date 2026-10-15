@@ -1,275 +1,165 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { FileText, Plus, Upload, X } from 'lucide-react';
-import { useQuery } from '@tanstack/react-query';
+import { Eye, FileText, Plus, Ruler, Settings2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
-import { MemberSearchCombobox } from '@/components/club/member-search-combobox';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { useFitnessT } from '@/hooks/use-fitness-t';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { useBranches } from '@/hooks/use-branches';
 import { usePermission } from '@/hooks/use-permission';
-import { useAuth } from '@/store/auth';
-import { api, apiError } from '@/lib/api';
-import { useFileUpload, uploadUrl } from '@/components/employees/use-uploads';
-import { localToday } from '@/lib/formatters';
-import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
-import { confirm } from '@/lib/confirm';
+import { uploadUrl } from '@/components/employees/use-uploads';
+import { usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import type { InbodyMeasurementRow } from '@/types/fitness';
-import type { ClubMemberListItem } from '@/types/club';
-import { RowActions } from './shared';
+import { INBODY_SETTLEMENT_LABELS, memberColumnDef } from './shared';
+import { InbodyRecordDialog } from './inbody-record-dialog';
+import { InbodySettingsTab } from './inbody-settings-tab';
+import { InbodyMemberProfileDialog } from './inbody-member-profile-dialog';
+import { useLocale } from '@/store/locale';
 
 export function FitnessInbodyPage() {
-  const ft = useFitnessT();
-  const { user } = useAuth();
-  const { superAdmin } = usePermission();
-  const title = user?.job_title?.normalize('NFKD') ?? '';
-  const todayOnly = !superAdmin && user?.level !== 3 && /(استقبال|ريسيبشن|ريسبشن|reception)/i.test(title) && !/(مدير|مشرف|رئيس|manager|supervisor|head)/i.test(title);
+  const { ui } = useLocale();
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<InbodyMeasurementRow>(
     'club-inbody-measurements',
     params,
   );
-  const [open, setOpen] = useState(false);
-  const [editId, setEditId] = useState<number | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [selectedMember, setSelectedMember] = useState<ClubMemberListItem | null>(null);
-  const { data: nextFileNumber } = useQuery({
-    queryKey: ['club-inbody-measurements', 'next-file-number'],
-    enabled: open && editId == null,
-    queryFn: async () => (await api.get<{ nextFileNumber: number }>('/club-inbody-measurements/next-file-number')).data.nextFileNumber,
-  });
-  const { upload, uploading } = useFileUpload();
-  const [form, setForm] = useState({
-    memberCode: '',
-    measurementDate: localToday(),
-    reportUrl: '',
-  });
-
-  const deleteMutation = useMutationWithToast(
-    (id: number) => api.delete(`/club-inbody-measurements/${id}`),
-    { success: ft('common.success'), invalidate: ['club-inbody-measurements'] },
+  const { data: branches } = useBranches();
+  const { can } = usePermission();
+  const canCreate = can('club.fitness.inbody_invoices:create');
+  const canManageSettings = can('club.fitness.inbody_invoices:update');
+  const [tab, setTab] = useState('measurements');
+  const [recordOpen, setRecordOpen] = useState(false);
+  const [profileMemberId, setProfileMemberId] = useState<number | null>(null);
+  const branchNames = useMemo(
+    () => new Map((branches ?? []).map((branch) => [branch.id, branch.name ?? '—'])),
+    [branches],
   );
-
-  const openCreate = () => {
-    setEditId(null);
-    setSelectedMember(null);
-    setForm({
-      memberCode: '',
-      measurementDate: localToday(),
-      reportUrl: '',
-    });
-    setOpen(true);
-  };
-
-  const openEdit = async (row: InbodyMeasurementRow) => {
-    const { data: member } = await api.get<ClubMemberListItem>(`/club-members/measurement-operation-member/${row.memberId}`);
-    setSelectedMember(member);
-    setEditId(row.id);
-    setForm({
-      memberCode: row.memberCode ?? String(row.memberId),
-      measurementDate: row.measurementDate,
-      reportUrl: row.reportUrl ?? '',
-    });
-    setOpen(true);
-  };
-
-  const onPickReport = async (file: File | undefined) => {
-    if (!file) return;
-    const path = await upload('inbody', file);
-    if (path) setForm((f) => ({ ...f, reportUrl: path }));
-  };
-
-  const save = async () => {
-    if (!selectedMember || !form.measurementDate || !form.reportUrl) {
-      toast.error(!selectedMember ? ft('inbody.selectMemberFirst') : !form.reportUrl ? ft('inbody.uploadFileFirst') : ft('inbody.measurementDateRequired'));
-      return;
-    }
-    setSaving(true);
-    try {
-      const payload = {
-        memberId: selectedMember.id,
-        measurementDate: form.measurementDate,
-        reportUrl: form.reportUrl,
-      };
-      if (editId) await api.put(`/club-inbody-measurements/${editId}`, payload);
-      else await api.post('/club-inbody-measurements', payload);
-      toast.success(ft('common.success'));
-      setOpen(false);
-      void refetch();
-    } catch (e) {
-      toast.error(apiError(e));
-    } finally {
-      setSaving(false);
-    }
-  };
 
   const columns = useMemo<ColumnDef<InbodyMeasurementRow>[]>(
     () => [
-      {
-        accessorKey: 'memberCode',
-        header: ft('common.memberCode'),
-        cell: ({ getValue }) => <span className="font-mono" dir="ltr">{String(getValue() ?? '—')}</span>,
-      },
-      {
-        accessorKey: 'memberName',
-        header: ft('common.member'),
-        cell: ({ getValue }) => <span className="font-medium">{String(getValue() ?? '—')}</span>,
-      },
+      memberColumnDef<InbodyMeasurementRow>(ui('العضو')),
       {
         accessorKey: 'measurementDate',
-        header: ft('common.date'),
+        header: ui('تاريخ القياس'),
         cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string)}</span>,
       },
       {
-        accessorKey: 'reportUrl',
-        header: ft('inbody.details'),
+        accessorKey: 'branchId',
+        header: ui('الفرع'),
+        cell: ({ getValue }) => branchNames.get(getValue() as number) ?? '—',
+      },
+      {
+        accessorKey: 'settlementSource',
+        header: ui('طريقة التسوية'),
         cell: ({ getValue }) => {
-          const v = getValue() as string | null | undefined;
-          const href = uploadUrl(v);
+          const source = getValue() as InbodyMeasurementRow['settlementSource'];
+          return (
+            <span className="inline-flex rounded-full bg-muted px-2.5 py-1 text-xs font-medium">
+              {INBODY_SETTLEMENT_LABELS[source] ?? INBODY_SETTLEMENT_LABELS.legacy}
+            </span>
+          );
+        },
+      },
+      {
+        accessorKey: 'reportUrl',
+        header: ui('تقرير الجهاز'),
+        cell: ({ getValue }) => {
+          const href = uploadUrl(getValue() as string | null | undefined);
           return href ? (
             <a
               href={href}
               target="_blank"
               rel="noreferrer"
-              title={ft('inbody.viewFile')}
-              className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2 py-1 text-xs font-medium text-white hover:bg-amber-600"
+              className="inline-flex items-center gap-1.5 text-sm font-medium text-brand underline underline-offset-4"
             >
-              <FileText className="size-4" /> {ft('inbody.fileLabel')}
+              <FileText className="size-4" /> {ui('عرض التقرير')}
             </a>
-          ) : (
-            '—'
-          );
+          ) : <span className="text-muted-foreground">{ui('غير مرفوع')}</span>;
         },
       },
       {
         id: 'actions',
-        header: ft('common.actions'),
+        header: '',
         cell: ({ row }) => (
-          <div className="flex items-center gap-1">
-            <RowActions
-              editLabel={ft('common.edit')}
-              deleteLabel={ft('common.delete')}
-              onEdit={() => void openEdit(row.original)}
-              onDelete={() =>
-                void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
-                  if (ok) deleteMutation.mutate(row.original.id);
-                })
-              }
-            />
-          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            title={ui('بروفايل InBody')}
+            onClick={() => setProfileMemberId(row.original.memberId)}
+          >
+            <Eye className="size-4" />
+          </Button>
         ),
       },
     ],
-    [ft, deleteMutation],
+    [branchNames],
   );
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title={ft('inbody.memberMeasurementsTitle')}
-        description={ft('inbody.memberMeasurementsDescription')}
-        actions={
-          <Button variant="brand" onClick={openCreate}>
-            <Plus className="size-4" /> {ft('inbody.addMemberMeasurement')}
+        title={ui('قياسات InBody')}
+        description={ui('سجّل تقارير الجهاز، تابع رصيد العضو، وحصّل القياس تلقائيًا عند عدم وجود رصيد.')}
+        actions={tab === 'measurements' && canCreate ? (
+          <Button variant="brand" onClick={() => setRecordOpen(true)}>
+            <Plus className="size-4" /> {ui('تسجيل قياس')}
           </Button>
-        }
-      />
-      <DataTable
-        columns={columns}
-        data={data?.data ?? []}
-        total={data?.total ?? 0}
-        page={params.page}
-        pageSize={params.pageSize}
-        onPageChange={(page) => setParams({ page })}
-        onPageSizeChange={(pageSize) => setParams({ pageSize, page: 1 })}
-        search={params.search}
-        onSearchChange={(search) => setParams({ search, page: 1 })}
-        isLoading={isLoading}
-        isError={isError}
-        onRetry={() => void refetch()}
-        emptyTitle={ft('common.noData')}
+        ) : undefined}
       />
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent size="md" aria-describedby={undefined}>
-          <DialogHeader>
-            <DialogTitle>{editId ? ft('inbody.editMemberMeasurement') : ft('inbody.addMemberMeasurement')}</DialogTitle>
-          </DialogHeader>
-          <div className="grid gap-3 py-2">
-            <div className="grid gap-2">
-              <Label>{ft('inbody.fileNumber')}</Label>
-              <Input className="nums" readOnly value={editId ? toArabicDigits(editId) : nextFileNumber ? toArabicDigits(nextFileNumber) : ft('inbody.determiningFileNumber')} />
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList aria-label={ui('أقسام InBody')}>
+          <TabsTrigger value="measurements" className="gap-2">
+            <Ruler className="size-4" /> {ui('القياسات')}
+          </TabsTrigger>
+          <TabsTrigger value="settings" className="gap-2">
+            <Settings2 className="size-4" /> {ui('الإعدادات')}
+          </TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="measurements" className="mt-5">
+          <DataTable
+            exportSource={{ resource: 'club-inbody-measurements', params }}
+            columns={columns}
+            data={data?.data ?? []}
+            total={data?.total ?? 0}
+            page={params.page}
+            pageSize={params.pageSize}
+            onPageChange={(page) => setParams({ page })}
+            onPageSizeChange={(pageSize) => setParams({ pageSize, page: 1 })}
+            search={params.search}
+            onSearchChange={(search) => setParams({ search, page: 1 })}
+            isLoading={isLoading}
+            isError={isError}
+            onRetry={() => void refetch()}
+            emptyTitle={ui('لا توجد قياسات InBody مسجلة')}
+          />
+        </TabsContent>
+
+        <TabsContent value="settings" className="mt-5">
+          {canManageSettings ? (
+            <InbodySettingsTab />
+          ) : (
+            <div className="rounded-xl border bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
+              {ui('لا تملك صلاحية تعديل إعدادات InBody.')}
             </div>
-            <div className="grid gap-2">
-              <Label>{ft('common.name')}</Label>
-              <MemberSearchCombobox
-                forMeasurementOperation
-                selectedMember={selectedMember}
-                onSelect={(member) => {
-                  setSelectedMember(member);
-                  setForm((current) => ({ ...current, memberCode: member.memberCode }));
-                }}
-                onClear={() => {
-                  setSelectedMember(null);
-                  setForm((current) => ({ ...current, memberCode: '' }));
-                }}
-                disabled={Boolean(editId)}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label>{ft('common.date')}</Label>
-              <Input type="date" className="nums" disabled={todayOnly} value={form.measurementDate} onChange={(e) => setForm((f) => ({ ...f, measurementDate: e.target.value }))} />
-            </div>
-            <div className="grid gap-2">
-              <Label>{ft('inbody.file')}</Label>
-              {form.reportUrl ? (
-                <div className="flex items-center gap-2">
-                  <a
-                    href={uploadUrl(form.reportUrl) ?? '#'}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 text-sm text-brand underline"
-                  >
-                    <FileText className="size-4" /> {ft('inbody.viewReport')}
-                  </a>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    title={ft('common.delete')}
-                    onClick={() => setForm((f) => ({ ...f, reportUrl: '' }))}
-                  >
-                    <X className="size-4" />
-                  </Button>
-                </div>
-              ) : (
-                <label className="inline-flex w-fit cursor-pointer items-center gap-2 rounded-md border px-3 py-2 text-sm hover:bg-muted">
-                  <Upload className="size-4" />
-                  {uploading ? ft('inbody.uploading') : ft('inbody.uploadReport')}
-                  <input
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,application/pdf"
-                    className="hidden"
-                    disabled={uploading}
-                    onChange={(e) => void onPickReport(e.target.files?.[0])}
-                  />
-                </label>
-              )}
-              <span className="text-xs text-muted-foreground">{ft('inbody.reportHint')}</span>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void save()} disabled={saving || uploading}>{ft('common.save')}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+          )}
+        </TabsContent>
+      </Tabs>
+
+      <InbodyRecordDialog
+        open={recordOpen}
+        onOpenChange={setRecordOpen}
+        onSaved={() => void refetch()}
+      />
+
+      <InbodyMemberProfileDialog
+        memberId={profileMemberId}
+        open={profileMemberId != null}
+        onOpenChange={(next) => { if (!next) setProfileMemberId(null); }}
+      />
     </div>
   );
 }

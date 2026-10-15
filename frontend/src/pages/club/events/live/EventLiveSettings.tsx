@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Card } from "@/components/ui/card";
@@ -28,6 +29,7 @@ import { EventLiveBackLink } from './EventLiveBackLink';
 import { EventLiveNavMenu } from './EventLiveNavMenu';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { usePermission } from '@/hooks/use-permission';
 
 /** Inline editor for the titles list — chips with delete + add row. */
 const TitlesManager = ({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) => {
@@ -75,7 +77,7 @@ const TitlesManager = ({ value, onChange }: { value: string[]; onChange: (v: str
           }}
           placeholder={ui("أضف لقباً جديداً (مثال: المعالي)")}
         />
-        <Button type="button" onClick={add} disabled={!draft.trim()} className="bg-primary hover:bg-primary/90">
+        <Button permissionAction={null} type="button" onClick={add} disabled={!draft.trim()} className="bg-primary hover:bg-primary/90">
           <Plus className="h-4 w-4 ml-1" />
           {ui("إضافة")}
         </Button>
@@ -261,6 +263,8 @@ const PRESETS: { label: string; primary: string; secondary: string }[] = [
 
 const EventLiveSettings = () => {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canUpdate = can('club.events.list:update');
   const liveApi = useClubEventsLiveApi();
   const basePath = useEventLiveBasePath();
   const { settings, loading } = useEventSettings();
@@ -280,7 +284,7 @@ const EventLiveSettings = () => {
 
   // Live program-position sync to the API so the Display screen picks it up on its next poll.
   useEffect(() => {
-    if (!hydrated.current) return;
+    if (!hydrated.current || !canUpdate) return;
     const t = setTimeout(() => {
       liveApi
         .update({
@@ -290,12 +294,12 @@ const EventLiveSettings = () => {
         .catch(() => {});
     }, 250);
     return () => clearTimeout(t);
-  }, [form.program_align, form.program_offset_pct]);
+  }, [canUpdate, form.program_align, form.program_offset_pct]);
 
   // Global live auto-save: any field change debounced-pushes to the API so the
   // Check-In and Display screens update on their next poll — no manual save needed.
   useEffect(() => {
-    if (!hydrated.current) return;
+    if (!hydrated.current || !canUpdate) return;
     if (!form.event_name?.trim() || !form.thank_you_message?.trim()) return;
     const t = setTimeout(() => {
       const payload = {
@@ -365,9 +369,10 @@ const EventLiveSettings = () => {
       liveApi.update(payload).catch(() => {});
     }, 500);
     return () => clearTimeout(t);
-  }, [form]);
+  }, [canUpdate, form]);
 
   const update = <K extends keyof EventSettings>(key: K, value: EventSettings[K]) => {
+    if (!canUpdate) return;
     setForm((prev) => {
       const next = { ...prev, [key]: value };
       if (key === "primary_color" || key === "secondary_color") {
@@ -434,6 +439,7 @@ const EventLiveSettings = () => {
   };
 
   const handleSave = async () => {
+    if (!canUpdate) return;
     if (!form.event_name.trim() || !form.thank_you_message.trim()) {
       toast.error(ui('الرجاء تعبئة الاسم ورسالة الشكر'));
       return;
@@ -514,6 +520,7 @@ const EventLiveSettings = () => {
   };
 
   const handleReset = () => {
+    if (!canUpdate) return;
     setForm({ ...DEFAULT_SETTINGS, id: form.id });
     applyThemeColors(DEFAULT_SETTINGS.primary_color, DEFAULT_SETTINGS.secondary_color);
     toast.success(ui('تمت استعادة الإعدادات الافتراضية — اضغط حفظ لتثبيتها'));
@@ -534,20 +541,21 @@ const EventLiveSettings = () => {
             </div>
           </div>
           <div className="flex items-center gap-2">
-            <Button type="button" variant="outline" size="sm" onClick={handleReset} className="text-amber-700 border-amber-300 hover:bg-amber-50">
+            {canUpdate ? <Button permissionResource="club.events.list" permissionAction="update" type="button" variant="outline" size="sm" onClick={handleReset} className="text-amber-700 border-amber-300 hover:bg-amber-50">
               <RotateCcw className="h-4 w-4 ml-2" />
               {ui("استعادة الافتراضي")}
-            </Button>
-            <Button type="button" size="sm" onClick={handleSave} disabled={saving} className="bg-primary hover:bg-primary/90 text-primary-foreground">
+            </Button> : null}
+            {canUpdate ? <Button permissionResource="club.events.list" permissionAction="update" type="button" size="sm" onClick={handleSave} disabled={saving} className="bg-primary hover:bg-primary/90 text-primary-foreground">
               <Save className="h-4 w-4 ml-2" />
               {saving ? ui("جاري الحفظ...") : ui("حفظ التغييرات")}
-            </Button>
+            </Button> : null}
             <EventLiveNavMenu variant="light" current="settings" />
             <EventLiveBackLink />
           </div>
         </div>
       </header>
 
+      <fieldset disabled={!canUpdate} className="contents">
       <main className="container mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Form */}
         <div className="lg:col-span-2 space-y-6">
@@ -691,7 +699,7 @@ const EventLiveSettings = () => {
                   <div className="space-y-1.5">
                     <div className="flex items-center justify-between">
                       <Label className="text-xs font-bold">{ui("حجم النص (px)")}</Label>
-                      <span className="text-xs font-bold tabular-nums text-[#558B2F]">{form.hero_size_px ?? 128}</span>
+                      <span className="text-xs font-bold tabular-nums text-[#558B2F]">{formatDisplayNumber(form.hero_size_px ?? 128)}</span>
                     </div>
                     <Slider value={[form.hero_size_px ?? 128]} min={40} max={240} step={2} onValueChange={(v) => update("hero_size_px", v[0])} />
                   </div>
@@ -757,7 +765,7 @@ const EventLiveSettings = () => {
                 <div className="space-y-2">
                   {(form.checkin_steps ?? []).map((step: string, i: number) => (
                     <div key={i} className="flex items-center gap-2">
-                      <span className="w-8 h-8 rounded-full bg-[#F08AB0] text-white text-sm font-extrabold flex items-center justify-center shrink-0">{i + 1}</span>
+                      <span className="w-8 h-8 rounded-full bg-[#F08AB0] text-white text-sm font-extrabold flex items-center justify-center shrink-0">{formatDisplayNumber(i + 1)}</span>
                       <Input
                         value={step}
                         onChange={(e) => {
@@ -765,7 +773,7 @@ const EventLiveSettings = () => {
                           next[i] = e.target.value;
                           update("checkin_steps", next);
                         }}
-                        placeholder={`${ui("الخطوة")} ${i + 1}`}
+                        placeholder={`${ui("الخطوة")} ${formatDisplayNumber(i + 1)}`}
                       />
                       <button
                         type="button"
@@ -830,7 +838,7 @@ const EventLiveSettings = () => {
                         {ui("فقرات الحفل")}
                       </div>
                       <div className="absolute bottom-1 inset-x-0 text-center text-[9px] text-white/50 font-bold">
-                        {align === "right" ? ui("يمين") : ui("يسار")} • {ui("إزاحة")} {offset}%
+                        {align === "right" ? ui("يمين") : ui("يسار")} • {ui("إزاحة")} {formatDisplayNumber(offset)}%
                       </div>
                     </div>
                   );
@@ -862,7 +870,7 @@ const EventLiveSettings = () => {
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <Label className="text-xs font-bold">{ui("الحجم (px)")}</Label>
-                        <span className="text-xs font-bold tabular-nums text-[#558B2F]">{form.display_welcome_size_px ?? 30}</span>
+                        <span className="text-xs font-bold tabular-nums text-[#558B2F]">{formatDisplayNumber(form.display_welcome_size_px ?? 30)}</span>
                       </div>
                       <Slider value={[form.display_welcome_size_px ?? 30]} min={14} max={80} step={1} onValueChange={(v) => update("display_welcome_size_px", v[0])} />
                     </div>
@@ -916,7 +924,7 @@ const EventLiveSettings = () => {
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <Label className="text-xs font-bold">{ui("الحجم (px)")}</Label>
-                        <span className="text-xs font-bold tabular-nums text-[#558B2F]">{form.display_thanks_size_px ?? 20}</span>
+                        <span className="text-xs font-bold tabular-nums text-[#558B2F]">{formatDisplayNumber(form.display_thanks_size_px ?? 20)}</span>
                       </div>
                       <Slider value={[form.display_thanks_size_px ?? 20]} min={12} max={42} step={1} onValueChange={(v) => update("display_thanks_size_px", v[0])} />
                     </div>
@@ -1010,7 +1018,7 @@ const EventLiveSettings = () => {
                     <div className="flex items-center justify-between">
                       <Label className="text-xs font-bold">{ui("مقدار الإزاحة (%)")}</Label>
                       <span className="text-xs font-bold tabular-nums text-[#558B2F]">
-                        {form.program_offset_pct ?? 22}%
+                        {formatDisplayNumber(form.program_offset_pct ?? 22)}%
                       </span>
                     </div>
                     <Slider
@@ -1259,7 +1267,7 @@ const EventLiveSettings = () => {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>{ui("شدّة الفينيت (إطار العمق)")}</Label>
-                <span className="text-xs font-bold text-[#558B2F] tabular-nums">{form.vignette_intensity ?? 18}%</span>
+                <span className="text-xs font-bold text-[#558B2F] tabular-nums">{formatDisplayNumber(form.vignette_intensity ?? 18)}%</span>
               </div>
               <Slider
                 value={[form.vignette_intensity ?? 18]}
@@ -1274,7 +1282,7 @@ const EventLiveSettings = () => {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>{ui("شفافية أعلى البطاقات")}</Label>
-                <span className="text-xs font-bold text-[#558B2F] tabular-nums">{form.card_top_opacity ?? 35}%</span>
+                <span className="text-xs font-bold text-[#558B2F] tabular-nums">{formatDisplayNumber(form.card_top_opacity ?? 35)}%</span>
               </div>
               <Slider
                 value={[form.card_top_opacity ?? 35]}
@@ -1289,7 +1297,7 @@ const EventLiveSettings = () => {
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label>{ui("شفافية أسفل البطاقات")}</Label>
-                <span className="text-xs font-bold text-[#558B2F] tabular-nums">{form.card_bottom_opacity ?? 75}%</span>
+                <span className="text-xs font-bold text-[#558B2F] tabular-nums">{formatDisplayNumber(form.card_bottom_opacity ?? 75)}%</span>
               </div>
               <Slider
                 value={[form.card_bottom_opacity ?? 75]}
@@ -1607,6 +1615,7 @@ const EventLiveSettings = () => {
           </Card>
         </div>
       </main>
+      </fieldset>
     </div>
   );
 };

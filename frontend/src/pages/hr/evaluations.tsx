@@ -26,11 +26,12 @@ import {
 } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 interface EvaluationRow {
@@ -52,6 +53,9 @@ interface EvaluationDetail {
 
 export function EvaluationsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('affairs.evaluations:create');
+  const canDelete = can('affairs.evaluations:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<EvaluationRow>('hr/evaluations', params);
   const { data: empOptions = [] } = useEmployeeOptions();
@@ -144,22 +148,24 @@ export function EvaluationsPage() {
           <Button variant="ghost" size="icon" aria-label={ui('عرض')} onClick={() => setDetailId(row.original.id)}>
             <Eye className="size-4" />
           </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={ui('حذف')}
-            onClick={async () => {
-              const ok = await confirm({
-                title: ui('حذف التقييم'),
-                description: ui('هل تريد حذف هذا التقييم؟'),
-                confirmLabel: ui('حذف'),
-                variant: 'destructive',
-              });
-              if (ok) deleteMutation.mutate(row.original.id);
-            }}
-          >
-            <Trash2 className="size-4 text-destructive" />
-          </Button>
+          {canDelete ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={ui('حذف')}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: ui('حذف التقييم'),
+                  description: ui('هل تريد حذف هذا التقييم؟'),
+                  confirmLabel: ui('حذف'),
+                  variant: 'destructive',
+                });
+                if (ok) deleteMutation.mutate(row.original.id);
+              }}
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          ) : null}
         </div>
       ),
     },
@@ -176,12 +182,15 @@ export function EvaluationsPage() {
         isError={isError}
         error={error}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('تقييم جديد')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCreate}>
+              <Plus className="size-4" /> {ui('تقييم جديد')}
+            </Button>
+          ) : undefined
         }
       >
         <DataTable
+          exportSource={{ resource: 'hr/evaluations', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -275,7 +284,7 @@ export function EvaluationsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
-            <Button onClick={() => void save()}>{ui('حفظ')}</Button>
+            <Button permissionAction="create" onClick={() => void save()}>{ui('حفظ')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

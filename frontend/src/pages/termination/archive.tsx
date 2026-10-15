@@ -17,11 +17,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 interface ArchiveRow {
@@ -33,6 +34,10 @@ interface ArchiveRow {
 
 export function ArchivePage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('termination.archive:create');
+  const canUpdate = can('termination.archive:update');
+  const canDelete = can('termination.archive:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<ArchiveRow>('termination/archive', params);
   const { data: empOptions = [] } = useEmployeeOptions();
@@ -52,12 +57,14 @@ export function ArchivePage() {
   );
 
   const openCreate = () => {
+    if (!canCreate) return;
     setEditId(null);
     setForm({ empId: '', fromDate: '', toDate: '' });
     setFormOpen(true);
   };
 
   const openEdit = async (row: ArchiveRow) => {
+    if (!canUpdate) return;
     setEditId(row.id);
     setForm({ empId: '', fromDate: row.title ?? '', toDate: row.createdAt ?? '' });
     setFormOpen(true);
@@ -74,6 +81,7 @@ export function ArchivePage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.empId || !form.fromDate || !form.toDate) {
       toast.error(ui('يرجى تعبئة جميع الحقول المطلوبة'));
       return;
@@ -114,12 +122,12 @@ export function ArchivePage() {
     {
       id: 'actions',
       header: ui('الإجراءات'),
-      cell: ({ row }) => (
+      cell: ({ row }) => !canUpdate && !canDelete ? null : (
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+          {canUpdate ? <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
             <Pencil className="size-4" />
-          </Button>
-          <Button
+          </Button> : null}
+          {canDelete ? <Button
             variant="ghost"
             size="icon"
             aria-label={ui('حذف')}
@@ -130,11 +138,11 @@ export function ArchivePage() {
                 confirmLabel: ui('حذف'),
                 variant: 'destructive',
               });
-              if (ok) deleteMutation.mutate(row.original.id);
+              if (ok && canDelete) deleteMutation.mutate(row.original.id);
             }}
           >
             <Trash2 className="size-4 text-destructive" />
-          </Button>
+          </Button> : null}
         </div>
       ),
     },
@@ -150,13 +158,14 @@ export function ArchivePage() {
         statsLoading={isLoading}
         isError={isError}
         error={error}
-        actions={
+        actions={canCreate ? (
           <Button variant="brand" size="sm" onClick={openCreate}>
             <Plus className="size-4" /> {ui('سجل جديد')}
           </Button>
-        }
+        ) : undefined}
       >
         <DataTable
+          exportSource={{ resource: 'termination/archive', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -173,7 +182,7 @@ export function ArchivePage() {
         />
       </ListPageShell>
 
-      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+      <Dialog open={formOpen && (editId ? canUpdate : canCreate)} onOpenChange={setFormOpen}>
         <DialogContent aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editId ? ui('تعديل سجل طي القيد') : ui('سجل طي قيد جديد')}</DialogTitle>
@@ -202,7 +211,7 @@ export function ArchivePage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
-            <Button onClick={() => void save()}>{ui('حفظ')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()}>{ui('حفظ')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

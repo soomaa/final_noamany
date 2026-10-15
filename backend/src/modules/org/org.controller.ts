@@ -4,6 +4,7 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { CreateDepartmentDto, UpdateDepartmentDto } from './dto/department.dto';
 import { CreateJobTitleDto, UpdateJobTitleDto } from './dto/job-title.dto';
 import { OrgService } from './org.service';
+import { HrScopeSafeLookup } from '../../common/hr-scope/hr-scope-safe-lookup.decorator';
 
 @UseGuards(JwtAuthGuard)
 @Controller('departments')
@@ -24,6 +25,12 @@ export class OrgController {
   // -------- Job titles (المسميات الوظيفية) — declared BEFORE the param routes
   // so static `job-titles/...` segments are not captured by `:id`. --------
   @Get('job-titles')
+  @HrScopeSafeLookup()
+  @RequiresPermission(
+    'org.departments:view',
+    'employees.list:create',
+    'employees.new:create',
+  )
   jobTitles() {
     return this.org.jobTitles();
   }

@@ -15,6 +15,7 @@ export interface EntitlementSubscriptionSnapshot {
   derivedStatus: string;
   startDate: string;
   endDate: string;
+  projectedEndDate?: string | null;
   remainingAmount: number;
   isTimeBased: boolean;
   timeFrom: string | null;
@@ -41,7 +42,10 @@ export interface EntitlementMemberSnapshot {
 }
 
 export interface EntitlementResult {
+  /** Last calendar day authorized on the offline gate controller. */
+  accessValidUntil?: string | null;
   allowed: boolean;
+  allowGraceSessions: boolean;
   member: EntitlementMemberSnapshot;
   activeSubscription: EntitlementSubscriptionSnapshot | null;
   /**
@@ -56,8 +60,6 @@ export interface EntitlementResult {
 export interface ValidateEntitlementOptions {
   memberId: number;
   branchId?: number;
-  /** Explicitly trusted operation branches (for configured club branch groups). */
-  branchIds?: number[];
   /** When set, validate/pick THIS subscription (reception chose it) instead of auto-picking. */
   subscriptionId?: number;
   at?: Date;

@@ -3,6 +3,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { cairoDateParts, cairoDateString } from '../../common/utils/cairo-date';
 import {
   CreateDailyReportDto,
   ListDailyReportsDto,
@@ -93,13 +94,12 @@ export class DailyReportsService {
 
     // legacy stamps send_date_ar / send_time at insert time.
     const now = new Date();
-    const sendDate = now.toISOString().slice(0, 10);
+    const sendDate = cairoDateString(now);
     const sendTime = now.toTimeString().slice(0, 5);
 
     // Derive the report period from the submit date so it can never contradict it;
     // an explicit forMonth/forYear (rare back-fill) still wins when provided.
-    const derivedMonth = now.getMonth() + 1;
-    const derivedYear = now.getFullYear();
+    const { month: derivedMonth, year: derivedYear } = cairoDateParts(now);
 
     const row = await this.prisma.hr_dialy_reports.create({
       data: {

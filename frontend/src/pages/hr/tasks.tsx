@@ -19,6 +19,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
@@ -75,6 +76,10 @@ const emptyForm = {
 
 export function TasksPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('affairs.tasks:create');
+  const canUpdate = can('affairs.tasks:update');
+  const canDelete = can('affairs.tasks:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<TaskRow>('tasks', params);
 
@@ -82,7 +87,7 @@ export function TasksPage() {
   const { data: employees = [] } = useQuery({
     queryKey: ['employees', 'lookup'],
     queryFn: async () => {
-      return fetchAllReportRows<EmployeeListItem>('/employees', { status: 1 }, 200);
+      return fetchAllReportRows<EmployeeListItem>('/employees', { status: '1' }, 200);
     },
     staleTime: 60_000,
   });
@@ -255,6 +260,7 @@ export function TasksPage() {
       cell: ({ row }) => {
         const r = row.original;
         const pending = (r.decision ?? 'wait') === 'wait';
+        if (!pending && !canUpdate && !canDelete) return null;
         return (
           <div className="flex gap-1">
             {pending && (
@@ -267,25 +273,29 @@ export function TasksPage() {
                 </Button>
               </>
             )}
-            <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => void openEdit(r)}>
-              <Pencil className="size-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={ui('حذف')}
-              onClick={async () => {
-                const ok = await confirm({
-                  title: ui('حذف المهمة'),
-                  description: ui('هل تريد حذف هذه المهمة وكل المكلّفين بها؟'),
-                  confirmLabel: ui('حذف'),
-                  variant: 'destructive',
-                });
-                if (ok) deleteMutation.mutate(r.id);
-              }}
-            >
-              <Trash2 className="size-4 text-destructive" />
-            </Button>
+            {canUpdate ? (
+              <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => void openEdit(r)}>
+                <Pencil className="size-4" />
+              </Button>
+            ) : null}
+            {canDelete ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={ui('حذف')}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: ui('حذف المهمة'),
+                    description: ui('هل تريد حذف هذه المهمة وكل المكلّفين بها؟'),
+                    confirmLabel: ui('حذف'),
+                    variant: 'destructive',
+                  });
+                  if (ok) deleteMutation.mutate(r.id);
+                }}
+              >
+                <Trash2 className="size-4 text-destructive" />
+              </Button>
+            ) : null}
           </div>
         );
       },
@@ -303,9 +313,11 @@ export function TasksPage() {
         isError={isError}
         error={error}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('مهمة جديدة')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCreate}>
+              <Plus className="size-4" /> {ui('مهمة جديدة')}
+            </Button>
+          ) : undefined
         }
       >
         <div className="mb-4 max-w-xs">
@@ -318,6 +330,7 @@ export function TasksPage() {
           />
         </div>
         <DataTable
+          exportSource={{ resource: 'tasks', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -383,7 +396,7 @@ export function TasksPage() {
             <div>
               <div className="flex items-center justify-between">
                 <Label>{ui('المكلّفون')}</Label>
-                <Button type="button" variant="outline" size="sm" onClick={addMokalfa}>
+                <Button permissionAction={null} type="button" variant="outline" size="sm" onClick={addMokalfa}>
                   <Plus className="size-4" /> {ui('إضافة مكلّف')}
                 </Button>
               </div>
@@ -411,7 +424,7 @@ export function TasksPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
-            <Button disabled={saving} onClick={() => void save()}>{ui('حفظ')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} disabled={saving} onClick={() => void save()}>{ui('حفظ')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

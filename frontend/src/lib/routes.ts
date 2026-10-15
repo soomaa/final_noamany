@@ -8,16 +8,16 @@ export function resolveRoute(legacyLink: string | null | undefined): string {
 
   const mappings: [string[], string][] = [
     // Permissions — specific status routes first
-    [['all_ozonat/wared'], '/permissions?mode=wared'],
-    [['all_ozonat/accept'], '/permissions?mode=accept'],
-    [['all_ozonat/reject'], '/permissions?mode=reject'],
+    [['all_ozonat/wared'], '/permissions?status=incoming'],
+    [['all_ozonat/accept'], '/permissions?status=approved'],
+    [['all_ozonat/reject'], '/permissions?status=rejected'],
     [['request_ozonat_data'], '/permissions?mode=tracking'],
     [['all_ozonat', 'ezn_order'], '/permissions'],
 
     // Leaves — specific status routes first
-    [['all_agazat/wared'], '/leaves?mode=wared'],
-    [['all_agazat/accept'], '/leaves?mode=accept'],
-    [['all_agazat/reject'], '/leaves?mode=reject'],
+    [['all_agazat/wared'], '/leaves?status=incoming'],
+    [['all_agazat/accept'], '/leaves?status=approved'],
+    [['all_agazat/reject'], '/leaves?status=rejected'],
     [['request_vacation_data'], '/leaves?mode=tracking'],
     [['vacation/all_agazat', 'all_agazat/vacation'], '/leaves'],
 
@@ -40,7 +40,6 @@ export function resolveRoute(legacyLink: string | null | undefined): string {
     [['get_agzat_dayes_data'], '/employees/weekly-leaves'],
     [['job_setting', 'forms_settings'], '/settings/forms'],
     [['egraat_emp_data'], '/hr/action-screen'],
-    [['egraat_settings/settings', 'add_setting'], '/hr/gym-rates'],
     [['evaluation_employee', 'add_taqeem'], '/hr/evaluations'],
     [['custody_new', 'custody'], '/hr/custody'],
     [['ehtyag_request', 'job_request', 'talb_tawzef'], '/hr/job-requests'],
@@ -63,7 +62,6 @@ export function resolveRoute(legacyLink: string | null | undefined): string {
 
     // HR settings (general)
     [['employee_settings', 'setting_new'], '/settings/pay-components'],
-    [['egraat_settings'], '/hr/gym-rates'],
 
     // Attendance / shifts
     [['dwam_settings', 'add_dwam_setting'], '/attendance/settings'],
@@ -82,8 +80,7 @@ export function resolveRoute(legacyLink: string | null | undefined): string {
     [['all_gazaat', 'gazaat', 'penalty', 'jaza'], '/penalties'],
 
     // Payroll
-    [['period_zeyzda'], '/payroll/increases/report'],
-    [['add_zeyzda', 'zeyzda_rateb'], '/payroll/increases'],
+    [['add_zeyzda', 'period_zeyzda', 'zeyzda_rateb'], '/payroll/setup'],
     [['employee_salaries', 'payroll', 'salary', 'mosayer'], '/payroll/runs'],
     [['payroll_setup', 'salary_setup'], '/payroll/setup'],
 

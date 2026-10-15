@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { withDryRun } from '../../common/preview/dry-run.util';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BulkReplaceInsuranceDto } from './dto/insurance-settings.dto';
+import { cairoDateString, dateOnlyEpochSeconds } from '../../common/utils/cairo-date';
 
 @Injectable()
 export class InsuranceSettingsService {
@@ -56,7 +57,7 @@ export class InsuranceSettingsService {
       });
 
       const now = Math.floor(Date.now() / 1000);
-      const midnight = Math.floor(new Date(new Date().toDateString()).getTime() / 1000);
+      const midnight = dateOnlyEpochSeconds(cairoDateString());
 
       let count = 0;
       for (const c of catalog) {

@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useQuery } from '@tanstack/react-query';
 import { PageHeader } from '@/components/common/page-header';
 import { StatusBadge } from '@/components/common/status-badge';
@@ -6,9 +7,12 @@ import { api } from '@/lib/api';
 import { toast } from 'sonner';
 import { useLocale } from '@/store/locale';
 import type { AutomationWorkflow, StaffTask } from '@/types/gym-ops';
+import { usePermission } from '@/hooks/use-permission';
 
 export function AutomationPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canConfigure = can('admin.automation:configure');
   const { data: workflows, refetch: refetchWf } = useQuery({
     queryKey: ['automation-workflows'],
     queryFn: async () => {
@@ -28,12 +32,14 @@ export function AutomationPage() {
   });
 
   const toggle = async (id: number, active: boolean) => {
+    if (!canConfigure) return;
     await api.patch(`/club/automation/workflows/${id}/toggle`, null, { params: { active: String(active) } });
     toast.success(active ? ui('تم التفعيل') : ui('تم الإيقاف'));
     void refetchWf();
   };
 
   const completeTask = async (id: number) => {
+    if (!canConfigure) return;
     await api.patch(`/club/automation/tasks/${id}/status`, null, { params: { status: 'completed' } });
     toast.success(ui('تم إغلاق المهمة'));
     void refetchTasks();
@@ -55,18 +61,18 @@ export function AutomationPage() {
                 <div>
                   <p className="font-medium">{wf.nameAr}</p>
                   <p className="text-xs text-muted-foreground">{wf.triggerType}</p>
-                  <p className="mt-1 text-xs text-muted-foreground nums">{wf.runsCount} {ui('تنفيذ')}</p>
+                  <p className="mt-1 text-xs text-muted-foreground nums">{formatDisplayNumber(wf.runsCount)} {ui('تنفيذ')}</p>
                 </div>
                 <StatusBadge status={wf.isActive ? 'active' : 'suspended'} />
               </div>
-              <Button
+              {canConfigure ? <Button
                 className="mt-3"
                 size="sm"
                 variant="outline"
                 onClick={() => void toggle(wf.id, !wf.isActive)}
               >
                 {wf.isActive ? ui('إيقاف') : ui('تفعيل')}
-              </Button>
+              </Button> : null}
             </div>
           ))}
         </div>
@@ -84,9 +90,9 @@ export function AutomationPage() {
                 <p className="font-medium">{t.title}</p>
                 <p className="text-xs text-muted-foreground">{t.taskType} · {t.priority}</p>
               </div>
-              <Button size="sm" variant="outline" onClick={() => void completeTask(t.id)}>
+              {canConfigure ? <Button size="sm" variant="outline" onClick={() => void completeTask(t.id)}>
                 {ui('إتمام')}
-              </Button>
+              </Button> : null}
             </div>
           ))}
         </div>

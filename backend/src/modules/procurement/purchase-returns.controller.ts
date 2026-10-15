@@ -24,7 +24,7 @@ import { PurchaseReturnsService } from './purchase-returns.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('purchase-returns')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.cafe_purchases:view')
 export class PurchaseReturnsController {
   constructor(private readonly service: PurchaseReturnsService) {}
 
@@ -39,13 +39,13 @@ export class PurchaseReturnsController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.procurement:create')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:create')
   create(@Body() body: UpsertPurchaseReturnDto, @CurrentUser('sub') userId: number) {
     return this.service.create(body, userId);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertPurchaseReturnDto>,
@@ -54,7 +54,7 @@ export class PurchaseReturnsController {
   }
 
   @Patch(':id/status')
-  @RequiresPermission('gym-sales.procurement:approve')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:approve')
   changeStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: ChangePurchaseReturnStatusDto,
@@ -65,7 +65,7 @@ export class PurchaseReturnsController {
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.procurement:delete')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

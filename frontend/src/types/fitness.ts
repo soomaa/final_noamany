@@ -58,6 +58,7 @@ export interface MemberProgressRow extends MemberRowFields {
 export interface InbodyMeasurementRow extends MemberRowFields {
   id: number;
   memberId: number;
+  branchId: number | null;
   measurementDate: string;
   weight: number | null;
   heightCm: number | null;
@@ -66,6 +67,49 @@ export interface InbodyMeasurementRow extends MemberRowFields {
   bmi: number | null;
   notes: string | null;
   reportUrl?: string | null;
+  settlementSource: 'subscription' | 'package' | 'package_purchase' | 'paid_single' | 'legacy';
+  subscriptionId: number | null;
+  entitlementId: number | null;
+  invoiceId: number | null;
+}
+
+export interface InbodyOffer {
+  id: number;
+  name: string;
+  description?: string | null;
+  price: number;
+  measurementCount: number;
+  validityDays: number | null;
+  branchId: number;
+  isActive?: boolean;
+}
+
+export interface InbodyBalance {
+  id: number;
+  source: 'subscription' | 'package';
+  label: string;
+  remaining: number;
+  expiresAt: string | null;
+}
+
+export interface InbodyMemberContext {
+  member: {
+    id: number;
+    memberCode: string;
+    name: string;
+    branchId: number;
+  };
+  totalRemaining: number;
+  hasActiveMembership: boolean;
+  allowWithoutActiveMembership: boolean;
+  balances: InbodyBalance[];
+  offers: InbodyOffer[];
+}
+
+export interface InbodyBranchSettings {
+  branchId: number;
+  allowWithoutActiveMembership: boolean;
+  offers: InbodyOffer[];
 }
 
 export interface PhysicalAssessmentRow extends MemberRowFields {
@@ -76,6 +120,9 @@ export interface PhysicalAssessmentRow extends MemberRowFields {
   scoresJson: unknown;
   notes: string | null;
 }
+
+/** Who a class slot / session is for. */
+export type ClassAudience = 'men' | 'women' | 'kids' | 'mixed';
 
 export interface ClubClassRow {
   id: number;
@@ -92,6 +139,7 @@ export interface ClubClassRow {
   maxCapacity: number;
   price: number;
   status: FitnessClassStatus;
+  audience?: ClassAudience;
   notes: string | null;
   isActive: boolean;
   enrollmentCount: number;
@@ -123,6 +171,7 @@ export interface ClubClassScheduleSlot {
   trainerId: number | null;
   maxCapacity: number;
   price: number;
+  audience?: ClassAudience;
   trainer?: { id: number; name: string } | null;
   hall?: { id: number; name: string; hallNumber: string } | null;
 }
@@ -137,10 +186,14 @@ export interface ClubTrainerScheduleSlot {
   branchId: number;
   hallId: number | null;
   maxCapacity: number;
+  audience?: ClassAudience;
   hall?: { id: number; name: string; hallNumber: string } | null;
 }
 
 export interface ClubClassType {
+  allowExternal?: boolean;
+  linkedSubscriptionTypeIds?: number[];
+  commissionPercentage?: number | null;
   id: number;
   name: string;
   color: string;
@@ -158,6 +211,15 @@ export interface ClubClassType {
 }
 
 export interface ClassManagementReports {
+  sessionHistory?: Array<{
+    id: number; className: string; classDate: string; startTime: string; endTime: string;
+    trainerId: number; trainerName: string; status: string; percentage: number;
+    attendance: number; revenue: number; commission: number; unresolvedValues: number;
+    attendees: Array<{ enrollmentId: number; memberId: number; memberName: string;
+      subscriptionNumber: string | null; subscriptionType: string | null;
+      packageValue: number | null; packageSessions: number | null; sessionValue: number | null;
+      percentage: number; commission: number | null; historicalEstimate: boolean }>;
+  }>;
   summary: { sessions: number; attendance: number; demand: number; revenue: number };
   classTypes: Array<{
     classTypeId: number | null;
@@ -235,8 +297,14 @@ export interface ClubTrainerRow {
   email: string | null;
   phone: string | null;
   specialization: string | null;
+  /** `specialization` split into chips; the list the member app renders. */
+  specializations?: string[];
+  /** Reception/calendar chip colour (#RRGGBB); null falls back to a derived colour. */
+  color: string | null;
   experience: string | null;
   bio: string | null;
+  /** Opaque public upload reference (`public-file:<id>`) of the trainer portrait. */
+  imageUrl?: string | null;
   ratingAvg: number;
   isActive: boolean;
 }
@@ -278,6 +346,94 @@ export interface ClubTrainerDetails {
   }>;
 }
 
+export interface TrainerCommissionTier {
+  id?: number;
+  minAchievementPct: number;
+  maxAchievementPct: number | null;
+  commissionPercent: number;
+  label?: string | null;
+}
+
+export interface TrainerWorkspaceRating {
+  id: number;
+  trainerId: number;
+  attendanceId?: number | null;
+  memberId: number | null;
+  memberName?: string | null;
+  rating: number;
+  comment: string | null;
+  createdAt: string;
+}
+
+export interface TrainerEarningPayment {
+  id: number;
+  trainerId: number;
+  amount: number;
+  paymentDate: string;
+  periodFrom: string | null;
+  periodTo: string | null;
+  notes: string | null;
+}
+
+export interface TrainerWorkspace {
+  trainer: ClubTrainerRow;
+  stats: {
+    sessions: number;
+    uniqueMembers: number;
+    attendance: number;
+    revenue: number;
+    target: number;
+    targetUnit: 'members' | 'money';
+    achievementPct: number;
+    commissionPercent: number;
+    earned: number;
+    paid: number;
+    remaining: number;
+    overpaid: number;
+    ratingAvg: number;
+    ratingCount: number;
+  };
+  activeSalary: ClubTrainerSalaryRow | null;
+  commissionSetting: {
+    employeeId: number;
+    trainerId: number | null;
+    targetUnit: 'members' | 'money';
+    baseTarget: number;
+    commissionMode: 'attendance' | 'tiered' | 'combined';
+    privateCommissionMode: 'salary' | 'fixed';
+    privateCommissionPercent: number;
+    targetPeriodMode: 'monthly' | 'custom' | 'days';
+    targetStartDate: string | null;
+    targetEndDate: string | null;
+    targetDays: number | null;
+    currentCycle?: import('@/lib/sales-commission').TargetCycle;
+    tiers: TrainerCommissionTier[];
+  } | null;
+  classes: ClubTrainerDetails['classes'];
+  payments: TrainerEarningPayment[];
+  ratings: TrainerWorkspaceRating[];
+  ratingDistribution: Record<'1' | '2' | '3' | '4' | '5', number>;
+  currentCycle: import('@/lib/sales-commission').TargetCycle;
+}
+
+export type TrainerPerformanceRow = TrainerWorkspace['stats'] & {
+  trainerId: number;
+  name: string;
+  specialization: string | null;
+  isActive: boolean;
+};
+
+export interface TrainerPerformanceResponse {
+  data: TrainerPerformanceRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  dateFrom: string;
+  dateTo: string;
+  totals: Pick<TrainerPerformanceRow, 'sessions' | 'revenue' | 'earned' | 'paid' | 'remaining' | 'ratingAvg'>;
+}
+
+
 export interface ClubFacilityRow {
   id: number;
   name: string;
@@ -290,6 +446,7 @@ export interface ClubFacilityRow {
 }
 
 export interface ClubEquipmentRow {
+  imageUrl?: string | null;
   id: number;
   facilityId: number | null;
   name: string;
@@ -357,30 +514,6 @@ export interface ClubSpaBookingRow extends MemberRowFields {
   service?: { id: number; name: string; price: number; duration: number };
 }
 
-export interface ClubSpaAttendanceRow extends MemberRowFields {
-  id: number;
-  memberId: number;
-  memberCode: string;
-  memberName: string;
-  branchId: number | null;
-  subscriptionId: number;
-  attendanceDate: string;
-  checkInTime: string;
-  createdAt: string;
-}
-
-export interface ClubClassAttendanceRow extends MemberRowFields {
-  id: number;
-  memberId: number;
-  classId: number;
-  className: string;
-  classType: { id: number; name: string; color: string } | null;
-  branchId: number;
-  classDate: string;
-  attendanceTime: string | null;
-  subscriptionId: number | null;
-}
-
 export interface ClubInbodyInvoiceRow extends MemberRowFields {
   id: number;
   invoiceNumber: string;
@@ -397,4 +530,87 @@ export interface ClubInbodyInvoiceRow extends MemberRowFields {
   paymentMethod: string | null;
   subscriptionId: number | null;
   coveredBySubscription: boolean;
+}
+
+/** Daily booking board — captains as columns, the clock as rows. */
+export interface BookingBoardMember {
+  memberId: number;
+  memberName: string | null;
+  memberCode: string | null;
+  memberPhone: string | null;
+  memberGender: string | null;
+  memberProfilePicture: string | null;
+  attendanceStatus: string;
+  bookingSource: string;
+}
+
+export interface BookingBoardEntry {
+  kind: 'booked' | 'free';
+  startTime: string;
+  endTime: string;
+  durationMinutes: number;
+  branchId: number;
+  classTypeId: number | null;
+  className: string;
+  color: string;
+  hallId: number | null;
+  hallName: string | null;
+  maxCapacity: number;
+  enrollmentCount: number;
+  remainingSeats: number;
+  bookable: boolean;
+  price: number;
+  classId?: number;
+  status?: FitnessClassStatus;
+  members?: BookingBoardMember[];
+  templateSlotId?: number;
+}
+
+export interface BookingBoardTrainer {
+  trainerId: number;
+  trainerName: string;
+  imageUrl: string | null;
+  specialization: string | null;
+  entries: BookingBoardEntry[];
+  bookedSessions: number;
+  freeSlots: number;
+  bookedSeats: number;
+  capacity: number;
+  firstFreeTime: string | null;
+}
+
+export interface BookingBoardBranch {
+  branchId: number;
+  branchName: string;
+  parentId: number;
+  bookedSessions: number;
+  freeSlots: number;
+  bookedSeats: number;
+  trainers: number;
+}
+
+export interface BookingBoardDay {
+  date: string;
+  weekday: number;
+  isPastDate: boolean;
+  axis: { startTime: string; endTime: string; slotMinutes: number };
+  branches: BookingBoardBranch[];
+  trainers: BookingBoardTrainer[];
+  summary: {
+    trainers: number;
+    bookedSessions: number;
+    freeSlots: number;
+    bookedSeats: number;
+    capacity: number;
+  };
+}
+
+export interface BookingBoardTarget {
+  trainerId: number;
+  trainerName: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  branchId: number;
+  entry?: BookingBoardEntry;
 }

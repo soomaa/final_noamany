@@ -1,0 +1,2620 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum YesNo {
+  yes
+  no
+}
+
+enum HaletKafala {
+  kafala
+  ajeer
+  zeyara
+  other
+  saudi
+  eqama
+}
+
+enum TaskenType {
+  alone
+  family
+}
+
+enum No3Emp {
+  eshraf
+  schools
+}
+
+enum WazefaType {
+  moder
+  emp
+}
+
+enum HdoorTtype {
+  hdoor
+  ensraf
+  Out
+}
+
+enum TasgelType {
+  automatic
+  manual
+}
+
+enum BookingStatus {
+  Aktif
+  Nonaktif
+}
+
+enum RbacResourceType {
+  module
+  group
+  page
+}
+
+enum RbacEffect {
+  allow
+  deny
+}
+
+enum RbacDataScope {
+  own
+  team
+  branch
+  department
+  global
+}
+
+model all_defined_setting {
+  defined_id         Int    @id @default(autoincrement())
+  defined_title      String @db.VarChar(255)
+  defined_type       Int
+  defined_type_title String @db.VarChar(255) // e.g. allowances/deduction/type_contract/job_role
+  in_order           String @default("0") @db.VarChar(255) // numeric-as-string
+  @@map("all_defined_setting")
+}
+
+model api_users {
+  user_id    Int     @id @default(autoincrement())
+  user_name  String? @db.VarChar(100)
+  user_phone String? @db.VarChar(20)
+  user_email String? @db.VarChar(70)
+  user_city  String? @db.VarChar(100)
+  user_pass  String? @db.VarChar(500)
+  status     Int     @default(0) // tinyint: 0=inactive,1=active
+  rand_key   Int?
+  m_image    String? @db.Text
+  employees employees[]
+  @@map("api_users")
+}
+
+model attendance_channels {
+  id      Int     @id @default(autoincrement())
+  key     String  @unique @db.VarChar(20) // device | app | gps | qr | nfc | face
+  enabled Int     @default(1) @db.TinyInt
+  label   String? @db.VarChar(50)
+  @@map("attendance_channels")
+}
+
+model attendance_device_events {
+  id                   BigInt             @id @default(autoincrement())
+  device_id            Int
+  provider_event_id    String             @db.VarChar(120)
+  employee_code        Int
+  occurred_at          DateTime           @db.DateTime(3)
+  event_type           String             @db.VarChar(8)
+  payload_hash         String             @db.Char(64)
+  status               String             @default("received") @db.VarChar(16)
+  attendance_record_id Int?
+  error_code           String?            @db.VarChar(60)
+  received_at          DateTime           @default(now()) @db.DateTime(3)
+  processed_at         DateTime?          @db.DateTime(3)
+  device               attendance_devices @relation(fields: [device_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_attendance_device_events_device")
+  @@unique([device_id, provider_event_id], map: "uq_attendance_device_provider_event")
+  @@index([device_id, occurred_at], map: "idx_attendance_device_events_occurred")
+  @@index([status, received_at], map: "idx_attendance_device_events_status")
+  @@map("attendance_device_events")
+}
+
+model attendance_devices {
+  id                    Int                        @id @default(autoincrement())
+  title                 String?                    @db.VarChar(150)
+  ip                    String?                    @db.VarChar(50)
+  branch_id_fk          Int?
+  last_sync             String?                    @db.VarChar(30) // date-time string
+  status                String?                    @db.VarChar(20) // online | offline
+  created_at            String?                    @db.VarChar(30)
+  updated_at            String?                    @db.VarChar(30)
+  credential_hash       String?                    @db.Char(64)
+  credential_rotated_at DateTime?                  @db.DateTime(3)
+  events                attendance_device_events[]
+  @@map("attendance_devices")
+}
+
+model attendance_rules {
+  id         Int     @id @default(autoincrement())
+  key        String  @unique @db.VarChar(50) // late | early_leave | absence | overtime | weekly_rest | holidays | flexible_hours
+  enabled    Int     @default(1) @db.TinyInt
+  threshold  String? @db.VarChar(20)
+  grace_min  String? @db.VarChar(20)
+  multiplier String? @db.VarChar(20)
+  @@map("attendance_rules")
+}
+
+model bank_employes_details {
+  id                    Int     @id @default(autoincrement())
+  emp_code              Int     @default(0) // FK-by-convention -> employees.emp_code
+  bank_id_fk            Int     @default(0) // -> banks / banks_settings
+  bank_account_num      String  @default("0") @db.VarChar(255)
+  bank_code             String? @db.VarChar(10)
+  approved_for_sarf     Int     @default(0) @db.TinyInt // bool (approved for payout)
+  bank_id_fk_image      String? @default("0") @db.VarChar(700)
+  emp_bank_name         String? @db.VarChar(70)
+  past_bank_id_fk       Int?
+  past_bank_account_num String? @db.VarChar(200)
+  past_bank_id_fk_image String? @db.VarChar(200)
+  attachment            String? @db.VarChar(200)
+  past_attachment       String? @db.VarChar(200)
+  @@map("bank_employes_details")
+}
+
+model banks {
+  id        Int    @id @default(autoincrement())
+  bank_name String @db.VarChar(255)
+  @@map("banks")
+}
+
+model branch_settings {
+  id       Int     @id @default(autoincrement())
+  title    String  @db.VarChar(255)
+  from_id  Int // parent
+  lat_map  String? @db.VarChar(200)
+  long_map String? @db.VarChar(200)
+  @@map("branch_settings")
+}
+
+model business_audit_log {
+  id             Int      @id @default(autoincrement())
+  entity_type    String   @db.VarChar(60)
+  entity_id      String   @db.VarChar(60)
+  action         String   @db.VarChar(60)
+  actor_user_id  Int?
+  actor_name     String?  @db.VarChar(150)
+  branch_id      Int?
+  before_json    Json?
+  after_json     Json?
+  changed_fields Json?
+  reason         String?  @db.Text
+  ip_address     String?  @db.VarChar(45)
+  correlation_id String?  @db.VarChar(64)
+  created_at     DateTime @default(now())
+  @@index([entity_type, entity_id])
+  @@index([created_at])
+  @@index([actor_user_id])
+  @@index([branch_id])
+  @@index([correlation_id])
+  @@map("business_audit_log")
+}
+
+model cities {
+  id         Int    @id @default(autoincrement())
+  name       String @db.VarChar(300)
+  from_id_fk Int    @default(0) // self-ref parent (FK-by-convention)
+  in_order   String @default("0") @db.VarChar(255) // numeric-as-string sort order
+  @@map("cities")
+}
+
+model conf_company_data {
+  id_config            Int           @id @default(autoincrement())
+  nameweb              String        @db.VarChar(200)
+  abbreviation_name    String?       @db.VarChar(255)
+  slogan               String?       @db.VarChar(200)
+  summary_company      String?       @db.Text
+  deskripsi            String?       @db.Text
+  website              String?       @db.VarChar(255) // latin1
+  email                String?       @db.VarChar(255) // latin1
+  email_cadangan       String?       @db.VarChar(255) // latin1
+  address              String?       @db.Text
+  telepon              String?       @db.VarChar(50) // latin1
+  hp                   String?       @db.VarChar(50) // latin1
+  fax                  String?       @db.VarChar(50) // latin1
+  logo                 String?       @db.VarChar(255) // latin1
+  icon                 String?       @db.VarChar(255) // latin1
+  footer               String?       @db.VarChar(255) // latin1
+  keywords             String?       @db.VarChar(400)
+  metatext             String?       @db.Text
+  facebook             String?       @db.VarChar(255) // latin1
+  twitter              String?       @db.VarChar(255) // latin1
+  instagram            String?       @db.VarChar(255) // latin1
+  google_plus          String?       @db.VarChar(255) // latin1
+  google_map           String?       @db.Text // latin1
+  judul_1              String?       @db.VarChar(200) // latin1
+  pesan_1              String?       @db.VarChar(200) // latin1
+  judul_2              String?       @db.VarChar(200) // latin1
+  pesan_2              String?       @db.VarChar(200) // latin1
+  judul_3              String?       @db.VarChar(200) // latin1
+  pesan_3              String?       @db.VarChar(200) // latin1
+  judul_4              String?       @db.VarChar(200) // latin1
+  pesan_4              String?       @db.VarChar(200) // latin1
+  judul_5              String?       @db.VarChar(200) // latin1
+  pesan_5              String        @db.VarChar(200) // latin1 NOT NULL
+  judul_6              String?       @db.VarChar(200) // latin1
+  pesan_6              String        @db.VarChar(200) // latin1 NOT NULL
+  isi_1                String?       @db.VarChar(500) // latin1
+  isi_2                String?       @db.VarChar(500) // latin1
+  isi_3                String?       @db.VarChar(500) // latin1
+  isi_4                String?       @db.VarChar(500) // latin1
+  isi_5                String?       @db.VarChar(500) // latin1
+  isi_6                String?       @db.VarChar(500) // latin1
+  link_1               String?       @db.VarChar(255) // latin1
+  link_2               String?       @db.VarChar(255) // latin1
+  link_3               String?       @db.VarChar(255) // latin1
+  link_4               String?       @db.VarChar(255) // latin1
+  link_5               String?       @db.VarChar(255) // latin1
+  link_6               String?       @db.VarChar(255) // latin1
+  javawebmedia         String?       @db.Text // latin1
+  gambar               String?       @db.VarChar(255) // latin1
+  video                String?       @db.VarChar(255) // latin1
+  rekening             String?       @db.Text // latin1
+  gambar_berita        String?       @db.VarChar(255) // latin1
+  status_form_booking  BookingStatus // enum('Aktif','Nonaktif') latin1, NOT NULL
+  max_room_booking     Int?
+  nama_direktur        String?       @db.VarChar(255) // latin1
+  jabatan              String?       @db.VarChar(255) // latin1
+  stempel_tanda_tangan String?       @db.VarChar(255) // latin1
+  protocol             String        @db.VarChar(255) // latin1 NOT NULL
+  smtp_host            String        @db.VarChar(255) // latin1 NOT NULL
+  smtp_port            Int
+  smtp_timeout         Int
+  smtp_user            String        @db.VarChar(255) // latin1 NOT NULL
+  smtp_pass            String        @db.VarChar(255) // latin1 NOT NULL
+  id_user              Int
+  tanggal              DateTime      @default(now()) @updatedAt @db.Timestamp(0)
+  image                String?       @db.VarChar(300)
+  max_num              Int?
+  @@map("conf_company_data")
+}
+
+model contract_employe {
+  id                        Int     @id @default(autoincrement())
+  emp_code                  String  @default("0") @db.VarChar(255) // FK-by-convention (varchar)
+  num_days_in_month         String  @default("0") @db.VarChar(255)
+  hours_work                String  @default("0") @db.VarChar(255)
+  hour_value                String  @default("0") @db.VarChar(255)
+  work_period_id_fk         String  @default("0") @db.VarChar(255)
+  contract_nature           Int     @default(0)
+  job_type                  String  @default("0") @db.VarChar(255)
+  pay_method_id_fk          String  @default("0") @db.VarChar(255)
+  bank_id_fk                String  @default("0") @db.VarChar(255)
+  bank_code                 String  @default("255") @db.VarChar(255)
+  bank_account_num          String  @default("0") @db.VarChar(255)
+  year_vacation_num         String  @default("0") @db.VarChar(255)
+  year_vacation_period      String  @default("0") @db.VarChar(255)
+  casual_vacation_num       String  @default("0") @db.VarChar(255)
+  travel_ticket             String  @default("0") @db.VarChar(255)
+  travel_type_fk            String  @default("0") @db.VarChar(255)
+  travel_period             String  @default("0") @db.VarChar(255)
+  reward_end_work           Int     @default(0) @db.TinyInt // bool
+  vacation_previous_balance Float
+  vacation_start_ar         String  @db.VarChar(255) // date-string
+  vacation_start_m          String? @db.VarChar(15) // date-string Gregorian
+  vacation_start_h          String? @db.VarChar(15) // date-string Hijri
+  travel_type_name          String? @db.VarChar(30)
+  @@unique([emp_code])
+  @@map("contract_employe")
+}
+
+model custody_devices {
+  id      Int     @id @default(autoincrement())
+  title   String? @db.VarChar(300)
+  from_id Int?    @default(0)
+  level   Int?
+  @@map("custody_devices")
+}
+
+model department_jobs {
+  id         Int     @id @default(autoincrement())
+  name       String  @db.VarChar(255)
+  from_id_fk Int     @default(0) // parent job/dept (self-ref FK-by-convention)
+  status     Int     @default(0)
+  in_order   String  @default("0") @db.VarChar(255) // numeric-as-string
+  dep_code   Int?
+  edara_id   Int? // -> hr_edarat_aqsam / departments
+  is_trainer Boolean @default(false)
+  @@map("department_jobs")
+}
+
+model departments {
+  id            Int    @id @default(autoincrement())
+  main_dep_name String @db.VarChar(255)
+  main_dep_f_id String @db.VarChar(255) // parent id as string
+  sub_dep_name  String @db.VarChar(255)
+  detail        String @db.VarChar(255)
+  type          Int    @db.TinyInt
+  suspend       Int    @db.TinyInt // bool
+  date          String @db.VarChar(255) // date-string
+  date_s        String @db.VarChar(255) // date-string
+  publisher     String @db.VarChar(255)
+  deleted       Int    @default(1) @db.TinyInt // soft-delete (VERIFY polarity: 1 likely = active)
+  @@map("departments")
+}
+
+model document_number_series {
+  series_key String   @id @db.VarChar(80)
+  next_value BigInt
+  updated_at DateTime @updatedAt @db.DateTime(3)
+  @@map("document_number_series")
+}
+
+model emp_custody {
+  id            Int     @id @default(autoincrement())
+  emp_code      Int?
+  custody_id_fk Int?
+  custody_title String? @db.VarChar(255)
+  num           Int?
+  status        Int?
+  date_recived  String? @db.VarChar(255)
+  transfered    Int?
+  @@map("emp_custody")
+}
+
+model emp_custody_transfer_operations {
+  id              Int    @id @default(autoincrement())
+  custody_id_fk   Int
+  from_emp_code   Int
+  to_emp_code     Int
+  date            Int
+  date_ar         String @db.VarChar(20)
+  date_s          Int
+  publisher       String @db.VarChar(100)
+  @@index([custody_id_fk])
+  @@index([from_emp_code])
+  @@index([to_emp_code])
+  @@map("emp_custody_transfer_operations")
+}
+
+model emp_files {
+  id          Int     @id @default(autoincrement())
+  emp_id      Int? // -> employees.id (safe relation)
+  emp_code    String  @default("0") @db.VarChar(255) // FK-by-convention (varchar)
+  title       String  @db.VarChar(400)
+  emp_file    String  @db.Text // path
+  tanbih_fk   Int?    @db.TinyInt // alert flag
+  period      Int?    @db.TinyInt
+  have_date   Int     @default(0) @db.TinyInt // bool
+  from_date   String? @db.VarChar(15) // date-string
+  from_date_h String? @db.VarChar(15) // date-string Hijri
+  to_date     String? @db.VarChar(15) // date-string
+  to_date_h   String? @db.VarChar(15) // date-string Hijri
+  employee employees? @relation(fields: [emp_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@index([emp_id])
+  @@map("emp_files")
+}
+
+model employees {
+  id                      Int         @id @default(autoincrement())
+  employee                String?     @db.VarChar(200) // full name
+  emp_code                Int? // BUSINESS KEY
+  branch_id_fk            Int? // -> tbl_branches.branch_id
+  emp_code_g              Int?
+  socity_branch_id_fk     Int? // -> socity_branch (all NULL in data)
+  branche_work_id_fk      Int?
+  branche_sub_work_id_fk  Int?
+  emp_type                Int         @default(1) @db.TinyInt
+  card_num                BigInt?     @default(0)
+  demo_card               String      @db.VarChar(15) // NOT NULL no default (HAZARD)
+  gender                  Int?        @db.TinyInt
+  f2a_contract            Int?
+  cat_manager_id_fk       String?     @db.VarChar(255)
+  insurance_number        Int?
+  city_id_fk              Int? // -> cities / tbl_city
+  hai_id_fk               Int? // district
+  street_name             String?     @db.VarChar(255)
+  bank                    Int?        @db.TinyInt
+  bank_num                String?     @db.VarChar(255)
+  status                  Int?        @db.TinyInt
+  phone                   String?     @db.VarChar(20)
+  administration          Int?
+  department              String?     @db.VarChar(100)
+  degree_id               String?     @db.VarChar(100)
+  contract                String?     @db.VarChar(100)
+  personal_photo          String?     @db.VarChar(200)
+  emp_sign                String?     @db.VarChar(255)
+  birth_date              String?     @db.VarChar(255) // date-string
+  birth_date_m            String?     @db.VarChar(30) // date-string Gregorian
+  birth_date_h            String?     @db.VarChar(30) // date-string Hijri
+  type_card               String?     @db.VarChar(100)
+  dest_card               String?     @db.VarChar(100)
+  passport_number         String?     @db.VarChar(50)
+  date_start_passport     String?     @db.VarChar(50) // date-string
+  date_end_passport       String?     @db.VarChar(50) // date-string
+  esdar_date              String?     @db.VarChar(20) // date-string (issue)
+  esdar_date_m            String?     @db.VarChar(30) // date-string Gregorian
+  esdar_date_h            String?     @db.VarChar(30) // date-string Hijri
+  end_date                String?     @db.VarChar(255) // date-string
+  end_date_m              String?     @db.VarChar(30) // date-string Gregorian
+  end_date_h              String?     @db.VarChar(30) // date-string Hijri
+  adress                  String?     @db.VarChar(100)
+  adress_other            String?     @db.VarChar(100)
+  email                   String?     @db.VarChar(200)
+  nationality             String?     @db.VarChar(100)
+  deyana                  String?     @db.VarChar(20) // religion
+  employee_degree         String?     @db.VarChar(100)
+  employee_qualification  String?     @db.VarChar(100)
+  employee_type           Int         @default(1)
+  employment_type         String?     @db.VarChar(20)
+  is_sales                Boolean     @default(false)
+  reason                  String?     @db.VarChar(100)
+  manger                  String?     @db.VarChar(20)
+  type_tamin              String?     @db.VarChar(100)
+  start_work_date_m       String?     @db.VarChar(255) // date-string Gregorian
+  start_work_date_h       String?     @db.VarChar(30) // date-string Hijri
+  end_contract_date_m     String?     @db.VarChar(255) // date-string Gregorian
+  end_contract_date_h     String?     @db.VarChar(30) // date-string Hijri
+  end_service_date_m      String?     @db.VarChar(30) // date-string Gregorian
+  end_service_date_h      String?     @db.VarChar(30) // date-string Hijri
+  work_maktb              String?     @db.VarChar(50)
+  another_phone           String?     @db.VarChar(20)
+  snap_chat               String?     @db.VarChar(50)
+  twiter                  String?     @db.VarChar(255)
+  start_tamin_date_m      String?     @db.VarChar(30) // date-string Gregorian
+  start_tamin_date_h      String?     @db.VarChar(30) // date-string Hijri
+  type_tamin__medicine    String?     @db.VarChar(100)
+  tamin_company           String?     @db.VarChar(100)
+  tamin_medicine_num      String?     @db.VarChar(200)
+  tamin_medicine_end_date String?     @db.VarChar(15) // date-string
+  tamin_medicine_company  String?     @db.VarChar(70)
+  polica_num              String?     @db.VarChar(200)
+  tamin_type              String?     @db.VarChar(100)
+  tamin_date_m            String?     @db.VarChar(30) // date-string Gregorian
+  tamin_date_h            String?     @db.VarChar(30) // date-string Hijri
+  leave_emp               Int?        @db.TinyInt // bool
+  executive_management_fk Int?        @db.TinyInt // tinyint(1) bool
+  manger_type             Int?        @db.TinyInt
+  publisher               Int?
+  date                    String?     @db.VarChar(30) // date-string
+  tahwela_rkm             Int?
+  edara_n                 String?     @db.VarChar(50) // department name
+  qsm_n                   String?     @db.VarChar(50) // section name
+  mosma_wazefy_code       Int? // -> department_jobs (job title code)
+  mosma_wazefy_tarteb     Int?        @db.TinyInt
+  mosma_wazefy_n          String?     @db.VarChar(50)
+  mosma_wazefy_eqama_n    String?     @db.VarChar(100)
+  test_num_month          Int?
+  end_test_date_m         String?     @db.VarChar(30) // date-string Gregorian
+  edara_id                Int? // -> hr_edarat_aqsam (department)
+  qsm_id                  Int? // -> section
+  w7da_id                 Int?
+  markz_id                Int?
+  markz_name              String?     @db.VarChar(50)
+  cat_mosayer_id_fk       Int?        @db.TinyInt
+  show_in_mosayer         YesNo?
+  show_in_tamen           YesNo?
+  use_signature           String?     @db.VarChar(50)
+  users_signatures        String?     @db.VarChar(255)
+  bbank                   String?     @db.VarChar(500)
+  x1                      String?     @db.VarChar(15)
+  x2                      String?     @db.VarChar(15)
+  rkm_saheb_amal          String?     @db.VarChar(15)
+  tasken_type             TaskenType?
+  tasken_vlaue            Decimal?    @db.Decimal(19, 2)
+  motawen                 YesNo?
+  download_app            Int?        @db.TinyInt
+  token                   String?     @db.VarChar(500)
+  token_date              String?     @db.VarChar(15) // date-string
+  token_time              String?     @db.VarChar(10) // time-string
+  generate_qrcode         YesNo?      @default(no)
+  tamin_egtma3y_num       String?     @db.VarChar(100)
+  branche_company_id_fk   Int?
+  barcode_path            String?     @db.VarChar(200)
+  qrcode_path             String?     @db.VarChar(200)
+  year_vacation_num       Int?
+  remove_basma            YesNo       @default(no)
+  halet_kafala            HaletKafala @default(kafala)
+  remain_akd              Float?
+  remain_tby              Float?
+  remain_gwaz             Float?
+  remain_eqama            Float?
+  no3_emp                 No3Emp      @default(schools)
+  wazefa_type             WazefaType  @default(emp)
+  neqat_total             Int?
+  neqat_x1                Int?
+  neqat_x2                Int?
+  neqat_x3                Int?
+  neqat_x4                Int?
+  neqat_x5                Int?
+  neqat_x6                Int?
+  neqat_x7                Int?
+  neqat_t                 Int?
+  card_esdar_date         String?     @db.VarChar(50) // date-string
+  card_enhaa_date         String?     @db.VarChar(50) // date-string
+  age                     Int         @default(0)
+  birth_img               YesNo?
+  qualification_img       YesNo?
+  phesh_genai             YesNo?
+  military_service        YesNo?
+  e3fa_reason             String?     @db.VarChar(50)
+  person_img              YesNo?
+  rokhsa_mihani           YesNo?
+  date_ar                 String?     @db.VarChar(50) // date-string (Arabic)
+  date_s                  String?     @db.VarChar(50) // date-string (system)
+  shahadt_jaish           YesNo // NOT NULL no default (HAZARD)
+  tamin_rkm               Int // NOT NULL no default
+  khedma_year             Int // NOT NULL no default
+  tamin_mosama_wazefy     String?     @db.VarChar(50)
+  tamin_rateb             Decimal?    @db.Decimal(19, 2)
+  tamin_hesa_emp          Decimal?    @db.Decimal(19, 2)
+  tamin_hesa_oner         Decimal?    @db.Decimal(19, 2)
+  // PHAROS additions (not in legacy schema) — خبرات/مهارات/لغات + marital/national address
+  previous_experience String?  @db.Text
+  skills              String?  @db.Text
+  languages           String?  @db.Text
+  marital_status      Int?
+  national_address    String?  @db.VarChar(255)
+  basic_salary        Decimal? @db.Decimal(19, 2)
+  // Mobile-app account link (PHAROS)
+  app_user_id Int?
+  app_user    api_users? @relation(fields: [app_user_id], references: [user_id], onDelete: SetNull, onUpdate: NoAction)
+  // Safe relations: dependents linked by employees.id (int = int).
+  emp_files           emp_files[]
+  hr_finance_employes hr_finance_employes[]
+  employees_branches  employees_branches[]
+  hr_emp_dwam         hr_emp_dwam[]
+  @@unique([emp_code])
+  @@index([app_user_id])
+  @@map("employees")
+}
+
+model employees_branches {
+  id           Int     @id @default(autoincrement())
+  branch_id_fk Int? // -> tbl_branches.branch_id (FK-by-convention)
+  emp_id_fk    Int? // -> employees.id (safe relation)
+  date         String? @db.VarChar(100) // date-string
+  publisher    Int?
+  employee employees? @relation(fields: [emp_id_fk], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@index([emp_id_fk])
+  @@map("employees_branches")
+}
+
+model employees_settings {
+  id_setting    Int     @id @default(autoincrement())
+  title_setting String  @db.VarChar(255)
+  have_branch   Int     @default(0)
+  type          Int
+  type_name     String  @db.VarChar(255)
+  form_id       Int     @default(0)
+  in_order      Int     @default(0)
+  color         String? @db.VarChar(10)
+  @@map("employees_settings")
+}
+
+model global_settings {
+  id                   Int      @id
+  institute_name       String   @db.VarChar(255)
+  institute_code       String   @db.VarChar(255)
+  use_barcode          String?  @db.VarChar(3) // bool-as-string
+  reg_prefix           String   @db.VarChar(255)
+  institute_email      String   @db.VarChar(100)
+  address              String   @db.Text
+  mobileno             String   @db.VarChar(100)
+  logo                 String?  @db.VarChar(500)
+  currency             String   @db.VarChar(100)
+  currency_symbol      String   @db.VarChar(100)
+  sms_service_provider String   @db.VarChar(100)
+  session_id           Int
+  translation          String   @db.VarChar(100)
+  footer_text          String   @db.VarChar(255)
+  animations           String   @db.VarChar(100)
+  timezone             String   @db.VarChar(100)
+  date_format          String   @db.VarChar(100) // HAZARD: original CHARSET utf32
+  facebook_url         String   @db.VarChar(255)
+  twitter_url          String   @db.VarChar(255)
+  linkedin_url         String   @db.VarChar(255)
+  youtube_url          String   @db.VarChar(255)
+  instagram_url        String?  @db.VarChar(200)
+  snapchat_url         String?  @db.VarChar(200)
+  cron_secret_key      String?  @db.VarChar(255)
+  preloader_backend    Int?     @default(1) @db.TinyInt // tinyint(1) -> boolean
+  cms_default_branch   Int // FK-by-convention -> tbl_branches.branch_id
+  created_at           DateTime @default(now()) @db.Timestamp(0)
+  updated_at           DateTime @db.DateTime(0)
+  ketm_image           String?  @db.VarChar(200)
+  alert_days_contract  Int? // dashboard alert window (contracts)
+  alert_days_quest     Int? // dashboard alert window (iqama/residency)
+  @@map("global_settings")
+}
+
+model holiday_setting {
+  id           Int     @id @default(autoincrement()) @db.Int
+  name         String  @db.VarChar(300)
+  num_days     Int     @default(0) @db.Int
+  max_days     Int     @default(0) @db.Int
+  min_days     Int     @default(0) @db.Int
+  mowazf_badel Int     @default(0) @db.TinyInt
+  agaza_ttype  Int     @default(0) @db.TinyInt
+  date_from    String? @db.VarChar(15)
+  date_to      String? @db.VarChar(15)
+  is_paid      Boolean @default(true)
+  active       String? @default("yes") // enum: yes, no
+  @@map("holiday_setting")
+}
+
+model hr_agazat_sysat {
+  id                          Int  @id @default(autoincrement()) @db.Int
+  min_nums_in_year            Int? @db.Int
+  emergency_nums_in_year      Int? @db.Int
+  max_nums_in_year            Int? @db.Int
+  moda_takdem_talb            Int? @db.Int
+  min_nums_in_talb            Int? @db.Int
+  moda_takdem_talb_min        Int? @db.Int
+  is_avlible_no_sallary_agaza Int? @db.Int
+  @@map("hr_agazat_sysat")
+}
+
+model hr_all_agzat_history {
+  id             Int     @id @default(autoincrement()) @db.Int
+  agaza_rkm_fk   Int     @default(0) @db.Int
+  agaza_id_fk    Int     @default(0) @db.Int
+  from_user      Int     @default(0) @db.Int
+  from_user_n    String? @db.VarChar(100)
+  to_user        Int     @default(0) @db.Int
+  to_user_n      String? @db.VarChar(100)
+  talab_in_fk    Int     @default(0) @db.Int
+  talab_in_title String? @db.VarChar(20)
+  level          String? @db.VarChar(100)
+  talab_msg      String? @db.VarChar(30)
+  reason_action  String? @db.VarChar(30)
+  date           String? @db.VarChar(15)
+  date_ar        String? @db.VarChar(15)
+  seen           Int     @default(0) @db.TinyInt
+  @@map("hr_all_agzat_history")
+}
+
+model hr_all_agzat_orders {
+  id                          Int     @id @default(autoincrement()) @db.Int
+  agaza_rkm                   Int?    @db.Int
+  agaza_date                  String? @db.VarChar(20)
+  agaza_date_ar               String? @db.VarChar(20)
+  no3_agaza                   Int?    @db.Int
+  f2a_agaza                   Int?    @db.TinyInt
+  fatra_agaza                 Int?    @db.TinyInt
+  emp_id_fk                   Int?    @db.Int
+  emp_code_fk                 BigInt? @db.BigInt
+  edara_id_fk                 Int?    @db.Int
+  edara_n                     String? @db.VarChar(100)
+  qsm_id_fk                   Int?    @db.Int
+  qsm_n                       String? @db.VarChar(50)
+  direct_manager_id_fk        Int?    @db.Int
+  direct_manager_code_fk      BigInt? @db.BigInt
+  direct_manager_n            String? @db.VarChar(50)
+  agaza_from_date_m           String? @db.VarChar(20)
+  agaza_from_date_h           String? @db.VarChar(20)
+  agaza_to_date_m             String? @db.VarChar(20)
+  agaza_to_date_h             String? @db.VarChar(20)
+  agaza_to_date               Int?    @db.Int
+  agaza_from_date             Int?    @db.Int
+  num_days                    Float?  @default(0) @db.Float
+  allDayes                    Int?    @db.Int
+  rased_motah                 Int?    @db.Int
+  mobashret_amal_date_m       String? @db.VarChar(20)
+  mobashret_amal_date_h       String? @db.VarChar(20)
+  address_since_agaza         String? @db.VarChar(50)
+  emp_jwal                    String? @db.VarChar(20)
+  month                       Int?    @db.Int
+  year                        Int?    @db.Int
+  marad_name                  String? @db.VarChar(50)
+  taqrer_form_date_m          String? @db.VarChar(20)
+  taqrer_form_date_h          String? @db.VarChar(20)
+  taqrer_to_date_m            String? @db.VarChar(20)
+  taqrer_to_date_h            String? @db.VarChar(20)
+  hospital_name               String? @db.VarChar(100)
+  hospital_report             String? @db.VarChar(150)
+  emp_badel_id_fk             Int?    @db.Int
+  emp_badel_code_fk           BigInt? @db.BigInt
+  emp_badel_n                 String? @db.VarChar(50)
+  action_emp_badel            Int     @default(0) @db.TinyInt
+  action_direct_manager       Int     @default(0) @db.TinyInt
+  action_mowazf_moktas        Int     @default(0) @db.TinyInt
+  action_moder_hr             Int     @default(0) @db.TinyInt
+  action_moder_final          Int     @default(0) @db.TinyInt
+  suspend                     Int     @default(0) @db.TinyInt
+  current_from_user_id        Int?    @db.Int
+  current_from_user_name      String? @db.VarChar(50)
+  current_to_user_id          Int?    @db.Int
+  current_to_user_name        String? @db.VarChar(50)
+  talab_in_fk                 Int?    @db.Int
+  talab_in_title              String? @db.VarChar(100)
+  level                       Int     @default(0) @db.TinyInt
+  talab_msg                   String? @db.VarChar(100)
+  reason_action               String? @db.VarChar(50)
+  current_date_s              String? @db.VarChar(50)
+  agaza_from_day_n            String? @db.VarChar(20)
+  agaza_to_day_n              String? @db.VarChar(20)
+  mobashret_amal_day_n        String? @db.VarChar(20)
+  daraget_waffa               String? @db.VarChar(100)
+  without_salary              Int     @default(0) @db.TinyInt
+  seen                        Int     @default(0) @db.TinyInt
+  publisher                   Int?    @db.Int
+  manger                      String? @db.VarChar(50)
+  manager_code                String? @db.VarChar(50)
+  manager_name                String? @db.VarChar(100)
+  current_from_emp_id         String? @db.VarChar(50)
+  current_to_emp_id           String? @db.VarChar(50)
+  reason                      String? @db.VarChar(200)
+  suspend_reason              String? @db.VarChar(200)
+  suspend_date                String? @db.VarChar(20)
+  suspend_time                String? @db.VarChar(20)
+  f_file                      String? @db.VarChar(200)
+  for_year                    Int?    @db.Int
+  publisher_name              String? @db.VarChar(100)
+  send_to_emp_badel           String? @default("wait") // enum: yes, no, wait
+  send_to_direct_manager      String? @default("wait") // enum: yes, no, wait
+  approve_emp_badel           String? @default("wait") // enum: yes, no, wait
+  approve_direct_manager      String? @default("wait") // enum: yes, no, wait
+  approve_moder_edara         String? @default("wait") // enum: yes, no, wait
+  approve_hr                  String? @default("wait") // enum: yes, no, wait
+  approve_emp_badel_date      String? @db.VarChar(15)
+  approve_direct_manager_date String? @db.VarChar(15)
+  approve_moder_edara_date    String? @db.VarChar(15)
+  approve_hr_date             String? @db.VarChar(15)
+  close_talab                 String? @default("wait") // enum: yes, no, wait
+  actions_sends               String? @default("start") // enum: start, send_to_emp_badel, approve_emp_badel, send_to_direct_manager, approve_direct_manager, approve_moder_edara, approve_moder_3am, approve_hr, close_talab
+  approve_moder_3am           String? @default("wait") // enum: yes, no, wait
+  approve_moder_3am_date      String? @db.VarChar(15)
+  @@index([emp_code_fk, year, suspend, f2a_agaza], map: "hr_agz_emp_year_status_idx")
+  @@index([emp_code_fk, agaza_from_date_m, agaza_to_date_m], map: "hr_agz_emp_date_range_idx")
+  @@index([current_to_user_id, suspend], map: "hr_agz_assignee_status_idx")
+  @@map("hr_all_agzat_orders")
+}
+
+model hr_all_ozonat_history {
+  id             Int     @id @db.Int
+  ezn_rkm_fk     Int?    @db.Int
+  ezn_rkm_id     Int?    @db.Int
+  from_user_id   Int?    @db.Int
+  from_user_name String? @db.VarChar(100)
+  to_user_id     Int?    @db.Int
+  to_user_name   String? @db.VarChar(100)
+  level          Int?    @db.TinyInt
+  talab_in_fk    Int?    @db.Int
+  talab_in_title String? @db.VarChar(100)
+  talab_msg      String? @db.VarChar(500)
+  reason_action  String? @db.VarChar(500)
+  date_ar        String? @db.VarChar(50)
+  date           String? @db.VarChar(100)
+  publisher      String? @db.VarChar(100)
+  suspend        String? @db.VarChar(2)
+  seen           Int     @default(0) @db.TinyInt
+  @@map("hr_all_ozonat_history")
+}
+
+model hr_all_ozonat_orders {
+  id                          Int     @id @default(autoincrement()) @db.Int
+  ezn_rkm                     Int?    @db.Int
+  ezn_date                    String? @db.VarChar(20)
+  ezn_date_ar                 String? @db.VarChar(20)
+  ezn_month                   Int?    @db.Int
+  ezn_year                    Int?    @db.Int
+  no3_ezn                     Int?    @db.TinyInt
+  fatra_fk                    Int?    @db.TinyInt
+  fatra_n                     String? @db.VarChar(20)
+  from_hour                   String? @db.VarChar(10)
+  to_hour                     String? @db.VarChar(10)
+  total_hours                 Float   @default(0) @db.Double
+  reason                      String? @db.VarChar(120)
+  emp_id_fk                   Int?    @db.Int
+  emp_user_id                 Int?    @db.Int
+  emp_code_fk                 Int?    @db.Int
+  edara_id_fk                 Int?    @db.Int
+  edara_n                     String? @db.VarChar(100)
+  qsm_id_fk                   Int?    @db.Int
+  qsm_n                       String? @db.VarChar(100)
+  direct_manager_id_fk        Int?    @db.Int
+  direct_manager_code_fk      Int?    @db.Int
+  direct_manager_n            String? @db.VarChar(100)
+  date                        String? @db.VarChar(20)
+  date_ar                     String? @db.VarChar(20)
+  publisher                   Int?    @db.Int
+  publisher_name              String? @db.VarChar(70)
+  current_from_id             String? @db.VarChar(100)
+  current_to_id               String? @db.VarChar(100)
+  current_from_user_name      String? @db.VarChar(100)
+  current_to_user_name        String? @db.VarChar(100)
+  level                       Int     @default(0) @db.TinyInt
+  suspend                     Int     @default(0) @db.TinyInt
+  cancel                      String? @default("no") // enum: yes, no
+  talab_in_fk                 Int?    @db.Int
+  talab_in_title              String? @db.VarChar(100)
+  talab_msg                   String? @db.VarChar(100)
+  reason_action               String? @db.VarChar(50)
+  emp_name                    String? @db.VarChar(100)
+  job_title                   String? @db.VarChar(100)
+  seen                        Int     @default(0) @db.TinyInt
+  action_direct_manager       Int     @default(0) @db.TinyInt
+  action_mowazf_moktas        Int     @default(0) @db.TinyInt
+  action_moder_hr             Int     @default(0) @db.TinyInt
+  action_moder_final          Int     @default(0) @db.TinyInt
+  remain_hours                Int?    @db.Int
+  remain_num                  Int?    @db.Int
+  geha_name                   String? @db.VarChar(50)
+  visit_goal                  String? @db.VarChar(50)
+  visit_sub                   String? @db.VarChar(50)
+  visit_type                  Int?    @db.TinyInt
+  visit_detailes              String? @db.VarChar(50)
+  need_report                 String? @default("no") // enum: yes, no
+  send_report                 String? // enum: yes, no
+  report_to_user_id           Int?    @db.Int
+  suspend_report              Int?    @db.TinyInt
+  current_from_user_emp_id    Int?    @db.Int
+  current_to_emp_id           Int?    @db.Int
+  current_from_emp_id         Int?    @db.Int
+  current_from_user_id        Int?    @db.Int
+  current_to_user_id          Int?    @db.Int
+  suspend_reason              String? @db.VarChar(200)
+  suspend_date                String? @db.VarChar(20)
+  suspend_time                String? @db.VarChar(20)
+  send_to_direct_manager      String? @default("wait") // enum: yes, no, wait
+  approve_direct_manager      String? @default("wait") // enum: yes, no, wait
+  approve_moder_edara         String? @default("wait") // enum: yes, no, wait
+  approve_hr                  String? @default("wait") // enum: yes, no, wait
+  approve_emp_badel_date      String? @db.VarChar(15)
+  approve_direct_manager_date String? @db.VarChar(15)
+  approve_moder_edara_date    String? @db.VarChar(15)
+  approve_hr_date             String? @db.VarChar(15)
+  close_talab                 String? @default("wait") // enum: yes, no, wait
+  actions_sends               String? @default("start") // enum: start, send_to_direct_manager, approve_direct_manager, approve_moder_edara, approve_hr, approve_moder_3am, close_talab
+  approve_moder_3am           String? @default("wait") // enum: yes, no, wait
+  approve_moder_3am_date      String? @db.VarChar(20)
+  @@index([current_to_user_id, suspend])
+  @@index([emp_code_fk, ezn_date_ar])
+  @@index([emp_code_fk, ezn_date])
+  @@index([emp_id_fk, no3_ezn, ezn_month, ezn_year])
+  @@index([suspend])
+  @@map("hr_all_ozonat_orders")
+}
+
+model hr_ansheta {
+  id        Int     @id @default(autoincrement())
+  emp_id    Int?
+  title     String? @db.VarChar(200)
+  send_date String? @db.VarChar(15) // date-string
+  send_time String? @db.VarChar(10)
+  suspend   Int     @default(0) // tinyint
+  notes     String? @db.VarChar(200)
+  rad_notes String? @db.VarChar(200)
+  @@map("hr_ansheta")
+}
+
+model hr_ansheta_files {
+  id          Int     @id @default(autoincrement())
+  main_id_fk  Int?
+  file_name   String? @db.VarChar(300)
+  uploaded_on String? @db.VarChar(20)
+  @@map("hr_ansheta_files")
+}
+
+model hr_dialy_reports {
+  id           Int     @id @default(autoincrement())
+  send_date_ar String? @db.VarChar(20) // date-string
+  send_time    String? @db.VarChar(10)
+  emp_id_fk    Int?
+  title        String? @db.VarChar(255)
+  status       String? @db.VarChar(12) // enum('inprogress','done')
+  notes        String? @db.VarChar(500)
+  for_month    Int?
+  for_year     Int?
+  suspend      Int?    @default(0) // tinyint
+  rad_notes    String? @db.VarChar(200)
+  @@map("hr_dialy_reports")
+}
+
+model hr_disclaimers {
+  id                 Int     @id @default(autoincrement())
+  disclaimer_id      Int
+  adminstration_id   String? @db.VarChar(300)
+  notes              String? @db.Text
+  emp_id_fk          String? @db.VarChar(255)
+  responsible_emp_id String? @db.VarChar(300)
+  resignation        String? @db.VarChar(255)
+  employee_card      String? @db.VarChar(255)
+  medical_card       String? @db.VarChar(255)
+  social_insurance   String? @db.VarChar(255)
+  @@map("hr_disclaimers")
+}
+
+model hr_dwrat_job_orders {
+  id                     Int     @id @default(autoincrement())
+  job_request_ordered_fk String  @db.VarChar(50)
+  dawra                  String? @db.VarChar(255)
+  place                  String? @db.VarChar(255)
+  date_from              String? @db.VarChar(50)
+  date_to                String? @db.VarChar(50)
+  specialized            String? @db.VarChar(255)
+  img                    String? @db.VarChar(500)
+  @@index([job_request_ordered_fk])
+}
+
+model hr_edarat_aqsam {
+  id         Int     @id @default(autoincrement())
+  title_id   Int
+  title_code Int?
+  title      String? @db.VarChar(100)
+  from_id_fk Int?    @default(0) // self-ref parent
+  trteeb     Int? // order
+  from_code  Int // code range start
+  to_code    Int // code range end
+  @@map("hr_edarat_aqsam")
+}
+
+model hr_egraat_emp_setting {
+  id                  Int     @id @default(autoincrement())
+  job_title_id_fk     Int?
+  job_title_code_fk   Int?
+  job_title_n         String? @db.VarChar(100)
+  person_type         Int?
+  person_id           Int?
+  person_code         String? @db.VarChar(15)
+  person_name         String? @db.VarChar(100)
+  person_qsm          String? @db.VarChar(100)
+  person_edara        String? @db.VarChar(100)
+  person_private_name String? @db.VarChar(100)
+  person_img          String? @db.VarChar(100)
+  person_suspend      Int?
+  from_date           String? @db.VarChar(15)
+  to_date             String? @db.VarChar(15)
+  from_date_str       String? @db.VarChar(30)
+  to_date_str         String? @db.VarChar(30)
+  date                Int?
+  date_ar             String? @db.VarChar(100)
+  publisher           Int?
+  publisher_name      String? @db.VarChar(100)
+  web_display         Int?    @default(0)
+  @@map("hr_egraat_emp_setting")
+}
+
+model hr_egraat_setting {
+  id             Int     @id @default(autoincrement())
+  code           Int?
+  title          String? @db.VarChar(100)
+  main_type      Int?    @default(0)
+  tarteb         Int?
+  min_num        Int?
+  max_num        Int?
+  date           String? @db.VarChar(50)
+  date_ar        String? @db.VarChar(50)
+  time           String? @db.VarChar(50)
+  publisher_name String? @db.VarChar(50)
+  publisher      Int?
+  edara          Int?
+  qsm            Int?
+  job_number     Int?
+  marg3_mobasher Int?
+  @@map("hr_egraat_setting")
+}
+
+model hr_emp_agazat_dayes {
+  id          Int    @id @default(autoincrement()) @db.Int
+  emp_id_fk   Int    @db.Int
+  emp_name    String @db.VarChar(100)
+  emp_code_fk Int    @db.Int
+  off_day     String @db.VarChar(50)
+  date_ar     String @db.VarChar(20)
+  publisher   Int    @db.Int
+  @@map("hr_emp_agazat_dayes")
+}
+
+model hr_emp_dwam {
+  id           Int     @id @default(autoincrement())
+  emp_id       Int // -> employees.id (safe relation)
+  emp_code     String? @db.VarChar(255)
+  always_id_fk Int
+  period_id_fk Int
+  attend_time  String  @db.VarChar(255) // time-string
+  leave_time   String  @db.VarChar(255) // time-string
+  start_enter  String  @db.VarChar(255) // time-string
+  end_enter    String  @db.VarChar(255) // time-string
+  start_out    String  @db.VarChar(255) // time-string
+  end_out      String  @db.VarChar(255) // time-string
+  from_date    Int // epoch-ish int (pairs with from_date_ar)
+  from_date_ar String  @db.VarChar(255) // date-string (Arabic)
+  to_date      Int // epoch-ish int
+  to_date_ar   String  @db.VarChar(255) // date-string (Arabic)
+  saturday     Int     @default(0) // bool working-day flag
+  sunday       Int     @default(0) // bool
+  monday       Int     @default(0) // bool
+  tuesday      Int     @default(0) // bool
+  wednesday    Int     @default(0) // bool
+  thursday     Int     @default(0) // bool
+  friday       Int     @default(0) // bool
+  employee employees @relation(fields: [emp_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@index([emp_id])
+  @@map("hr_emp_dwam")
+}
+
+model hr_entdab_sysat_setting {
+  id                      Int    @id @default(autoincrement()) @db.Int
+  title                   String @db.VarChar(100)
+  ttype                   Int?   @db.TinyInt
+  hours_out_work_days     Float? @db.Float
+  hours_out_vacation_days Float? @db.Float
+  taklef_moda_minmum      Int?   @db.Int
+  taklef_moda_maxmum      Int?   @db.Int
+  taklef_badel_minmum     Int?   @db.Int
+  taklef_badel_maxmum     Int?   @db.Int
+  mostwa_wazefy           Int?   @db.Int
+  badal_value_part_day    Int?   @db.Int
+  badal_value_full_day    Int?   @db.Int
+  @@map("hr_entdab_sysat_setting")
+}
+
+model hr_enzarat {
+  id                     Int     @id @default(autoincrement()) @db.Int
+  emp_name               String? @db.VarChar(100)
+  emp_name_id            Int?    @db.Int
+  emp_user_id            Int?    @db.Int
+  emp_edara              String? @db.VarChar(100)
+  emp_edara_id           Int?    @db.Int
+  emp_qesm               String? @db.VarChar(70)
+  emp_qesm_id            Int?    @db.Int
+  direct_manager_emp_id  Int?    @db.Int
+  direct_manager_user_id Int?    @db.Int
+  enzar_type             String? @db.VarChar(50)
+  enzar_type_id          Int?    @db.Int
+  details                String? @db.VarChar(300)
+  enzar_time             String? @db.VarChar(10)
+  enzar_date             String? @db.VarChar(15)
+  enzar_date_ar          String? @db.VarChar(15)
+  publisher              Int?    @db.Int
+  publisher_name         String? @db.VarChar(100)
+  current_from_user_id   Int?    @db.Int
+  current_from_user_name String? @db.VarChar(100)
+  current_to_user_id     Int?    @db.Int
+  current_to_user_name   String? @db.VarChar(100)
+  send_to_hr             String? @default("no") // enum: yes, no
+  send_to_emp            String? @default("no") // enum: yes, no
+  actions_sends          String? @default("start") // enum: start, send_to_hr, send_to_emp
+  hr_notes               String? @db.VarChar(300)
+  @@map("hr_enzarat")
+}
+
+model hr_enzarat_history {
+  id                  Int     @id @default(autoincrement()) @db.Int
+  talab_id_fk         Int     @db.Int
+  from_user_id        Int?    @db.Int
+  to_user_id          Int?    @db.Int
+  from_user_n         String? @db.VarChar(150)
+  to_user_n           String? @db.VarChar(150)
+  from_mosma_wazefy_n String? @db.VarChar(100)
+  to_mosma_wazefy_n   String? @db.VarChar(100)
+  process_title       String? @db.VarChar(100)
+  date_ar             String? @db.VarChar(15)
+  time_ar             String? @db.VarChar(15)
+  comment             String? @db.Text
+  @@map("hr_enzarat_history")
+}
+
+model hr_evaluation_setting {
+  id      Int     @id @default(autoincrement())
+  title   String? @db.VarChar(255)
+  from_id Int?
+  degree  String? @db.VarChar(255)
+  @@map("hr_evaluation_setting")
+}
+
+model hr_final_settlements {
+  id                                       Int       @id @default(autoincrement())
+  settlement_number                        Int       @unique(map: "uq_hr_final_settlement_number")
+  employee_id                              Int
+  employee_code                            Int?
+  employee_name                            String    @db.VarChar(200)
+  branch_id                                Int?
+  termination_date                         DateTime  @db.Date
+  service_start_date                       DateTime  @db.Date
+  service_years                            Decimal   @db.Decimal(12, 6)
+  policy_id                                Int
+  policy_version                           String    @db.VarChar(80)
+  tax_policy_id                            Int
+  tax_policy_version                       String    @db.VarChar(80)
+  worked_period_gross                      Decimal   @db.Decimal(19, 2)
+  worked_period_deductions_before_tax_loan Decimal   @db.Decimal(19, 2)
+  employee_insurance                       Decimal   @db.Decimal(19, 2)
+  employer_insurance                       Decimal   @db.Decimal(19, 2)
+  unused_leave_days                        Decimal   @db.Decimal(10, 4)
+  unused_leave_compensation                Decimal   @db.Decimal(19, 2)
+  end_of_service_benefit                   Decimal   @db.Decimal(19, 2)
+  other_earnings                           Decimal   @default(0) @db.Decimal(19, 2)
+  loan_recovery                            Decimal   @default(0) @db.Decimal(19, 2)
+  other_deductions                         Decimal   @default(0) @db.Decimal(19, 2)
+  income_tax                               Decimal   @default(0) @db.Decimal(19, 2)
+  gross_entitlements                       Decimal   @db.Decimal(19, 2)
+  total_deductions                         Decimal   @db.Decimal(19, 2)
+  net_payable                              Decimal   @db.Decimal(19, 2)
+  status                                   String    @default("draft") @db.VarChar(20)
+  calculation_snapshot                     Json
+  reason                                   String?   @db.VarChar(500)
+  created_by                               Int?
+  approved_by                              Int?
+  approved_at                              DateTime? @db.DateTime(3)
+  posted_by                                Int?
+  posted_at                                DateTime? @db.DateTime(3)
+  paid_by                                  Int?
+  paid_at                                  DateTime? @db.DateTime(3)
+  bank_reference                           String?   @db.VarChar(150)
+  payment_snapshot                         Json?
+  created_at                               DateTime  @default(now()) @db.DateTime(3)
+  updated_at                               DateTime  @default(now()) @updatedAt @db.DateTime(3)
+  @@unique([employee_id, termination_date], map: "uq_hr_final_settlement_employee_termination")
+  @@index([status, termination_date], map: "idx_hr_final_settlement_status_date")
+  @@map("hr_final_settlements")
+}
+
+model hr_finance_employes {
+  id                  Int      @id @default(autoincrement())
+  emp_id              Int? // -> employees.id (safe relation)
+  emp_code            Int      @default(0) // FK-by-convention
+  method_to_count     Int      @default(1) @db.TinyInt
+  badl_discount_id_fk Int      @default(0) // -> all_defined_setting.defined_id
+  badl_code           Int?
+  value               Float    @default(0) @db.Double
+  badl_type           Int      @default(0) @db.TinyInt // 1=allowance / 2=deduction (by convention)
+  specific_period     String   @default("0") @db.VarChar(255)
+  date_from           String?  @db.VarChar(255) // date-string
+  date_to             String?  @db.VarChar(255) // date-string
+  insurance_affect    Int      @default(0) @db.TinyInt // bool
+  dalel_code          BigInt   @default(0)
+  dalel_name          String?  @db.VarChar(100)
+  having_all_value    Decimal? @db.Decimal(19, 2)
+  having_tamin_value  Decimal? @db.Decimal(19, 2)
+  discut_all_value    Decimal? @db.Decimal(19, 2)
+  publisher           Int?
+  publisher_name      String?  @db.VarChar(100)
+  employee employees? @relation(fields: [emp_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@index([emp_id])
+  @@map("hr_finance_employes")
+}
+
+model hr_forms_settings {
+  id_setting    Int    @id @default(autoincrement()) @db.Int
+  title_setting String @db.VarChar(255)
+  have_branch   Int    @default(0) @db.Int
+  type          Int    @db.Int
+  type_name     String @db.VarChar(255)
+  max_degree    String @default("0") @db.VarChar(255)
+  form_id       Int    @default(0) @db.Int
+  in_order      Int    @default(0) @db.Int
+  @@map("hr_forms_settings")
+}
+
+model hr_general_setting {
+  id_setting     Int     @id @db.Int
+  title_setting  String  @db.VarChar(255)
+  ttype          String? // enum: enzar, laft_nazr, mokalfat
+  form_id        Int     @default(0) @db.Int
+  status_setting String? @default("active") // enum: active, notactive
+  details        String? @db.Text
+  @@map("hr_general_setting")
+}
+
+model hr_gezaat {
+  id                     Int     @id @default(autoincrement()) @db.Int
+  emp_id                 Int?    @db.Int
+  emp_code               Int?    @db.Int
+  emp_name               String? @db.VarChar(100)
+  mosma_wazefy_id        Int?    @db.Int
+  mosma_wazefy_n         String? @db.VarChar(30)
+  edara_id_fk            Int?    @db.Int
+  edara_n                String? @db.VarChar(100)
+  qsm_id_fk              Int?    @db.Int
+  qsm_n                  String? @db.VarChar(100)
+  details                String? @db.VarChar(300)
+  geza_type              Int?    @db.Int
+  geza_value             String? @db.VarChar(100)
+  suspend                Int     @default(0) @db.Int
+  suspend_date           String? @db.VarChar(50)
+  suspend_time           String? @db.VarChar(50)
+  suspend_publisher_name String? @db.VarChar(100)
+  suspend_publisher      Int?    @db.Int
+  month                  Int?    @db.Int
+  year                   Int?    @db.Int
+  geza_date              String? @db.VarChar(15)
+  geza_date_ar           String? @db.VarChar(15)
+  publisher              Int?    @db.Int
+  publisher_name         String? @db.VarChar(150)
+  // Consumption marker: the payroll run (hr_mosayer.mosayer_rkm) that collected this
+  // penalty when the run was POSTED. NULL = not yet consumed. Prevents a recompute or an
+  // overlapping-period run from deducting the same penalty twice; cleared on run delete/unpost.
+  mosayer_rkm_fk         Int?    @db.Int
+  @@map("hr_gezaat")
+}
+
+model hr_insurance_settings {
+  id               Int     @id @default(autoincrement())
+  nationality_type Int?
+  setting_id_fk    String? @db.VarChar(300)
+  emp_average      String? @db.VarChar(300)
+  society_average  String? @db.VarChar(300)
+  date             String? @db.VarChar(300)
+  date_s           String? @db.VarChar(300)
+  @@map("hr_insurance_settings")
+}
+
+model hr_interview_degree {
+  id                     Int     @id @default(autoincrement())
+  job_request_ordered_fk String  @db.VarChar(50)
+  item_id_fk             String? @db.VarChar(50)
+  item_degree            String? @db.VarChar(50)
+  publisher              String? @db.VarChar(255)
+  date                   String? @db.VarChar(20)
+  date_ar                String? @db.VarChar(20)
+  @@index([job_request_ordered_fk])
+}
+
+model hr_interview_degree_adv_disadv {
+  id                     Int     @id @default(autoincrement())
+  job_request_ordered_fk Int
+  title                  String? @db.Text
+  type                   String? @db.VarChar(10)
+  @@index([job_request_ordered_fk, type])
+}
+
+model hr_job_orders_offers {
+  id                     Int     @id @default(autoincrement())
+  job_request_ordered_fk String  @db.VarChar(50)
+  salaray                String? @db.VarChar(50)
+  bdl_sakn               String? @db.VarChar(50)
+  bdl_moslat             String? @db.VarChar(50)
+  medical_insurance      String? @db.VarChar(50)
+  contract_peroid        String? @db.VarChar(50)
+  contract_type_fk       String? @db.VarChar(50)
+  demo_days              String? @db.VarChar(50)
+  yearly_vacation        String? @db.VarChar(50)
+  other                  String? @db.Text
+  notes                  String? @db.Text
+  date                   String? @db.VarChar(20)
+  date_ar                String? @db.VarChar(20)
+  publisher              String? @db.VarChar(255)
+  suspend                String? @db.VarChar(10)
+  @@unique([job_request_ordered_fk])
+}
+
+model hr_job_request {
+  id              Int     @id @default(autoincrement())
+  rkm_talab       Int?
+  date_talab      String? @db.VarChar(15)
+  date_talab_ar   String? @db.VarChar(15)
+  dep_id_fk       Int?
+  sub_dep_id_fk   Int?
+  job_title_id_fk Int?
+  num_for_job     Int?
+  job_type        Int?
+  job_natural     Int?
+  date            String? @db.VarChar(15)
+  date_ar         String? @db.VarChar(15)
+  publisher       Int?
+  img             String? @db.VarChar(500)
+  @@map("hr_job_request")
+}
+
+model hr_job_request_details {
+  id                Int     @id @default(autoincrement())
+  job_request_id_fk Int?
+  type              Int?
+  title             String? @db.VarChar(500)
+  @@map("hr_job_request_details")
+}
+
+model hr_lawyeh_files {
+  id         Int     @id @default(autoincrement())
+  f_file     String? @db.VarChar(500)
+  title      String? @db.VarChar(200)
+  user_id    Int?
+  added_date String? @db.VarChar(15) // date-string
+  added_time String? @db.VarChar(10)
+  @@map("hr_lawyeh_files")
+}
+
+model hr_lawyeh_files_seens {
+  id          Int     @id @default(autoincrement())
+  layha_id_fk Int?
+  emp_id_fk   Int?
+  user_id_fk  Int?
+  seen        Int     @default(0) // tinyint
+  seen_date   String? @db.VarChar(15) // date-string
+  seen_time   String? @db.VarChar(10)
+  @@map("hr_lawyeh_files_seens")
+}
+
+model hr_locations_visits {
+  id           Int     @id @default(autoincrement())
+  send_date_ar String? @db.VarChar(20) // date-string
+  send_time    String? @db.VarChar(10)
+  emp_id_fk    Int?
+  lat          String? @db.VarChar(100)
+  long         String? @db.VarChar(100)
+  img_path     String? @db.VarChar(500)
+  notes        String? @db.VarChar(100)
+  @@map("hr_locations_visits")
+}
+
+model hr_mandate_orders {
+  id                      Int     @id @default(autoincrement()) @db.Int
+  rkm_talab               Int     @db.Int
+  emp_id_fk               Int     @db.Int
+  edara_id_fk             Int     @db.Int
+  qsm_id_fk               Int     @db.Int
+  direct_manager_id_fk    Int     @db.Int
+  job_title_id_fk         Int     @db.Int
+  mandate_type_fk         Int     @db.Int
+  mandate_direction       String  @default("0") @db.VarChar(255)
+  mandate_distance        String  @default("0") @db.VarChar(255)
+  mandate_purpose         String  @default("0") @db.VarChar(500)
+  from_date               String  @default("0") @db.VarChar(255)
+  to_date                 String  @default("0") @db.VarChar(255)
+  num_days                String  @default("0") @db.VarChar(255)
+  bdal_count_method       String  @default("0") @db.VarChar(255)
+  bdal_value              String  @default("0") @db.VarChar(255)
+  bdal_total              String  @default("0") @db.VarChar(255)
+  date                    String  @default("0") @db.VarChar(255)
+  date_s                  String  @default("0") @db.VarChar(255)
+  date_ar                 String  @default("0") @db.VarChar(255)
+  publisher               Int     @default(0) @db.Int
+  publisher_name          String? @db.VarChar(250)
+  approved_direct_manager Int     @db.TinyInt
+  direct_manger_reason    String  @default("0") @db.VarChar(255)
+  specific_emp_id         Int     @db.Int
+  approved_specific_emp   Int     @db.TinyInt
+  specific_emp_reason     String  @default("0") @db.VarChar(255)
+  current_from_id         String  @default("0") @db.VarChar(255)
+  current_to_id           String  @default("0") @db.VarChar(255)
+  current_procedure       String  @default("0") @db.VarChar(255)
+  current_process_title   String  @default("0") @db.VarChar(255)
+  last_from_id            String  @default("0") @db.VarChar(255)
+  last_to_id              String  @default("0") @db.VarChar(255)
+  last_procedure          String  @default("0") @db.VarChar(255)
+  last_process_title      String  @default("0") @db.VarChar(255)
+  procedure_level         String  @default("0") @db.VarChar(255)
+  current_from_user_id    Int?    @db.Int
+  current_from_user_name  String? @db.VarChar(255)
+  current_to_user_id      Int?    @db.Int
+  current_to_user_name    String? @db.VarChar(255)
+  level                   Int     @default(0) @db.TinyInt
+  suspend                 Int     @default(0) @db.TinyInt
+  talab_in_fk             Int?    @db.Int
+  talab_in_title          String? @db.VarChar(255)
+  talab_msg               String? @db.VarChar(255)
+  reason_action           String? @db.VarChar(255)
+  seen                    Int     @default(0) @db.TinyInt
+  action_emp              Int     @default(0) @db.TinyInt
+  action_moder_final      Int     @default(0) @db.TinyInt
+  emp_user_id             Int?    @db.Int
+  geha_mandate_id_fk      Int?    @db.Int
+  geha_mandate_name       String? @db.VarChar(100)
+  mandate_id_fk           Int?    @db.Int
+  mandate_name            String? @db.VarChar(100)
+  mandate_purpose_id_fk   Int?    @db.Int
+  @@map("hr_mandate_orders")
+}
+
+model hr_mandate_orders_history {
+  id             Int     @id @default(autoincrement()) @db.Int
+  mandate_rkm_fk Int?    @db.Int
+  mandate_rkm_id Int?    @db.Int
+  from_user_id   Int?    @db.Int
+  from_user_name String? @db.VarChar(100)
+  to_user_id     Int?    @db.Int
+  to_user_name   String? @db.VarChar(100)
+  level          Int?    @db.TinyInt
+  talab_in_fk    Int?    @db.Int
+  talab_in_title String? @db.VarChar(100)
+  talab_msg      String? @db.VarChar(500)
+  reason_action  String? @db.VarChar(500)
+  date_ar        String? @db.VarChar(50)
+  date           String? @db.VarChar(100)
+  publisher      String? @db.VarChar(100)
+  suspend        String? @db.VarChar(2)
+  seen           Int     @default(0) @db.TinyInt
+  @@map("hr_mandate_orders_history")
+}
+
+model hr_mobadrat {
+  id           Int     @id @default(autoincrement())
+  send_date_ar String? @db.VarChar(20) // date-string
+  send_time    String? @db.VarChar(10)
+  emp_id_fk    Int?
+  title        String? @db.VarChar(255)
+  notes        String? @db.VarChar(500)
+  for_month    Int?
+  for_year     Int?
+  suspend      Int?    @default(0) // tinyint
+  rad_notes    String? @db.VarChar(200)
+  @@map("hr_mobadrat")
+}
+
+model hr_mokafat {
+  id                Int     @id @default(autoincrement()) @db.Int
+  mokafa_rkm        Int     @db.Int
+  mokafa_date       Int     @db.Int
+  month             Int?    @db.Int
+  year              Int?    @db.Int
+  mon_melady        String  @default("0") @db.VarChar(255)
+  mokafa_date_ar    String  @db.VarChar(255)
+  mokafa_value_type Int     @db.Int
+  mokafa_type       Int     @db.Int
+  total_value       String? @db.VarChar(255)
+  presence_number   Int     @default(0) @db.Int
+  publisher         Int     @db.Int
+  about             String  @db.VarChar(255)
+  suspend           Int     @default(0) @db.TinyInt
+  @@map("hr_mokafat")
+}
+
+model hr_mokafat_details {
+  id                            Int      @id @default(autoincrement()) @db.Int
+  mokafa_rkm_fk                 Int?     @db.Int
+  emp_code                      Int?     @db.Int
+  month                         Int?     @db.TinyInt
+  year                          Int?     @db.Int
+  bank_responsible_national_num String?  @db.VarChar(255)
+  bank_responsible_name         String?  @db.VarChar(500)
+  bank_account_num              String?  @db.VarChar(255)
+  bank_code                     String?  @db.VarChar(255)
+  value                         Decimal? @db.Decimal(19, 2)
+  mokafa_types                  Int?     @db.Int
+  mokafa_option                 String? // enum: rateb, alone
+  edara_n                       String?  @db.VarChar(150)
+  qsm_n                         String?  @db.VarChar(150)
+  mosma_wazefy_n                String?  @db.VarChar(100)
+  day                           Int?     @db.Int
+  suspend                       Int?     @db.TinyInt
+  // Consumption marker: the payroll run (hr_mosayer.mosayer_rkm) that paid this bonus
+  // when the run was POSTED. NULL = not yet consumed. Prevents a recompute or an
+  // overlapping-period run from paying the same bonus twice; cleared on run delete/unpost.
+  mosayer_rkm_fk                Int?     @db.Int
+  @@map("hr_mokafat_details")
+}
+
+model hr_mosalat {
+  id                     Int     @id @default(autoincrement())
+  mosala_rkm             Int?
+  mosala_date_ar         String? @db.VarChar(15) // date-string
+  mosala_time            String? @db.VarChar(10)
+  emp_name               String? @db.VarChar(100)
+  emp_name_id            Int?
+  emp_user_id            Int?
+  emp_edara              String? @db.VarChar(100)
+  emp_edara_id           Int?
+  emp_qesm               String? @db.VarChar(70)
+  emp_qesm_id            Int?
+  direct_manager_emp_id  Int?
+  direct_manager_user_id Int?
+  details                String? @db.VarChar(300)
+  publisher              Int?
+  publisher_name         String? @db.VarChar(100)
+  current_from_user_id   Int?
+  current_from_user_name String? @db.VarChar(100)
+  current_to_user_id     Int?
+  current_to_user_name   String? @db.VarChar(100)
+  send_to_hr             String  @default("no") @db.VarChar(5) // enum('yes','no')
+  send_to_emp            String  @default("no") @db.VarChar(5) // enum('yes','no')
+  actions_sends          String? @default("start") @db.VarChar(15) // enum('start','send_to_hr','send_to_emp')
+  answer_reasons         String? @db.VarChar(500)
+  answer_mobarer         String? @db.VarChar(500)
+  answer_other           String? @db.VarChar(500)
+  answer_date            String? @db.VarChar(15)
+  answer_time            String? @db.VarChar(10)
+  send_from              String  @default("hr") @db.VarChar(12) // enum('morasalat','hr')
+  for_year               Int     @default(2025)
+  for_month              Int?
+  f_file                 String? @db.VarChar(500)
+  real_file              String? @db.VarChar(500)
+  action_moder_rad       String  @default("wait") @db.VarChar(10) // enum('wait','accepted','refused')
+  action_moder_date      String? @db.VarChar(15)
+  action_moder_time      String? @db.VarChar(10)
+  action_moder_notes     String? @db.VarChar(300)
+  @@map("hr_mosalat")
+}
+
+model hr_mosalat_mokalfat {
+  id            Int     @id @default(autoincrement())
+  mosala_id_fk  Int?
+  mokalfa_id    Int?
+  mokalfa_name  String? @db.VarChar(255)
+  mokalfa_notes String? @db.VarChar(200)
+  @@map("hr_mosalat_mokalfat")
+}
+
+model hr_mosayer {
+  id                       Int      @id @default(autoincrement()) @db.Int
+  mosayer_rkm              Int?     @unique @db.Int
+  mosayer_date             String?  @db.VarChar(15)
+  mosayer_date_ar          String?  @db.VarChar(15)
+  mosayer_month            Int?     @db.TinyInt
+  mosayer_year             Int?     @db.Int
+  total                    Int      @db.Int
+  egmali_rateb_asasy       Decimal? @db.Decimal(19, 2)
+  egmali_badal_sakn        Decimal? @db.Decimal(19, 2)
+  egmali_badal_mowaslat    Decimal? @db.Decimal(19, 2)
+  egmali_badal_etsal       Decimal? @db.Decimal(19, 2)
+  egmali_badal_e3asha      Decimal? @db.Decimal(19, 2)
+  egmali_badal_tabe3a_amal Decimal? @db.Decimal(19, 2)
+  egmali_tot_edafi         Decimal? @db.Decimal(19, 2)
+  egmali_badal_taklef      Decimal? @db.Decimal(19, 2)
+  egmali_tot_mokafaa       Decimal? @db.Decimal(19, 2)
+  egmali_tot_entdab        Decimal? @db.Decimal(19, 2)
+  egmali_tot_okraa_esthkaq Decimal? @db.Decimal(19, 2)
+  egmali_total_esthkak     Decimal? @db.Decimal(19, 2)
+  egmali_khasm_keyab       Decimal? @db.Decimal(19, 2)
+  egmali_agaza_bdon_rateb  Decimal? @db.Decimal(19, 2)
+  egmali_khasm_takher      Decimal? @db.Decimal(19, 2)
+  egmali_khasm_gezaa       Decimal? @db.Decimal(19, 2)
+  egmali_khasm_tamen       Decimal? @db.Decimal(19, 2)
+  egmali_tamin_hesa_oner   Decimal? @db.Decimal(19, 2)
+  egmali_khasm_solaf       Decimal? @db.Decimal(19, 2)
+  egmali_tot_okraa_khasm   Decimal? @db.Decimal(19, 2)
+  egmali_total_khsomat     Decimal? @db.Decimal(19, 2)
+  egmali_safi              Decimal? @db.Decimal(19, 2)
+  tax_policy_id            Int?     @db.Int
+  tax_policy_version       String?  @db.VarChar(80)
+  tax_policy_snapshot      Json?
+  egmali_income_tax        Decimal? @db.Decimal(19, 2)
+  suspend_direct_manager   String? // enum: yes, no
+  suspend_mohasb           String? // enum: yes, no
+  suspend_moder_mali       String? // enum: yes, no
+  suspend_moder_3am        String? // enum: yes, no
+  amin_name                String?  @db.VarChar(75)
+  manager_name             String?  @db.VarChar(75)
+  naeb_name                String?  @db.VarChar(75)
+  approved                 Int?     @default(0) @db.Int
+  cashing_date             String?  @db.VarChar(50)
+  due_date                 String?  @db.VarChar(50)
+  file_downloded           String?  @db.VarChar(100)
+  halet_sarf               String? // enum: yes, no
+  do_ezn_sarf              String?  @default("no") // enum: yes, no
+  tanfez_ezn_sarf          String?  @default("no") // enum: yes, no
+  finish_sarf_date         String?  @db.VarChar(15)
+  finish_sarf_time         String?  @db.VarChar(15)
+  finish_sarf_person       String?  @db.VarChar(100)
+  taghez                   String?  @default("no") // enum: yes, no
+  taghez_date_ar           String?  @db.VarChar(15)
+  taghez_time              String?  @db.VarChar(15)
+  emp_id_fk                Int?     @db.Int
+  current_from_user_id     Int?     @db.Int
+  current_from_user_name   String?  @db.VarChar(150)
+  current_to_user_id       Int?     @db.Int
+  current_to_user_name     String?  @db.VarChar(150)
+  level                    Int?     @db.TinyInt
+  level_title              String?  @db.VarChar(20)
+  talab_msg                String?  @db.VarChar(150)
+  reason_action            String?  @db.VarChar(255)
+  seen                     Int      @default(0) @db.TinyInt
+  @@unique([mosayer_year, mosayer_month], map: "uq_hr_mosayer_period")
+  @@map("hr_mosayer")
+}
+
+model hr_mosayer_details {
+  id                   Int      @id @default(autoincrement()) @db.Int
+  mosayer_rkm_fk       Int?     @db.Int
+  emp_id               Int?     @db.Int
+  emp_code             Int?     @db.Int
+  emp_name             String?  @db.VarChar(70)
+  mosma_wazefy_n       String?  @db.VarChar(50)
+  emp_pay_method       Int?     @db.TinyInt
+  ayam_amal            Float?   @db.Double
+  sa3at_amal           Float?   @db.Double
+  agr_sa3a             Float?   @db.Double
+  emp_bank_id_fk       Int?     @db.Int
+  emp_bank_account_num String?  @db.VarChar(30)
+  bank_code            String?  @db.VarChar(6)
+  emp_name_in_bank     String?  @db.VarChar(70)
+  rateb_asasy          Decimal? @db.Decimal(19, 2)
+  badal_sakn           Decimal? @db.Decimal(19, 2)
+  badal_mowaslat       Decimal? @db.Decimal(19, 2)
+  badal_etsal          Decimal? @db.Decimal(19, 2)
+  badal_e3asha         Decimal? @db.Decimal(19, 2)
+  badal_tabe3a_amal    Decimal? @db.Decimal(19, 2)
+  tot_edafi            Decimal? @db.Decimal(19, 2)
+  badal_taklef         Decimal? @db.Decimal(19, 2)
+  tot_mokafaa          Decimal? @db.Decimal(19, 2)
+  tot_entdab           Decimal? @db.Decimal(19, 2)
+  tot_okraa_esthkaq    Decimal? @db.Decimal(19, 2)
+  total_esthkak        Decimal? @db.Decimal(19, 2)
+  khasm_keyab          Decimal? @db.Decimal(19, 2)
+  agaza_bdon_rateb     Decimal? @db.Decimal(19, 2)
+  khasm_takher         Decimal? @db.Decimal(19, 2)
+  khasm_gezaa          Decimal? @db.Decimal(19, 2)
+  khasm_tamen          Decimal? @db.Decimal(19, 2)
+  tamin_hesa_oner      Decimal? @db.Decimal(19, 2)
+  khasm_solaf          Decimal? @db.Decimal(19, 2)
+  tot_okraa_khasm      Decimal? @db.Decimal(19, 2)
+  total_khsomat        Decimal? @db.Decimal(19, 2)
+  safi                 Decimal? @db.Decimal(19, 2)
+  taxable_earnings     Decimal? @db.Decimal(19, 2)
+  income_tax           Decimal? @db.Decimal(19, 2)
+  tax_policy_id        Int?     @db.Int
+  tax_policy_version   String?  @db.VarChar(80)
+  tax_breakdown        Json?
+  /// Immutable inputs/rules/breakdown/result captured when this payroll line is computed.
+  calculation_snapshot Json?
+  halet_sarf           String? // enum: yes, no
+  tanfez_ezn_sarf      String?  @default("no") // enum: yes, no
+  taghez               String?  @default("no") // enum: yes, no
+  taghez_date_ar       String?  @db.VarChar(15)
+  taghez_time          String?  @db.VarChar(15)
+  sent_sarf            String? // enum: yes, no
+  sent_sarf_time       String?  @db.VarChar(15)
+  publisher_sent_sarf  String?  @db.VarChar(100)
+  finish_sarf_date     String?  @db.VarChar(15)
+  finish_sarf_time     String?  @db.VarChar(15)
+  finish_sarf_person   String?  @db.VarChar(100)
+  @@map("hr_mosayer_details")
+}
+
+model hr_persons_job_orders {
+  id                     Int     @id @default(autoincrement())
+  job_request_ordered_fk String  @db.VarChar(50)
+  job                    String? @db.VarChar(255)
+  job_name               String? @db.VarChar(255)
+  job_place              String? @db.VarChar(255)
+  mob                    String? @db.VarChar(50)
+  @@index([job_request_ordered_fk])
+}
+
+model hr_previous_work_job_orders {
+  id                     Int     @id @default(autoincrement())
+  job_request_ordered_fk String  @db.VarChar(50)
+  company_name           String? @db.VarChar(255)
+  job_id_title_fk        String? @db.VarChar(50)
+  date_from              String? @db.VarChar(50)
+  date_to                String? @db.VarChar(50)
+  job_mission            String? @db.Text
+  salary                 String? @db.VarChar(50)
+  leave_work_reason      String? @db.Text
+  @@index([job_request_ordered_fk])
+}
+
+model hr_qualification_job_orders {
+  id                     Int     @id @default(autoincrement())
+  job_request_ordered_fk String  @db.VarChar(50)
+  degree_id_fk           String? @db.VarChar(50)
+  qualification_id_fk    String? @db.VarChar(50)
+  school                 String? @db.VarChar(255)
+  specialied             String? @db.VarChar(255)
+  year                   String? @db.VarChar(20)
+  taqder                 String? @db.VarChar(100)
+  img                    String? @db.VarChar(500)
+  @@index([job_request_ordered_fk])
+}
+
+model hr_request_effects {
+  id            Int      @id @default(autoincrement())
+  request_id    Int      @unique
+  effect_type   String   @db.VarChar(30)
+  employee_id   Int
+  snapshot_json Json
+  result_json   Json
+  applied_by    Int
+  applied_at    DateTime @default(now()) @db.DateTime(3)
+  @@index([employee_id, applied_at])
+  @@index([effect_type, applied_at])
+  @@map("hr_request_effects")
+}
+
+model hr_requests {
+  id                 Int     @id @default(autoincrement())
+  type               String  @db.VarChar(30) // vacation | ezn | solaf | loan | allowance | salary_cert | resignation | transfer | promotion | data_change
+  request_no         Int?
+  emp_id_fk          Int?
+  emp_code_fk        Int?
+  emp_name           String? @db.VarChar(100)
+  status             Int     @default(0) @db.TinyInt
+  reason_action      String? @db.VarChar(255)
+  payload            String? @db.Text // JSON-encoded type-specific fields
+  created_at         String? @db.VarChar(30)
+  publisher          Int?
+  publisher_name     String? @db.VarChar(100)
+  current_to_user_id Int?
+  @@map("hr_requests")
+}
+
+model hr_salary_doors {
+  id               Int     @id @default(autoincrement())
+  mo2hel           String? @db.VarChar(100)
+  martba           String? @db.VarChar(100)
+  dawam_type       String? @db.VarChar(50)
+  salary_start     Int?
+  year_bonus_value Int?
+  x_1              Int?
+  x_2              Int?
+  x_3              Int?
+  x_4              Int?
+  x_5              Int?
+  x_6              Int?
+  x_7              Int?
+  x_8              Int?
+  x_9              Int?
+  x_10             Int?
+  x_11             Int?
+  x_12             Int?
+  x_13             Int?
+  x_14             Int?
+  x_15             Int?
+  @@map("hr_salary_doors")
+}
+
+model hr_skills_job_orders {
+  id                     Int     @id @default(autoincrement())
+  job_request_ordered_fk String  @db.VarChar(50)
+  name                   String? @db.VarChar(255)
+  details                String? @db.Text
+  efficiency_id_fk       String? @db.VarChar(50)
+  @@index([job_request_ordered_fk])
+}
+
+model hr_solaf {
+  id                      Int     @id @default(autoincrement()) @db.Int
+  t_rkm                   Int?    @unique @db.Int
+  t_rkm_date_m            String? @db.VarChar(15)
+  emp_id_fk               Int?    @db.Int
+  emp_code_fk             Int?    @db.Int
+  emp_name                String? @db.VarChar(100)
+  edara_id_fk             Int?    @db.Int
+  qsm_id_fk               Int?    @db.Int
+  qemt_solaf              Int?    @db.Int
+  sadad_solfa             Int?    @default(0) @db.Int
+  qst_num                 Int?    @db.Int
+  khsm_form_date_m        String? @db.VarChar(15)
+  khsm_to_date_m          String? @db.VarChar(15)
+  hd_solfa                Int?    @db.Int
+  previous_request_date_m String? @db.VarChar(15)
+  solaf_reason            String? @db.VarChar(100)
+  num_previous_requests   Int?    @db.Int
+  edara_n                 String? @db.VarChar(100)
+  qsm_n                   String? @db.VarChar(100)
+  job_title               String? @db.VarChar(100)
+  suspend                 Int?    @default(0) @db.Int
+  direct_manager_id_fk    Int?    @db.Int
+  direct_manager_code_fk  Int?    @db.Int
+  direct_manager_n        String? @db.VarChar(100)
+  action_direct_manager   Int     @db.Int
+  action_mowazf_moktas    Int     @db.Int
+  action_moder_hr         Int     @db.Int
+  action_moder_fr         Int     @db.Int
+  action_moder_final      Int     @db.Int
+  current_from_user_id    Int     @db.Int
+  current_from_user_name  String  @db.VarChar(100)
+  current_to_user_id      Int     @db.Int
+  current_to_user_name    String? @db.VarChar(100)
+  talab_in_fk             Int     @db.Int
+  talab_in_title          String  @db.VarChar(100)
+  level                   Int     @db.Int
+  talab_msg               String  @db.VarChar(100)
+  reason_action           String  @db.VarChar(100)
+  qemt_qst                Float   @default(0) @db.Double
+  seen                    Int     @default(0) @db.TinyInt
+  direct_manger_taqeem    Int     @default(0) @db.TinyInt
+  direct_manger_sarf      Int     @default(0) @db.TinyInt
+  emp_motalbat            Int     @default(0) @db.TinyInt
+  solaf_qaema             Int     @default(0) @db.TinyInt
+  rased_yasmah            Int     @default(0) @db.TinyInt
+  rased_motah             String? @db.VarChar(15)
+  moder_mali_option       Int     @default(0) @db.TinyInt
+  ended                   String? // enum: yes, no
+  tanfez_sanad_sarf       String? @default("no") // enum: yes, no
+  publisher               Int?    @db.Int
+  @@map("hr_solaf")
+}
+
+model hr_solaf_dawabt {
+  id     Int     @id @default(autoincrement()) @db.Int
+  title  String? @db.VarChar(100)
+  type   Int?    @db.Int
+  type_n String? @db.VarChar(100)
+  @@map("hr_solaf_dawabt")
+}
+
+model hr_solaf_emp_hesbat {
+  id             Int     @id @default(autoincrement()) @db.Int
+  emp_id         Int?    @db.Int
+  emp_code       Int?    @db.Int
+  emp_name       String? @db.VarChar(100)
+  rkm_hesab      BigInt? @db.BigInt
+  hesab_name     String? @db.VarChar(200)
+  publisher      Int?    @db.Int
+  publisher_name String? @db.VarChar(100)
+  date_added     String? @db.VarChar(15)
+  time_add       String? @db.VarChar(10)
+  @@map("hr_solaf_emp_hesbat")
+}
+
+model hr_solaf_main_setting {
+  id              Int  @id @default(autoincrement()) @db.Int
+  da3m_value      Int? @db.Int
+  aqsa_moda_sadad Int? @db.Int
+  had_adna        Int? @db.Int
+  rateb_asasy     Int  @default(0) @db.Int
+  bdl_sakn        Int  @default(0) @db.Int
+  bdl_mowaslat    Int  @default(0) @db.Int
+  bdl_jwal        Int  @default(0) @db.Int
+  rateb_mokto3    Int  @default(0) @db.Int
+  bdl_amal        Int  @default(0) @db.Int
+  bdl_taklef      Int  @default(0) @db.Int
+  bdl_ma3esha     Int  @default(0) @db.Int
+  @@map("hr_solaf_main_setting")
+}
+
+model hr_solaf_quest {
+  id               Int     @id @default(autoincrement()) @db.Int
+  t_rkm_fk         Int?    @db.Int
+  emp_code_fk      Int?    @db.Int
+  value_of_qst     Float?  @db.Float
+  month            Int?    @db.Int
+  year             Int?    @db.Int
+  qst_date_ar      String? @db.VarChar(15)
+  qst_date         String? @db.VarChar(15)
+  paid             String? // enum: yes, no, wait
+  date_paid        String? @db.VarChar(15)
+  time_paid        String? @db.VarChar(15)
+  paid_sarf_person String? @db.VarChar(100)
+  suspend          Int     @default(0) @db.Int
+  @@map("hr_solaf_quest")
+}
+
+model hr_solaf_ta3gel {
+  id                     Int     @id @default(autoincrement()) @db.Int
+  t_rkm                  Int?    @db.Int
+  solfa_rkm              Int?    @db.Int
+  t_rkm_date_m           String? @db.VarChar(100)
+  emp_id_fk              Int?    @db.Int
+  emp_code_fk            Int?    @db.Int
+  emp_name               String? @db.VarChar(100)
+  edara_id_fk            Int?    @db.Int
+  qsm_id_fk              Int?    @db.Int
+  edara_n                String? @db.VarChar(100)
+  qsm_n                  String? @db.VarChar(100)
+  job_title              String? @db.VarChar(150)
+  fe2a_ta3gel            Int?    @db.Int
+  qued_rkm               Int?    @db.Int
+  for_month              String? @db.TinyText
+  qemt_qst               Int?    @db.Int
+  ta3gel_reason          String? @db.VarChar(100)
+  suspend                Int?    @default(0) @db.Int
+  publisher              Int?    @db.Int
+  publisher_name         String? @db.VarChar(150)
+  from_bank_id_fk        Int?    @db.Int
+  from_bank_code         String? @db.VarChar(50)
+  from_bank_account_num  String? @db.VarChar(50)
+  to_bank_id_fk          Int?    @db.Int
+  to_bank_code           String? @db.VarChar(50)
+  to_bank_account_num    String? @db.VarChar(50)
+  action_moder_fr        Int     @default(0) @db.TinyInt
+  action_moder_hr        Int     @default(0) @db.TinyInt
+  action_mohaseb         Int?    @db.TinyInt
+  current_from_user_id   Int?    @db.Int
+  current_from_user_name String? @db.VarChar(100)
+  current_to_user_id     Int?    @db.Int
+  current_to_user_name   String? @db.VarChar(100)
+  level                  Int     @default(0) @db.TinyInt
+  level_title            String  @default("مقدم الطلب") @db.VarChar(50)
+  reason_action          String? @db.VarChar(150)
+  seen                   Int     @default(0) @db.TinyInt
+  ta3gel_morfak          String? @db.Text
+  mosayer_month          Int?    @db.Int
+  mosayer_year           Int?    @db.Int
+  tanfez                 String? @default("no") // enum: yes, no
+  @@map("hr_solaf_ta3gel")
+}
+
+model hr_ta3en_moaqt_evaluation {
+  id             Int     @id @default(autoincrement())
+  emp_id_fk      String? @db.VarChar(100)
+  edara_id_fk    String? @db.VarChar(100)
+  qsm_id_fk      String? @db.VarChar(100)
+  total_degree   String? @db.VarChar(100)
+  result_tagraba String? @db.VarChar(100)
+  taqdeer        String? @db.VarChar(100)
+  date           Int?
+  date_ar        String? @db.VarChar(15)
+  publisher      Int?
+  publisher_name String? @db.VarChar(100)
+  @@map("hr_ta3en_moaqt_evaluation")
+}
+
+model hr_ta3en_moaqt_evaluation_details {
+  id             Int     @id @default(autoincrement())
+  evaluate_id_fk Int?
+  title          String? @db.VarChar(255)
+  max_degree     String? @db.VarChar(50)
+  emp_degree     String? @db.VarChar(50)
+  @@map("hr_ta3en_moaqt_evaluation_details")
+}
+
+model hr_ta3en_moaqt_evaluation_points {
+  id             Int     @id @default(autoincrement())
+  evaluate_id_fk Int?
+  title          String? @db.VarChar(255)
+  type           Int?
+  type_n         String? @db.VarChar(50)
+  @@map("hr_ta3en_moaqt_evaluation_points")
+}
+
+model hr_ta3mem {
+  id             Int     @id @default(autoincrement())
+  ta3mem_date    String? @db.VarChar(100)
+  file           String? @db.VarChar(200)
+  subject        String? @db.Text
+  publisher      Int?
+  publisher_name Int?
+  date           Int?
+  date_ar        Int?
+  ta3mem_title   String? @db.VarChar(100)
+  type           String? @db.VarChar(20)
+  img            String? @db.VarChar(500)
+  adv_from_date  String? @db.VarChar(100)
+  adv_to_date    String? @db.VarChar(100)
+  adv_place      String? @db.VarChar(200)
+  adv_time       String? @db.VarChar(100)
+  send_all_t3mem Int?    @default(0)
+  @@map("hr_ta3mem")
+}
+
+model hr_ta3mem_details {
+  id           Int     @id @default(autoincrement())
+  ta3mem_id_fk Int?
+  emp_id       Int?
+  emp_code     Int?
+  emp_name     String? @db.VarChar(100)
+  seen         Int?
+  seen_date    String? @db.VarChar(15)
+  seen_time    String? @db.VarChar(20)
+  type         String? @db.VarChar(20)
+  @@map("hr_ta3mem_details")
+}
+
+model hr_ta3mem_msg {
+  id             Int     @id @default(autoincrement())
+  msg_date       String? @db.VarChar(100) // date-string
+  msg_title      String? @db.VarChar(100)
+  subject        String? @db.Text
+  msg_f2a        Int? // category id (FK-by-convention)
+  start_time     String? @db.VarChar(100)
+  start_date     String? @db.VarChar(100) // date-string
+  moda           String? @db.VarChar(100)
+  publisher      Int
+  publisher_name Int
+  date           Int
+  date_ar        Int
+  send_all_t3mem Int     @default(0)
+  img            String? @db.VarChar(250)
+  @@map("hr_ta3mem_msg")
+}
+
+model hr_ta3mem_personal_msg {
+  id             Int     @id @default(autoincrement())
+  msg_date       String? @db.VarChar(100) // date-string
+  msg_time       String? @db.VarChar(15)
+  msg_title      String? @db.VarChar(100)
+  for_month      Int?
+  for_year       Int?
+  from_user_id   Int?
+  from_emp_id    Int?
+  subject        String? @db.Text
+  message        String? @db.VarChar(255)
+  msg_f2a        Int?
+  start_time     String? @db.VarChar(100)
+  start_date     String? @db.VarChar(100) // date-string
+  moda           String? @db.VarChar(100)
+  publisher      Int?
+  publisher_name String? @db.VarChar(250)
+  date           String? @db.VarChar(15) // date-string
+  date_ar        String? @db.VarChar(15)
+  send_all_t3mem Int     @default(0)
+  file           String? @db.VarChar(250)
+  deleted        Int     @default(0) // tinyint bool-as-int
+  deleted_date   String? @db.VarChar(10)
+  deleted_time   String? @db.VarChar(10)
+  @@map("hr_ta3mem_personal_msg")
+}
+
+model hr_ta3mem_personal_msg_details {
+  id               Int     @id @default(autoincrement())
+  ta3mem_msg_id_fk Int?
+  to_user_id       Int?
+  to_emp_id        Int?
+  emp_code         Int?
+  emp_name         String? @db.VarChar(100)
+  type             Int     @default(0)
+  seen             Int?
+  send_all_t3mem   Int?
+  send_date        String? @db.VarChar(15) // date-string
+  send_time        String? @db.VarChar(10)
+  seen_date        String? @db.VarChar(15) // date-string
+  seen_time        String? @db.VarChar(20)
+  deleted          Int     @default(0)
+  deleted_date     String? @db.VarChar(10)
+  deleted_time     String? @db.VarChar(10)
+  for_month        Int?
+  for_year         Int?
+  for_c_year       Int     @default(2025)
+  @@map("hr_ta3mem_personal_msg_details")
+}
+
+model hr_talabat_orders {
+  id             Int     @id @default(autoincrement()) @db.Int
+  talab_date_ar  String? @db.VarChar(20)
+  talab_time     String? @db.VarChar(10)
+  emp_id_fk      Int?    @db.Int
+  for_month      Int?    @db.Int
+  for_year       Int?    @db.Int
+  no3_talab_id   Int?    @db.TinyInt
+  date_ar        String? @db.VarChar(20)
+  publisher_name String? @db.VarChar(70)
+  send_report    String? @default("no") // enum: yes, no
+  suspend        Int?    @default(0) @db.TinyInt
+  notes          String? @db.VarChar(500)
+  rad_notes      String? @db.VarChar(200)
+  rad_file       String? @db.VarChar(500)
+  @@map("hr_talabat_orders")
+}
+
+model hr_tayi_qyed {
+  id                  Int     @id @default(autoincrement())
+  emp_id              String? @db.VarChar(200)
+  edara_id_fk         String? @db.VarChar(200)
+  qsm_id_fk           String? @db.VarChar(200)
+  direct_manger_id_fk String? @db.VarChar(200)
+  from_date           String? @db.VarChar(250)
+  from_date_ar        String? @db.VarChar(250)
+  to_date             String? @db.VarChar(250)
+  to_date_ar          String? @db.VarChar(250)
+  date                String? @db.VarChar(250)
+  date_s              String? @db.VarChar(250)
+  publisher           String? @db.VarChar(250)
+  @@map("hr_tayi_qyed")
+}
+
+model job_request_orders {
+  id                    Int       @id @default(autoincrement())
+  name                  String?   @db.VarChar(300)
+  national_num          String?   @db.VarChar(50)
+  national_num_img      String?   @db.Text
+  personal_photo        String?   @db.VarChar(600)
+  gender_id_fk          Int?
+  nationality_id_fk     Int?
+  date_birth            String?   @db.VarChar(300)
+  date_birth_hijri      String?   @db.VarChar(20)
+  place_birth           String?   @db.VarChar(300)
+  social_status         Int?
+  city                  String?   @db.VarChar(300)
+  hai                   String?   @db.VarChar(300)
+  job_request_id_fk     Int?
+  job_name_other        String?   @db.VarChar(300)
+  mob                   String?   @db.VarChar(50)
+  email                 String?   @db.VarChar(100)
+  work_now              Int?
+  interview_date        String?   @db.VarChar(50)
+  determine_interview   Int?
+  do_interview          Int?
+  total_degree          String?   @db.VarChar(50)
+  date                  String?   @db.VarChar(50)
+  date_ar               String?   @db.VarChar(50)
+  pipeline_status       String    @default("applied") @db.VarChar(32)
+  status_reason         String?   @db.Text
+  status_changed_at     DateTime  @default(now()) @db.DateTime(3)
+  accepted_at           DateTime? @db.DateTime(3)
+  accepted_by           Int?
+  converted_employee_id Int?
+  converted_at          DateTime? @db.DateTime(3)
+  @@unique([converted_employee_id], map: "uq_job_request_orders_converted_employee")
+  @@index([pipeline_status, status_changed_at], map: "idx_job_request_orders_pipeline_status")
+  @@map("job_request_orders")
+}
+
+model leave_carryover_runs {
+  target_year  Int       @id
+  status       String    @db.VarChar(20)
+  processed    Int       @default(0)
+  started_at   DateTime  @default(now()) @db.DateTime(3)
+  completed_at DateTime? @db.DateTime(3)
+  initiated_by Int?
+  @@map("leave_carryover_runs")
+}
+
+model pages {
+  page_id        Int     @id @default(autoincrement())
+  page_title     String  @db.VarChar(255)
+  page_link      String  @db.VarChar(255)
+  group_id_fk    Int // menu group (FK-by-convention)
+  level          Int
+  page_order     Int
+  page_icon_code String  @db.VarChar(255)
+  page_photo     String  @default("0") @db.VarChar(500)
+  bg_color       String? @db.VarChar(10)
+  width          String? @db.VarChar(10)
+  color          String? @db.VarChar(10)
+  class          String? @db.VarChar(10)
+  permissions permissions[]
+  @@map("pages")
+}
+
+model payroll_period_controls {
+  period_key String   @id @db.VarChar(7)
+  created_at DateTime @default(now()) @db.DateTime(3)
+  updated_at DateTime @default(now()) @updatedAt @db.DateTime(3)
+  @@map("payroll_period_controls")
+}
+
+model payroll_settlement_benefit_tiers {
+  id                     Int                         @id @default(autoincrement())
+  policy_id              Int
+  sort_order             Int
+  lower_years            Decimal                     @db.Decimal(10, 6)
+  upper_years            Decimal?                    @db.Decimal(10, 6)
+  salary_months_per_year Decimal                     @db.Decimal(10, 6)
+  policy                 payroll_settlement_policies @relation(fields: [policy_id], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "fk_payroll_settlement_tier_policy")
+  @@unique([policy_id, sort_order], map: "uq_payroll_settlement_tier_order")
+  @@map("payroll_settlement_benefit_tiers")
+}
+
+model payroll_settlement_policies {
+  id                            Int                                @id @default(autoincrement())
+  code                          String                             @db.VarChar(60)
+  version                       Int
+  name                          String                             @db.VarChar(150)
+  jurisdiction                  String                             @db.VarChar(80)
+  effective_from                DateTime                           @db.Date
+  effective_to                  DateTime?                          @db.Date
+  benefit_base                  String                             @default("basic") @db.VarChar(30)
+  leave_day_divisor             Int                                @default(30)
+  max_compensated_leave_days    Decimal?                           @db.Decimal(10, 4)
+  benefit_taxable               Boolean                            @default(false)
+  leave_taxable                 Boolean                            @default(false)
+  recover_all_outstanding_loans Boolean                            @default(true)
+  status                        String                             @default("draft") @db.VarChar(20)
+  source_reference              String?                            @db.VarChar(500)
+  created_by                    Int?
+  published_by                  Int?
+  published_at                  DateTime?                          @db.DateTime(3)
+  created_at                    DateTime                           @default(now()) @db.DateTime(3)
+  updated_at                    DateTime                           @default(now()) @updatedAt @db.DateTime(3)
+  tiers                         payroll_settlement_benefit_tiers[]
+  @@unique([code, version], map: "uq_payroll_settlement_policy_code_version")
+  @@index([effective_from, effective_to, status], map: "idx_payroll_settlement_policy_effective_status")
+  @@map("payroll_settlement_policies")
+}
+
+model payroll_tax_brackets {
+  id           Int                  @id @default(autoincrement())
+  policy_id    Int
+  sort_order   Int
+  lower_bound  Decimal              @db.Decimal(19, 2)
+  upper_bound  Decimal?             @db.Decimal(19, 2)
+  rate_percent Decimal              @db.Decimal(7, 4)
+  policy       payroll_tax_policies @relation(fields: [policy_id], references: [id], onDelete: Cascade, onUpdate: Cascade, map: "fk_payroll_tax_bracket_policy")
+  @@unique([policy_id, sort_order], map: "uq_payroll_tax_bracket_order")
+  @@index([policy_id], map: "idx_payroll_tax_bracket_policy")
+  @@map("payroll_tax_brackets")
+}
+
+model payroll_tax_policies {
+  id                Int                    @id @default(autoincrement())
+  code              String                 @db.VarChar(60)
+  version           Int
+  name              String                 @db.VarChar(150)
+  jurisdiction      String                 @db.VarChar(80)
+  effective_from    DateTime               @db.Date
+  effective_to      DateTime?              @db.Date
+  annual_allowance  Decimal                @default(0) @db.Decimal(19, 2)
+  annual_tax_credit Decimal                @default(0) @db.Decimal(19, 2)
+  periods_per_year  Int                    @default(12)
+  status            String                 @default("draft") @db.VarChar(20)
+  source_reference  String?                @db.VarChar(500)
+  created_by        Int?
+  published_by      Int?
+  published_at      DateTime?              @db.DateTime(3)
+  created_at        DateTime               @default(now()) @db.DateTime(3)
+  updated_at        DateTime               @default(now()) @updatedAt @db.DateTime(3)
+  brackets          payroll_tax_brackets[]
+  @@unique([code, version], map: "uq_payroll_tax_policy_code_version")
+  @@index([effective_from, effective_to, status], map: "idx_payroll_tax_policy_effective_status")
+  @@map("payroll_tax_policies")
+}
+
+model penalty_bylaws {
+  id                  Int     @id @default(autoincrement())
+  code                String? @db.VarChar(50)
+  title               String? @db.VarChar(255)
+  description         String? @db.Text
+  action_type         String? @db.VarChar(20) // deduction | warning | suspension
+  threshold           Int?
+  period_months       Int?
+  deduction_days      Float?  @db.Float
+  deduction_amount    Float?  @db.Float
+  suspension_days     Int?
+  warning_template_id Int?
+  is_active           Int     @default(1) @db.TinyInt
+  sort_order          Int?
+  publisher           Int?
+  created_at          String? @db.VarChar(20)
+  @@map("penalty_bylaws")
+}
+
+model permissions {
+  user_id    Int // -> users.user_id
+  page_id_fk Int // -> pages.page_id
+  page_level Int // access level
+  user users @relation(fields: [user_id], references: [user_id], onDelete: NoAction, onUpdate: NoAction)
+  page pages @relation(fields: [page_id_fk], references: [page_id], onDelete: NoAction, onUpdate: NoAction)
+  @@id([user_id, page_id_fk])
+  @@index([page_id_fk])
+  @@map("permissions")
+}
+
+model private_file_metadata {
+  id                String    @id @db.Char(36)
+  category          String    @db.VarChar(40)
+  storage_key       String    @unique @db.VarChar(500)
+  original_name     String    @db.VarChar(255)
+  mime_type         String    @db.VarChar(120)
+  byte_size         BigInt
+  sha256            String    @db.Char(64)
+  owner_employee_id Int?
+  branch_id         Int?
+  uploaded_by       Int
+  validation_status String    @default("validated") @db.VarChar(30)
+  created_at        DateTime  @default(now()) @db.DateTime(3)
+  retention_until   DateTime? @db.DateTime(3)
+  deleted_at        DateTime? @db.DateTime(3)
+  deleted_by        Int?
+  @@index([category, created_at])
+  @@index([owner_employee_id, deleted_at])
+  @@index([branch_id, deleted_at])
+  @@index([uploaded_by, created_at])
+  @@map("private_file_metadata")
+}
+
+model rbac_actions {
+  id         Int     @id @default(autoincrement())
+  key        String  @unique @db.VarChar(40) // view/create/update/delete/approve/reject/export/print/audit/configure/execute/manage/use
+  label_ar   String  @db.VarChar(80)
+  label_en   String  @db.VarChar(80)
+  sensitive  Boolean @default(false)
+  sort_order Int     @default(0)
+  resource_actions rbac_resource_actions[]
+  role_permissions rbac_role_permissions[]
+  exceptions       rbac_user_exceptions[]
+  @@map("rbac_actions")
+}
+
+model rbac_resource_actions {
+  resource_id Int
+  action_id   Int
+  resource rbac_resources @relation(fields: [resource_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  action   rbac_actions   @relation(fields: [action_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  @@id([resource_id, action_id])
+  @@index([action_id])
+  @@map("rbac_resource_actions")
+}
+
+model rbac_resources {
+  id         Int              @id @default(autoincrement())
+  key        String           @unique @db.VarChar(120) // stable, e.g. "employees.list"
+  parent_id  Int?
+  type       RbacResourceType
+  name_ar    String           @db.VarChar(160)
+  name_en    String?          @db.VarChar(160)
+  route      String?          @db.VarChar(200) // new React route, e.g. "/employees"
+  icon       String?          @db.VarChar(80)
+  sort_order Int              @default(0)
+  is_active  Boolean          @default(true)
+  parent   rbac_resources?  @relation("rbac_resource_tree", fields: [parent_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  children rbac_resources[] @relation("rbac_resource_tree")
+  resource_actions rbac_resource_actions[]
+  role_permissions rbac_role_permissions[]
+  exceptions       rbac_user_exceptions[]
+  role_scopes      rbac_role_scopes[]
+  @@index([parent_id])
+  @@map("rbac_resources")
+}
+
+model rbac_role_permissions {
+  id          Int        @id @default(autoincrement())
+  role_id     Int
+  resource_id Int
+  action_id   Int
+  effect      RbacEffect
+  role     rbac_roles     @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  resource rbac_resources @relation(fields: [resource_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  action   rbac_actions   @relation(fields: [action_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  @@unique([role_id, resource_id, action_id])
+  @@index([role_id])
+  @@index([resource_id])
+  @@index([action_id])
+  @@map("rbac_role_permissions")
+}
+
+model rbac_role_scopes {
+  id          Int           @id @default(autoincrement())
+  role_id     Int
+  resource_id Int
+  scope       RbacDataScope
+  role     rbac_roles     @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  resource rbac_resources @relation(fields: [resource_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  @@unique([role_id, resource_id])
+  @@index([role_id])
+  @@map("rbac_role_scopes")
+}
+
+model rbac_roles {
+  id             Int      @id @default(autoincrement())
+  key            String   @unique @db.VarChar(60)
+  name_ar        String   @db.VarChar(120)
+  name_en        String?  @db.VarChar(120)
+  description    String?  @db.VarChar(255)
+  is_system      Boolean  @default(false)
+  is_super_admin Boolean  @default(false)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+  permissions rbac_role_permissions[]
+  user_roles  rbac_user_roles[]
+  scopes      rbac_role_scopes[]
+  @@map("rbac_roles")
+}
+
+model rbac_user_exceptions {
+  id          Int        @id @default(autoincrement())
+  user_id     Int
+  resource_id Int
+  action_id   Int
+  effect      RbacEffect
+  expires_at  DateTime?
+  reason      String?    @db.VarChar(255)
+  created_at  DateTime   @default(now())
+  created_by  Int?
+  resource rbac_resources @relation(fields: [resource_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  action   rbac_actions   @relation(fields: [action_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  @@unique([user_id, resource_id, action_id])
+  @@index([user_id])
+  @@map("rbac_user_exceptions")
+}
+
+model rbac_user_roles {
+  id         Int       @id @default(autoincrement())
+  user_id    Int
+  role_id    Int
+  expires_at DateTime?
+  created_at DateTime  @default(now())
+  created_by Int?
+  role rbac_roles @relation(fields: [role_id], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  @@unique([user_id, role_id])
+  @@index([user_id])
+  @@index([role_id])
+  @@map("rbac_user_roles")
+}
+
+model staff_auth_sessions {
+  id                 String    @id @db.Char(36)
+  family_id          String    @db.Char(36)
+  user_id            Int
+  refresh_token_hash String    @unique @db.Char(64)
+  expires_at         DateTime  @db.DateTime(3)
+  consumed_at        DateTime? @db.DateTime(3)
+  revoked_at         DateTime? @db.DateTime(3)
+  revocation_reason  String?   @db.VarChar(100)
+  replaced_by        String?   @db.Char(36)
+  ip_address         String?   @db.VarChar(45)
+  user_agent         String?   @db.VarChar(255)
+  created_at         DateTime  @default(now()) @db.DateTime(3)
+  last_used_at       DateTime? @db.DateTime(3)
+  @@index([user_id, revoked_at, expires_at])
+  @@index([family_id, revoked_at])
+  @@map("staff_auth_sessions")
+}
+
+model tbl_branches {
+  branch_id   Int     @id @default(autoincrement())
+  branch_name String? @db.VarChar(50)
+  from_id     Int // parent/region (0 = root)
+  @@map("tbl_branches")
+}
+
+model tbl_emps_hours_edafi {
+  id               Int    @id @default(autoincrement()) @db.Int
+  emp_id_fk        Int    @db.Int
+  emp_code_fk      Int    @db.Int
+  emp_name         String @db.VarChar(100)
+  branch_id_fk     Int    @db.Int
+  num_hours        Int    @db.Int
+  date_ar          String @db.VarChar(20)
+  date_s           String @db.VarChar(20)
+  edafa_date       String @db.VarChar(20)
+  publisher        Int    @db.Int
+  publisher_emp_id Int    @db.Int
+  @@map("tbl_emps_hours_edafi")
+}
+
+model tbl_emps_shef_edafi {
+  id               Int    @id @default(autoincrement()) @db.Int
+  emp_id_fk        Int    @db.Int
+  emp_name         String @db.VarChar(100)
+  ttype            Int    @db.Int
+  dwam_id_fk       Int    @db.Int
+  sheft_date       String @db.VarChar(20)
+  emp_code_fk      Int    @db.Int
+  branch_id_fk     Int    @db.Int
+  date_ar          String @db.VarChar(11)
+  date_s           String @db.VarChar(11)
+  publisher        Int    @db.Int
+  publisher_emp_id Int    @db.Int
+  @@map("tbl_emps_shef_edafi")
+}
+
+model tbl_hdodr_setting {
+  id                Int     @id @default(autoincrement())
+  hdoor_from_time   String? @db.VarChar(10) // time-string
+  hdoor_to_time     String? @db.VarChar(10) // time-string
+  hdoor_khasm_from  String? @db.VarChar(10) // time-string
+  ensraf_from_time  String? @db.VarChar(10) // time-string
+  ensraf_khasm_from String? @db.VarChar(10) // time-string
+  ensraf_to_time    String? @db.VarChar(10) // time-string
+  title             String? @db.VarChar(100)
+  @@map("tbl_hdodr_setting")
+}
+
+model tbl_hdoor_emps {
+  hodoor_id               Int         @id @default(autoincrement())
+  employee_code           Int? // -> employees.emp_code
+  employee_id             Int?
+  action_date             String?     @db.VarChar(15) // date-string (Hijri)
+  action_date_s           String?     @db.VarChar(15) // date-string (Gregorian)
+  hdoor_time              String?     @db.VarChar(15) // time-string actual in
+  dwam_hdoor_time         String?     @db.VarChar(10) // time-string scheduled in
+  late_min                Float?
+  ensraf_time             String?     @db.VarChar(10) // time-string actual out
+  dwam_ensraf_time        String?     @db.VarChar(10) // time-string scheduled out
+  mobaker_min             Float? // early-leave minutes
+  hdoor_user_id           Int? // -> users.user_id (recorder)
+  ensraf_user_id          Int? // -> users.user_id (recorder)
+  ttype                   HdoorTtype?
+  action_time             String?     @db.VarChar(10) // time-string
+  num_min                 Float?
+  tasgel_type             TasgelType? @default(automatic)
+  hdoor_img_path          String?     @db.VarChar(500)
+  ensraf_img_path         String?     @db.VarChar(500)
+  hdoor_lat               String?     @db.VarChar(100)
+  hdoor_long              String?     @db.VarChar(100)
+  ensraf_lat              String?     @db.VarChar(100)
+  ensraf_long             String?     @db.VarChar(100)
+  second_hdoor_time       String?     @db.VarChar(10) // time-string
+  second_hdoor_user_id    Int?
+  second_dwam_hdoor_time  String?     @db.VarChar(10) // time-string
+  second_late_min         Float?
+  second_hdoor_img_path   String?     @db.VarChar(500)
+  second_hdoor_lat        String?     @db.VarChar(100)
+  second_hdoor_long       String?     @db.VarChar(100)
+  second_ensraf_time      String?     @db.VarChar(10) // time-string
+  second_ensraf_user_id   Int?
+  second_dwam_ensraf_time String?     @db.VarChar(10) // time-string
+  second_mobaker_min      Float?
+  second_ensraf_img_path  String?     @db.VarChar(500)
+  second_ensraf_lat       String?     @db.VarChar(100)
+  second_ensraf_long      String?     @db.VarChar(100)
+  for_month               Int?
+  for_year                Int?
+  mobker_hdor             Int?        @default(0)
+  ensraf_point            Int?
+  sheft_type              Int
+  branch_id_fk            Int // -> tbl_branches.branch_id
+  dwam_id_fk              Int // -> hr_emp_dwam.id
+  @@index([action_date])
+  @@index([action_date_s])
+  @@index([branch_id_fk, action_date])
+  @@index([branch_id_fk, action_date_s])
+  @@index([employee_code, action_date])
+  @@index([employee_code, action_date_s])
+  @@map("tbl_hdoor_emps")
+}
+
+model tbl_mohmat_3mal {
+  id         Int    @id @default(autoincrement()) @db.Int
+  emp_id_fk  Int    @db.Int
+  emp_name   String @db.VarChar(100)
+  mohma_name String @db.VarChar(200)
+  mohma_date String @db.VarChar(20)
+  site_id    Int    @db.Int
+  site_name  String @db.VarChar(150)
+  date_ar    String @db.VarChar(20)
+  date_s     String @db.VarChar(20)
+  publisher  Int    @db.Int
+  @@map("tbl_mohmat_3mal")
+}
+
+model tbl_notifications {
+  id           Int     @id @default(autoincrement())
+  from_user    Int? // -> users.user_id (FK-by-convention)
+  to_user      Int? // -> users.user_id (FK-by-convention)
+  date_ar      String? @db.VarChar(15) // date-string
+  time_ar      String? @db.VarChar(15) // time-string
+  seen         Int     @default(0) @db.TinyInt // bool
+  seen_date    String? @db.VarChar(15) // date-string
+  seen_time    String? @db.VarChar(10) // time-string
+  fk_id        BigInt? // polymorphic target id
+  notify_id_fk Int?
+  n_code       Int?
+  test_num     Int?
+  @@map("tbl_notifications")
+}
+
+model tbl_sites {
+  id        Int     @id @default(autoincrement()) @db.Int
+  name      String  @db.VarChar(255)
+  s_lat     Float   @db.Double
+  s_long    Float   @db.Double
+  radius    Int     @default(100) @db.Int
+  date_ar   String  @db.VarChar(20)
+  publisher Int     @db.Int
+  site_name String? @db.VarChar(200)
+  @@map("tbl_sites")
+}
+
+model tbl_sys_notifications_settings {
+  id      Int     @id @default(autoincrement())
+  code    Int?
+  t_table String? @db.VarChar(100) // target table name (polymorphic)
+  url     String? @db.VarChar(100)
+  title   String? @db.VarChar(100)
+  @@map("tbl_sys_notifications_settings")
+}
+
+model tbl_zeyada_rateb {
+  id        Int     @id @default(autoincrement()) @db.Int
+  emp_id_fk Int     @db.Int
+  emp_code  Int     @db.Int
+  emp_name  String  @db.VarChar(100)
+  value     Decimal @db.Decimal(10, 0)
+  date_ar   String  @db.VarChar(20)
+  date_s    String  @db.VarChar(20)
+  publisher Int     @db.Int
+  @@map("tbl_zeyada_rateb")
+}
+
+model users {
+  user_id              Int     @id @default(autoincrement())
+  agent_brok_fk        Int? // FK-by-convention
+  emp_code             Int? // FK-by-convention -> employees.emp_code (varchar/int mismatch; not enforced)
+  username             String? @db.VarChar(40)
+  password             String? @db.VarChar(255) // bcrypt going forward; legacy sha1(md5) tolerated until rehash on login
+  name                 String? @db.VarChar(100)
+  email                String? @db.VarChar(50)
+  address              String? @db.VarChar(200)
+  level                Int? // COMMENT '1:admin , 2:emp'
+  role_id_fk           Int? // FK-by-convention -> role (out of scope)
+  image                String? @db.VarChar(500)
+  x_y_z                String? @db.VarChar(300)
+  branch_id_fk         Int? // FK-by-convention -> tbl_branches.branch_id
+  app_pass             String? @db.VarChar(100) // SHA-1 hex (mobile)
+  approved             Int?    @default(1) // bool-as-int
+  pass_demo            String? @db.VarChar(100)
+  user_pass            String? @db.VarChar(500) // duplicate password store
+  device_token         String  @default("") @db.VarChar(255) // legacy NOT NULL w/o default — defaulted for strict InnoDB
+  must_change_password Boolean @default(false)
+  // Safe relation: permissions junction keyed by user_id (int = int).
+  permissions permissions[]
+  @@map("users")
+}
+
+model users_notifications {
+  id           Int     @id @default(autoincrement())
+  notify_id_fk Int? // FK-by-convention -> tbl_notifications / tbl_sys_notifications_settings
+  message      String? @db.VarChar(1000)
+  url          String? @db.VarChar(100)
+  date         String? @db.VarChar(100) // date-string
+  type         Int?    @db.TinyInt
+  approved     Int?    @db.TinyInt // bool-as-tinyint
+  @@map("users_notifications")
+}

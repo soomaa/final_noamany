@@ -14,103 +14,66 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { ListQueryDto } from '../../common/dto/list-query.dto';
 import { JwtUser } from '../../common/types/jwt-user';
 import { LeavesService } from './leaves.service';
 import { CreateLeaveDto } from './dto/create-leave.dto';
-import { ListLeavesDto } from './dto/list-leaves.dto';
+import { CarryOverLeaveDto, CreateLeaveTypeDto, UpdateLeaveTypeDto } from './dto/leave-type.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('leaves')
-@RequiresPermission('leaves:view')
+@RequiresPermission('leaves.list:view')
 export class LeavesController {
   constructor(private readonly leaves: LeavesService) {}
 
   @Get('types')
+  @RequiresPermission('leaves.types:view')
   listTypes(@Query() query: PaginationDto) {
     return this.leaves.listTypes(query);
   }
 
   @Post('types')
-  createType(
-    @Body()
-    body: {
-      title?: string;
-      minDays?: number;
-      maxDays?: number;
-      agazaTtype?: number;
-      dateFrom?: string;
-      dateTo?: string;
-      hasSubstitute?: boolean;
-      isActive?: boolean;
-    },
-  ) {
+  @RequiresPermission('leaves.types:create')
+  createType(@Body() body: CreateLeaveTypeDto) {
     return this.leaves.createType(body);
   }
 
   @Patch('types/:id')
+  @RequiresPermission('leaves.types:update')
   updateType(
     @Param('id', ParseIntPipe) id: number,
-    @Body()
-    body: {
-      title?: string;
-      minDays?: number;
-      maxDays?: number;
-      agazaTtype?: number;
-      dateFrom?: string;
-      dateTo?: string;
-      hasSubstitute?: boolean;
-      isActive?: boolean;
-    },
+    @Body() body: UpdateLeaveTypeDto,
   ) {
     return this.leaves.updateType(id, body);
   }
 
   @Delete('types/:id')
+  @RequiresPermission('leaves.types:delete')
   removeType(@Param('id', ParseIntPipe) id: number) {
     return this.leaves.removeType(id);
   }
 
   @Post('carry-over')
-  @RequiresPermission('leaves:configure')
-  carryOver(@Body() body: { year?: number }) {
-    return this.leaves.carryOver(body.year);
+  @RequiresPermission('leaves.balances:configure')
+  carryOver(@Body() body: CarryOverLeaveDto, @CurrentUser('sub') userId: number) {
+    return this.leaves.carryOver(body.year, userId);
   }
 
   @Get('balances')
+  @RequiresPermission('leaves.balances:view')
   balances(@Query() query: PaginationDto) {
     return this.leaves.balances(query);
   }
 
-  @Get('available')
-  available(
-    @Query('empId', ParseIntPipe) empId: number,
-    @Query('leaveTypeId', ParseIntPipe) leaveTypeId: number,
-  ) {
-    return this.leaves.available(empId, leaveTypeId);
-  }
-
   @Get()
-  list(@Query() query: ListLeavesDto, @CurrentUser() user: JwtUser) {
-    return this.leaves.list(query, user);
+  list(@Query() query: ListQueryDto) {
+    return this.leaves.list(query);
   }
 
   @Post()
+  @RequiresPermission('leaves.list:create')
   create(@Body() body: CreateLeaveDto, @CurrentUser() user: JwtUser) {
     return this.leaves.create(body, user.sub, user.name ?? undefined);
-  }
-
-  @Patch(':id')
-  update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() body: { startDate?: string; endDate?: string; returnToWorkDate?: string; reason?: string; addressSinceAgaza?: string },
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.leaves.update(id, body, user);
-  }
-
-  @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    return this.leaves.remove(id, user);
   }
 
   @Post(':id/approve')
@@ -126,6 +89,7 @@ export class LeavesController {
   }
 
   @Post(':id/cancel')
+  @RequiresPermission('leaves.list:update')
   cancel(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
     return this.leaves.cancel(id, user.sub, user.name ?? undefined);
   }

@@ -47,7 +47,7 @@ export function ModuleListPage({ title, description, apiKey, searchPlaceholder }
     return (
       <div>
         <PageHeader title={title} description={description} />
-        <NotImplementedState title={ui(`${title} — قيد الإعداد على الخادم`)} />
+        <NotImplementedState title={`${title}${ui(' — قيد الإعداد على الخادم')}`} />
       </div>
     );
   }
@@ -55,8 +55,9 @@ export function ModuleListPage({ title, description, apiKey, searchPlaceholder }
   return (
     <div>
       <PageHeader title={title} description={description} />
-      <FilterBar searchPlaceholder={searchPlaceholder ?? ui(`بحث في ${title}…`)} />
+      <FilterBar searchPlaceholder={searchPlaceholder ?? `${ui('بحث في ')}${title}…`} />
       <DataTable
+        exportSource={{ resource: apiKey, params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -69,7 +70,7 @@ export function ModuleListPage({ title, description, apiKey, searchPlaceholder }
         onRetry={() => void refetch()}
         search={params.search}
         onSearchChange={(s) => setParams({ search: s, page: 1 })}
-        emptyTitle={ui(`لا توجد بيانات في ${title}`)}
+        emptyTitle={`${ui('لا توجد بيانات في ')}${title}`}
       />
     </div>
   );

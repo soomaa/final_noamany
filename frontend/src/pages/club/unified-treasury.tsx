@@ -1,3 +1,4 @@
+import { formatMoneyNumber } from '@/lib/formatters';
 import { useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Download, Printer } from 'lucide-react';
@@ -6,11 +7,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
-import { api, getAccessToken } from '@/lib/api';
+import { api } from '@/lib/api';
 import { downloadFromApi, downloadMultiSheetExcel, printElement } from '@/lib/export';
 import { localToday } from '@/lib/formatters';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 import { uiStatic } from '@/lib/ui-static';
 
 interface TreasuryData {
@@ -52,6 +54,9 @@ function normalizeRange(from: string, to: string): { dateFrom: string; dateTo: s
 }
 
 export function UnifiedTreasuryPage() {
+  const { can } = usePermission();
+  const canExport = can('club.subscriptions.unified_treasury:export');
+  const canPrint = can('club.subscriptions.unified_treasury:print');
   const { ui } = useLocale();
   const { data: branches } = useBranches();
   const [branchId, setBranchId] = useState('');
@@ -157,7 +162,7 @@ export function UnifiedTreasuryPage() {
     await downloadFromApi(
       `/api/treasury/daily/export?${qs.toString()}`,
       `treasury_${exportStamp}.xlsx`,
-      getAccessToken() ?? undefined,
+      undefined,
     );
   };
 
@@ -175,18 +180,18 @@ export function UnifiedTreasuryPage() {
           <p className="text-sm text-muted-foreground">{ui('تجميع كل مصادر الإيراد — اشتراكات، POS، سبا، InBody، إيرادات')}</p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => void exportExcel()} disabled={!data}>
+          {canExport ? <Button variant="outline" size="sm" onClick={() => void exportExcel()} disabled={!data}>
             <Download className="ms-1 h-4 w-4" />
             {ui('Excel')}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => void exportServer()} disabled={!data}>
+          </Button> : null}
+          {canExport ? <Button variant="outline" size="sm" onClick={() => void exportServer()} disabled={!data}>
             <Download className="ms-1 h-4 w-4" />
             {ui('تصدير من الخادم')}
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => printRef.current && printElement(printRef.current, ui('الخزينة'))} disabled={!data}>
+          </Button> : null}
+          {canPrint ? <Button variant="outline" size="sm" onClick={() => printRef.current && printElement(printRef.current, ui('الخزينة'))} disabled={!data}>
             <Printer className="ms-1 h-4 w-4" />
             {ui('طباعة')}
-          </Button>
+          </Button> : null}
         </div>
       </div>
 
@@ -287,10 +292,10 @@ export function UnifiedTreasuryPage() {
         <>
           <div ref={printRef} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('إجمالي الإيراد')}</p><p className="nums text-2xl font-bold">{toArabicDigits(data.grandTotal.toFixed(2))}</p></CardContent></Card>
+              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('إجمالي الإيراد')}</p><p className="nums text-2xl font-bold">{formatMoneyNumber(data.grandTotal)}</p></CardContent></Card>
               <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('عدد العمليات')}</p><p className="nums text-2xl font-bold">{toArabicDigits(data.grandCount)}</p></CardContent></Card>
-              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('المصروفات')}</p><p className="nums text-2xl font-bold">{toArabicDigits(data.totalExpenses.toFixed(2))}</p></CardContent></Card>
-              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('صافي النقد')}</p><p className="nums text-2xl font-bold">{toArabicDigits(data.netCash.toFixed(2))}</p></CardContent></Card>
+              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('المصروفات')}</p><p className="nums text-2xl font-bold">{formatMoneyNumber(data.totalExpenses)}</p></CardContent></Card>
+              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('صافي النقد')}</p><p className="nums text-2xl font-bold">{formatMoneyNumber(data.netCash)}</p></CardContent></Card>
             </div>
 
             <div className="overflow-x-auto rounded-xl border">
@@ -317,7 +322,7 @@ export function UnifiedTreasuryPage() {
                     <tr key={i} className="border-b">
                       <td className="p-2">{e.sourceLabel}</td>
                       <td className="p-2">{e.customerName}</td>
-                      <td className="p-2 nums">{toArabicDigits(e.amount.toFixed(2))}</td>
+                      <td className="p-2 nums">{formatMoneyNumber(e.amount)}</td>
                       <td className="p-2">{METHOD_LABELS[e.paymentMethod] ?? e.paymentMethod}</td>
                     </tr>
                   ))}

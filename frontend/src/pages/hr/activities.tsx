@@ -19,13 +19,15 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { uploadUrl } from '@/components/employees/use-uploads';
 
 interface ActivityRow {
   id: number;
@@ -59,6 +61,12 @@ function statusMeta(status?: number): { key: StatusKey; label: string } {
 
 export function ActivitiesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('affairs.activities:create');
+  const canUpdate = can('affairs.activities:update');
+  const canDelete = can('affairs.activities:delete');
+  const canApprove = can('affairs.activities:approve');
+  const canReject = can('affairs.activities:reject');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<ActivityRow>('activities', params);
   const { data: empOptions = [] } = useEmployeeOptions();
@@ -144,6 +152,7 @@ export function ActivitiesPage() {
   };
 
   const reject = async (id: number) => {
+    if (!canReject) return;
     const ok = await confirm({
       title: ui('رفض النشاط'),
       description: ui('سيتم وضع النشاط كمرفوض. يمكنك إضافة سبب الرفض.'),
@@ -240,7 +249,7 @@ export function ActivitiesPage() {
           <Button variant="ghost" size="icon" aria-label={ui('عرض')} onClick={() => void openView(row.original)}>
             <Eye className="size-4" />
           </Button>
-          {row.original.status !== 4 && (
+          {canApprove && row.original.status !== 4 && (
             <Button
               variant="ghost"
               size="icon"
@@ -250,30 +259,34 @@ export function ActivitiesPage() {
               <Check className="size-4 text-success" />
             </Button>
           )}
-          {row.original.status !== 2 && (
+          {canReject && row.original.status !== 2 && (
             <Button variant="ghost" size="icon" aria-label={ui('رفض')} onClick={() => void reject(row.original.id)}>
               <X className="size-4 text-destructive" />
             </Button>
           )}
-          <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
-            <Pencil className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={ui('حذف')}
-            onClick={async () => {
-              const ok = await confirm({
-                title: ui('حذف النشاط'),
-                description: ui('سيتم حذف النشاط وجميع صوره. هل تريد المتابعة؟'),
-                confirmLabel: ui('حذف'),
-                variant: 'destructive',
-              });
-              if (ok) deleteMutation.mutate(row.original.id);
-            }}
-          >
-            <Trash2 className="size-4 text-destructive" />
-          </Button>
+          {canUpdate ? (
+            <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+              <Pencil className="size-4" />
+            </Button>
+          ) : null}
+          {canDelete ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={ui('حذف')}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: ui('حذف النشاط'),
+                  description: ui('سيتم حذف النشاط وجميع صوره. هل تريد المتابعة؟'),
+                  confirmLabel: ui('حذف'),
+                  variant: 'destructive',
+                });
+                if (ok) deleteMutation.mutate(row.original.id);
+              }}
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          ) : null}
         </div>
       ),
     },
@@ -290,12 +303,15 @@ export function ActivitiesPage() {
         isError={isError}
         error={error}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('نشاط جديد')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCreate}>
+              <Plus className="size-4" /> {ui('نشاط جديد')}
+            </Button>
+          ) : undefined
         }
       >
         <DataTable
+          exportSource={{ resource: 'activities', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -352,7 +368,7 @@ export function ActivitiesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
-            <Button onClick={() => void save()}>{ui('حفظ')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()}>{ui('حفظ')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -393,9 +409,11 @@ export function ActivitiesPage() {
 
               <div className="flex items-center justify-between">
                 <Label>{ui('الصور')}</Label>
-                <Button variant="outline" size="sm" disabled={uploading} onClick={onPickImage}>
-                  <ImagePlus className="size-4" /> {uploading ? ui('جارٍ الرفع…') : ui('إضافة صورة')}
-                </Button>
+                {canUpdate ? (
+                  <Button variant="outline" size="sm" disabled={uploading} onClick={onPickImage}>
+                    <ImagePlus className="size-4" /> {uploading ? ui('جارٍ الرفع…') : ui('إضافة صورة')}
+                  </Button>
+                ) : null}
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -409,15 +427,15 @@ export function ActivitiesPage() {
                 <p className="py-4 text-center text-sm text-muted-foreground">{ui('لا توجد صور بعد')}</p>
               ) : (
                 <div className="grid grid-cols-3 gap-2">
-                  {detail.files.map((f) => (
+                  {detail.files.filter((f) => uploadUrl(f.fileName)).map((f) => (
                     <div key={f.id} className="group relative overflow-hidden rounded-md border">
                       <img
-                        src={`/uploads/${f.fileName ?? ''}`}
+                        src={uploadUrl(f.fileName)!}
                         alt=""
                         className="h-24 w-full object-cover"
                         loading="lazy"
                       />
-                      <Button
+                      {canUpdate ? <Button
                         variant="destructive"
                         size="icon"
                         aria-label={ui('حذف الصورة')}
@@ -425,7 +443,7 @@ export function ActivitiesPage() {
                         onClick={() => void removeImage(f.id)}
                       >
                         <Trash2 className="size-3.5" />
-                      </Button>
+                      </Button> : null}
                     </div>
                   ))}
                 </div>

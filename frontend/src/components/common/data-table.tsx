@@ -1,3 +1,4 @@
+import { formatDisplayNumber, isIdentifierColumn } from '@/lib/number-display';
 import {
   type ColumnDef,
   flexRender,
@@ -5,7 +6,7 @@ import {
   useReactTable,
 } from '@tanstack/react-table';
 import { Copy, Download, Printer, Search } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -13,7 +14,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
+import { DebouncedSearchInput } from '@/components/common/debounced-search-input';
 import { Pagination } from '@/components/ui/pagination';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
@@ -27,6 +28,10 @@ import {
 import { EmptyState, ErrorState } from '@/components/common/states';
 import { toast } from 'sonner';
 import { useLocale } from '@/store/locale';
+import { useLocation } from 'react-router-dom';
+import { usePermission } from '@/hooks/use-permission';
+import { downloadExcel, type ExportColumn } from '@/lib/export';
+import { fetchAllListRows, type ExportSource } from '@/lib/export-all-rows';
 
 export interface PaginatedResponse<T> {
   data: T[];
@@ -55,8 +60,15 @@ interface DataTableProps<T> {
   emptyDescription?: string;
   emptyAction?: ReactNode;
   enableExport?: boolean;
-  /** Real Excel export for this table. When omitted, the legacy placeholder remains. */
-  onExportExcel?: () => void | Promise<void>;
+  /** Optional already-localized export projection. Use it when raw API fields are technical codes. */
+  exportData?: Record<string, unknown>[];
+  exportColumns?: ExportColumn[];
+  /**
+   * Pull every row matching the current filters when exporting, instead of only the
+   * page on screen. Without it «تصدير» can only see `data`, i.e. one page of rows.
+   */
+  exportSource?: ExportSource<T>;
+  rowClassName?: (row: T) => string | undefined;
 }
 
 export function DataTable<T>({
@@ -79,41 +91,113 @@ export function DataTable<T>({
   emptyDescription,
   emptyAction,
   enableExport = true,
-  onExportExcel,
+  exportData,
+  exportColumns,
+  exportSource,
+  rowClassName,
 }: DataTableProps<T>) {
   const { t, ui } = useLocale();
+  const location = useLocation();
+  const { can, routeMap } = usePermission();
+  const permissionResource = Object.entries(routeMap).reduce<{ key: string; length: number } | null>(
+    (best, [route, key]) =>
+      (location.pathname === route || location.pathname.startsWith(`${route}/`)) && route.length > (best?.length ?? -1)
+        ? { key, length: route.length }
+        : best,
+    null,
+  )?.key;
+  // This flag declares table capability only. Each control remains fail-closed
+  // against the current page's canonical export/print permission.
+  const canExport = enableExport && Boolean(permissionResource && can(`${permissionResource}:export`));
+  const canPrint = enableExport && Boolean(permissionResource && can(`${permissionResource}:print`));
   const resolvedSearchPlaceholder = searchPlaceholder ?? ui('بحث في الجدول…');
   const resolvedEmptyTitle = emptyTitle ?? t('shared.noData');
   const table = useReactTable({
     data,
     columns,
+    defaultColumn: { cell: ({ getValue, column }) => {
+      const value = getValue();
+      if (value == null) return null;
+      if (isIdentifierColumn(column.id)) return String(value);
+      return typeof value === 'number' || typeof value === 'string' ? formatDisplayNumber(value) : String(value);
+    } },
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     pageCount: Math.ceil(total / pageSize),
   });
 
-  const handleCopy = () => {
-    const headers = columns.map((c) => (typeof c.header === 'string' ? c.header : c.id ?? '')).join('\t');
-    const rows = data.map((row) =>
-      columns
-        .map((col) => {
-          const key = (col as { accessorKey?: string }).accessorKey;
-          if (!key) return '';
-          return String((row as Record<string, unknown>)[key] ?? '');
-        })
+  const [exporting, setExporting] = useState(false);
+
+  /** Columns to export, falling back to the accessor-keyed table columns. */
+  const resolveExportColumns = (): ExportColumn[] =>
+    exportColumns ?? columns.flatMap((column) => {
+      const key = (column as { accessorKey?: string }).accessorKey;
+      if (!key) return [];
+      const header = typeof column.header === 'string' ? column.header : key;
+      return [{ key, header } satisfies ExportColumn];
+    });
+
+  /**
+   * Rows to export: the whole filtered result set when the page declares an
+   * `exportSource`, otherwise the page currently rendered.
+   */
+  const resolveExportRows = async (): Promise<Record<string, unknown>[]> => {
+    if (!exportSource) return exportData ?? (data as Record<string, unknown>[]);
+    const rows = await fetchAllListRows<T>(exportSource.resource, exportSource.params);
+    const project = exportSource.project;
+    return project
+      ? rows.map((row, index) => project(row, index))
+      : (rows as Record<string, unknown>[]);
+  };
+
+  const handleCopy = async () => {
+    const projectedColumns = resolveExportColumns();
+    const projectedRows = await resolveExportRows();
+    const headers = projectedColumns.map((column) => column.header).join('\t');
+    const rows = projectedRows.map((row) =>
+      projectedColumns
+        .map((column) => String(row[column.key] ?? ''))
         .join('\t'),
     );
-    void navigator.clipboard.writeText([headers, ...rows].join('\n'));
+    await navigator.clipboard.writeText([headers, ...rows].join('\n'));
     toast.success(ui('تم النسخ'));
   };
 
   const handlePrint = () => window.print();
 
+  const handleExcel = async () => {
+    const resolvedExportColumns = resolveExportColumns();
+    if (resolvedExportColumns.length === 0) {
+      toast.error(ui('لا توجد أعمدة قابلة للتصدير'));
+      return;
+    }
+    try {
+      await downloadExcel(
+        await resolveExportRows(),
+        resolvedExportColumns,
+        `${permissionResource ?? 'data'}-${new Date().toISOString().slice(0, 10)}.xlsx`,
+        ui('البيانات'),
+      );
+      toast.success(ui('تم تصدير ملف Excel'));
+    } catch {
+      toast.error(ui('تعذر تصدير ملف Excel'));
+    }
+  };
+
+  /** Serializes exports and surfaces failures, so a long fetch cannot be fired twice. */
+  const runExport = (task: () => Promise<void>) => {
+    if (exporting) return;
+    setExporting(true);
+    void task()
+      .catch(() => toast.error(ui('تعذر تصدير البيانات')))
+      .finally(() => setExporting(false));
+  };
+
   if (isError) {
     return <ErrorState message={errorMessage} onRetry={onRetry} />;
   }
 
-  const hasToolbar = !!(onSearchChange || toolbar || (enableExport && data.length > 0));
+  const hasToolbar = !!(onSearchChange || toolbar || ((canExport || canPrint) && data.length > 0));
 
   return (
     <div className="space-y-3">
@@ -124,39 +208,36 @@ export function DataTable<T>({
               {onSearchChange && (
                 <div className="relative max-w-sm flex-1">
                   <Search className="pointer-events-none absolute end-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
+                  <DebouncedSearchInput
+                    key={location.pathname}
                     className="pe-9 h-9 text-sm"
                     placeholder={resolvedSearchPlaceholder}
+                    aria-label={resolvedSearchPlaceholder}
                     value={search ?? ''}
-                    onChange={(e) => onSearchChange(e.target.value)}
+                    onValueChange={onSearchChange}
                   />
                 </div>
               )}
               {toolbar}
             </div>
-            {enableExport && data.length > 0 && (
+            {(canExport || canPrint) && data.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="sm">
-                    <Download className="size-4" />
-                    {ui('تصدير')}
+                  <Button variant="outline" size="sm" disabled={exporting}>
+                    {canExport ? <Download className="size-4" /> : <Printer className="size-4" />}
+                    {canExport ? ui(exporting ? 'جاري التصدير…' : 'تصدير') : ui('طباعة')}
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={handleCopy}>
+                  {canExport ? <DropdownMenuItem onClick={() => runExport(handleCopy)}>
                     <Copy className="size-4" /> {ui('نسخ')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={handlePrint}>
+                  </DropdownMenuItem> : null}
+                  {canPrint ? <DropdownMenuItem onClick={handlePrint}>
                     <Printer className="size-4" /> {ui('طباعة')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      if (onExportExcel) void onExportExcel();
-                      else toast.info(ui('تصدير Excel — قريباً'));
-                    }}
-                  >
+                  </DropdownMenuItem> : null}
+                  {canExport ? <DropdownMenuItem onClick={() => runExport(handleExcel)}>
                     <Download className="size-4" /> Excel
-                  </DropdownMenuItem>
+                  </DropdownMenuItem> : null}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -200,7 +281,7 @@ export function DataTable<T>({
             )}
             {!isLoading &&
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'}>
+                <TableRow key={row.id} className={rowClassName?.(row.original)} data-state={row.getIsSelected() && 'selected'}>
                   {row.getVisibleCells().map((cell) => (
                     <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
                   ))}

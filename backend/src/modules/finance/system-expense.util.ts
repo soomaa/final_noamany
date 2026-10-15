@@ -18,6 +18,7 @@ export async function recordSystemExpense(
     branchId?: number;
     createdBy?: number;
     paymentMethod?: string;
+    businessUnit?: 'gym' | 'cafe';
   },
 ) {
   const amount = Math.round(input.amount * 100) / 100;
@@ -31,6 +32,8 @@ export async function recordSystemExpense(
   await tx.fin_expenses.create({
     data: {
       expense_number: expenseNumber,
+      business_unit: input.businessUnit ?? 'gym',
+      paid_amount: amount,
       expense_date: input.date,
       category: input.category,
       sub_category: input.subCategory ?? null,
@@ -48,6 +51,27 @@ export async function recordSystemExpense(
       branch_id: input.branchId ?? null,
       created_by: input.createdBy ?? null,
       notes: 'مستند تلقائي مربوط بالنظام',
+    },
+  });
+}
+
+/** Keep the display-only finance register aligned when its authoritative module document is reversed. */
+export async function reverseSystemExpense(
+  tx: Prisma.TransactionClient,
+  invoiceNumber: string,
+  reason: string,
+) {
+  const expense = await tx.fin_expenses.findFirst({
+    where: { invoice_number: invoiceNumber, is_deleted: false },
+    select: { id: true, notes: true },
+  });
+  if (!expense) return;
+  await tx.fin_expenses.update({
+    where: { id: expense.id },
+    data: {
+      is_deleted: true,
+      deleted_at: new Date(),
+      notes: [expense.notes, `عكس تلقائي: ${reason}`].filter(Boolean).join('\n'),
     },
   });
 }

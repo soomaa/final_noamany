@@ -1,8 +1,16 @@
-export interface AccountNode {
+/** Chart-of-accounts types, in the order the tree presents them. */
+export const ACCOUNT_TYPES = ['asset', 'liability', 'equity', 'revenue', 'expense'] as const;
+export type AccountType = (typeof ACCOUNT_TYPES)[number];
+
+/** Depth-derived label: root → main, its children → sub-main, deeper → sub. */
+export type AccountLevel = 'main' | 'sub-main' | 'sub';
+
+/** One account as the API returns it, without the tree edge. */
+export interface AccountRow {
   id: number;
   code: string;
   name: string;
-  accountType: string;
+  accountType: AccountType;
   normalBalance: string;
   parentId: number | null;
   isPostable: boolean;
@@ -10,6 +18,12 @@ export interface AccountNode {
   description: string | null;
   branchId: number | null;
   isActive: boolean;
+  /** Net balance rolled up from every descendant. */
+  balance?: number;
+  accountLevel?: AccountLevel;
+}
+
+export interface AccountNode extends AccountRow {
   children: AccountNode[];
 }
 
@@ -23,6 +37,10 @@ export interface JournalEntryLine {
   description?: string | null;
 }
 
+/** Presentation-level entry type, mirrored from `acc_journal_entries.entry_type`. */
+export const JOURNAL_ENTRY_TYPES = ['daily', 'monthly', 'annual'] as const;
+export type JournalEntryType = (typeof JOURNAL_ENTRY_TYPES)[number];
+
 export interface JournalEntryRow {
   id: number;
   entryNo: string;
@@ -30,10 +48,13 @@ export interface JournalEntryRow {
   branchId: number | null;
   description: string | null;
   reference: string | null;
+  entryType: JournalEntryType;
   status: 'draft' | 'posted' | 'reversed';
   sourceModule: string | null;
   totalDebit: number;
   totalCredit: number;
+  createdAt?: string;
+  postedAt?: string | null;
   lines?: JournalEntryLine[];
 }
 

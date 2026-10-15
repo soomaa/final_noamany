@@ -4,7 +4,7 @@
  *  company/global settings, country/cities, branches, departments (hr_edarat_aqsam),
  *  job titles, banks, users (with bcrypt passwords), employees + their link rows.
  *
- * Login accounts created (password for ALL demo accounts = "noamany@123"):
+ * Login accounts created (password for ALL demo accounts = "one80@123"):
  *   admin        -> level 1 (super admin, RBAC bypass)
  *   hr           -> level 1
  *   men.manager  -> level 3 (branch manager)
@@ -18,7 +18,7 @@ import {
   BASE, addDays, ymd, dmy, ymdhms,
 } from './_shared';
 
-export const DEMO_PASSWORD = 'noamany@123';
+export const DEMO_PASSWORD = 'one80@123';
 
 export async function seedFoundation(): Promise<void> {
   console.log('▶ Foundation…');
@@ -39,11 +39,11 @@ export async function seedFoundation(): Promise<void> {
   await prisma.global_settings.create({
     data: {
       id: 1,
-      institute_name: 'Noamany Fitness Center',
-      institute_code: 'Noamany',
+      institute_name: 'ONE80 Gym & Fitness',
+      institute_code: 'ONE80',
       use_barcode: 'yes',
       reg_prefix: 'ONE',
-      institute_email: 'info@noamanycenter.test',
+      institute_email: 'info@one80gym.test',
       address: 'القاهرة - مصر',
       mobileno: '0112345678',
       logo: null,
@@ -52,15 +52,15 @@ export async function seedFoundation(): Promise<void> {
       sms_service_provider: 'none',
       session_id: 1,
       translation: 'ar',
-      footer_text: 'Noamany Fitness Center © 2026',
+      footer_text: 'ONE80 Gym © 2026',
       animations: 'yes',
       timezone: 'Africa/Cairo',
       date_format: 'Y-m-d',
-      facebook_url: 'https://facebook.com/noamanycenter',
-      twitter_url: 'https://twitter.com/noamanycenter',
-      linkedin_url: 'https://linkedin.com/company/noamanycenter',
-      youtube_url: 'https://youtube.com/@noamanycenter',
-      instagram_url: 'https://instagram.com/noamanycenter',
+      facebook_url: 'https://facebook.com/one80gym',
+      twitter_url: 'https://twitter.com/one80gym',
+      linkedin_url: 'https://linkedin.com/company/one80gym',
+      youtube_url: 'https://youtube.com/@one80gym',
+      instagram_url: 'https://instagram.com/one80gym',
       cms_default_branch: 1,
       updated_at: BASE,
       alert_days_contract: 30,
@@ -71,23 +71,23 @@ export async function seedFoundation(): Promise<void> {
   // ---- company / CMS singleton (company page) ----
   await prisma.conf_company_data.create({
     data: {
-      nameweb: 'Noamany Fitness Center',
-      abbreviation_name: 'Noamany',
+      nameweb: 'ONE80 Gym & Fitness',
+      abbreviation_name: 'ONE80',
       slogan: 'حياة أقوى.. جسد أفضل',
       summary_company: 'نادي رياضي متكامل يقدم خدمات اللياقة البدنية والتدريب الشخصي والعافية.',
-      email: 'info@noamanycenter.test',
+      email: 'info@one80gym.test',
       address: 'القاهرة - مصر',
       telepon: '0112345678',
       hp: '0501234567',
-      pesan_5: 'مرحباً بكم في Noamany',
+      pesan_5: 'مرحباً بكم في ONE80',
       pesan_6: 'نحو حياة صحية',
       status_form_booking: 'Aktif',
       max_room_booking: 20,
       protocol: 'smtp',
-      smtp_host: 'smtp.noamanycenter.test',
+      smtp_host: 'smtp.one80gym.test',
       smtp_port: 587,
       smtp_timeout: 30,
-      smtp_user: 'mailer@noamanycenter.test',
+      smtp_user: 'mailer@one80gym.test',
       smtp_pass: 'change-me',
       id_user: 1,
       nama_direktur: 'المدير العام',
@@ -113,12 +113,16 @@ export async function seedFoundation(): Promise<void> {
   log('foundation', `cities: ${cityNames.length}`);
 
   // ---- branches ----
-  // Match the four branches shown in the authenticated online dashboard.
+  // ONE80 — two branches with codes A1 and B2 (per client spec).
+  // Additional legacy branches kept for existing seed data compatibility.
   const branchDefs: Array<{ name: string; code: string }> = [
-    { name: 'فرع طنطا', code: 'A' },
-    { name: 'فرع البر الشرقي- شبين الكوم', code: 'B' },
-    { name: 'فرع الجلاء- شبين الكوم', code: 'C' },
-    { name: 'فرع طنطا الفرعي', code: 'D' },
+    { name: 'ONE80 Gym - فرع A1', code: 'A1' },
+    { name: 'ONE80 Gym - فرع B2', code: 'B2' },
+    { name: 'الفرع الرئيسي - العليا', code: 'A' },
+    { name: 'فرع الرجال - النخيل', code: 'B' },
+    { name: 'فرع السيدات - الياسمين', code: 'C' },
+    { name: 'فرع حي الملقا', code: 'D' },
+    { name: 'فرع جدة - الروضة', code: 'E' },
   ];
   const branchIds: number[] = [];
   for (const def of branchDefs) {
@@ -246,7 +250,7 @@ export async function seedFoundation(): Promise<void> {
   const jobDefs = [
     'مدير عام', 'مدير موارد بشرية', 'محاسب', 'أمين صندوق', 'موظف استقبال',
     'مدرب لياقة', 'مدربة لياقة', 'مشرف صالة', 'أخصائي تغذية', 'فني صيانة',
-    'أمين مستودع', 'أخصائي مبيعات', 'منسق موارد بشرية', 'مسؤول تسويق',
+    'أمين مستودع', 'أخصائي مبيعات', 'منسق موارد بشرية', 'مسؤول تسويق', 'إدارة الكافيه',
   ];
   const jobIds: number[] = [];
   for (let i = 0; i < jobDefs.length; i++) {
@@ -378,7 +382,7 @@ export async function seedFoundation(): Promise<void> {
         contract: 'دوام كامل',
         birth_date: ymd(addDays(BASE, -randInt(7000, 15000))),
         birth_date_m: ymd(addDays(BASE, -randInt(7000, 15000))),
-        email: `emp${empCode}@noamanycenter.test`,
+        email: `emp${empCode}@one80gym.test`,
         nationality: 'مصري',
         deyana: 'مسلم',
         marital_status: pick([1, 2]),
@@ -446,7 +450,7 @@ export async function seedFoundation(): Promise<void> {
         username: u.username,
         password: pass,
         name: u.name,
-        email: `${u.username}@noamanycenter.test`,
+        email: `${u.username}@one80gym.test`,
         level: u.level,
         image: null,
         branch_id_fk: branchIds[u.branchIdx],
@@ -464,7 +468,7 @@ export async function seedFoundation(): Promise<void> {
         username: `emp${empRows[i].emp_code}`,
         password: pass,
         name: `موظف ${empRows[i].emp_code}`,
-        email: `emp${empRows[i].emp_code}@noamanycenter.test`,
+        email: `emp${empRows[i].emp_code}@one80gym.test`,
         level: 2,
         branch_id_fk: branchIds[randInt(0, branchIds.length - 1)],
         emp_code: empRows[i].emp_code,

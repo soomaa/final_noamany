@@ -4,7 +4,7 @@ import { BranchScopeService } from '../../common/branch-scope/branch-scope.servi
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { localDateString } from '../club-members/club-member.utils';
-import { addDays, toNum } from '../club-subscriptions/club-subscription.utils';
+import { addDays, daysBetween, deriveSubStatus, toNum } from '../club-subscriptions/club-subscription.utils';
 import { resolveTreasuryPeriod } from '../gym-ops/treasury-range.util';
 import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
 import {
@@ -19,37 +19,8 @@ type DashboardLedgerRow = {
   amount: Prisma.Decimal;
 };
 
-type DashboardBranchExpenseRow = {
-  branch_id: number;
-  amount: Prisma.Decimal | number;
-};
-
-type DashboardBranchSalesRow = {
-  branch_id: number;
-  sale_date: string;
-  bar_revenue: Prisma.Decimal | number;
-  product_revenue: Prisma.Decimal | number;
-};
-
-type DashboardSubscriptionMetricsRow = {
-  active_members: bigint | number;
-  active_subscriptions: bigint | number;
-  outstanding_count: bigint | number;
-  outstanding_amount: Prisma.Decimal | number;
-  expired: bigint | number;
-  pending_renewals: bigint | number;
-  expiring_7: bigint | number;
-  expiring_30: bigint | number;
-  monthly: bigint | number;
-  quarterly: bigint | number;
-  half_yearly: bigint | number;
-  yearly: bigint | number;
-};
-
 @Injectable()
 export class ClubDashboardService {
-  private readonly executiveCache = new Map<string, { expiresAt: number; value: Promise<unknown> }>();
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly branchScope: BranchScopeService,
@@ -62,6 +33,20 @@ export class ClubDashboardService {
 
   private branchWhere(ids: number[] | null, field = 'branch_id') {
     return ids === null ? {} : { [field]: { in: ids } };
+  }
+
+  async cafeRevenueForPeriod(start: string, end: string, scopedBranches: number[] | null, creatorId: number | null = null) {
+    const result = await this.prisma.sales_quick_sales.aggregate({
+      where: {
+        sale_date: { gte: start, lte: end },
+        status: 'completed',
+        sale_type: { not: 'partner' },
+        ...this.branchWhere(scopedBranches),
+        ...createdByFilter(creatorId),
+      },
+      _sum: { collected_amount: true },
+    });
+    return Math.round(toNum(result._sum.collected_amount) * 100) / 100;
   }
 
   /**
@@ -93,10 +78,13 @@ export class ClubDashboardService {
     return { start, end, days, startMs };
   }
 
-  private financialLedgerRows(start: string, end: string, scopedBranches: number[] | null) {
-    const branchSql = scopedBranches?.length
-      ? Prisma.sql`AND e.branch_id IN (${Prisma.join(scopedBranches)})`
-      : Prisma.empty;
+  private financialLedgerRows(start: string, end: string, scopedBranches: number[] | null, creatorId: number | null = null) {
+    const branchSql = scopedBranches === null
+      ? Prisma.empty
+      : scopedBranches.length
+        ? Prisma.sql`AND e.branch_id IN (${Prisma.join(scopedBranches)})`
+        // A scoped user with no branches sees nothing, never every branch.
+        : Prisma.sql`AND 1 = 0`;
     return this.prisma.$queryRaw<DashboardLedgerRow[]>`
       SELECT
         e.date,
@@ -115,45 +103,9 @@ export class ClubDashboardService {
         AND e.date BETWEEN ${start} AND ${end}
         AND a.account_type IN ('revenue', 'expense')
         ${branchSql}
+        ${creatorId === null ? Prisma.empty : Prisma.sql`AND e.created_by = ${creatorId}`}
       GROUP BY e.date, a.account_type, a.id, a.name
       ORDER BY e.date ASC, a.id ASC
-    `;
-  }
-
-  private branchExpenseRows(start: string, end: string, scopedBranches: number[] | null) {
-    const branchSql = scopedBranches?.length
-      ? Prisma.sql`AND e.branch_id IN (${Prisma.join(scopedBranches)})`
-      : Prisma.empty;
-    return this.prisma.$queryRaw<DashboardBranchExpenseRow[]>`
-      SELECT e.branch_id, SUM(l.debit - l.credit) AS amount
-      FROM acc_journal_entries e
-      INNER JOIN acc_journal_entry_lines l ON l.entry_id = e.id
-      INNER JOIN acc_accounts a ON a.id = l.account_id
-      WHERE e.status IN ('posted', 'reversed')
-        AND e.date BETWEEN ${start} AND ${end}
-        AND a.account_type = 'expense'
-        AND e.branch_id IS NOT NULL
-        ${branchSql}
-      GROUP BY e.branch_id
-    `;
-  }
-
-  private branchSalesRows(start: string, end: string, scopedBranches: number[] | null) {
-    const branchSql = scopedBranches?.length
-      ? Prisma.sql`AND s.branch_id IN (${Prisma.join(scopedBranches)})`
-      : Prisma.empty;
-    return this.prisma.$queryRaw<DashboardBranchSalesRow[]>`
-      SELECT
-        s.branch_id,
-        s.sale_date,
-        COALESCE(SUM(CASE WHEN i.item_type = 'cafe' THEN i.line_total ELSE 0 END), 0) AS bar_revenue,
-        COALESCE(SUM(CASE WHEN i.item_type <> 'cafe' THEN i.line_total ELSE 0 END), 0) AS product_revenue
-      FROM sales_quick_sales s
-      INNER JOIN sales_quick_sale_items i ON i.quick_sale_id = s.id
-      WHERE s.status = 'completed'
-        AND s.sale_date BETWEEN ${start} AND ${end}
-        ${branchSql}
-      GROUP BY s.branch_id, s.sale_date
     `;
   }
 
@@ -161,34 +113,37 @@ export class ClubDashboardService {
     query: { startDate?: string; endDate?: string; branchId?: string },
     user?: JwtUser,
     providedLedgerRows?: DashboardLedgerRow[],
+    providedCreatorId?: number | null,
   ) {
     const { start, end } = this.dashboardPeriod(query.startDate, query.endDate);
     const scopedBranches = this.branchIds(user, query.branchId ?? null);
     const clubBranchWhere = this.branchWhere(scopedBranches);
     const lockerBranchWhere = this.branchWhere(scopedBranches, 'main_branch_id');
+    const creatorId = providedCreatorId !== undefined ? providedCreatorId
+      : user ? (await resolveFinanceCreatorScope(this.permissions, user)).selectedUserId : null;
+    const creatorWhere = createdByFilter(creatorId);
 
     const memberWhere = { is_deleted: false, ...clubBranchWhere };
     const subWhere = {
       ...clubBranchWhere,
+      ...creatorWhere,
       registration_date: { gte: start, lte: end },
       ...this.visibleSubscriptionWhere(),
     };
     const lockerSubWhere = {
       ...lockerBranchWhere,
+      ...creatorWhere,
       subscription_start_date: { gte: start, lte: end },
     };
 
     const today = localDateString();
-    const renewalWindow = addDays(today, 7);
-    const subscriptionBranchSql = scopedBranches?.length
-      ? Prisma.sql`AND s.branch_id IN (${Prisma.join(scopedBranches)})`
-      : Prisma.empty;
 
-    const [totalMembers, legacyActiveMembers, newMembersInPeriod, subsInRange, lockerSubs, attendance, facilityCount, subscriptionMetricsRows, trainerCount, classesToday, spaInvoices, inbodyInvoices, classEnrollmentsPaid, ledgerRows] =
+    const [totalMembers, members, newMembersInPeriod, subsInRange, lockerSubs, attendance, facilityCount, allSubs, trainerCount, classesToday, spaInvoices, inbodyInvoices, classEnrollmentsPaid, ledgerRows] =
       await Promise.all([
         this.prisma.club_members.count({ where: memberWhere }),
-        this.prisma.club_members.count({
-          where: { ...memberWhere, end_date: { gte: today } },
+        this.prisma.club_members.findMany({
+          where: memberWhere,
+          select: { id: true, end_date: true, created_at: true },
         }),
         this.prisma.club_members.count({
           where: {
@@ -199,41 +154,27 @@ export class ClubDashboardService {
             },
           },
         }),
-        this.prisma.club_subscriptions.findMany({
-          where: subWhere,
-          select: { paid_amount: true, remaining_amount: true, subscription_value: true },
-        }),
-        this.prisma.club_locker_subscriptions.findMany({
-          where: lockerSubWhere,
-          select: { paid_amount: true },
-        }),
-        this.prisma.club_attendance.groupBy({
-          by: ['member_id'],
+        this.prisma.club_subscriptions.findMany({ where: subWhere }),
+        this.prisma.club_locker_subscriptions.findMany({ where: lockerSubWhere }),
+        this.prisma.club_attendance.findMany({
           where: {
             attendance_date: { gte: start, lte: end },
             ...clubBranchWhere,
           },
+          select: { member_id: true },
         }),
         this.prisma.club_halls.count({ where: { is_deleted: false, ...clubBranchWhere } }),
-        this.prisma.$queryRaw<DashboardSubscriptionMetricsRow[]>`
-          SELECT
-            COUNT(DISTINCT CASE WHEN s.subscription_end_date >= ${today} THEN s.member_id END) AS active_members,
-            SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date >= ${today} THEN 1 ELSE 0 END) AS active_subscriptions,
-            SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date >= ${today} AND s.remaining_amount > 0 THEN 1 ELSE 0 END) AS outstanding_count,
-            COALESCE(SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date >= ${today} AND s.remaining_amount > 0 THEN s.remaining_amount ELSE 0 END), 0) AS outstanding_amount,
-            SUM(CASE WHEN s.subscription_end_date < ${today} THEN 1 ELSE 0 END) AS expired,
-            SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date BETWEEN ${today} AND ${renewalWindow} THEN 1 ELSE 0 END) AS pending_renewals,
-            SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date BETWEEN ${today} AND ${renewalWindow} THEN 1 ELSE 0 END) AS expiring_7,
-            SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date BETWEEN ${today} AND ${addDays(today, 30)} THEN 1 ELSE 0 END) AS expiring_30,
-            SUM(CASE WHEN s.subscription_end_date >= ${today} AND DATEDIFF(s.subscription_end_date, s.subscription_start_date) <= 35 THEN 1 ELSE 0 END) AS monthly,
-            SUM(CASE WHEN s.subscription_end_date >= ${today} AND DATEDIFF(s.subscription_end_date, s.subscription_start_date) BETWEEN 36 AND 100 THEN 1 ELSE 0 END) AS quarterly,
-            SUM(CASE WHEN s.subscription_end_date >= ${today} AND DATEDIFF(s.subscription_end_date, s.subscription_start_date) BETWEEN 101 AND 359 THEN 1 ELSE 0 END) AS half_yearly,
-            SUM(CASE WHEN s.subscription_end_date >= ${today} AND DATEDIFF(s.subscription_end_date, s.subscription_start_date) >= 360 THEN 1 ELSE 0 END) AS yearly
-          FROM club_subscriptions s
-          LEFT JOIN club_members m ON m.id = s.member_id
-          WHERE (s.member_id IS NULL OR m.is_deleted = 0)
-            ${subscriptionBranchSql}
-        `,
+        this.prisma.club_subscriptions.findMany({
+          where: {
+            ...clubBranchWhere,
+            ...this.visibleSubscriptionWhere(),
+          },
+          select: {
+            member_id: true,
+            subscription_start_date: true,
+            subscription_end_date: true,
+          },
+        }),
         this.prisma.club_trainers.count({ where: { is_deleted: false, is_active: true } }),
         this.prisma.club_classes.count({
           where: {
@@ -245,21 +186,24 @@ export class ClubDashboardService {
         this.prisma.club_spa_invoices.findMany({
           where: {
             is_active: true,
+            ...creatorWhere,
             invoice_date: { gte: start, lte: end },
             ...clubBranchWhere,
           },
-          select: { status: true, total_amount: true },
         }),
         this.prisma.club_inbody_invoices.findMany({
           where: {
             is_active: true,
+            ...creatorWhere,
             invoice_date: { gte: start, lte: end },
             ...clubBranchWhere,
           },
-          select: { status: true, total_amount: true },
         }),
         this.prisma.club_class_enrollments.findMany({
           where: {
+            // Enrollments have no cashier identity. Do not expose unattributable
+            // class revenue in an employee's personal financial summary.
+            ...(creatorId === null ? {} : { id: -1 }),
             enrollment_date: { gte: start, lte: end },
             attendance_status: { not: 'cancelled' },
             class: {
@@ -269,7 +213,7 @@ export class ClubDashboardService {
           },
           include: { class: { select: { price: true } } },
         }),
-        providedLedgerRows ?? this.financialLedgerRows(start, end, scopedBranches),
+        providedLedgerRows ?? this.financialLedgerRows(start, end, scopedBranches, creatorId),
       ]);
 
     const spaRevenue = spaInvoices
@@ -283,7 +227,12 @@ export class ClubDashboardService {
       0,
     );
 
-    const subscriptionMetrics = subscriptionMetricsRows[0];
+    const activeMemberIds = new Set<number>();
+    for (const s of allSubs) {
+      if (!s.member_id) continue;
+      const st = deriveSubStatus(s.subscription_start_date, s.subscription_end_date);
+      if (st === 'active' || st === 'upcoming') activeMemberIds.add(s.member_id);
+    }
 
     const subscriptionRevenue = subsInRange.reduce((sum, s) => sum + toNum(s.paid_amount), 0);
     const subscriptionRemaining = subsInRange.reduce(
@@ -315,67 +264,72 @@ export class ClubDashboardService {
       .filter((item) => Math.abs(item.value) >= 0.01)
       .sort((a, b) => b.value - a.value);
 
-    const distinctAttendees = attendance.length;
-    const activeMembers = Number(subscriptionMetrics?.active_members ?? 0) || legacyActiveMembers;
+    const distinctAttendees = new Set(attendance.map((a) => a.member_id)).size;
+    const activeMembers =
+      activeMemberIds.size || members.filter((m) => m.end_date && m.end_date >= today).length;
     const attendanceRate = activeMembers > 0 ? Math.round((distinctAttendees / activeMembers) * 100) : 0;
 
     // Distribution of currently active/upcoming subscriptions (by real duration), not only new
     // registrations in the selected date range — hub users expect the live plan mix.
-    const distribution = {
-      monthly: Number(subscriptionMetrics?.monthly ?? 0),
-      quarterly: Number(subscriptionMetrics?.quarterly ?? 0),
-      halfYearly: Number(subscriptionMetrics?.half_yearly ?? 0),
-      yearly: Number(subscriptionMetrics?.yearly ?? 0),
-    };
-    const expiredSubscriptions = Number(subscriptionMetrics?.expired ?? 0);
-    const pendingRenewals = Number(subscriptionMetrics?.pending_renewals ?? 0);
+    const distribution = { monthly: 0, quarterly: 0, halfYearly: 0, yearly: 0 };
+    for (const s of allSubs) {
+      const st = deriveSubStatus(s.subscription_start_date, s.subscription_end_date);
+      if (st !== 'active' && st !== 'upcoming') continue;
+      const days = daysBetween(s.subscription_start_date, s.subscription_end_date);
+      if (days <= 35) distribution.monthly++;
+      else if (days <= 100) distribution.quarterly++;
+      else if (days < 360) distribution.halfYearly++;
+      else distribution.yearly++;
+    }
 
-    const [recentMembers, recentPayments, refundsInRange] = await Promise.all([
-      this.prisma.club_members.findMany({
-        where: {
-          ...memberWhere,
-          created_at: {
-            gte: new Date(`${start}T00:00:00.000Z`),
-            lte: new Date(`${end}T23:59:59.999Z`),
+    const expiredSubscriptions = allSubs.filter(
+      (s) => deriveSubStatus(s.subscription_start_date, s.subscription_end_date) === 'expired',
+    ).length;
+
+    const renewalWindow = addDays(today, 7);
+    const pendingRenewals = allSubs.filter((s) => {
+      const st = deriveSubStatus(s.subscription_start_date, s.subscription_end_date);
+      return st === 'active' && s.subscription_end_date <= renewalWindow;
+    }).length;
+
+    const recentMembers = await this.prisma.club_members.findMany({
+      where: {
+        ...memberWhere,
+        created_at: {
+          gte: new Date(`${start}T00:00:00.000Z`),
+          lte: new Date(`${end}T23:59:59.999Z`),
+        },
+      },
+      orderBy: { created_at: 'desc' },
+      take: 5,
+      select: { id: true, name: true, member_code: true, created_at: true },
+    });
+
+    const recentPayments = await this.prisma.club_receipts.findMany({
+      where: {
+        ...creatorWhere,
+        receipt_date: { gte: start, lte: end },
+        status: { in: ['مدفوعة', 'paid'] },
+        AND: [
+          {
+            OR: [
+              { member: { is_deleted: false } },
+              {
+                member_id: null,
+                subscription: { member: { is_deleted: false } },
+              },
+            ],
           },
-        },
-        orderBy: { created_at: 'desc' },
-        take: 5,
-        select: { id: true, name: true, member_code: true, created_at: true },
-      }),
-      this.prisma.club_receipts.findMany({
-        where: {
-          receipt_date: { gte: start, lte: end },
-          status: { in: ['مدفوعة', 'paid'] },
-          AND: [
-            {
-              OR: [
-                { member: { is_deleted: false } },
-                {
-                  member_id: null,
-                  subscription: { member: { is_deleted: false } },
-                },
-              ],
-            },
-          ],
-          // Honor the branch filter via the receipt's subscription/member (receipts have no branch column).
-          ...(scopedBranches
-            ? { OR: [{ subscription: { branch_id: { in: scopedBranches } } }, { member: { branch_id: { in: scopedBranches } } }] }
-            : {}),
-        },
-        orderBy: { created_at: 'desc' },
-        take: 5,
-        select: { id: true, member_name: true, amount: true, receipt_date: true, receipt_number: true },
-      }),
-      this.prisma.club_subscription_refunds.findMany({
-        where: {
-          status: 'completed',
-          refund_date: { gte: start, lte: end },
-          ...clubBranchWhere,
-        },
-        select: { refund_amount: true },
-      }),
-    ]);
+        ],
+        // Honor the branch filter via the receipt's subscription/member (receipts have no branch column).
+        ...(scopedBranches
+          ? { OR: [{ subscription: { branch_id: { in: scopedBranches } } }, { member: { branch_id: { in: scopedBranches } } }] }
+          : {}),
+      },
+      orderBy: { created_at: 'desc' },
+      take: 5,
+      select: { id: true, member_name: true, amount: true, receipt_date: true, receipt_number: true },
+    });
 
     const avgMonthlyMembership =
       subsInRange.length > 0
@@ -383,6 +337,15 @@ export class ClubDashboardService {
         : 0;
 
     // Committed subscription refunds in the range reduce net revenue (المرتجعات تُخصم من الإيراد).
+    const refundsInRange = await this.prisma.club_subscription_refunds.findMany({
+      where: {
+        ...creatorWhere,
+        status: 'completed',
+        refund_date: { gte: start, lte: end },
+        ...clubBranchWhere,
+      },
+      select: { refund_amount: true },
+    });
     const subscriptionRefunds = refundsInRange.reduce((sum, r) => sum + toNum(r.refund_amount), 0);
 
     return {
@@ -450,75 +413,31 @@ export class ClubDashboardService {
    * category breakdown.
    */
   async executive(query: { startDate?: string; endDate?: string; branchId?: string }, user?: JwtUser) {
-    const { start, end } = this.dashboardPeriod(query.startDate, query.endDate);
-    const scopedBranches = this.branchIds(user, query.branchId ?? null);
-    const key = [start, end, scopedBranches?.join(',') ?? 'all', user?.sub ?? 'anonymous'].join('|');
-    const now = Date.now();
-    const cached = this.executiveCache.get(key);
-    if (cached && cached.expiresAt > now) return cached.value;
-
-    const value = this.buildExecutive({ startDate: start, endDate: end, branchId: query.branchId }, user)
-      .catch((error) => {
-        if (this.executiveCache.get(key)?.value === value) this.executiveCache.delete(key);
-        throw error;
-      });
-    this.executiveCache.set(key, { expiresAt: now + 30_000, value });
-
-    // Bound per-process memory even when admins inspect many custom ranges.
-    if (this.executiveCache.size > 100) {
-      for (const [cacheKey, entry] of this.executiveCache) {
-        if (entry.expiresAt <= now || this.executiveCache.size > 100) this.executiveCache.delete(cacheKey);
-      }
-    }
-    return value;
-  }
-
-  private async buildExecutive(query: { startDate?: string; endDate?: string; branchId?: string }, user?: JwtUser) {
     const { start, end, days, startMs } = this.dashboardPeriod(query.startDate, query.endDate);
     const scopedBranches = this.branchIds(user, query.branchId ?? null);
     const clubBranchWhere = this.branchWhere(scopedBranches);
+    const creatorId = user ? (await resolveFinanceCreatorScope(this.permissions, user)).selectedUserId : null;
+    const creatorWhere = createdByFilter(creatorId);
     const today = localDateString();
     const expiring7Date = addDays(today, 7);
     const expiring30Date = addDays(today, 30);
-    const warehouseBranchSql = scopedBranches?.length
-      ? Prisma.sql`AND w.branch_id IN (${Prisma.join(scopedBranches)})`
-      : Prisma.empty;
-    const subscriptionBranchSql = scopedBranches?.length
-      ? Prisma.sql`AND s.branch_id IN (${Prisma.join(scopedBranches)})`
-      : Prisma.empty;
+    const warehouseBranchSql = scopedBranches === null
+      ? Prisma.empty
+      : scopedBranches.length
+        ? Prisma.sql`AND w.branch_id IN (${Prisma.join(scopedBranches)})`
+        // A scoped user with no branches sees nothing, never every branch.
+        : Prisma.sql`AND 1 = 0`;
 
     type CountRow = { total: bigint | number };
-    // Start the expensive ledger aggregation immediately and overlap it with
-    // membership, attendance, inventory and sales queries.
-    const ledgerRowsPromise = this.financialLedgerRows(start, end, scopedBranches);
-    const basePromise = ledgerRowsPromise.then((ledgerRows) =>
-      this.summary({ startDate: start, endDate: end, branchId: query.branchId }, user, ledgerRows),
-    );
+    const ledgerRows = await this.financialLedgerRows(start, end, scopedBranches, creatorId);
 
-    const [
-      base,
-      subscriptions,
-      members,
-      attendances,
-      subscriptionMetricsRows,
-      lowStockRows,
-      employeeCount,
-      quickSalesToday,
-      bookingsToday,
-      ledgerRows,
-      dashboardBranches,
-      branchSubscriptions,
-      branchNewMembers,
-      branchBlockedMembers,
-      branchInbody,
-      branchExpenses,
-      branchSales,
-    ] =
+    const [base, subscriptions, members, attendances, allCurrentSubs, lowStockRows, employeeCount, quickSalesToday, cafeRevenue, bookingsToday] =
       await Promise.all([
-        basePromise,
+        this.summary({ startDate: start, endDate: end, branchId: query.branchId }, user, ledgerRows, creatorId),
         this.prisma.club_subscriptions.findMany({
           where: {
             registration_date: { gte: start, lte: end },
+            ...creatorWhere,
             ...clubBranchWhere,
             ...this.visibleSubscriptionWhere(),
           },
@@ -546,22 +465,20 @@ export class ClubDashboardService {
           where: { attendance_date: { gte: start, lte: end }, ...clubBranchWhere },
           select: { attendance_date: true, member_id: true },
         }),
-        this.prisma.$queryRaw<DashboardSubscriptionMetricsRow[]>`
-          SELECT
-            COUNT(DISTINCT CASE WHEN s.subscription_end_date >= ${today} THEN s.member_id END) AS active_members,
-            SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date >= ${today} THEN 1 ELSE 0 END) AS active_subscriptions,
-            SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date >= ${today} AND s.remaining_amount > 0 THEN 1 ELSE 0 END) AS outstanding_count,
-            COALESCE(SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date >= ${today} AND s.remaining_amount > 0 THEN s.remaining_amount ELSE 0 END), 0) AS outstanding_amount,
-            SUM(CASE WHEN s.subscription_end_date < ${today} THEN 1 ELSE 0 END) AS expired,
-            SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date BETWEEN ${today} AND ${expiring7Date} THEN 1 ELSE 0 END) AS pending_renewals,
-            SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date BETWEEN ${today} AND ${expiring7Date} THEN 1 ELSE 0 END) AS expiring_7,
-            SUM(CASE WHEN s.subscription_start_date <= ${today} AND s.subscription_end_date BETWEEN ${today} AND ${expiring30Date} THEN 1 ELSE 0 END) AS expiring_30,
-            0 AS monthly, 0 AS quarterly, 0 AS half_yearly, 0 AS yearly
-          FROM club_subscriptions s
-          LEFT JOIN club_members m ON m.id = s.member_id
-          WHERE (s.member_id IS NULL OR m.is_deleted = 0)
-            ${subscriptionBranchSql}
-        `,
+        this.prisma.club_subscriptions.findMany({
+          where: {
+            ...clubBranchWhere,
+            ...this.visibleSubscriptionWhere(),
+          },
+          select: {
+            subscription_start_date: true,
+            subscription_end_date: true,
+            remaining_amount: true,
+            subscription_type: true,
+            created_by: true,
+            type: { select: { name: true } },
+          },
+        }),
         this.prisma.$queryRaw<CountRow[]>`
           SELECT COUNT(*) AS total
           FROM inv_stock_balances b
@@ -578,11 +495,11 @@ export class ClubDashboardService {
             ...(scopedBranches ? { branch_id_fk: { in: scopedBranches } } : {}),
           },
         }),
-        this.prisma.sales_quick_sales.aggregate({
-          where: { sale_date: today, status: 'completed', ...clubBranchWhere },
-          _count: { _all: true },
-          _sum: { collected_amount: true },
+        this.prisma.sales_quick_sales.findMany({
+          where: { sale_date: today, status: 'completed', ...clubBranchWhere, ...creatorWhere },
+          select: { collected_amount: true },
         }),
+        this.cafeRevenueForPeriod(start, end, scopedBranches, creatorId),
         this.prisma.sales_bookings.count({
           where: {
             booking_date: today,
@@ -590,51 +507,6 @@ export class ClubDashboardService {
             ...clubBranchWhere,
           },
         }),
-        ledgerRowsPromise,
-        this.prisma.tbl_branches.findMany({
-          where: scopedBranches ? { branch_id: { in: scopedBranches } } : {},
-          orderBy: { branch_id: 'asc' },
-          select: { branch_id: true, branch_name: true },
-        }),
-        this.prisma.club_subscriptions.groupBy({
-          by: ['branch_id'],
-          where: {
-            registration_date: { gte: start, lte: end },
-            ...clubBranchWhere,
-            ...this.visibleSubscriptionWhere(),
-          },
-          _count: { _all: true },
-          _sum: { paid_amount: true },
-        }),
-        this.prisma.club_members.groupBy({
-          by: ['branch_id'],
-          where: {
-            is_deleted: false,
-            created_at: {
-              gte: new Date(`${start}T00:00:00.000Z`),
-              lte: new Date(`${end}T23:59:59.999Z`),
-            },
-            ...clubBranchWhere,
-          },
-          _count: { _all: true },
-        }),
-        this.prisma.club_members.groupBy({
-          by: ['branch_id'],
-          where: { is_deleted: false, is_blocked: true, ...clubBranchWhere },
-          _count: { _all: true },
-        }),
-        this.prisma.club_inbody_invoices.groupBy({
-          by: ['branch_id'],
-          where: {
-            is_active: true,
-            invoice_date: { gte: start, lte: end },
-            ...clubBranchWhere,
-          },
-          _count: { _all: true },
-          _sum: { total_amount: true },
-        }),
-        this.branchExpenseRows(start, end, scopedBranches),
-        this.branchSalesRows(start, end, scopedBranches),
       ]);
 
     const daily = new Map<string, {
@@ -684,10 +556,6 @@ export class ClubDashboardService {
         point.revenue += toNum(s.paid_amount);
       }
     }
-    for (const sale of branchSales) {
-      const point = daily.get(sale.sale_date);
-      if (point) point.revenue += toNum(sale.bar_revenue) + toNum(sale.product_revenue);
-    }
     for (const attendance of attendances) {
       const point = daily.get(attendance.attendance_date);
       if (point) point.checkins += 1;
@@ -702,7 +570,10 @@ export class ClubDashboardService {
     const revenue = trends.reduce((sum, row) => sum + row.revenue, 0);
     const expenses = trends.reduce((sum, row) => sum + row.expenses, 0);
     const profit = revenue - expenses;
-    const subscriptionMetrics = subscriptionMetricsRows[0];
+    const activeSubscriptions = allCurrentSubs.filter(
+      (s) => deriveSubStatus(s.subscription_start_date, s.subscription_end_date) === 'active',
+    );
+    const outstandingSubscriptions = activeSubscriptions.filter((s) => toNum(s.remaining_amount) > 0 && (creatorId === null || s.created_by === creatorId));
     const packageMap = new Map<string, { name: string; count: number; revenue: number }>();
     for (const sub of subscriptions) {
       const name = sub.type?.name || sub.subscription_type || 'اشتراك غير مصنف';
@@ -718,42 +589,6 @@ export class ClubDashboardService {
       .sort((a, b) => b.value - a.value);
     const checkinsToday = attendances.filter((a) => a.attendance_date === today).length;
     const uniqueVisitors = new Set(attendances.map((a) => a.member_id)).size;
-    const byBranch = <T extends { branch_id: number }>(rows: T[]) =>
-      new Map(rows.map((row) => [row.branch_id, row]));
-    const subscriptionsByBranch = byBranch(branchSubscriptions);
-    const newMembersByBranch = byBranch(branchNewMembers);
-    const blockedMembersByBranch = byBranch(branchBlockedMembers);
-    const inbodyByBranch = byBranch(branchInbody);
-    const expensesByBranch = byBranch(branchExpenses);
-    const salesByBranch = new Map<number, { barRevenue: number; productRevenue: number }>();
-    for (const sale of branchSales) {
-      const current = salesByBranch.get(sale.branch_id) ?? { barRevenue: 0, productRevenue: 0 };
-      current.barRevenue += toNum(sale.bar_revenue);
-      current.productRevenue += toNum(sale.product_revenue);
-      salesByBranch.set(sale.branch_id, current);
-    }
-    const branchBreakdown = dashboardBranches.map((branch) => {
-      const subscription = subscriptionsByBranch.get(branch.branch_id);
-      const inbody = inbodyByBranch.get(branch.branch_id);
-      const sale = salesByBranch.get(branch.branch_id);
-      const subscriptionRevenue = toNum(subscription?._sum.paid_amount ?? 0);
-      const barRevenue = sale?.barRevenue ?? 0;
-      const productRevenue = sale?.productRevenue ?? 0;
-      return {
-        branchId: branch.branch_id,
-        branchName: branch.branch_name || `#${branch.branch_id}`,
-        totalRevenue: Math.round((subscriptionRevenue + barRevenue + productRevenue) * 100) / 100,
-        subscriptionRevenue: Math.round(subscriptionRevenue * 100) / 100,
-        barRevenue: Math.round(barRevenue * 100) / 100,
-        productRevenue: Math.round(productRevenue * 100) / 100,
-        expenses: Math.round(toNum(expensesByBranch.get(branch.branch_id)?.amount ?? 0) * 100) / 100,
-        subscriptionsCount: subscription?._count._all ?? 0,
-        newMembers: newMembersByBranch.get(branch.branch_id)?._count._all ?? 0,
-        inbodyCount: inbody?._count._all ?? 0,
-        inbodyRevenue: Math.round(toNum(inbody?._sum.total_amount ?? 0) * 100) / 100,
-        blockedMembers: blockedMembersByBranch.get(branch.branch_id)?._count._all ?? 0,
-      };
-    });
 
     return {
       ...base,
@@ -768,27 +603,30 @@ export class ClubDashboardService {
         revenue: Math.round(revenue * 100) / 100,
         expenses: Math.round(expenses * 100) / 100,
         profit: Math.round(profit * 100) / 100,
+        cafeRevenue,
         margin: revenue !== 0 ? Math.round((profit / revenue) * 1000) / 10 : 0,
         source: 'member-management',
         expenseSource: 'general-ledger',
       },
       operations: {
-        activeSubscriptions: Number(subscriptionMetrics?.active_subscriptions ?? 0),
+        activeSubscriptions: activeSubscriptions.length,
         newSubscriptions: subscriptions.length,
         checkinsToday,
         checkinsInRange: attendances.length,
         uniqueVisitors,
-        outstandingAmount: Math.round(toNum(subscriptionMetrics?.outstanding_amount ?? 0) * 100) / 100,
-        outstandingCount: Number(subscriptionMetrics?.outstanding_count ?? 0),
-        expiring7: Number(subscriptionMetrics?.expiring_7 ?? 0),
-        expiring30: Number(subscriptionMetrics?.expiring_30 ?? 0),
+        outstandingAmount: Math.round(
+          outstandingSubscriptions.reduce((sum, s) => sum + toNum(s.remaining_amount), 0) * 100,
+        ) / 100,
+        outstandingCount: outstandingSubscriptions.length,
+        expiring7: activeSubscriptions.filter((s) => s.subscription_end_date <= expiring7Date).length,
+        expiring30: activeSubscriptions.filter((s) => s.subscription_end_date <= expiring30Date).length,
         lowStock: Number(lowStockRows[0]?.total ?? 0),
         employees: employeeCount,
         trainers: base.trainers,
         classesToday: base.classesToday ?? 0,
         facilities: base.facilities,
-        quickSalesToday: quickSalesToday._count._all,
-        quickSalesAmountToday: toNum(quickSalesToday._sum.collected_amount),
+        quickSalesToday: quickSalesToday.length,
+        quickSalesAmountToday: quickSalesToday.reduce((sum, sale) => sum + toNum(sale.collected_amount), 0),
         bookingsToday,
       },
       trends,
@@ -804,7 +642,6 @@ export class ClubDashboardService {
         { name: 'نشط', value: base.totalMembers.active },
         { name: 'غير نشط', value: base.totalMembers.inactive },
       ],
-      branchBreakdown,
       period: { start, end, days },
       branchId: scopedBranches?.length === 1 ? scopedBranches[0] : null,
     };

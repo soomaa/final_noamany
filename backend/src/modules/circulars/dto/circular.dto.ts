@@ -1,17 +1,7 @@
-import { Type } from 'class-transformer';
-import { PartialType } from '@nestjs/mapped-types';
-import { IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { IsArray, IsIn, IsInt, IsOptional, IsString } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class ListCircularsDto extends PaginationDto {}
-
-export class CircularAttachmentDto {
-  @IsString()
-  title!: string;
-
-  @IsString()
-  file!: string;
-}
 
 export class CreateCircularDto {
   @IsString()
@@ -24,16 +14,6 @@ export class CreateCircularDto {
   @IsOptional()
   @IsString()
   date?: string;
-
-  /** Main circular image/file used by the legacy mobile API (`ta3mem_img`). */
-  @IsOptional()
-  @IsString()
-  image?: string;
-
-  /** Explicit all-employees routing; avoids silently saving a circular with no recipients. */
-  @IsOptional()
-  @IsBoolean()
-  sendToAll?: boolean;
 
   /**
    * Recipient routing mode (legacy load_tahwel `type`):
@@ -56,12 +36,4 @@ export class CreateCircularDto {
   @IsArray()
   @IsInt({ each: true })
   edaraIds?: number[];
-
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => CircularAttachmentDto)
-  attachments?: CircularAttachmentDto[];
 }
-
-export class UpdateCircularDto extends PartialType(CreateCircularDto) {}

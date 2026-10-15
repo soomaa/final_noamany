@@ -1,4 +1,3 @@
-import { ConflictException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
@@ -11,25 +10,35 @@ describe('ClubMembersService app credentials', () => {
     {} as BusinessAuditService,
     {} as BranchScopeService,
     {} as ClubSubscriptionRefundsService,
-    {} as never,
   );
 
-  it('uses the member phone as the initial app password', () => {
-    expect((service as any).defaultAppPassword('01012345678')).toBe('01012345678');
+  it('uses the documented first-login password', () => {
+    const first = (service as any).defaultAppPassword();
+    const second = (service as any).defaultAppPassword();
+
+    expect(first).toBe('000000');
+    expect(second).toBe('000000');
   });
 
-  it('does not attach an existing orphan login to a newly created member', async () => {
+  it('always creates an app account for a phone-backed member even when an old client opts out', () => {
+    expect((service as any).shouldCreateAppAccount({
+      phone: '01000000000',
+      autoCreateUser: false,
+      cardNumber: '29801010101234-C01',
+    })).toBe(true);
+  });
+
+  it('creates a dedicated app identity instead of reusing a global phone match', async () => {
     const tx = {
       api_users: {
-        findFirst: jest.fn().mockResolvedValue({ user_id: 77 }),
-      },
-      club_members: {
-        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockResolvedValue({ user_id: 88 }),
       },
     };
 
-    await expect(
-      (service as any).provisionAppUser(tx, { phone: '01000000000' }),
-    ).rejects.toBeInstanceOf(ConflictException);
+    await expect((service as any).provisionAppUser(tx, {
+      name: 'عضو فرع ب',
+      phone: '01000000000',
+    })).resolves.toEqual(expect.objectContaining({ appUserId: 88, plaintextPassword: '000000' }));
+    expect(tx.api_users.create).toHaveBeenCalledTimes(1);
   });
 });

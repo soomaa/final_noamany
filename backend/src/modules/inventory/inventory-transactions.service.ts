@@ -8,8 +8,9 @@ import { InventoryTxnStatus, InventoryTxnType, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { isDryRun, previewResponse, PreviewRow } from '../../common/preview';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { InventoryStockService } from './inventory-stock.service';
+import { InventoryStockService, roundStock } from './inventory-stock.service';
 import { InventoryLocationService } from './inventory-location.service';
+import { transactionLocations } from './transaction-locations.util';
 import { notDeletedFilter, toNumber } from './inventory.utils';
 import type { JwtUser } from '../../common/types/jwt-user';
 import {
@@ -23,6 +24,7 @@ import { BranchScopeService } from '../../common/branch-scope/branch-scope.servi
 
 @Injectable()
 export class InventoryTransactionsService {
+  private readonly txOptions = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: 10000, timeout: 30000 };
   private readonly supportedTypes: InventoryTxnType[] = [
     InventoryTxnType.issue,
     InventoryTxnType.damage,
@@ -40,6 +42,27 @@ export class InventoryTransactionsService {
     if (!this.branchScope.isBranchAllowed(user, branchId)) {
       throw new ForbiddenException('لا تملك صلاحية تنفيذ حركة مخزون على هذا الفرع');
     }
+  }
+
+  private async lockDraft(tx: Prisma.TransactionClient, id: number, user: JwtUser) {
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM inv_transactions WHERE id = ${id} FOR UPDATE`);
+    const row = await tx.inv_transactions.findFirst({ where: { id, ...notDeletedFilter() }, include: { items: true } });
+    if (!row) throw new NotFoundException('الحركة المخزنية غير موجودة');
+    this.assertBranchAccess(user, row.branch_id);
+    if (row.status !== InventoryTxnStatus.draft) throw new BadRequestException('العملية متاحة للحركة في حالة المسودة فقط');
+    return row;
+  }
+
+  private assertItems(items: Array<{ productId?: number | null; quantity: unknown }>) {
+    if (!items.length || items.some(item => !item.productId || !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0 || roundStock(Number(item.quantity)) <= 0)) {
+      throw new BadRequestException('الحركة تحتاج أصناف مخزون مرتبطة وكميات أكبر من صفر');
+    }
+  }
+
+  private async validateLocations(tx: Prisma.TransactionClient, type: InventoryTxnType, branchId: number, sourceId: number | null | undefined, targetId: number | null | undefined, user: JwtUser) {
+    this.assertBranchAccess(user, branchId);
+    const locations = await transactionLocations(tx, type, branchId, sourceId, targetId);
+    for (const row of locations.rows) this.assertBranchAccess(user, row.branch_id);
   }
 
   private map(row: Prisma.inv_transactionsGetPayload<{ include: { items: true } }>) {
@@ -148,7 +171,7 @@ export class InventoryTransactionsService {
   }
 
   async create(dto: UpsertInventoryTransactionDto, user: JwtUser) {
-    if (!dto.items?.length) throw new BadRequestException('يجب إضافة بند واحد على الأقل');
+    this.assertItems(dto.items ?? []);
     if (!this.supportedTypes.includes(dto.txnType as InventoryTxnType)) {
       throw new BadRequestException('استخدم شاشة المشتريات أو المرتجعات أو الجرد لهذه الحركة');
     }
@@ -158,21 +181,16 @@ export class InventoryTransactionsService {
     this.assertBranchAccess(user, branchId);
     let sourceWarehouseId = dto.sourceWarehouseId;
     let targetWarehouseId = dto.targetWarehouseId;
-    if (!sourceWarehouseId && !targetWarehouseId && dto.txnType !== InventoryTxnType.transfer) {
-      const stockLocationId = await this.location.resolveBranchStockLocation(branchId);
-      if (dto.txnType === InventoryTxnType.receipt || dto.txnType === InventoryTxnType.sales_return) {
-        targetWarehouseId = stockLocationId;
-      } else {
-        sourceWarehouseId = stockLocationId;
-      }
-    }
-
     const totalAmount = dto.items.reduce(
       (s, i) => s + (i.total ?? (i.price ?? 0) * i.quantity),
       0,
     );
 
     const row = await this.prisma.$transaction(async (tx) => {
+      if (sourceWarehouseId == null && targetWarehouseId == null && dto.txnType !== InventoryTxnType.transfer) {
+        sourceWarehouseId = await this.location.resolveBranchStockLocation(branchId, tx);
+      }
+      await this.validateLocations(tx, dto.txnType as InventoryTxnType, branchId, sourceWarehouseId, targetWarehouseId, user);
       const txn = await tx.inv_transactions.create({
         data: {
           reference: dto.reference,
@@ -202,26 +220,22 @@ export class InventoryTransactionsService {
         include: { items: true },
       });
       return txn;
-    });
+    }, this.txOptions);
 
     return this.map(row);
   }
 
   async update(id: number, dto: Partial<UpsertInventoryTransactionDto>, user: JwtUser) {
-    const existing = await this.prisma.inv_transactions.findFirst({
-      where: { id, ...notDeletedFilter() },
-    });
-    if (!existing) throw new NotFoundException('الحركة المخزنية غير موجودة');
-    this.assertBranchAccess(user, existing.branch_id);
-    if (dto.branchId != null) this.assertBranchAccess(user, dto.branchId);
-    if (existing.status !== InventoryTxnStatus.draft) {
-      throw new BadRequestException('لا يمكن تعديل الحركة إلا في حالة المسودة');
-    }
     if (dto.txnType && !this.supportedTypes.includes(dto.txnType as InventoryTxnType)) {
       throw new BadRequestException('نوع الحركة غير مدعوم من شاشة الحركات اليدوية');
     }
-
+    if (dto.items !== undefined) this.assertItems(dto.items);
     const row = await this.prisma.$transaction(async (tx) => {
+      const existing = await this.lockDraft(tx, id, user);
+      await this.validateLocations(tx, (dto.txnType ?? existing.txn_type) as InventoryTxnType,
+        dto.branchId ?? existing.branch_id,
+        dto.sourceWarehouseId !== undefined ? dto.sourceWarehouseId : existing.source_warehouse_id,
+        dto.targetWarehouseId !== undefined ? dto.targetWarehouseId : existing.target_warehouse_id, user);
       if (dto.items) {
         await tx.inv_transaction_items.deleteMany({ where: { transaction_id: id } });
       }
@@ -259,21 +273,16 @@ export class InventoryTransactionsService {
         },
         include: { items: true },
       });
-    });
+    }, this.txOptions);
 
     return this.map(row);
   }
 
   async remove(id: number, user: JwtUser) {
-    const existing = await this.prisma.inv_transactions.findFirst({
-      where: { id, ...notDeletedFilter() },
-    });
-    if (!existing) throw new NotFoundException('الحركة المخزنية غير موجودة');
-    this.assertBranchAccess(user, existing.branch_id);
-    if (existing.status !== InventoryTxnStatus.draft) {
-      throw new BadRequestException('لا يمكن حذف الحركة إلا في حالة المسودة');
-    }
-    await this.prisma.inv_transactions.update({ where: { id }, data: { is_deleted: true } });
+    await this.prisma.$transaction(async tx => {
+      await this.lockDraft(tx, id, user);
+      await tx.inv_transactions.update({ where: { id }, data: { is_deleted: true } });
+    }, this.txOptions);
     return { success: true };
   }
 
@@ -309,18 +318,20 @@ export class InventoryTransactionsService {
       );
     }
 
-    const financiallyConsumed =
-      txn.txn_type === InventoryTxnType.issue || txn.txn_type === InventoryTxnType.damage;
-    if (financiallyConsumed) await this.moduleLedger.ensureChart();
-
+    // The draft type may change before we obtain its lock (transfer -> issue).
+    await this.moduleLedger.ensureChart();
     await this.prisma.$transaction(async (tx) => {
-      // Guarded claim: only one concurrent approve can flip the status (conditional updateMany
-      // inside the tx). The loser sees count === 0 and never applies the stock movements twice.
+      const txn = await this.lockDraft(tx, id, user);
+      if (!this.supportedTypes.includes(txn.txn_type)) throw new BadRequestException('نوع الحركة غير مدعوم من شاشة الحركات اليدوية');
+      this.assertItems(txn.items.map(item => ({ productId: item.product_id, quantity: item.quantity })));
+      await this.validateLocations(tx, txn.txn_type, txn.branch_id, txn.source_warehouse_id, txn.target_warehouse_id, user);
+      const financiallyConsumed = txn.txn_type === InventoryTxnType.issue || txn.txn_type === InventoryTxnType.damage;
+      // The draft lock serializes every mutation; keep the write conditional as well.
       const claimed = await tx.inv_transactions.updateMany({
         where: {
           id,
           ...notDeletedFilter(),
-          status: { notIn: [InventoryTxnStatus.approved, InventoryTxnStatus.rejected] },
+          status: InventoryTxnStatus.draft,
         },
         data: {
           status: InventoryTxnStatus.approved,
@@ -409,32 +420,21 @@ export class InventoryTransactionsService {
           paymentMethod: 'تسوية مخزون',
         });
       }
-    });
+    }, this.txOptions);
 
     return this.findOne(id, user);
   }
 
   async reject(id: number, dto: RejectTransactionDto, user: JwtUser) {
-    const existing = await this.prisma.inv_transactions.findFirst({
-      where: { id, ...notDeletedFilter() },
-    });
-    if (!existing) throw new NotFoundException('الحركة المخزنية غير موجودة');
-    this.assertBranchAccess(user, existing.branch_id);
-    if (existing.status === InventoryTxnStatus.approved) {
-      throw new BadRequestException('لا يمكن رفض حركة معتمدة');
-    }
     if (!dto.reason?.trim()) throw new BadRequestException('سبب الرفض مطلوب');
-
-    await this.prisma.inv_transactions.update({
-      where: { id },
-      data: {
-        status: InventoryTxnStatus.rejected,
-        rejected_by: user.sub,
-        rejected_at: new Date(),
-        rejection_reason: dto.reason.trim(),
-      },
-    });
-
-    return this.findOne(id, user);
+    const row = await this.prisma.$transaction(async tx => {
+      await this.lockDraft(tx, id, user);
+      return tx.inv_transactions.update({
+        where: { id },
+        data: { status: InventoryTxnStatus.rejected, rejected_by: user.sub, rejected_at: new Date(), rejection_reason: dto.reason.trim() },
+        include: { items: true },
+      });
+    }, this.txOptions);
+    return this.map(row);
   }
 }

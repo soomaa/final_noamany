@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useSearchParams } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 
@@ -51,7 +52,7 @@ export function ListStatusTabs({ tabs, paramKey = 'status', className }: ListSta
                     : 'bg-muted text-muted-foreground',
                 )}
               >
-                {tab.count}
+                {formatDisplayNumber(tab.count)}
               </span>
             )}
           </button>

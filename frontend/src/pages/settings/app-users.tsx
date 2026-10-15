@@ -19,8 +19,9 @@ import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 interface AppUserRow {
   id: number;
@@ -33,6 +34,10 @@ interface AppUserRow {
 
 export function AppUsersPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('admin.app-users:create');
+  const canUpdate = can('admin.app-users:update');
+  const canDelete = can('admin.app-users:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<AppUserRow>(
     'app-users',
@@ -90,6 +95,7 @@ export function AppUsersPage() {
   };
 
   const save = async () => {
+    if ((editId && !canUpdate) || (!editId && !canCreate)) return;
     if (!form.name.trim() || !form.phone.trim() || !form.email.trim()) {
       toast.error(ui('الاسم والجوال والبريد مطلوبة'));
       return;
@@ -150,7 +156,7 @@ export function AppUsersPage() {
       header: ui('الجوال'),
       cell: ({ getValue }) => {
         const v = getValue() as string | null;
-        return v ? <span className="nums">{toArabicDigits(v)}</span> : '—';
+        return v ? <span className="nums">{formatDigits(v)}</span> : '—';
       },
     },
     {
@@ -161,7 +167,7 @@ export function AppUsersPage() {
     {
       accessorKey: 'status',
       header: ui('الحالة'),
-      cell: ({ row }) => (
+      cell: ({ row }) => canUpdate ? (
         <button
           type="button"
           aria-label={row.original.status === 1 ? ui('إلغاء التنشيط') : ui('تنشيط')}
@@ -173,22 +179,22 @@ export function AppUsersPage() {
             label={row.original.status === 1 ? ui('نشط') : ui('غير نشط')}
           />
         </button>
-      ),
+      ) : <StatusBadge status={row.original.status === 1 ? 'active' : 'suspended'} label={row.original.status === 1 ? ui('نشط') : ui('غير نشط')} />,
     },
     {
       id: 'actions',
       header: ui('الإجراءات'),
       cell: ({ row }) => (
         <div className="flex gap-1">
-          <Button
+          {canUpdate ? <Button
             variant="ghost"
             size="icon"
             aria-label={ui('تعديل')}
             onClick={() => openEdit(row.original)}
           >
             <Pencil className="size-4" />
-          </Button>
-          <Button
+          </Button> : null}
+          {canDelete ? <Button
             variant="ghost"
             size="icon"
             aria-label={ui('حذف')}
@@ -203,7 +209,7 @@ export function AppUsersPage() {
             }}
           >
             <Trash2 className="size-4 text-destructive" />
-          </Button>
+          </Button> : null}
         </div>
       ),
     },
@@ -219,13 +225,14 @@ export function AppUsersPage() {
         statsLoading={isLoading}
         isError={isError}
         error={error}
-        actions={
+        actions={canCreate ? (
           <Button variant="brand" size="sm" onClick={openCreate}>
             <Plus className="size-4" /> {ui('مستخدم جديد')}
           </Button>
-        }
+        ) : undefined}
       >
         <DataTable
+          exportSource={{ resource: 'app-users', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -305,7 +312,7 @@ export function AppUsersPage() {
             <Button variant="outline" onClick={() => setFormOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()}>{ui('حفظ')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()}>{ui('حفظ')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

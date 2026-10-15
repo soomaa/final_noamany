@@ -10,6 +10,7 @@ import { cafeUnitLabel } from '@/lib/cafe-units';
 import { localToday } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { liveStockQueryOptions } from '@/lib/live-stock-query';
 
 interface DailyStockRow {
   productId: number;
@@ -47,6 +48,7 @@ export function DailyStockOverview() {
   const [kind, setKind] = useState('all');
 
   const { data, isLoading } = useQuery({
+    ...liveStockQueryOptions,
     queryKey: ['inventory-dashboard', 'daily-stock', branchId, date, search, kind],
     queryFn: async () => {
       const { data } = await api.get<DailyStockResponse>('/inventory-dashboard/daily-stock', {

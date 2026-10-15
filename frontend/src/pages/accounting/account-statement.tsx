@@ -1,3 +1,4 @@
+import { formatMoneyNumber } from '@/lib/formatters';
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api } from '@/lib/api';
@@ -106,8 +107,8 @@ export function AccountStatementPage() {
             <strong>{data.account.name}</strong>
             <span className="ms-2 nums text-muted-foreground">({data.account.code})</span>
             <div className="mt-1 text-sm text-muted-foreground">
-              {ui('افتتاحي')}: {toArabicDigits(data.openingBalance.toFixed(2))} · {ui('ختامي')}:{' '}
-              {toArabicDigits(data.closingBalance.toFixed(2))}
+              {ui('افتتاحي')}: {formatMoneyNumber(data.openingBalance)} · {ui('ختامي')}:{' '}
+              {formatMoneyNumber(data.closingBalance)}
             </div>
           </div>
           <table className="w-full text-sm">
@@ -127,9 +128,9 @@ export function AccountStatementPage() {
                   <td className="p-2 nums">{m.date}</td>
                   <td className="p-2 nums">{m.entryNo}</td>
                   <td className="p-2">{m.description ?? '—'}</td>
-                  <td className="p-2 nums">{toArabicDigits(m.debit.toFixed(2))}</td>
-                  <td className="p-2 nums">{toArabicDigits(m.credit.toFixed(2))}</td>
-                  <td className="p-2 nums">{toArabicDigits(m.balance.toFixed(2))}</td>
+                  <td className="p-2 nums">{formatMoneyNumber(m.debit)}</td>
+                  <td className="p-2 nums">{formatMoneyNumber(m.credit)}</td>
+                  <td className="p-2 nums">{formatMoneyNumber(m.balance)}</td>
                 </tr>
               ))}
             </tbody>

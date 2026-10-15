@@ -19,6 +19,10 @@ import {
 } from "class-validator";
 import { PaginationDto } from "../../../common/dto/pagination.dto";
 
+/** Presentation-level journal entry types. Stored on `acc_journal_entries.entry_type`. */
+export const JOURNAL_ENTRY_TYPES = ["daily", "monthly", "annual"] as const;
+export type JournalEntryType = (typeof JOURNAL_ENTRY_TYPES)[number];
+
 export class ListAccountsDto extends PaginationDto {
   @IsOptional()
   @Transform(({ value }) =>
@@ -46,6 +50,14 @@ export class CreateAccountDto {
   @IsString()
   @MaxLength(255)
   name!: string;
+
+  /**
+   * Only meaningful for a root account: a child always inherits its parent's type,
+   * so sending a conflicting value on a child is rejected rather than silently ignored.
+   */
+  @IsOptional()
+  @IsIn(["asset", "liability", "equity", "revenue", "expense"])
+  type?: AccountType;
 
   @IsOptional()
   @Transform(({ value }) =>
@@ -150,6 +162,10 @@ export class UpsertJournalEntryDto {
   @IsString()
   reference?: string;
 
+  @IsOptional()
+  @IsIn([...JOURNAL_ENTRY_TYPES])
+  entryType?: JournalEntryType;
+
   @IsArray()
   @ArrayMinSize(2)
   @ValidateNested({ each: true })
@@ -161,6 +177,10 @@ export class ListJournalEntriesDto extends PaginationDto {
   @IsOptional()
   @IsIn(["draft", "posted", "reversed"])
   status?: JournalEntryStatus;
+
+  @IsOptional()
+  @IsIn([...JOURNAL_ENTRY_TYPES])
+  entryType?: JournalEntryType;
 
   @IsOptional()
   @IsString()

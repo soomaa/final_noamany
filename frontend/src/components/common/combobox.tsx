@@ -1,5 +1,5 @@
 import { Check, ChevronsUpDown, X } from 'lucide-react';
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -53,28 +53,8 @@ export function Combobox({
   const [query, setQuery] = useState('');
   const [highlight, setHighlight] = useState(0);
   const listRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const triggerRef = useRef<HTMLButtonElement>(null);
-  const [portalContainer, setPortalContainer] = useState<HTMLElement | null>(null);
   const autoId = useId();
   const listboxId = `${id ?? autoId}-listbox`;
-
-  // Render the Popover portal inside the nearest Dialog element (if any).
-  // This keeps the dropdown inside the Dialog's FocusScope DOM, so the Dialog's
-  // focus trap never steals keyboard focus away from our search input.
-  useLayoutEffect(() => {
-    const dialog = triggerRef.current?.closest('[role="dialog"]') as HTMLElement | null;
-    if (dialog) setPortalContainer(dialog);
-  }, []);
-
-  // Focus the search input when the popover opens.
-  useEffect(() => {
-    if (!open) return;
-    const timer = window.setTimeout(() => {
-      inputRef.current?.focus();
-    }, 0);
-    return () => window.clearTimeout(timer);
-  }, [open]);
 
   const selected = options.find((o) => o.value === value);
 
@@ -123,7 +103,6 @@ export function Combobox({
     <Popover open={open} onOpenChange={setOpen} modal={false}>
       <PopoverTrigger asChild>
         <Button
-          ref={triggerRef}
           id={id}
           type="button"
           variant="outline"
@@ -138,16 +117,9 @@ export function Combobox({
           <ChevronsUpDown className="size-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent
-        container={portalContainer}
-        className="w-[var(--radix-popover-trigger-width)] p-0"
-        align="start"
-        onKeyDown={onKeyDown}
-        onOpenAutoFocus={(e) => e.preventDefault()}
-      >
+      <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start" onKeyDown={onKeyDown}>
         <div className="border-b border-border p-2">
           <Input
-            ref={inputRef}
             value={query}
             onChange={(e) => {
               const v = e.target.value;
@@ -156,6 +128,7 @@ export function Combobox({
             }}
             placeholder={resolvedSearchPlaceholder}
             className="h-9"
+            autoFocus
             aria-label={resolvedSearchPlaceholder}
           />
         </div>
@@ -163,8 +136,13 @@ export function Combobox({
           ref={listRef}
           id={listboxId}
           role="listbox"
-          className="max-h-60 overflow-y-auto p-1"
+          className="max-h-72 overflow-y-auto overscroll-contain p-1"
           aria-label={resolvedPlaceholder}
+          // Inside a Radix Dialog, react-remove-scroll blocks native wheel on this
+          // portalled list — drive the scroll manually so the mouse wheel works.
+          onWheel={(e) => {
+            e.currentTarget.scrollTop += e.deltaY;
+          }}
         >
           {filtered.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">{resolvedEmptyText}</p>
@@ -258,7 +236,7 @@ export function MultiSelect({
                   <button
                     type="button"
                     className="rounded-sm hover:bg-primary/20"
-                    aria-label={ui(`إزالة ${o.label}`)}
+                    aria-label={`${ui('إزالة ')}${o.label}`}
                     onClick={(e) => {
                       e.stopPropagation();
                       toggle(o.value);

@@ -26,102 +26,22 @@ export interface CatalogNodeDto {
 
 /**
  * Serves the DB-backed resource tree + action set for the permission matrix.
- * The catalog defines available screens and actions; the DB stores grants.
+ * The DB is the source of truth (respects is_active and any future admin edits);
+ * it was seeded from src/modules/rbac/catalog/rbac.catalog.ts.
  */
 @Injectable()
 export class RbacCatalogService {
+  private syncPromise?: Promise<void>;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly engine: PermissionEngineService,
   ) {}
 
-  /** Existing installations may predate sidebar pages added to the code catalog. */
-  private async syncCatalogDefinitions(): Promise<void> {
-    const flat = flattenCatalog();
-    const [resources, actions, resourceActions] = await Promise.all([
-      this.prisma.rbac_resources.findMany({ select: {
-        id: true, key: true, parent_id: true, type: true, name_ar: true,
-        name_en: true, route: true, icon: true, sort_order: true, is_active: true,
-      } }),
-      this.prisma.rbac_actions.findMany({ select: { id: true, key: true } }),
-      this.prisma.rbac_resource_actions.findMany({ select: { resource_id: true, action_id: true } }),
-    ]);
-    const resourcesByKey = new Map(resources.map((resource) => [resource.key, resource]));
-    const resourceIds = new Map(resources.map((resource) => [resource.key, resource.id]));
-    const actionIds = new Map(actions.map((action) => [action.key, action.id]));
-    const existingPairs = new Set(resourceActions.map((link) => `${link.resource_id}:${link.action_id}`));
-    const needsResourceSync = (resource: typeof flat[number]) => {
-      const row = resourcesByKey.get(resource.key);
-      if (!row) return true;
-      return !row.is_active
-        || row.parent_id !== (resource.parentKey ? resourceIds.get(resource.parentKey) ?? null : null)
-        || row.type !== resource.type
-        || row.name_ar !== resource.nameAr
-        || row.name_en !== (resource.nameEn ?? null)
-        || row.route !== (resource.route ?? null)
-        || row.icon !== (resource.icon ?? null)
-        || row.sort_order !== resource.sortOrder;
-    };
-    const missingResources = flat.some(needsResourceSync);
-    const missingActions = ACTIONS.some((action) => !actionIds.has(action.key));
-    const missingLinks = flat.some((resource) => resource.actions.some((action) => {
-      const resourceId = resourceIds.get(resource.key);
-      const actionId = actionIds.get(action);
-      return resourceId != null && actionId != null && !existingPairs.has(`${resourceId}:${actionId}`);
-    }));
-    if (!missingResources && !missingActions && !missingLinks) return;
-
-    for (const action of ACTIONS) {
-      if (actionIds.has(action.key)) continue;
-      const row = await this.prisma.rbac_actions.upsert({
-        where: { key: action.key },
-        update: {},
-        create: {
-          key: action.key,
-          label_ar: action.labelAr,
-          label_en: action.labelEn,
-          sensitive: action.sensitive,
-          sort_order: action.sortOrder,
-        },
-        select: { id: true },
-      });
-      actionIds.set(action.key, row.id);
-    }
-
-    for (const resource of flat) {
-      if (!needsResourceSync(resource)) continue;
-      const values = {
-        parent_id: resource.parentKey ? resourceIds.get(resource.parentKey) ?? null : null,
-        type: resource.type,
-        name_ar: resource.nameAr,
-        name_en: resource.nameEn ?? null,
-        route: resource.route ?? null,
-        icon: resource.icon ?? null,
-        sort_order: resource.sortOrder,
-        is_active: true,
-      };
-      const row = await this.prisma.rbac_resources.upsert({
-        where: { key: resource.key },
-        update: values,
-        create: { key: resource.key, ...values },
-        select: { id: true },
-      });
-      resourceIds.set(resource.key, row.id);
-    }
-
-    const links = flat.flatMap((resource) => resource.actions.flatMap((action) => {
-      const resourceId = resourceIds.get(resource.key);
-      const actionId = actionIds.get(action);
-      if (resourceId == null || actionId == null || existingPairs.has(`${resourceId}:${actionId}`)) return [];
-      return [{ resource_id: resourceId, action_id: actionId }];
-    }));
-    if (links.length) await this.prisma.rbac_resource_actions.createMany({ data: links, skipDuplicates: true });
-    this.engine.invalidateCatalog();
-    this.engine.invalidateAll();
-  }
-
   async getCatalog(): Promise<{ actions: CatalogActionDto[]; tree: CatalogNodeDto[] }> {
-    await this.syncCatalogDefinitions();
+    // The runtime resolver uses the TypeScript catalog. Reconcile the DB metadata before
+    // serving the editor so the matrix can never display a different tree/action set.
+    await this.ensureCatalogSynced();
     const [actions, resources, resourceActions] = await Promise.all([
       this.prisma.rbac_actions.findMany({ orderBy: { sort_order: 'asc' } }),
       this.prisma.rbac_resources.findMany({
@@ -176,5 +96,164 @@ export class RbacCatalogService {
       })),
       tree: roots,
     };
+  }
+
+  /**
+   * Additively reconciles catalog metadata without touching role grants, user exceptions,
+   * scopes, or assignments. Removed resources are only marked inactive, so their historic
+   * permission rows remain recoverable if the resource returns later.
+   */
+  private ensureCatalogSynced(): Promise<void> {
+    if (!this.syncPromise) {
+      this.syncPromise = this.syncCatalog().catch((error) => {
+        this.syncPromise = undefined;
+        throw error;
+      });
+    }
+    return this.syncPromise;
+  }
+
+  private async syncCatalog(): Promise<void> {
+    const flat = flattenCatalog();
+    const [dbActions, dbResources, dbResourceActions] = await Promise.all([
+      this.prisma.rbac_actions.findMany(),
+      this.prisma.rbac_resources.findMany(),
+      this.prisma.rbac_resource_actions.findMany(),
+    ]);
+
+    const actionByKey = new Map(dbActions.map((action) => [action.key, action]));
+    let changed = false;
+    for (const action of ACTIONS) {
+      const current = actionByKey.get(action.key);
+      if (
+        !current
+        || current.label_ar !== action.labelAr
+        || current.label_en !== action.labelEn
+        || current.sensitive !== action.sensitive
+        || current.sort_order !== action.sortOrder
+      ) {
+        await this.prisma.rbac_actions.upsert({
+          where: { key: action.key },
+          update: {
+            label_ar: action.labelAr,
+            label_en: action.labelEn,
+            sensitive: action.sensitive,
+            sort_order: action.sortOrder,
+          },
+          create: {
+            key: action.key,
+            label_ar: action.labelAr,
+            label_en: action.labelEn,
+            sensitive: action.sensitive,
+            sort_order: action.sortOrder,
+          },
+        });
+        changed = true;
+      }
+    }
+
+    // Refresh actions after possible inserts so every wanted action has an id.
+    const actionRows = changed
+      ? await this.prisma.rbac_actions.findMany()
+      : dbActions;
+    const actionIdByKey = new Map(actionRows.map((action) => [action.key, action.id]));
+    const resourceByKey = new Map(dbResources.map((resource) => [resource.key, resource]));
+    const resourceIdByKey = new Map(dbResources.map((resource) => [resource.key, resource.id]));
+
+    // flattenCatalog is parent-first, so newly inserted parents are available to children.
+    for (const resource of flat) {
+      const parentId = resource.parentKey ? resourceIdByKey.get(resource.parentKey) ?? null : null;
+      const current = resourceByKey.get(resource.key);
+      if (
+        !current
+        || current.parent_id !== parentId
+        || current.type !== resource.type
+        || current.name_ar !== resource.nameAr
+        || current.name_en !== (resource.nameEn ?? null)
+        || current.route !== (resource.route ?? null)
+        || current.icon !== (resource.icon ?? null)
+        || current.sort_order !== resource.sortOrder
+        || !current.is_active
+      ) {
+        const row = await this.prisma.rbac_resources.upsert({
+          where: { key: resource.key },
+          update: {
+            parent_id: parentId,
+            type: resource.type,
+            name_ar: resource.nameAr,
+            name_en: resource.nameEn ?? null,
+            route: resource.route ?? null,
+            icon: resource.icon ?? null,
+            sort_order: resource.sortOrder,
+            is_active: true,
+          },
+          create: {
+            key: resource.key,
+            parent_id: parentId,
+            type: resource.type,
+            name_ar: resource.nameAr,
+            name_en: resource.nameEn ?? null,
+            route: resource.route ?? null,
+            icon: resource.icon ?? null,
+            sort_order: resource.sortOrder,
+            is_active: true,
+          },
+        });
+        resourceIdByKey.set(resource.key, row.id);
+        changed = true;
+      }
+    }
+
+    const activeKeys = new Set(flat.map((resource) => resource.key));
+    const staleIds = dbResources
+      .filter((resource) => resource.is_active && !activeKeys.has(resource.key))
+      .map((resource) => resource.id);
+    if (staleIds.length) {
+      await this.prisma.rbac_resources.updateMany({
+        where: { id: { in: staleIds } },
+        data: { is_active: false },
+      });
+      changed = true;
+    }
+
+    // Refresh ids after resource inserts, then make each active resource's applicable
+    // action set exactly match the runtime catalog. Stored grants are deliberately kept.
+    const resourceRows = changed
+      ? await this.prisma.rbac_resources.findMany({ select: { id: true, key: true } })
+      : dbResources;
+    const finalResourceIdByKey = new Map(resourceRows.map((resource) => [resource.key, resource.id]));
+    const existingByResource = new Map<number, Set<number>>();
+    for (const cell of dbResourceActions) {
+      const set = existingByResource.get(cell.resource_id) ?? new Set<number>();
+      set.add(cell.action_id);
+      existingByResource.set(cell.resource_id, set);
+    }
+
+    for (const resource of flat) {
+      const resourceId = finalResourceIdByKey.get(resource.key);
+      if (!resourceId) continue;
+      const wanted = resource.actions
+        .map((action) => actionIdByKey.get(action))
+        .filter((id): id is number => id != null);
+      const existing = existingByResource.get(resourceId) ?? new Set<number>();
+      const wantedSet = new Set(wanted);
+      const missing = wanted.filter((id) => !existing.has(id));
+      const extra = [...existing].filter((id) => !wantedSet.has(id));
+      if (missing.length) {
+        await this.prisma.rbac_resource_actions.createMany({
+          data: missing.map((action_id) => ({ resource_id: resourceId, action_id })),
+          skipDuplicates: true,
+        });
+        changed = true;
+      }
+      if (extra.length) {
+        await this.prisma.rbac_resource_actions.deleteMany({
+          where: { resource_id: resourceId, action_id: { in: extra } },
+        });
+        changed = true;
+      }
+    }
+
+    if (changed) this.engine.invalidateCatalog();
   }
 }

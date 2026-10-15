@@ -48,7 +48,7 @@ describe('large treasury periods', () => {
     const branchScope = {
       resolveListFilter: jest.fn().mockReturnValue([2]),
     };
-    const permissions = { isSuperAdmin: jest.fn().mockResolvedValue(false) };
+    const permissions = { isSuperAdmin: jest.fn().mockResolvedValue(false), scopeFor: jest.fn().mockResolvedValue("own") };
     const service = new ClubDashboardService(
       prisma as unknown as PrismaService,
       branchScope as unknown as BranchScopeService,

@@ -137,6 +137,15 @@ export class ProductRecipeLineDto {
   @IsString() unit!: string;
 }
 
+export class PackagedMaterialSizeDto {
+  @IsOptional() @IsInt() @Min(1) id?: number;
+  @IsNumber() @Min(0.001) packageSize!: number;
+  @IsIn(['g', 'kg', 'oz', 'ml', 'L', 'fl_oz', 'piece']) packageUnit!: string;
+  @IsNumber() @Min(0.01) packagePrice!: number;
+  @IsOptional() @IsNumber() @Min(0) initialPackageCount?: number;
+  @IsOptional() @IsNumber() @Min(0) reorderPoint?: number;
+}
+
 export class UpsertProductDto {
   @IsOptional() @IsString() productCode?: string;
   @IsString() nameAr!: string;
@@ -165,6 +174,12 @@ export class UpsertProductDto {
   @IsOptional() @IsString() model?: string;
   @IsOptional() @IsString() color?: string;
   @IsOptional() @IsString() size?: string;
+  @IsOptional() @IsBoolean() isPackaged?: boolean;
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => PackagedMaterialSizeDto)
+  packages?: PackagedMaterialSizeDto[];
   @IsOptional() @IsString() material?: string;
   @IsOptional() @IsNumber() weightKg?: number;
   @IsOptional() dimensions?: Record<string, unknown>;
@@ -394,8 +409,15 @@ export class UpsertCountItemDto {
   @IsString() itemName!: string;
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsNumber() systemQuantity?: number;
-  @IsNumber() countedQuantity!: number;
+  @IsNumber() @Min(0) countedQuantity!: number;
+  @IsOptional() @IsString() @MaxLength(255) varianceReason?: string;
   @IsOptional() @IsString() status?: string;
+  /**
+   * Editing a counted line: false (default) = fixing a typo in the original count, so the
+   * system balance captured at that count is kept; true = the item was physically counted
+   * again now, so the baseline is re-read from the live balance.
+   */
+  @IsOptional() @IsBoolean() recount?: boolean;
 }
 
 export class UpsertSparePartDto {

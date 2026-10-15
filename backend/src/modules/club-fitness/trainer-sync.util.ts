@@ -2,12 +2,6 @@ import { PrismaClient } from '@prisma/client';
 
 type TrainerSyncPrisma = Pick<PrismaClient, 'employees' | 'department_jobs' | 'club_trainers'>;
 
-const TRAINER_JOB_TITLES = new Set(['مدرب', 'مدرب لياقة', 'مدربة لياقة']);
-
-function isTrainerJobTitle(title?: string | null): boolean {
-  return TRAINER_JOB_TITLES.has(title?.trim() ?? '');
-}
-
 /**
  * Keep `club_trainers` in sync with employees whose job title (المسمى الوظيفي) is flagged
  * `is_trainer`. Keyed 1:1 on `club_trainers.employee_id`:
@@ -34,13 +28,14 @@ export async function syncEmployeeTrainer(
   });
   if (!emp) return null;
 
-  const job = emp.mosma_wazefy_code
-    ? await prisma.department_jobs.findUnique({
-        where: { id: emp.mosma_wazefy_code },
-        select: { is_trainer: true, name: true },
-      })
-    : null;
-  const jobIsTrainer = !!job?.is_trainer || isTrainerJobTitle(job?.name);
+  const jobIsTrainer = emp.mosma_wazefy_code
+    ? (
+        await prisma.department_jobs.findUnique({
+          where: { id: emp.mosma_wazefy_code },
+          select: { is_trainer: true },
+        })
+      )?.is_trainer ?? false
+    : false;
   // leave_emp null/0 = active employee (non-terminated), mirroring the HR "active" convention.
   const shouldBeTrainer = jobIsTrainer && (emp.leave_emp == null || emp.leave_emp === 0);
 
@@ -91,7 +86,7 @@ export async function syncAllEmployeeTrainers(prisma: TrainerSyncPrisma): Promis
   const empIds = new Set<number>();
 
   const trainerJobs = await prisma.department_jobs.findMany({
-    where: { OR: [{ is_trainer: true }, { name: { in: [...TRAINER_JOB_TITLES] } }] },
+    where: { is_trainer: true },
     select: { id: true },
   });
   const jobIds = trainerJobs.map((j) => j.id);

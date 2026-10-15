@@ -13,7 +13,7 @@ export class ClubLockerStatusCron {
     private readonly prisma: PrismaService,
   ) {}
 
-  @Cron('30 2 * * *')
+  @Cron('30 2 * * *', { timeZone: 'Africa/Cairo' })
   async handleExpiry() {
     const ran = await runWithMysqlLock(this.prisma, 'cron:club-locker-status', 0, () =>
       this.handleExpiryLocked(),
@@ -24,5 +24,7 @@ export class ClubLockerStatusCron {
   private async handleExpiryLocked() {
     const result = await this.lockers.expireAndReleaseLockers();
     if (result.subs > 0) this.log.log(`Released ${result.lockers} lockers from ${result.subs} expired subs`);
+    const handoffs = await this.lockers.releaseStaleHandoffs();
+    if (handoffs > 0) this.log.log(`Released ${handoffs} locker handoffs left open from a previous day`);
   }
 }

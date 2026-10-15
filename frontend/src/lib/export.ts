@@ -1,3 +1,5 @@
+import { isIdentifierColumn } from './number-display';
+
 export interface ExportColumn<T extends Record<string, unknown> = Record<string, unknown>> {
   key: keyof T & string;
   header: string;
@@ -57,7 +59,10 @@ export async function downloadExcel<T extends Record<string, unknown>>(
   const worksheet = workbook.addWorksheet(safeSheetName(sheetName, 0, new Set()));
   worksheet.addRow(columns.map((column) => column.header));
   for (const row of rows) {
-    worksheet.addRow(columns.map((column) => toExcelCellValue(row[column.key])));
+    const added = worksheet.addRow(columns.map((column) => toExcelCellValue(row[column.key])));
+    columns.forEach((column, index) => {
+      if (typeof added.getCell(index + 1).value === 'number' && !isIdentifierColumn(column.key)) added.getCell(index + 1).numFmt = '#,##0.####################';
+    });
   }
   worksheet.getRow(1).font = { bold: true };
   worksheet.columns.forEach((column) => { column.width = 20; });
@@ -75,7 +80,10 @@ export async function downloadMultiSheetExcel(
     const worksheet = workbook.addWorksheet(safeSheetName(sheet.name, index, usedNames));
     worksheet.addRow(sheet.columns.map((column) => column.header));
     for (const row of sheet.rows) {
-      worksheet.addRow(sheet.columns.map((column) => toExcelCellValue(row[column.key])));
+      const added = worksheet.addRow(sheet.columns.map((column) => toExcelCellValue(row[column.key])));
+      sheet.columns.forEach((column, columnIndex) => {
+        if (typeof added.getCell(columnIndex + 1).value === 'number' && !isIdentifierColumn(column.key)) added.getCell(columnIndex + 1).numFmt = '#,##0.####################';
+      });
     }
     worksheet.getRow(1).font = { bold: true };
     worksheet.columns.forEach((column) => { column.width = 20; });
@@ -89,12 +97,8 @@ export function downloadBlob(blob: Blob, filename: string) {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
-  a.style.display = 'none';
-  document.body.appendChild(a);
   a.click();
-  a.remove();
-  // Keep the object URL alive through the browser's download dispatch.
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  URL.revokeObjectURL(url);
 }
 
 /** Fetch server export endpoint and download. */

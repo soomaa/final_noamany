@@ -19,11 +19,6 @@ export class AttendanceReportDto extends PaginationDto {
   @IsString()
   dateTo?: string;
 
-  /** Free-text filter, always applied within the already-scoped report result. */
-  @IsOptional()
-  @IsString()
-  search?: string;
-
   /** employees.branch_id_fk or 'all' */
   @IsOptional()
   @IsString()

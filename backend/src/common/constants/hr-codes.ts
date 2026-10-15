@@ -8,6 +8,10 @@
 export const EmployeeType = {
   /** Active / current staff (the set payroll and circulars target). */
   ACTIVE: 1,
+  /** Suspended (موقوف) — excluded from payroll like a non-active hire. */
+  SUSPENDED: 2,
+  /** Unspecified / not set (UI filter «لم يحدد»). */
+  UNSPECIFIED: 0,
 } as const;
 
 /** hr_all_agzat_orders.no3_agaza — leave-type codes. */

@@ -476,15 +476,15 @@ export async function seedAccountingApp(): Promise<void> {
   // about (singleton)
   await prisma.am_about_app.create({
     data: {
-      app_name: 'Noamany Fitness Center',
+      app_name: 'ONE80 Gym',
       app_version: '2.4.1',
-      description: 'تطبيق Noamany لإدارة الاشتراكات والحجوزات ومتابعة اللياقة.',
+      description: 'تطبيق ONE80 لإدارة الاشتراكات والحجوزات ومتابعة اللياقة.',
       features: 'حجز الحصص، متابعة الاشتراك، جدول التمارين، العروض والأخبار',
-      contact_email: 'support@noamanycenter.test',
+      contact_email: 'support@one80gym.test',
       contact_phone: '0112345678',
-      website: 'https://noamanycenter.test',
-      privacy_policy: 'سياسة الخصوصية الخاصة بتطبيق Noamany.',
-      terms_of_service: 'شروط وأحكام استخدام تطبيق Noamany.',
+      website: 'https://one80gym.test',
+      privacy_policy: 'سياسة الخصوصية الخاصة بتطبيق ONE80.',
+      terms_of_service: 'شروط وأحكام استخدام تطبيق ONE80.',
       updated_at: BASE,
     },
   });
@@ -546,7 +546,7 @@ export async function seedAccountingApp(): Promise<void> {
       data: {
         employee_id: linked ? linked.id : null,
         name: linked ? linked.employee ?? fullNameMale() : fullNameMale(),
-        email: `trainer${i + 1}@noamanycenter.test`,
+        email: `trainer${i + 1}@one80gym.test`,
         phone: randPhone(),
         specialization: pick(SPECS),
         experience: randInt(1, 15),
@@ -590,7 +590,7 @@ export async function seedAccountingApp(): Promise<void> {
     'انطلاق تحدي اللياقة الصيفي',
     'جدول حصص جديد لشهر يوليو',
     'ورشة تغذية مجانية للأعضاء',
-    'تحديث تطبيق Noamany بمزايا جديدة',
+    'تحديث تطبيق ONE80 بمزايا جديدة',
   ];
   for (let i = 0; i < NEWS.length; i++) {
     await prisma.am_news.create({
@@ -612,8 +612,8 @@ export async function seedAccountingApp(): Promise<void> {
     await prisma.am_ads.create({
       data: {
         title: ADS[i],
-        description: `${ADS[i]} — عرض حصري لأعضاء Noamany.`,
-        link_url: 'https://noamanycenter.test/promo',
+        description: `${ADS[i]} — عرض حصري لأعضاء ONE80.`,
+        link_url: 'https://one80gym.test/promo',
         start_date: ymd(start),
         end_date: ymd(end),
         is_active: i < 3,
@@ -800,7 +800,7 @@ export async function seedAccountingApp(): Promise<void> {
         gender: 'male',
         office_no: `011${randInt(1000000, 9999999)}`,
         mob: randPhone(),
-        email: `agent${i + 1}@noamanycenter.test`,
+        email: `agent${i + 1}@one80gym.test`,
         address: 'القاهرة - جمهورية مصر العربية',
         description: 'وكيل معتمد لتسويق اشتراكات النادي.',
         activity: i < 5 ? 'active' : 'notactive',
@@ -841,9 +841,9 @@ export async function seedAccountingApp(): Promise<void> {
   const EVENTS = ['subscription.created', 'payment.received', 'member.checked_in', 'invitation.accepted'];
   const endpointIds: number[] = [];
   const ENDPOINTS = [
-    { name: 'تكامل المحاسبة', url: 'https://hooks.noamanycenter.test/accounting' },
-    { name: 'تكامل الرسائل', url: 'https://hooks.noamanycenter.test/sms' },
-    { name: 'تكامل CRM', url: 'https://hooks.noamanycenter.test/crm' },
+    { name: 'تكامل المحاسبة', url: 'https://hooks.one80gym.test/accounting' },
+    { name: 'تكامل الرسائل', url: 'https://hooks.one80gym.test/sms' },
+    { name: 'تكامل CRM', url: 'https://hooks.one80gym.test/crm' },
   ];
   for (let i = 0; i < ENDPOINTS.length; i++) {
     const ep = await prisma.webhook_endpoints.create({

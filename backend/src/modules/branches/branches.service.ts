@@ -1,6 +1,8 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { CreateBranchDto, UpdateBranchDto } from './dto/branch.dto';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 export interface BranchView {
   id: number;
@@ -12,7 +14,25 @@ export interface BranchView {
 
 @Injectable()
 export class BranchesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: BranchScopeService,
+  ) {}
+
+  async findOptions(user: JwtUser): Promise<BranchView[]> {
+    const allowed = this.scope.allowedBranchIds(user);
+    const branches = await this.prisma.tbl_branches.findMany({
+      where: allowed === null ? undefined : { branch_id: { in: allowed } },
+      orderBy: { branch_id: 'asc' },
+    });
+    return branches.map((branch) => ({
+      id: branch.branch_id,
+      name: branch.branch_name,
+      parentId: branch.from_id,
+      lat: null,
+      lng: null,
+    }));
+  }
 
   /** tbl_branches is canonical; geofence coords live in branch_settings (matched by title). */
   async findAll(): Promise<BranchView[]> {

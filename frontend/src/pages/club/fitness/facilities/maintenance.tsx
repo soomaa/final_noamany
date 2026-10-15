@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useFitnessT } from '@/hooks/use-fitness-t';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { localToday } from '@/lib/formatters';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
@@ -20,6 +21,10 @@ import { RowActions, SELECT_CLS, useFitnessResourceList } from '../shared';
 
 export function FitnessMaintenancePage() {
   const ft = useFitnessT();
+  const { can } = usePermission();
+  const canCreate = can('club.fitness.equipment_maintenance:create');
+  const canUpdate = can('club.fitness.equipment_maintenance:update');
+  const canDelete = can('club.fitness.equipment_maintenance:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<ClubEquipmentMaintenanceRow>(
     'club-equipment-maintenance',
@@ -44,6 +49,7 @@ export function FitnessMaintenancePage() {
   );
 
   const openCreate = () => {
+    if (!canCreate) return;
     setEditId(null);
     setForm({
       equipmentId: equipment?.[0] ? String(equipment[0].id) : '',
@@ -57,6 +63,7 @@ export function FitnessMaintenancePage() {
   };
 
   const openEdit = (row: ClubEquipmentMaintenanceRow) => {
+    if (!canUpdate) return;
     setEditId(row.id);
     setForm({
       equipmentId: String(row.equipmentId),
@@ -70,6 +77,7 @@ export function FitnessMaintenancePage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.equipmentId || !form.scheduledDate) {
       toast.error(ft('maintenance.scheduled'));
       return;
@@ -120,34 +128,35 @@ export function FitnessMaintenancePage() {
       {
         id: 'actions',
         header: ft('common.actions'),
-        cell: ({ row }) => (
+        cell: ({ row }) => !canUpdate && !canDelete ? null : (
           <RowActions
             editLabel={ft('common.edit')}
             deleteLabel={ft('common.delete')}
-            onEdit={() => openEdit(row.original)}
-            onDelete={() =>
+            onEdit={canUpdate ? () => openEdit(row.original) : undefined}
+            onDelete={canDelete ? () =>
               void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
-                if (ok) deleteMutation.mutate(row.original.id);
+                if (ok && canDelete) deleteMutation.mutate(row.original.id);
               })
-            }
+            : undefined}
           />
         ),
       },
     ],
-    [ft],
+    [ft, canUpdate, canDelete, deleteMutation],
   );
 
   return (
     <div className="space-y-6">
       <PageHeader
         title={ft('maintenance.title')}
-        actions={
+        actions={canCreate ? (
           <Button variant="brand" onClick={openCreate}>
             <Plus className="size-4" /> {ft('common.add')}
           </Button>
-        }
+        ) : undefined}
       />
       <DataTable
+        exportSource={{ resource: 'club-equipment-maintenance', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -160,7 +169,7 @@ export function FitnessMaintenancePage() {
         onRetry={() => void refetch()}
         emptyTitle={ft('common.noData')}
       />
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open && (editId ? canUpdate : canCreate)} onOpenChange={setOpen}>
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editId ? ft('common.edit') : ft('common.add')}</DialogTitle>
@@ -200,7 +209,7 @@ export function FitnessMaintenancePage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
+            <Button variant="brand" permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

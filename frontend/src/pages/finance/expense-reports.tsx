@@ -1,3 +1,4 @@
+import { formatMoneyNumber } from '@/lib/formatters';
 import { useQuery } from '@tanstack/react-query';
 import {
   Bar,
@@ -18,7 +19,7 @@ import { useBranches } from '@/hooks/use-branches';
 import { api } from '@/lib/api';
 import { localDateStr, localToday } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
-import type { ExpenseReportData } from '@/types/finance';
+import type { ExpenseReportData, ExpenseCategory } from '@/types/finance';
 import { useLocale } from '@/store/locale';
 import { FinancePageShell } from './finance-shell';
 
@@ -32,14 +33,21 @@ export function FinanceExpenseReportsPage() {
   const [startDate, setStartDate] = useState(yearStart);
   const [endDate, setEndDate] = useState(() => localToday());
   const [branchId, setBranchId] = useState('all');
+  const [businessUnit, setBusinessUnit] = useState('gym');
+  const [category, setCategory] = useState('all');
+  const { data: categories = [] } = useQuery({
+    queryKey: ['expense-categories'],
+    queryFn: async () => (await api.get<ExpenseCategory[]>('/expense-categories')).data,
+  });
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['finance', 'expense-reports', startDate, endDate, branchId],
+    queryKey: ['finance', 'expense-reports', startDate, endDate, branchId, businessUnit, category],
     queryFn: async () => {
       const { data: d } = await api.get<ExpenseReportData>('/finance/expense-reports', {
         params: {
           startDate,
           endDate,
+          businessUnit, category,
           ...(branchId !== 'all' ? { branchId } : {}),
         },
       });
@@ -48,19 +56,34 @@ export function FinanceExpenseReportsPage() {
   });
 
   return (
-    <FinancePageShell title={ui('تقارير المصروفات')} description={ui('تحليل المصروفات حسب الفئة والفترة')}>
+    <FinancePageShell title={ui('تقارير المصروفات')} description={ui('المصروفات حسب الأنواع المُدارة والفترة، وتشمل المعلق والمعتمد وتستبعد المرفوض.')}>
       <div className="flex flex-wrap items-end gap-4 rounded-xl border bg-card p-4">
         <div className="grid gap-1">
-          <Label className="text-xs">{ui('من تاريخ')}</Label>
-          <Input className="nums" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+          <Label htmlFor="report-business-unit">{ui('المصروفات')}</Label>
+          <select id="report-business-unit" className="h-10 rounded-md border bg-background px-3 text-sm" value={businessUnit} onChange={(event) => setBusinessUnit(event.target.value)}>
+            <option value="gym">{ui('مصروفات الجيم')}</option>
+            <option value="cafe">{ui('مصروفات الكافيه')}</option>
+          </select>
         </div>
         <div className="grid gap-1">
-          <Label className="text-xs">{ui('إلى تاريخ')}</Label>
-          <Input className="nums" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+          <Label htmlFor="report-expense-category">{ui('نوع المصروف')}</Label>
+          <select id="report-expense-category" className="h-10 rounded-md border bg-background px-3 text-sm" value={category} onChange={(event) => setCategory(event.target.value)}>
+            <option value="all">{ui('كل الأنواع')}</option>
+            {categories.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+          </select>
         </div>
         <div className="grid gap-1">
-          <Label className="text-xs">{ui('الفرع')}</Label>
+          <Label htmlFor="expense-report-from" className="text-xs">{ui('من تاريخ')}</Label>
+          <Input id="expense-report-from" className="nums" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+        </div>
+        <div className="grid gap-1">
+          <Label htmlFor="expense-report-to" className="text-xs">{ui('إلى تاريخ')}</Label>
+          <Input id="expense-report-to" className="nums" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        </div>
+        <div className="grid gap-1">
+          <Label htmlFor="expense-report-branch" className="text-xs">{ui('الفرع')}</Label>
           <select
+            id="expense-report-branch"
             className="rounded-md border bg-background px-3 py-2 text-sm"
             value={branchId}
             onChange={(e) => setBranchId(e.target.value)}
@@ -85,7 +108,7 @@ export function FinanceExpenseReportsPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
           title={ui('إجمالي المصروفات')}
-          value={isLoading ? '…' : toArabicDigits((data?.totalAmount ?? 0).toFixed(2))}
+          value={isLoading ? '…' : formatMoneyNumber((data?.totalAmount ?? 0))}
           colorIndex={4}
           loading={isLoading}
         />
@@ -96,12 +119,18 @@ export function FinanceExpenseReportsPage() {
           loading={isLoading}
         />
         <StatCard
-          title={ui('فئات مختلفة')}
-          value={isLoading ? '…' : toArabicDigits(data?.expensesByCategory?.length ?? 0)}
+          title={ui('المتبقي')}
+          value={isLoading ? '…' : formatMoneyNumber(data?.remainingAmount ?? 0)}
           colorIndex={2}
           loading={isLoading}
         />
       </div>
+      <p className="text-sm text-muted-foreground">{ui('المدفوع')}: <span className="nums font-semibold">{formatMoneyNumber(data?.paidAmount ?? 0)}</span></p>
+      {(data?.paymentsNeedingReview ?? 0) > 0 && (
+        <p role="status" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
+          {ui('في مصروفات قديمة حالتها جزئي لكن المدفوع مش محفوظ. راجع المدفوع من تعديل المصروف؛ إجماليات المدفوع والمتبقي غير مكتملة لحين المراجعة.')}
+        </p>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="rounded-xl border bg-card p-4">
@@ -113,7 +142,7 @@ export function FinanceExpenseReportsPage() {
                   <span>{cat.category}</span>
                   <div className="flex items-center gap-3">
                     <span className="text-muted-foreground">{toArabicDigits(cat.count)}</span>
-                    <span className="nums font-bold">{toArabicDigits(cat.total.toFixed(2))}</span>
+                    <span className="nums font-bold">{formatMoneyNumber(cat.total)}</span>
                   </div>
                 </div>
               ))}
@@ -131,7 +160,7 @@ export function FinanceExpenseReportsPage() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                 <YAxis tickFormatter={(v) => toArabicDigits(v)} />
-                <Tooltip formatter={(v: number) => toArabicDigits(v.toFixed(2))} />
+                <Tooltip formatter={(v: number) => formatMoneyNumber(v)} />
                 <Bar dataKey="total" fill="#dc2626" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

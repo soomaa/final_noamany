@@ -5,6 +5,11 @@ import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertExists } from '../../common/validators/validation.util';
 import { diffDaysFromToday, toIsoDate } from '../../common/utils/legacy-date.util';
+import { todayIso } from '../../common/utils/legacy-date.util';
+import { HrDataScopeService } from '../../common/hr-scope/hr-data-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
+import { addDateOnlyDays } from '../../common/utils/cairo-date';
+import { claimEmployeePrivateFile } from '../uploads/private-file-reference.util';
 
 const DOC_TYPE_LABELS: Record<number, string> = {
   1: 'هوية',
@@ -16,10 +21,14 @@ const DOC_TYPE_LABELS: Record<number, string> = {
 
 @Injectable()
 export class DocumentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: HrDataScopeService,
+  ) {}
 
-  async list(q: PaginationDto & { expiry?: string }) {
+  async list(q: PaginationDto & { expiry?: string }, user: JwtUser) {
     const and: Prisma.emp_filesWhereInput[] = [];
+    and.push({ employee: await this.scope.employeeWhere(user, 'employees.documents') });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -31,42 +40,41 @@ export class DocumentsService {
       });
     }
 
-    const rows = await this.prisma.emp_files.findMany({
-      where: and.length ? { AND: and } : undefined,
-      include: { employee: { select: { employee: true } } },
-      orderBy: { id: 'desc' },
-    });
-
-    let mapped = rows.map((r) => this.toRow(r));
-
     if (q.expiry) {
-      mapped = mapped.filter((r) => {
-        const days = diffDaysFromToday(r.expiryDate);
-        if (days == null) return q.expiry === 'valid';
-        if (q.expiry === 'expired') return days < 0;
-        if (q.expiry === 'expiring') return days >= 0 && days <= 30;
-        if (q.expiry === 'valid') return days > 30;
-        return true;
-      });
+      const today = todayIso();
+      const cutoff = addDateOnlyDays(today, 30);
+      if (q.expiry === 'expired') and.push({ have_date: 1, to_date: { lt: today } });
+      if (q.expiry === 'expiring') and.push({ have_date: 1, to_date: { gte: today, lte: cutoff } });
+      if (q.expiry === 'valid') and.push({ OR: [{ have_date: { not: 1 } }, { to_date: null }, { to_date: { gt: cutoff } }] });
     }
 
-    const total = mapped.length;
-    const page = mapped.slice(q.skip, q.skip + q.take);
-    return paginated(page, total, q.page, q.pageSize);
+    const where = { AND: and };
+    const [rows, total] = await Promise.all([
+      this.prisma.emp_files.findMany({
+        where,
+        include: { employee: { select: { employee: true } } },
+        orderBy: { id: 'desc' },
+        skip: q.skip,
+        take: q.take,
+      }),
+      this.prisma.emp_files.count({ where }),
+    ]);
+    return paginated(rows.map((row) => this.toRow(row)), total, q.page, q.pageSize);
   }
 
-  async expiring(days = 30) {
+  async expiring(days = 30, user: JwtUser) {
+    const boundedDays = Math.min(Math.max(Number.isFinite(days) ? days : 30, 0), 3650);
+    const today = todayIso();
     const rows = await this.prisma.emp_files.findMany({
-      where: { have_date: 1, to_date: { not: null } },
+      where: { AND: [
+        { employee: await this.scope.employeeWhere(user, 'employees.documents') },
+        { have_date: 1, to_date: { gte: today, lte: addDateOnlyDays(today, boundedDays) } },
+      ] },
       include: { employee: { select: { employee: true } } },
       orderBy: { to_date: 'asc' },
+      take: 200,
     });
-    return rows
-      .map((r) => this.toRow(r))
-      .filter((r) => {
-        const d = diffDaysFromToday(r.expiryDate);
-        return d != null && d >= 0 && d <= days;
-      });
+    return rows.map((row) => this.toRow(row));
   }
 
   async create(dto: {
@@ -75,27 +83,33 @@ export class DocumentsService {
     filePath?: string;
     docType?: number;
     expiryDate?: string;
-  }) {
+  }, user: JwtUser) {
+    const employeeWhere = await this.scope.employeeWhere(user, 'employees.documents');
     const emp = await assertExists(
-      () => this.prisma.employees.findUnique({ where: { id: dto.empId }, select: { id: true, emp_code: true } }),
+      () => this.prisma.employees.findFirst({ where: { AND: [{ id: dto.empId }, employeeWhere] }, select: { id: true, emp_code: true } }),
       'الموظف غير موجود',
     );
-    const row = await this.prisma.emp_files.create({
-      data: {
-        emp_id: emp.id,
-        emp_code: emp.emp_code != null ? String(emp.emp_code) : '0',
-        title: dto.title,
-        emp_file: dto.filePath ?? '',
-        period: dto.docType ?? null,
-        have_date: dto.expiryDate ? 1 : 0,
-        to_date: dto.expiryDate ?? null,
-      },
+    const row = await this.prisma.$transaction(async (tx) => {
+      await claimEmployeePrivateFile(tx, dto.filePath, emp.id, user.sub, ['document']);
+      return tx.emp_files.create({
+        data: {
+          emp_id: emp.id,
+          emp_code: emp.emp_code != null ? String(emp.emp_code) : '0',
+          title: dto.title,
+          emp_file: dto.filePath ?? '',
+          period: dto.docType ?? null,
+          have_date: dto.expiryDate ? 1 : 0,
+          to_date: dto.expiryDate ?? null,
+        },
+      });
     });
     return { id: row.id };
   }
 
-  async remove(id: number) {
-    const row = await this.prisma.emp_files.findUnique({ where: { id } });
+  async remove(id: number, user: JwtUser) {
+    const row = await this.prisma.emp_files.findFirst({
+      where: { id, employee: await this.scope.employeeWhere(user, 'employees.documents') },
+    });
     if (!row) throw new NotFoundException('المستند غير موجود');
     await this.prisma.emp_files.delete({ where: { id } });
     return { id };

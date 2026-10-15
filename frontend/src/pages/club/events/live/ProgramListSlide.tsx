@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useEffect, useRef, useState } from "react";
 import { useEventSettings } from "./useEventSettings";
 import { useClubEventsLiveApi } from './use-club-events-live-api';
@@ -197,7 +198,7 @@ export const ProgramListSlide = ({ segments }: { segments: ProgramSegment[] }) =
             >
               <span aria-hidden className="absolute right-0 top-2 bottom-2 w-[3px] rounded-full bg-gradient-to-b from-transparent via-[hsl(var(--grad-gold))]/70 to-transparent" />
               <span className="pls-num relative w-8 h-8 sm:w-9 sm:h-9 rounded-full flex items-center justify-center font-extrabold text-sm bg-gradient-to-br from-[hsl(var(--grad-green))] to-[hsl(var(--grad-green-dark))] text-white ring-2 ring-[hsl(var(--grad-gold))]/40">
-                {i + 1}
+                {formatDisplayNumber(i + 1)}
               </span>
               <span aria-hidden className="relative w-9 h-9 sm:w-10 sm:h-10 rounded-lg flex items-center justify-center border border-[hsl(var(--grad-gold))]/30 bg-[hsl(var(--grad-gold))]/5">
                 <Icon className="pls-ico h-4 w-4 sm:h-5 sm:w-5 text-[hsl(var(--grad-cream))]" strokeWidth={2.2} />
@@ -216,7 +217,7 @@ export const ProgramListSlide = ({ segments }: { segments: ProgramSegment[] }) =
               {s.show_duration && s.duration_minutes != null && s.duration_minutes > 0 && (
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] sm:text-xs font-extrabold whitespace-nowrap bg-transparent text-[hsl(var(--grad-gold))] border border-[hsl(var(--grad-gold))]/50 tabular-nums backdrop-blur-sm">
                   <Clock className="h-3 w-3" />
-                  {s.duration_minutes} {ui('د')}
+                  {formatDisplayNumber(s.duration_minutes)} {ui('د')}
                 </span>
               )}
             </li>

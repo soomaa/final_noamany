@@ -46,7 +46,7 @@ export const AttendeesManagerDialog = ({
   const { data: rows = [], isFetching: loading, refetch } = useQuery({
     queryKey: ["grad", "attendees"],
     queryFn: async () =>
-      (await liveApi.listPrivateAttendees()).data.map(
+      (await liveApi.listAttendees()).data.map(
         (a: {
           id: string;
           name: string;
@@ -149,7 +149,7 @@ export const AttendeesManagerDialog = ({
                     </div>
                   </div>
                   <div className="text-[11px] text-[#558B2F] tabular-nums font-bold text-left">
-                    {t.toLocaleString("ar-SA", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit", hour12: true })}
+                    {t.toLocaleString("ar-SA-u-nu-latn", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit", hour12: true })}
                   </div>
                   <Button
                     type="button"

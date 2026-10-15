@@ -8,10 +8,20 @@ import { createRoot, type Root } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { Toaster } from '@/components/ui/sonner';
 import { queryClient } from '@/lib/query';
-import { setUiStaticMap } from '@/lib/ui-static';
 import { LocaleProvider, useLocale } from '@/store/locale';
 import { ThemeProvider } from '@/store/theme';
 import '@/styles/index.css';
+import { installOne80AuditLabels } from '@/adapters/one80/audit-label-registry';
+import { installOne80LocaleDictionaries } from '@/adapters/one80/locale-dictionaries';
+import { installOne80AuthenticatedRoutes } from '@/adapters/one80/authenticated-routes';
+import { installOne80Brand } from '@/adapters/one80/brand';
+import { installOne80ReportShortcuts } from '@/adapters/one80/report-shortcuts';
+
+installOne80AuditLabels();
+installOne80LocaleDictionaries();
+installOne80AuthenticatedRoutes();
+installOne80Brand();
+installOne80ReportShortcuts();
 
 function DirectionShell({ children }: { children: React.ReactNode }) {
   const { dir } = useLocale();
@@ -19,20 +29,11 @@ function DirectionShell({ children }: { children: React.ReactNode }) {
 }
 
 async function bootstrap() {
-  // Arabic is the default and does not need the large inline-copy translation map.
-  // English users load it before the first render so module-level option labels remain correct.
-  if (localStorage.getItem('one80_locale') === 'en') {
-    const module = await import('@/locales/ui-map.json');
-    setUiStaticMap(module.default as Record<string, string>);
-  }
-
-  const rootElement = document.getElementById('root') as (HTMLElement & { __one80Root?: Root }) | null;
-  if (!rootElement) throw new Error('Root element was not found');
-  const root = rootElement.__one80Root ?? createRoot(rootElement);
-  rootElement.__one80Root = root;
-  // Keep the application graph dynamic so a module-load error is displayed rather
-  // than leaving a silent blank screen during startup.
   const { App } = await import('@/App');
+  const rootElement = document.getElementById('root') as (HTMLElement & { __hrRoot?: Root }) | null;
+  if (!rootElement) throw new Error('Root element was not found');
+  const root = rootElement.__hrRoot ?? createRoot(rootElement);
+  rootElement.__hrRoot = root;
 
   root.render(
     <StrictMode>
@@ -40,7 +41,7 @@ async function bootstrap() {
         <ThemeProvider>
           <DirectionShell>
             <QueryClientProvider client={queryClient}>
-              <BrowserRouter future={{ v7_relativeSplatPath: true }}>
+              <BrowserRouter>
                 <App />
                 <Toaster />
               </BrowserRouter>
@@ -52,11 +53,4 @@ async function bootstrap() {
   );
 }
 
-function renderStartupError(error: unknown) {
-  const root = document.getElementById('root');
-  if (!root) return;
-  const message = error instanceof Error ? error.message : String(error);
-  root.innerHTML = `<main style="min-height:100vh;display:grid;place-items:center;padding:24px;background:#111;color:#fff;font-family:Tajawal,sans-serif;text-align:center"><section><h1 style="font-size:20px">تعذّر تشغيل النظام</h1><p style="color:#fca5a5;max-width:680px;white-space:pre-wrap">${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p><p style="color:#a3a3a3;font-size:14px">حدّث الصفحة بعد إصلاح الخطأ.</p></section></main>`;
-}
-
-void bootstrap().catch(renderStartupError);
+void bootstrap();

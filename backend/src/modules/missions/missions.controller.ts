@@ -16,8 +16,8 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { JwtUser } from '../../common/types/jwt-user';
 import { CreateMissionDto } from './dto/create-mission.dto';
 import { ListMissionsDto } from './dto/list-missions.dto';
-import { UpdateMissionDto } from './dto/update-mission.dto';
 import { MissionsService } from './missions.service';
+import { ScopedHrData } from '../../common/hr-scope/scoped-hr-data.decorator';
 
 @UseGuards(JwtAuthGuard)
 @Controller('missions')
@@ -26,31 +26,42 @@ export class MissionsController {
   constructor(private readonly missions: MissionsService) {}
 
   @Get()
-  list(@Query() query: ListMissionsDto) {
-    return this.missions.list(query);
-  }
-
-  @Get(':id')
-  get(@Param('id', ParseIntPipe) id: number) {
-    return this.missions.get(id);
+  @ScopedHrData()
+  list(@Query() query: ListMissionsDto, @CurrentUser() user: JwtUser) {
+    return this.missions.list(query, user);
   }
 
   @Post()
+  @ScopedHrData()
+  @RequiresPermission('leaves.missions:create')
   create(@Body() dto: CreateMissionDto, @CurrentUser() user: JwtUser) {
-    return this.missions.create(dto, user.sub);
+    return this.missions.create(dto, user.sub, user.name, user);
   }
 
-  @Patch(':id')
-  update(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateMissionDto,
-    @CurrentUser() user: JwtUser,
-  ) {
-    return this.missions.update(id, dto, user.sub);
+  @Get(':id/expenses')
+  @ScopedHrData()
+  expenses(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.missions.expenses(id, user);
+  }
+
+  @Patch(':id/approve')
+  @ScopedHrData()
+  @RequiresPermission('leaves.missions:approve')
+  approve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.missions.approve(id, user.sub, user.name, user);
+  }
+
+  @Patch(':id/reject')
+  @ScopedHrData()
+  @RequiresPermission('leaves.missions:reject')
+  reject(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.missions.reject(id, user.sub, user.name, user);
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.missions.remove(id);
+  @ScopedHrData()
+  @RequiresPermission('leaves.missions:delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.missions.remove(id, user);
   }
 }

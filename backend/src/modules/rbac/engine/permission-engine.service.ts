@@ -1,11 +1,12 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import {
-  ActionKey,
-  buildAncestry,
-  flattenCatalog,
-  permKey,
-} from '../catalog/rbac.catalog';
+  PERMISSION_CATALOG_ADAPTER,
+  PermissionCatalogAdapter,
+  PermissionCatalogResource,
+  permissionKey,
+} from '../../../ports/rbac/permission-catalog.adapter';
+import { HrPermissionCatalogAdapter } from '../../../ports/rbac/hr-permission-catalog.adapter';
 import {
   EffectiveResult,
   PermissionCacheService,
@@ -13,10 +14,12 @@ import {
 import { legacyRoleKeyForLevel } from '../legacy-level-roles';
 import {
   CellState,
+  effectiveForRole,
   effectiveForUser,
   resolveMatrix,
   ResolveInput,
   StoredCell,
+  unionRoles,
 } from './permission-resolver';
 
 /** Data-scope ranking for "broadest wins". */
@@ -43,26 +46,30 @@ interface CatalogMaps {
  */
 @Injectable()
 export class PermissionEngineService {
-  private readonly flat = flattenCatalog();
-  private readonly ancestry = buildAncestry(this.flat);
-  private readonly resourceActions: Map<string, string[]> = new Map(
-    this.flat.map((r) => [r.key, r.actions as string[]]),
-  );
-  private readonly resolveInput: ResolveInput = {
-    resourceActions: this.resourceActions,
-    ancestry: this.ancestry,
-  };
+  private readonly flat: PermissionCatalogResource[];
+  private readonly resolveInput: ResolveInput;
   /** Every applicable permission key — used as the super-admin set. */
-  private readonly allKeys: Set<string> = new Set(
-    this.flat.flatMap((r) => r.actions.map((a) => permKey(r.key, a))),
-  );
+  private readonly allKeys: Set<string>;
 
   private catalogMaps?: CatalogMaps;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly cache: PermissionCacheService,
-  ) {}
+    @Optional() @Inject(PERMISSION_CATALOG_ADAPTER)
+    catalog: PermissionCatalogAdapter = new HrPermissionCatalogAdapter(),
+  ) {
+    this.flat = catalog.resources();
+    this.resolveInput = {
+      resourceActions: new Map(this.flat.map((resource) => [resource.key, resource.actions])),
+      ancestry: new Map(this.flat.map((resource) => [resource.key, resource.parentKey])),
+    };
+    this.allKeys = new Set(
+      this.flat.flatMap((resource) =>
+        resource.actions.map((action) => permissionKey(resource.key, action)),
+      ),
+    );
+  }
 
   // ---- public API ---------------------------------------------------------------------
 
@@ -86,13 +93,14 @@ export class PermissionEngineService {
 
     const userRoles = await this.prisma.rbac_user_roles.findMany({
       where: { user_id: userId, OR: [{ expires_at: null }, { expires_at: { gt: now } }] },
-      select: { role_id: true, role: { select: { is_super_admin: true } } },
+      select: { role_id: true, expires_at: true, role: { select: { is_super_admin: true } } },
     });
+    let nearestExpiry = this.nearestExpiry(userRoles.map((role) => role.expires_at));
 
     // Super-admin roles bypass all checks.
     if (userRoles.some((r) => r.role?.is_super_admin)) {
       const result = this.superAdminResult();
-      this.cache.set(userId, result);
+      this.cache.set(userId, result, nearestExpiry);
       return result;
     }
 
@@ -119,9 +127,22 @@ export class PermissionEngineService {
       return result;
     }
 
-    const result = await this.resolveFromRoleIds(userId, roleIds, now);
-    this.cache.set(userId, result);
-    return result;
+    const resolved = await this.resolveFromRoleIds(userId, roleIds, now);
+    nearestExpiry = this.nearestExpiry([nearestExpiry, resolved.exceptionExpiry]);
+    this.cache.set(userId, resolved.result, nearestExpiry);
+    return resolved.result;
+  }
+
+  /**
+   * Resolve a user's permissions from the database, bypassing the short-lived cache.
+   *
+   * Permission-administration flows use this for boundaries that must reflect the
+   * database immediately, such as deciding whether an operator may assign or revoke
+   * the protected super-admin role when requests hit different API processes.
+   */
+  async getEffectiveFresh(userId: number): Promise<EffectiveResult> {
+    this.cache.invalidateUser(userId);
+    return this.getEffective(userId);
   }
 
   private superAdminResult(): EffectiveResult {
@@ -136,7 +157,7 @@ export class PermissionEngineService {
     userId: number,
     roleIds: number[],
     now: Date,
-  ): Promise<EffectiveResult> {
+  ): Promise<{ result: EffectiveResult; exceptionExpiry: Date | null }> {
     const maps = await this.getCatalogMaps();
 
     const [cells, exceptions, scopes] = await Promise.all([
@@ -146,7 +167,7 @@ export class PermissionEngineService {
       }),
       this.prisma.rbac_user_exceptions.findMany({
         where: { user_id: userId, OR: [{ expires_at: null }, { expires_at: { gt: now } }] },
-        select: { resource_id: true, action_id: true, effect: true },
+        select: { resource_id: true, action_id: true, effect: true, expires_at: true },
       }),
       this.prisma.rbac_role_scopes.findMany({
         where: { role_id: { in: roleIds } },
@@ -181,13 +202,21 @@ export class PermissionEngineService {
       if (!prev || SCOPE_RANK[s.scope] > SCOPE_RANK[prev]) scope.set(resourceKey, s.scope);
     }
 
-    return { superAdmin: false, keys, scope };
+    return {
+      result: { superAdmin: false, keys, scope },
+      exceptionExpiry: this.nearestExpiry(exceptions.map((exception) => exception.expires_at)),
+    };
+  }
+
+  private nearestExpiry(values: Array<Date | null | undefined>): Date | null {
+    const timestamps = values.flatMap((value) => value ? [value.getTime()] : []);
+    return timestamps.length ? new Date(Math.min(...timestamps)) : null;
   }
 
   /** Does the user have a specific permission? */
-  async can(userId: number, resourceKey: string, action: ActionKey | string): Promise<boolean> {
+  async can(userId: number, resourceKey: string, action: string): Promise<boolean> {
     const eff = await this.getEffective(userId);
-    return eff.superAdmin || eff.keys.has(permKey(resourceKey, action));
+    return eff.superAdmin || eff.keys.has(permissionKey(resourceKey, action));
   }
 
   /** OR-logic: passes if the user has ANY of the given `resource:action` keys. */
@@ -201,10 +230,21 @@ export class PermissionEngineService {
     return (await this.getEffective(userId)).superAdmin;
   }
 
+  /** Read outside the permission cache so a saved privacy policy takes effect immediately. */
+  async financialPrivacyEnabled(): Promise<boolean> {
+    const policy = await this.prisma.club_gym_policies.findUnique({
+      where: { id: 1 },
+      select: { restrict_employee_financial_visibility: true },
+    });
+    return policy?.restrict_employee_financial_visibility === true;
+  }
+
   /** Effective data scope for a resource (default 'global' for super-admin, else undefined). */
   async scopeFor(userId: number, resourceKey: string): Promise<string | undefined> {
     const eff = await this.getEffective(userId);
     if (eff.superAdmin) return 'global';
+    if ((resourceKey === 'financial-reports' || resourceKey.startsWith('financial-reports.'))
+      && await this.financialPrivacyEnabled()) return 'own';
     return eff.scope.get(resourceKey);
   }
 
@@ -221,6 +261,44 @@ export class PermissionEngineService {
 
   getAllKeys(): Set<string> {
     return this.allKeys;
+  }
+
+  /** Resolve the effective permission set granted by roles alone (no user exceptions). */
+  async effectiveForRoleIds(roleIds: number[]): Promise<{ superAdmin: boolean; keys: Set<string> }> {
+    const uniqueIds = [...new Set(roleIds)];
+    if (!uniqueIds.length) return { superAdmin: false, keys: new Set() };
+    const roles = await this.prisma.rbac_roles.findMany({
+      where: { id: { in: uniqueIds } },
+      select: { id: true, is_super_admin: true },
+    });
+    if (roles.length !== uniqueIds.length) return { superAdmin: false, keys: new Set() };
+    if (roles.some((role) => role.is_super_admin)) {
+      return { superAdmin: true, keys: new Set(this.allKeys) };
+    }
+
+    const [rows, maps] = await Promise.all([
+      this.prisma.rbac_role_permissions.findMany({
+        where: { role_id: { in: uniqueIds } },
+        select: { role_id: true, resource_id: true, action_id: true, effect: true },
+      }),
+      this.getCatalogMaps(),
+    ]);
+    const perRole = new Map(uniqueIds.map((id) => [id, [] as StoredCell[]]));
+    for (const row of rows) {
+      const resourceKey = maps.resourceIdToKey.get(row.resource_id);
+      const actionKey = maps.actionIdToKey.get(row.action_id);
+      if (resourceKey && actionKey) {
+        perRole.get(row.role_id)?.push({
+          resourceKey,
+          actionKey,
+          effect: row.effect as 'allow' | 'deny',
+        });
+      }
+    }
+    return {
+      superAdmin: false,
+      keys: unionRoles([...perRole.values()].map((cells) => effectiveForRole(cells, this.resolveInput))),
+    };
   }
 
   async getCatalogMaps(): Promise<CatalogMaps> {

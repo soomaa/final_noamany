@@ -1,6 +1,5 @@
 import { PaginationDto } from '../../../common/dto/pagination.dto';
-import { Type } from 'class-transformer';
-import { IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsBoolean, IsDateString, IsIn, IsInt, IsNumber, IsOptional, IsString, Max, MaxLength, Min, MinLength } from 'class-validator';
 
 export class CreatePayComponentDto {
   @IsString()
@@ -42,13 +41,28 @@ export class UpdatePayComponentDto {
   isActive?: boolean;
 }
 
-export class ListPayComponentsDto extends PaginationDto {
-  @IsOptional()
-  @IsIn(['allowance', 'deduction'])
-  category?: 'allowance' | 'deduction';
+export class MonthlyPayrollEventDto {
+  @IsIn(['deduction', 'increase', 'bonus', 'evaluation', 'target', 'reversal'])
+  kind!: 'deduction' | 'increase' | 'bonus' | 'evaluation' | 'target' | 'reversal';
+  @IsNumber({ maxDecimalPlaces: 2 }) @Min(0.01) @Max(100000000)
+  amount!: number;
+  @IsString() @MinLength(1) @MaxLength(1000)
+  note!: string;
+  @IsString() @MinLength(16) @MaxLength(64)
+  requestId!: string;
+  @IsOptional() @IsInt() @Min(1)
+  reversesId?: number;
 }
-
+export class PayrollCafeChoiceDto {
+  @IsBoolean() deduct!: boolean;
+  @IsNumber({ maxDecimalPlaces: 2 }) @Min(0) expectedAmount!: number;
+  @IsString() @MinLength(1) @MaxLength(1000) note!: string;
+  @IsString() @MinLength(16) @MaxLength(64) requestId!: string;
+}
 export class CreatePayrollRunDto {
+  @IsOptional() @IsDateString({ strict: true })
+  payoutDate?: string;
+
   @IsInt()
   @Min(1)
   @Max(12)
@@ -67,87 +81,4 @@ export class ListPayrollRunsDto extends PaginationDto {
   @IsOptional()
   @IsString()
   search?: string;
-}
-
-export class PayrollPreviewDto extends PaginationDto {
-  @IsDateString()
-  fromDate!: string;
-
-  @IsDateString()
-  toDate!: string;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  branchId?: number;
-}
-
-export class CreateSalaryIncreaseDto {
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  employeeId!: number;
-
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0.01)
-  value!: number;
-
-  @IsDateString()
-  date!: string;
-}
-
-export class UpdateSalaryIncreaseDto {
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  employeeId?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0.01)
-  value?: number;
-
-  @IsOptional()
-  @IsDateString()
-  date?: string;
-}
-
-export class ListSalaryIncreasesDto extends PaginationDto {
-  @IsOptional()
-  @Type(() => Number)
-  @IsInt()
-  @Min(1)
-  employeeId?: number;
-
-  @IsOptional()
-  @IsDateString()
-  dateFrom?: string;
-
-  @IsOptional()
-  @IsDateString()
-  dateTo?: string;
-}
-
-export class ApplySalaryOverridesDto {
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0)
-  privateBonus?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0)
-  taqeemValue?: number;
-
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0)
-  targetValue?: number;
 }

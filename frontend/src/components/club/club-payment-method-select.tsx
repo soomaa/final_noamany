@@ -11,19 +11,14 @@ export type ClubPaymentMethod =
   | 'transfer'
   | 'online';
 
-/** Methods that can be used for new subscription collections. */
 export const CLUB_PAYMENT_METHODS: ClubPaymentMethod[] = [
   'cash',
-  'card',
-  'transfer',
-];
-
-/** Older receipts may still contain a retired method and must remain readable. */
-const LEGACY_PAYMENT_METHODS: ClubPaymentMethod[] = [
   'visa',
   'instapay',
   'wallet',
   'bank',
+  'transfer',
+  'card',
   'online',
 ];
 
@@ -38,7 +33,7 @@ export function clubPaymentMethodLabel(
   method: string | null | undefined,
 ): string {
   if (!method) return '—';
-  return [...CLUB_PAYMENT_METHODS, ...LEGACY_PAYMENT_METHODS].includes(method as ClubPaymentMethod)
+  return CLUB_PAYMENT_METHODS.includes(method as ClubPaymentMethod)
     ? ct(`payments.${method}`)
     : method;
 }
@@ -60,14 +55,20 @@ export function ClubPaymentMethodSelect({
   value,
   onChange,
   className,
+  id,
+  ariaLabel,
 }: {
   value: string;
   onChange: (value: ClubPaymentMethod) => void;
   className?: string;
+  id?: string;
+  ariaLabel?: string;
 }) {
   const ct = useClubT();
   return (
     <select
+      id={id}
+      aria-label={ariaLabel}
       className={cn(
         'flex h-11 w-full rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         className,

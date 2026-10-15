@@ -22,7 +22,7 @@ import { RequisitionsService } from './requisitions.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('requisitions')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.cafe_purchases:view')
 export class RequisitionsController {
   constructor(private readonly service: RequisitionsService) {}
 
@@ -37,13 +37,13 @@ export class RequisitionsController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.procurement:create')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:create')
   create(@Body() body: UpsertRequisitionDto, @CurrentUser('sub') userId: number) {
     return this.service.create(body, userId);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertRequisitionDto>,
@@ -52,19 +52,19 @@ export class RequisitionsController {
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.procurement:delete')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }
 
   @Post(':id/items')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:update')
   addItem(@Param('id', ParseIntPipe) id: number, @Body() body: RequisitionItemDto) {
     return this.service.addItem(id, body);
   }
 
   @Post(':id/submit')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:update')
   submit(@Param('id', ParseIntPipe) id: number) {
     return this.service.submit(id);
   }

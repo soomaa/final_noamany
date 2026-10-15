@@ -14,6 +14,18 @@ export function timeOverlap(aStart: string, aEnd: string, bStart: string, bEnd: 
   return aStart < bEnd && bStart < aEnd;
 }
 
+export function normalizeTimeOfDay(value: unknown, message = 'صيغة الوقت غير صالحة'): string {
+  const raw = value == null ? '' : String(value).trim();
+  const parts = raw.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  if (!parts) throw new BadRequestException(message);
+  const hours = Number(parts[1]);
+  const minutes = Number(parts[2]);
+  const seconds = parts[3] == null ? 0 : Number(parts[3]);
+  if (hours > 23 || minutes > 59 || seconds > 59) throw new BadRequestException(message);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
 /** Reject when end time is not strictly after start (same-day classes). */
 export function assertEndTimeAfterStart(
   startTime: string,
@@ -83,4 +95,57 @@ export async function assertMemberExists(prisma: PrismaService, memberId: number
     throw new NotFoundException('العضو غير موجود');
   }
   return member;
+}
+
+/** `club_trainers.specialization` stays one VarChar(200); the API shape is a list. */
+export const SPECIALIZATION_SEPARATOR = '، ';
+export const SPECIALIZATION_MAX_LENGTH = 200;
+
+/** Free text → chips, split on the separators staff actually type. */
+export function splitSpecializations(specialization: string | null | undefined): string[] {
+  if (!specialization?.trim()) return [];
+  return specialization
+    .split(/[،,/|]/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+}
+
+/**
+ * Chips → the single stored column. Blanks are dropped and the result must still fit
+ * VarChar(200), otherwise MySQL would silently truncate the last specialization.
+ */
+export function joinSpecializations(value: unknown): string | null {
+  if (value == null) return null;
+  if (!Array.isArray(value)) throw new BadRequestException('التخصصات يجب أن تكون قائمة');
+  const parts = value
+    .map((part) => (part == null ? '' : String(part).trim()))
+    .filter((part) => part.length > 0);
+  if (!parts.length) return null;
+  const joined = parts.join(SPECIALIZATION_SEPARATOR);
+  if (joined.length > SPECIALIZATION_MAX_LENGTH) {
+    throw new BadRequestException(`التخصصات أطول من المسموح (${SPECIALIZATION_MAX_LENGTH} حرف)`);
+  }
+  return joined;
+}
+
+/**
+ * Re-derive `club_trainers.rating_avg` from every rating row (per-attendance, member-app and
+ * staff rows alike). Shared by the admin trainer service and the member app so both write the
+ * average the exact same way; pass the transaction client so the rating write and the average
+ * land together.
+ */
+export async function recalculateTrainerRatingAvg(
+  db: PrismaService | Prisma.TransactionClient,
+  trainerId: number,
+): Promise<number> {
+  const agg = await db.club_trainer_ratings.aggregate({
+    where: { trainer_id: trainerId },
+    _avg: { rating: true },
+  });
+  const avg = agg._avg.rating != null ? Number(agg._avg.rating) : 0;
+  await db.club_trainers.update({
+    where: { id: trainerId },
+    data: { rating_avg: avg },
+  });
+  return avg;
 }

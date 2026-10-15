@@ -28,7 +28,7 @@ export function GymSalesPageShell({
     <div className="space-y-6">
       <PageHeader title={ui(title)} description={description ? ui(description) : undefined} eyebrow={eyebrow} actions={actions} />
       {notImplemented ? (
-        <NotImplementedState title={ui(`${title} — الوحدة قيد الترحيل`)} />
+        <NotImplementedState title={`${title}${ui(' — الوحدة قيد الترحيل')}`} />
       ) : (
         children
       )}

@@ -20,7 +20,7 @@ import { SupplierPaymentSchedulesService } from './supplier-payment-schedules.se
 
 @UseGuards(JwtAuthGuard)
 @Controller('supplier-payment-schedules')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.supplier_payments:view')
 export class SupplierPaymentSchedulesController {
   constructor(private readonly service: SupplierPaymentSchedulesService) {}
 
@@ -35,13 +35,13 @@ export class SupplierPaymentSchedulesController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.procurement:create')
+  @RequiresPermission('gym-sales.procurement.supplier_payments:create')
   create(@Body() body: UpsertSupplierPaymentScheduleDto) {
     return this.service.create(body);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.supplier_payments:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertSupplierPaymentScheduleDto>,
@@ -50,7 +50,7 @@ export class SupplierPaymentSchedulesController {
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.procurement:delete')
+  @RequiresPermission('gym-sales.procurement.supplier_payments:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

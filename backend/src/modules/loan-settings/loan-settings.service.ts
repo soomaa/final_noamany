@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { cairoDateString, cairoTimeString } from '../../common/utils/cairo-date';
 
 const DAWABT_TYPE_NAMES = ['', 'ضبط الاستحقاق', 'ألية استرداد القرض/السلفة ', ' المستندات المطلوبة'];
 
@@ -146,8 +147,8 @@ export class LoanSettingsService {
         hesab_name: body.accountName,
         publisher: publisherId,
         publisher_name: publisherName,
-        date_added: now.toISOString().slice(0, 10),
-        time_add: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+        date_added: cairoDateString(now),
+        time_add: cairoTimeString(now),
       },
     });
     return { id: row.id };

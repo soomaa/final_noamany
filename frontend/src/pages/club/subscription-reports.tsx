@@ -1,7 +1,7 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { toast } from 'sonner';
 import {
   Activity,
   BarChart3,
@@ -46,12 +46,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useClubT } from '@/hooks/use-club-t';
-import { api, apiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { useArrayResource } from '@/lib/api-hooks';
-import { downloadExcel } from '@/lib/export';
 import { formatDateTime, formatMoney } from '@/lib/formatters';
-import { cn, toArabicDigits } from '@/lib/utils';
+import { cn, toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 type DetailDimension = 'payment' | 'sales' | 'user' | 'status' | 'source' | 'subscriptionType';
 
@@ -135,7 +135,7 @@ interface DetailResponse {
   pageSize: number;
 }
 
-const CHART_COLORS = ['#ED1C24', '#2fbf87', '#38bdf8', '#8b5cf6', '#ec4899', '#e5736b', '#14b8a6'];
+const CHART_COLORS = ['#eab308', '#2fbf87', '#38bdf8', '#8b5cf6', '#ec4899', '#e5736b', '#14b8a6'];
 
 const initialFilters = (): ReportFilters => ({
   startDate: firstOfMonth(),
@@ -207,6 +207,8 @@ function AnalysisCard({
 }
 
 export function ClubSubscriptionReportsPage() {
+  const { can } = usePermission();
+  const canExport = can('club.subscriptions.user_analytics:export');
   const { ui, locale } = useLocale();
   const ct = useClubT();
   const [draft, setDraft] = useState<ReportFilters>(initialFilters);
@@ -215,7 +217,6 @@ export function ClubSubscriptionReportsPage() {
   const [tab, setTab] = useState('overview');
   const [detail, setDetail] = useState<{ dimension: DetailDimension; key: string; title: string } | null>(null);
   const [detailPage, setDetailPage] = useState(1);
-  const [exportingDetails, setExportingDetails] = useState(false);
   const detailSectionRef = useRef<HTMLDivElement | null>(null);
   const detailPageSize = 10;
 
@@ -301,14 +302,14 @@ export function ClubSubscriptionReportsPage() {
         cell: ({ row }) => (
           <div>
             <p className="font-medium">{row.original.memberName || '—'}</p>
-            <p className="text-xs text-muted-foreground nums">{toArabicDigits(row.original.memberCode ?? row.original.phone ?? '—')}</p>
+            <p className="text-xs text-muted-foreground nums">{formatDigits(row.original.memberCode ?? row.original.phone ?? '—')}</p>
           </div>
         ),
       },
       {
         accessorKey: 'reference',
         header: ui('المرجع'),
-        cell: ({ getValue }) => <span className="whitespace-nowrap font-mono text-xs nums">{toArabicDigits(String(getValue() ?? '—'))}</span>,
+        cell: ({ getValue }) => <span className="whitespace-nowrap font-mono text-xs nums">{formatDigits(String(getValue() ?? '—'))}</span>,
       },
       { accessorKey: 'category', header: ui('التصنيف') },
       {
@@ -401,65 +402,6 @@ export function ClubSubscriptionReportsPage() {
     URL.revokeObjectURL(url);
   };
 
-  const exportDetails = async () => {
-    if (!detail || exportingDetails) return;
-    const selected = detail;
-    const filters = { ...applied };
-    setExportingDetails(true);
-    try {
-      const pageSize = 50;
-      const params = {
-        ...cleanParams(filters),
-        dimension: selected.dimension,
-        key: selected.key,
-        pageSize,
-      };
-      const first = (await api.get<DetailResponse>('/club-subscriptions/reports/details', {
-        params: { ...params, page: 1 },
-      })).data;
-      const rows = [...first.data];
-      for (let page = 2; page <= Math.ceil(first.total / pageSize); page++) {
-        const next = (await api.get<DetailResponse>('/club-subscriptions/reports/details', {
-          params: { ...params, page },
-        })).data;
-        rows.push(...next.data);
-      }
-      await downloadExcel<Record<string, unknown>>(
-        rows.map((row) => ({
-          activity: row.activity,
-          memberName: row.memberName,
-          memberCode: row.memberCode ?? row.phone ?? '',
-          reference: row.reference,
-          category: row.category,
-          date: formatDateTime(row.date, locale),
-          amount: row.amount,
-          collected: row.collected,
-          remaining: row.remaining ?? '',
-          userName: row.userName ?? '',
-        })),
-        [
-          { key: 'activity', header: ui('العملية') },
-          { key: 'memberName', header: ui('العضو') },
-          { key: 'memberCode', header: ui('كود العضو / الهاتف') },
-          { key: 'reference', header: ui('المرجع') },
-          { key: 'category', header: ui('التصنيف') },
-          { key: 'date', header: ui('التاريخ والوقت') },
-          { key: 'amount', header: ui('القيمة') },
-          { key: 'collected', header: ui('المحصل') },
-          { key: 'remaining', header: ui('المتبقي') },
-          { key: 'userName', header: ui('مستخدم النظام') },
-        ],
-        `subscription-report-${selected.dimension}-${selected.key.replace(/[^a-zA-Z0-9_-]/g, '-')}-${filters.startDate}-${filters.endDate}.xlsx`,
-        selected.title,
-      );
-      toast.success(ui('تم تصدير الجدول'));
-    } catch (error) {
-      toast.error(apiError(error));
-    } finally {
-      setExportingDetails(false);
-    }
-  };
-
   const DetailSection = () =>
     detail ? (
       <Card ref={detailSectionRef} className="mt-6 scroll-mt-24 overflow-hidden rounded-2xl border-2 border-primary/25 shadow-md">
@@ -487,8 +429,7 @@ export function ClubSubscriptionReportsPage() {
             isLoading={detailLoading}
             isError={detailError}
             emptyTitle={ui('لا توجد سجلات مطابقة')}
-            onExportExcel={exportDetails}
-            toolbar={exportingDetails ? <span className="text-xs text-muted-foreground">{ui('جارٍ تصدير كل النتائج…')}</span> : undefined}
+            enableExport={false}
           />
         </CardContent>
       </Card>
@@ -499,11 +440,11 @@ export function ClubSubscriptionReportsPage() {
       <PageHeader
         title={ui('تقارير الاشتراكات')}
         description={ui('صورة موحدة للاشتراكات والتحصيل والمبيعات والخدمات، مع تفاصيل تُحمّل عند الطلب.')}
-        actions={
+        actions={canExport ? (
           <Button variant="outline" onClick={exportSummary} disabled={!data}>
             <Download className="size-4" /> {ui('تصدير الملخص')}
           </Button>
-        }
+        ) : undefined}
       />
 
       {isLoading ? <Card><CardContent className="py-14 text-center text-muted-foreground">{ui('جارٍ تجهيز التحليل…')}</CardContent></Card> : null}
@@ -698,8 +639,8 @@ export function ClubSubscriptionReportsPage() {
                         <AreaChart data={data.trend}>
                           <defs>
                             <linearGradient id="subscriptionsGradient" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#ED1C24" stopOpacity={0.35} />
-                              <stop offset="95%" stopColor="#ED1C24" stopOpacity={0} />
+                              <stop offset="5%" stopColor="#eab308" stopOpacity={0.35} />
+                              <stop offset="95%" stopColor="#eab308" stopOpacity={0} />
                             </linearGradient>
                             <linearGradient id="servicesGradient" x1="0" y1="0" x2="0" y2="1">
                               <stop offset="5%" stopColor="#2fbf87" stopOpacity={0.32} />
@@ -708,10 +649,10 @@ export function ClubSubscriptionReportsPage() {
                           </defs>
                           <CartesianGrid strokeDasharray="3 3" opacity={0.25} />
                           <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                          <YAxis tick={{ fontSize: 11 }} />
+                          <YAxis tickFormatter={formatDisplayNumber} tick={{ fontSize: 11 }} />
                           <Tooltip formatter={(value: number) => formatMoney(value, undefined, locale)} />
                           <Legend />
-                          <Area type="monotone" dataKey="subscriptions" name={ui('الاشتراكات')} stroke="#ED1C24" fill="url(#subscriptionsGradient)" strokeWidth={2.5} />
+                          <Area type="monotone" dataKey="subscriptions" name={ui('الاشتراكات')} stroke="#eab308" fill="url(#subscriptionsGradient)" strokeWidth={2.5} />
                           <Area type="monotone" dataKey="services" name={ui('الخدمات')} stroke="#2fbf87" fill="url(#servicesGradient)" strokeWidth={2.5} />
                         </AreaChart>
                       </ResponsiveContainer>

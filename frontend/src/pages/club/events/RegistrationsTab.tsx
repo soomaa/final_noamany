@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { MemberCell } from '@/components/club/member-cell';
 import { PaidAmountField } from '@/components/club/paid-amount-field';
 import { useState } from 'react';
@@ -21,6 +22,11 @@ import { afterMenuClose } from '@/lib/confirm';
 import { clubEventsApi } from '@/lib/api/club-events';
 import { useLocale } from '@/store/locale';
 import { RegisterDialog } from './RegisterDialog';
+import { usePermission } from '@/hooks/use-permission';
+import { useClubPrintingPolicy } from '@/hooks/use-club-printing-policy';
+import { printThermalFinancialReceiptWithFallback } from '@/components/club/thermal-receipt-print';
+import { runAutoPrintOnce } from '@/lib/club-printing';
+import { useAuth } from '@/store/auth';
 
 const REGISTRANT_BADGE: Record<string, string> = {
   member: 'bg-blue-100 text-blue-700',
@@ -59,28 +65,50 @@ interface EventDetail {
 }
 
 function PayDialog({
-  registrationId,
+  registration,
+  event,
   open,
   onOpenChange,
 }: {
-  registrationId: number | null;
+  registration: RegistrationRow | null;
+  event: EventDetail;
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
   const { ui, dir } = useLocale();
   const qc = useQueryClient();
+  const { can } = usePermission();
+  const { user } = useAuth();
+  const { policy, shouldPrint } = useClubPrintingPolicy();
+  const canUpdate = can('club.events.registrations:update');
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('cash');
 
   const mutation = useMutation({
-    mutationFn: () =>
-      clubEventsApi.payRegistration(registrationId!, {
+    mutationFn: () => {
+      if (!canUpdate) throw new Error(ui('غير مصرح'));
+      return clubEventsApi.payRegistration(registration!.id, {
         amount: Number(amount),
         paymentMethod: method,
         idempotencyKey: crypto.randomUUID(),
-      }),
-    onSuccess: () => {
+      });
+    },
+    onSuccess: (payment: { paymentNumber: string; amount: number; paymentMethod: string | null; branchId: number }) => {
       toast.success(ui('تم تسجيل الدفعة بنجاح'));
+      if (shouldPrint('event', payment.amount, payment.paymentNumber)) {
+        runAutoPrintOnce('event', payment.paymentNumber, () => printThermalFinancialReceiptWithFallback({
+          documentNumber: payment.paymentNumber,
+          transactionLabel: 'Event payment',
+          itemName: event.title,
+          customerName: registration?.memberName || registration?.guestName || 'Event guest',
+          memberCode: registration?.memberCode,
+          branchName: `Branch #${payment.branchId}`,
+          collectedAmount: payment.amount,
+          paymentMethod: payment.paymentMethod || method,
+          operatorName: user?.name,
+          subscriptionNumber: registration?.registrationNumber,
+        }, policy));
+      }
       void qc.invalidateQueries({ queryKey: ['club-event-registrations'] });
       setAmount('');
       onOpenChange(false);
@@ -89,7 +117,7 @@ function PayDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open && canUpdate} onOpenChange={onOpenChange}>
       <DialogContent size="sm" aria-describedby={undefined} dir={dir}>
         <DialogHeader><DialogTitle>{ui('تسجيل دفعة')}</DialogTitle></DialogHeader>
         <div className="space-y-3">
@@ -115,7 +143,7 @@ function PayDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{ui('إلغاء')}</Button>
-          <Button disabled={!amount || mutation.isPending} onClick={() => mutation.mutate()}>
+          <Button permissionResource="club.events.registrations" permissionAction="update" disabled={!amount || mutation.isPending} onClick={() => mutation.mutate()}>
             {mutation.isPending ? ui('جاري الحفظ...') : ui('تأكيد الدفع')}
           </Button>
         </DialogFooter>
@@ -135,17 +163,21 @@ function RefundDialog({
 }) {
   const { ui, dir } = useLocale();
   const qc = useQueryClient();
+  const { can } = usePermission();
+  const canUpdate = can('club.events.registrations:update');
   const [amount, setAmount] = useState('');
   const [method, setMethod] = useState('cash');
   const [reason, setReason] = useState('');
 
   const mutation = useMutation({
-    mutationFn: () =>
-      clubEventsApi.refundRegistration(registrationId!, {
+    mutationFn: () => {
+      if (!canUpdate) throw new Error(ui('غير مصرح'));
+      return clubEventsApi.refundRegistration(registrationId!, {
         amount: Number(amount),
         paymentMethod: method,
         reason: reason || undefined,
-      }),
+      });
+    },
     onSuccess: () => {
       toast.success(ui('تم رد المبلغ بنجاح'));
       void qc.invalidateQueries({ queryKey: ['club-event-registrations'] });
@@ -157,7 +189,7 @@ function RefundDialog({
   });
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open && canUpdate} onOpenChange={onOpenChange}>
       <DialogContent size="sm" aria-describedby={undefined} dir={dir}>
         <DialogHeader><DialogTitle>{ui('رد مبلغ')}</DialogTitle></DialogHeader>
         <div className="space-y-3">
@@ -184,7 +216,7 @@ function RefundDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{ui('إلغاء')}</Button>
-          <Button variant="destructive" disabled={!amount || mutation.isPending} onClick={() => mutation.mutate()}>
+          <Button permissionResource="club.events.registrations" permissionAction="update" variant="destructive" disabled={!amount || mutation.isPending} onClick={() => mutation.mutate()}>
             {mutation.isPending ? ui('جاري الحفظ...') : ui('تأكيد الرد')}
           </Button>
         </DialogFooter>
@@ -196,21 +228,26 @@ function RefundDialog({
 export function RegistrationsTab({ event }: { event: EventDetail }) {
   const { ui } = useLocale();
   const qc = useQueryClient();
+  const { can } = usePermission();
+  const canView = can('club.events.registrations:view');
+  const canCreate = can('club.events.registrations:create');
+  const canUpdate = can('club.events.registrations:update');
   const [page, setPage] = useState(1);
   const [registerOpen, setRegisterOpen] = useState(false);
-  const [payFor, setPayFor] = useState<number | null>(null);
+  const [payFor, setPayFor] = useState<RegistrationRow | null>(null);
   const [refundFor, setRefundFor] = useState<number | null>(null);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['club-event-registrations', event.id, page],
     queryFn: () => clubEventsApi.listRegistrations({ eventId: event.id, page, pageSize: 20 }),
+    enabled: canView,
   });
 
   const rows: RegistrationRow[] = data?.data ?? [];
   const total: number = data?.total ?? 0;
 
   const cancelMutation = useMutation({
-    mutationFn: (id: number) => clubEventsApi.cancelRegistration(id),
+    mutationFn: (id: number) => canUpdate ? clubEventsApi.cancelRegistration(id) : Promise.reject(new Error(ui('غير مصرح'))),
     onSuccess: () => {
       toast.success(ui('تم إلغاء التسجيل'));
       void qc.invalidateQueries({ queryKey: ['club-event-registrations', event.id] });
@@ -219,7 +256,7 @@ export function RegistrationsTab({ event }: { event: EventDetail }) {
   });
 
   const promoteMutation = useMutation({
-    mutationFn: (id: number) => clubEventsApi.promoteRegistration(id),
+    mutationFn: (id: number) => canUpdate ? clubEventsApi.promoteRegistration(id) : Promise.reject(new Error(ui('غير مصرح'))),
     onSuccess: () => {
       toast.success(ui('تمت ترقية المشارك من قائمة الانتظار'));
       void qc.invalidateQueries({ queryKey: ['club-event-registrations', event.id] });
@@ -229,13 +266,15 @@ export function RegistrationsTab({ event }: { event: EventDetail }) {
 
   const tierName = (tierId: number | null) => event.tiers?.find(t => t.id === tierId)?.name ?? '—';
 
+  if (!canView) return null;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium">{ui('المسجلون')} ({total})</h3>
-        <Button size="sm" onClick={() => setRegisterOpen(true)}>
+        <h3 className="text-sm font-medium">{ui('المسجلون')} ({formatDisplayNumber(total)})</h3>
+        {canCreate ? <Button permissionResource="club.events.registrations" permissionAction="create" size="sm" onClick={() => setRegisterOpen(true)}>
           <Plus className="h-4 w-4 ms-1" /> {ui('تسجيل مشارك')}
-        </Button>
+        </Button> : null}
       </div>
 
       {isLoading ? (
@@ -282,9 +321,10 @@ export function RegistrationsTab({ event }: { event: EventDetail }) {
                     </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {reg.paidAmount} / {reg.price}
+                    {formatDisplayNumber(reg.paidAmount)} / {formatDisplayNumber(reg.price)}
                   </td>
                   <td className="px-4 py-3">
+                    {canUpdate ? (
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
                         <Button variant="ghost" size="icon" className="h-8 w-8">
@@ -293,7 +333,7 @@ export function RegistrationsTab({ event }: { event: EventDetail }) {
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         {reg.status !== 'cancelled' && reg.status !== 'refunded' && (
-                          <DropdownMenuItem onSelect={() => afterMenuClose(() => setPayFor(reg.id))}>{ui('تسجيل دفعة')}</DropdownMenuItem>
+                          <DropdownMenuItem onSelect={() => afterMenuClose(() => setPayFor(reg))}>{ui('تسجيل دفعة')}</DropdownMenuItem>
                         )}
                         {reg.paidAmount > 0 && (
                           <DropdownMenuItem onSelect={() => afterMenuClose(() => setRefundFor(reg.id))}>{ui('رد مبلغ')}</DropdownMenuItem>
@@ -311,6 +351,7 @@ export function RegistrationsTab({ event }: { event: EventDetail }) {
                         )}
                       </DropdownMenuContent>
                     </DropdownMenu>
+                    ) : null}
                   </td>
                 </tr>
               ))}
@@ -322,13 +363,13 @@ export function RegistrationsTab({ event }: { event: EventDetail }) {
       {total > 20 && (
         <div className="flex items-center justify-center gap-2">
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>{ui('السابق')}</Button>
-          <span className="text-sm text-muted-foreground">{ui('صفحة')} {page}</span>
+          <span className="text-sm text-muted-foreground">{ui('صفحة')} {formatDisplayNumber(page)}</span>
           <Button variant="outline" size="sm" disabled={page * 20 >= total} onClick={() => setPage(p => p + 1)}>{ui('التالي')}</Button>
         </div>
       )}
 
       <RegisterDialog open={registerOpen} onOpenChange={setRegisterOpen} event={event} />
-      <PayDialog registrationId={payFor} open={payFor != null} onOpenChange={(v) => !v && setPayFor(null)} />
+      <PayDialog registration={payFor} event={event} open={payFor != null} onOpenChange={(v) => !v && setPayFor(null)} />
       <RefundDialog registrationId={refundFor} open={refundFor != null} onOpenChange={(v) => !v && setRefundFor(null)} />
     </div>
   );

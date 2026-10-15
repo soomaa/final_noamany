@@ -17,9 +17,14 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClubSpaServiceRow } from '@/types/fitness';
 import { RowActions, SELECT_CLS } from '../shared';
+import { usePermission } from '@/hooks/use-permission';
 
 export function FitnessSpaServicesPage() {
   const ft = useFitnessT();
+  const { can } = usePermission();
+  const canCreate = can('club.fitness.spa_services:create');
+  const canUpdate = can('club.fitness.spa_services:update');
+  const canDelete = can('club.fitness.spa_services:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<ClubSpaServiceRow>('club-spa-services', params);
   const { data: branches } = useBranches();
@@ -66,6 +71,7 @@ export function FitnessSpaServicesPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.name.trim() || !form.price) {
       toast.error(ft('common.name'));
       return;
@@ -107,34 +113,35 @@ export function FitnessSpaServicesPage() {
       {
         id: 'actions',
         header: ft('common.actions'),
-        cell: ({ row }) => (
+        cell: ({ row }) => !canUpdate && !canDelete ? null : (
           <RowActions
             editLabel={ft('common.edit')}
             deleteLabel={ft('common.delete')}
-            onEdit={() => openEdit(row.original)}
-            onDelete={() =>
+            onEdit={canUpdate ? () => openEdit(row.original) : undefined}
+            onDelete={canDelete ? () =>
               void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
-                if (ok) deleteMutation.mutate(row.original.id);
+                if (ok && canDelete) deleteMutation.mutate(row.original.id);
               })
-            }
+            : undefined}
           />
         ),
       },
     ],
-    [ft],
+    [ft, canUpdate, canDelete, deleteMutation],
   );
 
   return (
     <div className="space-y-6">
       <PageHeader
         title={ft('spaServices.title')}
-        actions={
+        actions={canCreate ? (
           <Button variant="brand" onClick={openCreate}>
             <Plus className="size-4" /> {ft('spaServices.newService')}
           </Button>
-        }
+        ) : undefined}
       />
       <DataTable
+        exportSource={{ resource: 'club-spa-services', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -181,7 +188,7 @@ export function FitnessSpaServicesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
+            {(editId ? canUpdate : canCreate) ? <Button permissionAction={editId ? 'update' : 'create'} variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button> : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

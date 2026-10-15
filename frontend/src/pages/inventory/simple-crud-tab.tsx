@@ -97,7 +97,7 @@ export function SimpleCrudTab<T extends { id: number }>({
   const save = async () => {
     for (const f of fields) {
       if (f.required && !form[f.key]?.trim()) {
-        toast.error(ui(`${f.label} مطلوب`));
+        toast.error(`${f.label}${ui(' مطلوب')}`);
         return;
       }
     }
@@ -106,7 +106,7 @@ export function SimpleCrudTab<T extends { id: number }>({
       const payload = mapFormToPayload(form);
       if (editId) await api.patch(`/${resource}/${editId}`, payload);
       else await api.post(`/${resource}`, payload);
-      toast.success(ui(editId ? 'تم التحديث' : ui('تم الإنشاء')));
+      toast.success(ui(editId ? uiStatic('تم التحديث') : ui('تم الإنشاء')));
       setOpen(false);
       void refetch();
     } catch (e) {
@@ -140,6 +140,7 @@ export function SimpleCrudTab<T extends { id: number }>({
       }
     >
       <DataTable
+        exportSource={{ resource: resource, params }}
         columns={actionColumns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -155,7 +156,7 @@ export function SimpleCrudTab<T extends { id: number }>({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent size="lg">
           <DialogHeader>
-            <DialogTitle>{ui(editId ? 'تعديل' : 'إضافة')}</DialogTitle>
+            <DialogTitle>{ui(editId ? uiStatic('تعديل') : uiStatic('إضافة'))}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-3 py-2">
             {fields.map((f) => (

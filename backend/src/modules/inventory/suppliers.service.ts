@@ -104,7 +104,16 @@ export class SuppliersService {
         is_active: true,
         product: { is_deleted: false, status: 'active' },
       },
-      include: { product: true },
+      include: {
+        product: {
+          include: {
+            packages: {
+              where: { is_active: true },
+              orderBy: [{ is_default: 'desc' }, { package_base_quantity: 'asc' }],
+            },
+          },
+        },
+      },
       orderBy: { product: { name_ar: 'asc' } },
     });
     const productIds = links.map((link) => link.product_id);
@@ -123,6 +132,16 @@ export class SuppliersService {
       size: link.product.size,
       unitOfMeasure: link.product.unit_of_measure,
       costPrice: Number(link.product.cost_price),
+      isPackaged: link.product.is_packaged,
+      packages: link.product.packages.map((pack) => ({
+        id: pack.id,
+        packageSize: Number(pack.package_size),
+        packageUnit: pack.package_unit,
+        packageBaseQuantity: Number(pack.package_base_quantity),
+        packagePrice: Number(pack.package_price),
+        reorderPoint: Number(pack.reorder_point),
+        isDefault: pack.is_default,
+      })),
       currentStock: stock.get(link.product.id) ?? 0,
       inventoryKind: link.product.inventory_kind,
       purchaseUnit: link.purchase_unit,

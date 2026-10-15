@@ -3,21 +3,20 @@ import { ConfigModule } from '@nestjs/config';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { AppManagementModule } from '../app-management/app-management.module';
-import { PublicPortalModule } from '../public-portal/public-portal.module';
 import { MemberAuthController, MemberController } from './member.controller';
 import { MemberCompatController } from './member-compat.controller';
-import { MemberLegacyApiController } from './member-legacy-api.controller';
-import { OnlineCoachingMemberController } from './online-coaching-member.controller';
+import { MemberGuestController } from './member-guest.controller';
+import { ClubBranchesModule } from '../club-branches/club-branches.module';
 import { MemberAuthService } from './member-auth.service';
-import { MemberLegacyApiService } from './member-legacy-api.service';
 import { MemberService } from './member.service';
 import { MemberJwtStrategy } from './strategies/member-jwt.strategy';
-import { OptionalMemberJwtAuthGuard } from './guards/optional-member-jwt-auth.guard';
+import { GateAccessModule } from '../gate-access/gate-access.module';
+import { UploadsModule } from '../uploads/uploads.module';
 
 @Module({
-  imports: [ConfigModule, PassportModule, JwtModule.register({}), AppManagementModule, PublicPortalModule],
-  controllers: [MemberAuthController, MemberController, MemberCompatController, MemberLegacyApiController, OnlineCoachingMemberController],
-  providers: [MemberAuthService, MemberService, MemberJwtStrategy, MemberLegacyApiService, OptionalMemberJwtAuthGuard],
+  imports: [ConfigModule, PassportModule, JwtModule.register({}), AppManagementModule, GateAccessModule, UploadsModule, ClubBranchesModule],
+  controllers: [MemberAuthController, MemberController, MemberCompatController, MemberGuestController],
+  providers: [MemberAuthService, MemberService, MemberJwtStrategy],
   exports: [MemberAuthService, MemberService],
 })
 export class MemberModule {}

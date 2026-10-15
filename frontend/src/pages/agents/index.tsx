@@ -23,9 +23,11 @@ import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { usePermission } from '@/hooks/use-permission';
+import { uploadUrl } from '@/components/employees/use-uploads';
 
 interface AgentRow {
   id: number;
@@ -72,11 +74,8 @@ const VIEW_DETAILS_OPTIONS = [
   { value: 'no', label: uiStatic('لا') },
 ];
 
-/** Resolve a stored upload path to its public URL (legacy /uploads mount). */
 function imageUrl(path?: string | null): string | undefined {
-  if (!path) return undefined;
-  if (/^https?:\/\//.test(path)) return path;
-  return `/uploads/${path}`;
+  return uploadUrl(path) ?? undefined;
 }
 
 const EMPTY_FORM = {
@@ -103,6 +102,10 @@ const EMPTY_FORM = {
 
 export function AgentsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('admin.agents:create');
+  const canUpdate = can('admin.agents:update');
+  const canDelete = can('admin.agents:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<AgentRow>('agents', params);
 
@@ -194,6 +197,7 @@ export function AgentsPage() {
   };
 
   const save = async () => {
+    if ((editId && !canUpdate) || (!editId && !canCreate)) return;
     if (!form.name.trim()) {
       toast.error(ui('اسم الوكيل مطلوب'));
       return;
@@ -295,22 +299,22 @@ export function AgentsPage() {
       header: ui('الإجراءات'),
       cell: ({ row }) => (
         <div className="flex gap-1">
-          <Button
+          {canUpdate ? <Button
             variant="ghost"
             size="icon"
             aria-label={ui('عرض')}
             onClick={() => void openDetail(row.original.id)}
           >
             <ExternalLink className="size-4" />
-          </Button>
-          <Button
+          </Button> : null}
+          {canDelete ? <Button
             variant="ghost"
             size="icon"
             aria-label={ui('تعديل')}
             onClick={() => void openEdit(row.original.id)}
           >
             <Pencil className="size-4" />
-          </Button>
+          </Button> : null}
           <Button
             variant="ghost"
             size="icon"
@@ -352,13 +356,14 @@ export function AgentsPage() {
               aria-label={ui('تصفية حسب النشاط')}
               className="w-40"
             />
-            <Button variant="brand" size="sm" onClick={openCreate}>
+            {canCreate ? <Button variant="brand" size="sm" onClick={openCreate}>
               <Plus className="size-4" /> {ui('وكيل جديد')}
-            </Button>
+            </Button> : null}
           </div>
         }
       >
         <DataTable
+          exportSource={{ resource: 'agents', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -522,7 +527,7 @@ export function AgentsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
-            <Button onClick={() => void save()} disabled={saving || uploading}>
+            <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving || uploading}>
               {saving ? ui('جارٍ الحفظ…') : ui('حفظ')}
             </Button>
           </DialogFooter>

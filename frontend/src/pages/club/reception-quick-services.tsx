@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { useBranches } from '@/hooks/use-branches';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
@@ -32,6 +33,10 @@ export type ClubQuickServiceRow = {
 
 export function ClubReceptionQuickServicesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('club.reception.quick_services:create');
+  const canUpdate = can('club.reception.quick_services:update');
+  const canDelete = can('club.reception.quick_services:delete');
   const qc = useQueryClient();
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<ClubQuickServiceRow>(
@@ -85,6 +90,7 @@ export function ClubReceptionQuickServicesPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.name.trim() || !form.price) {
       toast.error(ui('الاسم والسعر مطلوبان'));
       return;
@@ -144,19 +150,19 @@ export function ClubReceptionQuickServicesPage() {
           <RowActions
             editLabel={ui('تعديل')}
             deleteLabel={ui('إيقاف')}
-            onEdit={() => openEdit(row.original)}
-            onDelete={() =>
+            onEdit={canUpdate ? () => openEdit(row.original) : undefined}
+            onDelete={canDelete ? () =>
               void confirm({ title: ui('إيقاف هذه الخدمة من الاستقبال؟'), variant: 'destructive' }).then(
                 (ok) => {
                   if (ok) deleteMutation.mutate(row.original.id);
                 },
               )
-            }
+            : undefined}
           />
         ),
       },
     ],
-    [ui, deleteMutation],
+    [ui, deleteMutation, canUpdate, canDelete],
   );
 
   return (
@@ -164,13 +170,14 @@ export function ClubReceptionQuickServicesPage() {
       <PageHeader
         title={ui('خدمات سريعة')}
         description={ui('أزرار البيع السريع في شاشة الاستقبال — حصة فردية، كارنيه، وغيرها')}
-        actions={
+        actions={canCreate ? (
           <Button variant="brand" onClick={openCreate}>
             <Plus className="size-4" /> {ui('إضافة خدمة')}
           </Button>
-        }
+        ) : undefined}
       />
       <DataTable
+        exportSource={{ resource: 'club-quick-services', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -251,9 +258,11 @@ export function ClubReceptionQuickServicesPage() {
             <Button variant="outline" onClick={() => setOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button variant="brand" onClick={() => void save()} disabled={saving}>
-              {ui('حفظ')}
-            </Button>
+            {(editId ? canUpdate : canCreate) && (
+              <Button permissionAction={editId ? 'update' : 'create'} variant="brand" onClick={() => void save()} disabled={saving}>
+                {ui('حفظ')}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

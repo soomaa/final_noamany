@@ -8,7 +8,7 @@ import { UnitTemplatesService } from './unit-templates.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('unit-templates')
-@RequiresPermission('gym-sales.inventory:view')
+@RequiresPermission('gym-sales.inventory.raw_materials:view')
 export class UnitTemplatesController {
   constructor(private readonly service: UnitTemplatesService) {}
 
@@ -33,31 +33,31 @@ export class UnitTemplatesController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.inventory:create')
+  @RequiresPermission('gym-sales.inventory.raw_materials:create')
   create(@Body() body: UpsertUnitTemplateDto) {
     return this.service.create(body);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertUnitTemplateDto>) {
     return this.service.update(id, body);
   }
 
   @Patch(':id')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   patch(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertUnitTemplateDto>) {
     return this.service.update(id, body);
   }
 
   @Post(':id/increment-usage')
-  @RequiresPermission('gym-sales.inventory:update')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   incrementUsage(@Param('id', ParseIntPipe) id: number) {
     return this.service.incrementUsage(id);
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.inventory:delete')
+  @RequiresPermission('gym-sales.inventory.raw_materials:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

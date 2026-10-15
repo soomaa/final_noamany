@@ -11,13 +11,15 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { queryClient } from '@/lib/query';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { uiStatic } from '@/lib/ui-static';
 
 interface PartnerPhone {
   id?: number;
@@ -58,7 +60,7 @@ const emptyForm = (): PartnerForm => ({
   address: '',
   notes: '',
   isActive: true,
-  phones: [{ phone: '', label: 'جوال', isPrimary: true }],
+  phones: [{ phone: '', label: uiStatic('جوال'), isPrimary: true }],
 });
 
 const phonePattern = /^\+?[0-9]{7,15}$/;
@@ -66,6 +68,10 @@ const normalizePhone = (value: string) => value.trim().replace(/[\s()-]/g, '');
 
 export function HrPartnersPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('hr.partners:create');
+  const canUpdate = can('hr.partners:update');
+  const canDelete = can('hr.partners:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<PartnerRow>('hr/partners', params);
   const [open, setOpen] = useState(false);
@@ -97,15 +103,15 @@ export function HrPartnersPage() {
       notes: partner.notes ?? '',
       isActive: partner.isActive,
       phones: partner.phones.length
-        ? partner.phones.map((item) => ({ phone: item.phone, label: item.label ?? 'جوال', isPrimary: item.isPrimary }))
-        : [{ phone: partner.primaryPhone ?? '', label: 'جوال', isPrimary: true }],
+        ? partner.phones.map((item) => ({ phone: item.phone, label: item.label ?? ui('جوال'), isPrimary: item.isPrimary }))
+        : [{ phone: partner.primaryPhone ?? '', label: ui('جوال'), isPrimary: true }],
     });
     setOpen(true);
   };
 
   const addPhone = () => setForm((current) => ({
     ...current,
-    phones: [...current.phones, { phone: '', label: 'جوال', isPrimary: false }],
+    phones: [...current.phones, { phone: '', label: ui('جوال'), isPrimary: false }],
   }));
 
   const updatePhone = (index: number, patch: Partial<PartnerForm['phones'][number]>) => setForm((current) => ({
@@ -147,7 +153,7 @@ export function HrPartnersPage() {
       };
       if (editingId) await api.put(`/hr/partners/${editingId}`, payload);
       else await api.post('/hr/partners', payload);
-      toast.success(ui(editingId ? 'تم تحديث بيانات الشريك' : 'تمت إضافة الشريك'));
+      toast.success(ui(editingId ? ui('تم تحديث بيانات الشريك') : ui('تمت إضافة الشريك')));
       setOpen(false);
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['hr/partners'] }),
@@ -191,25 +197,34 @@ export function HrPartnersPage() {
     {
       id: 'phones',
       header: ui('أرقام الهاتف'),
-      cell: ({ row }) => <div className="space-y-1">{row.original.phones.map((item) => <div key={item.id ?? item.phone} className="flex items-center gap-1 text-xs"><Phone className="size-3 text-muted-foreground" /><span className="nums">{toArabicDigits(item.phone)}</span>{item.isPrimary ? <Star className="size-3 fill-amber-400 text-amber-400" /> : null}</div>)}</div>,
+      cell: ({ row }) => <div className="space-y-1">{row.original.phones.map((item) => <div key={item.id ?? item.phone} className="flex items-center gap-1 text-xs"><Phone className="size-3 text-muted-foreground" /><span className="nums">{formatDigits(item.phone)}</span>{item.isPrimary ? <Star className="size-3 fill-amber-400 text-amber-400" /> : null}</div>)}</div>,
     },
-    { accessorKey: 'nationalId', header: ui('رقم الهوية'), cell: ({ getValue }) => getValue() ? <span className="nums">{toArabicDigits(getValue() as string)}</span> : '—' },
+    { accessorKey: 'nationalId', header: ui('رقم الهوية'), cell: ({ getValue }) => getValue() ? <span className="nums">{formatDigits(getValue() as string)}</span> : '—' },
     { accessorKey: 'isActive', header: ui('الحالة'), cell: ({ row }) => <StatusBadge status={row.original.isActive ? 'active' : 'suspended'} /> },
     {
       id: 'actions',
       header: ui('الإجراءات'),
-      cell: ({ row }) => <div className="flex gap-1"><Button type="button" variant="ghost" size="sm" onClick={() => openEdit(row.original)}><Pencil className="size-4" />{ui('تعديل')}</Button>{row.original.isActive ? <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => void deactivate(row.original)}><Trash2 className="size-4" />{ui('إيقاف')}</Button> : null}</div>,
+      cell: ({ row }) => {
+        if (!canUpdate && !canDelete) return null;
+        return (
+          <div className="flex gap-1">
+            {canUpdate ? <Button type="button" variant="ghost" size="sm" onClick={() => openEdit(row.original)}><Pencil className="size-4" />{ui('تعديل')}</Button> : null}
+            {canDelete && row.original.isActive ? <Button type="button" variant="ghost" size="sm" className="text-destructive" onClick={() => void deactivate(row.original)}><Trash2 className="size-4" />{ui('إيقاف')}</Button> : null}
+          </div>
+        );
+      },
     },
-  ], [params.page, params.pageSize, ui]);
+  ], [params.page, params.pageSize, ui, canUpdate, canDelete]);
 
   return <div>
     <PageHeader
       title={ui('الشركاء')}
       description={ui('ملفات الشركاء وأرقام التواصل وربطها بمبيعات وتسويات الكافيه')}
-      actions={<Button variant="brand" onClick={openCreate}><Plus className="size-4" />{ui('شريك جديد')}</Button>}
+      actions={canCreate ? <Button variant="brand" onClick={openCreate}><Plus className="size-4" />{ui('شريك جديد')}</Button> : undefined}
     />
     <FilterBar fields={filters} searchPlaceholder={ui('ابحث باسم الشريك أو الكود أو رقم الهاتف أو الهوية…')} />
     <DataTable
+      exportSource={{ resource: 'hr/partners', params }}
       columns={columns}
       data={data?.data ?? []}
       total={data?.total ?? 0}
@@ -224,13 +239,13 @@ export function HrPartnersPage() {
       onSearchChange={(search) => setParams({ search, page: 1 })}
       emptyTitle={ui('لا يوجد شركاء')}
       emptyDescription={ui('أضف أول شريك ليظهر في بحث نقطة البيع.')}
-      emptyAction={<Button onClick={openCreate}><Handshake className="size-4" />{ui('إضافة شريك')}</Button>}
+      emptyAction={canCreate ? <Button onClick={openCreate}><Handshake className="size-4" />{ui('إضافة شريك')}</Button> : undefined}
     />
 
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent size="lg">
         <DialogHeader>
-          <DialogTitle>{ui(editingId ? 'تعديل بيانات الشريك' : 'إضافة شريك جديد')}</DialogTitle>
+          <DialogTitle>{ui(editingId ? ui('تعديل بيانات الشريك') : ui('إضافة شريك جديد'))}</DialogTitle>
           <DialogDescription>{ui('سيمكن البحث عن الشريك في نقطة البيع بالاسم أو الكود أو أي رقم هاتف مسجل.')}</DialogDescription>
         </DialogHeader>
         <div className="grid max-h-[70vh] gap-4 overflow-y-auto pe-1 md:grid-cols-2">
@@ -241,19 +256,19 @@ export function HrPartnersPage() {
           <div className="md:col-span-2"><Label>{ui('العنوان')}</Label><Input className="mt-1" value={form.address} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} /></div>
 
           <section className="space-y-3 rounded-2xl border bg-muted/20 p-4 md:col-span-2">
-            <div className="flex items-center justify-between gap-3"><div><h3 className="font-bold">{ui('أرقام الهاتف')}</h3><p className="text-xs text-muted-foreground">{ui('أضف أي عدد من الأرقام وحدد الرقم الأساسي.')}</p></div><Button type="button" variant="outline" size="sm" onClick={addPhone}><Plus className="size-4" />{ui('رقم آخر')}</Button></div>
+            <div className="flex items-center justify-between gap-3"><div><h3 className="font-bold">{ui('أرقام الهاتف')}</h3><p className="text-xs text-muted-foreground">{ui('أضف أي عدد من الأرقام وحدد الرقم الأساسي.')}</p></div><Button permissionAction={null} type="button" variant="outline" size="sm" onClick={addPhone}><Plus className="size-4" />{ui('رقم آخر')}</Button></div>
             <div className="space-y-2">{form.phones.map((item, index) => <div key={index} className={`grid items-end gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_140px_auto_auto] ${item.isPrimary ? 'border-amber-300 bg-amber-50/50 dark:bg-amber-950/10' : 'bg-background'}`}>
               <div><Label className="text-xs">{ui('رقم الهاتف')}</Label><Input className="nums mt-1" type="tel" inputMode="tel" value={item.phone} onChange={(event) => updatePhone(index, { phone: event.target.value })} placeholder="01012345678" /></div>
               <div><Label className="text-xs">{ui('الوصف')}</Label><Input className="mt-1" value={item.label} onChange={(event) => updatePhone(index, { label: event.target.value })} placeholder={ui('جوال / واتساب')} /></div>
               <Button type="button" variant={item.isPrimary ? 'default' : 'outline'} size="sm" onClick={() => markPrimary(index)}><Star className={`size-4 ${item.isPrimary ? 'fill-current' : ''}`} />{item.isPrimary ? ui('أساسي') : ui('اجعله أساسي')}</Button>
-              <Button type="button" variant="ghost" size="icon" className="text-destructive" disabled={form.phones.length === 1} onClick={() => removePhone(index)} aria-label={ui('حذف الرقم')}><Trash2 className="size-4" /></Button>
+              <Button permissionAction={null} type="button" variant="ghost" size="icon" className="text-destructive" disabled={form.phones.length === 1} onClick={() => removePhone(index)} aria-label={ui('حذف الرقم')}><Trash2 className="size-4" /></Button>
             </div>)}</div>
           </section>
 
           <div className="md:col-span-2"><Label>{ui('ملاحظات')}</Label><Textarea className="mt-1" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} /></div>
           <label className="flex items-center gap-2 md:col-span-2"><input type="checkbox" checked={form.isActive} onChange={(event) => setForm((current) => ({ ...current, isActive: event.target.checked }))} /><span>{ui('الشريك نشط ويظهر في نقطة البيع')}</span></label>
         </div>
-        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>{ui('إلغاء')}</Button><Button onClick={() => void save()} disabled={saving}>{saving ? ui('جاري الحفظ…') : ui('حفظ الشريك')}</Button></DialogFooter>
+        <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>{ui('إلغاء')}</Button><Button permissionAction={editingId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>{saving ? ui('جاري الحفظ…') : ui('حفظ الشريك')}</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   </div>;

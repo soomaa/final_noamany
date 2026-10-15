@@ -33,6 +33,7 @@ import * as path from 'path';
 import * as ExcelJS from 'exceljs';
 import { Prisma, PrismaClient } from '@prisma/client';
 import {
+  branchCodePrefix,
   formatBranchMemberCode,
   getEmailValidationError,
   getPhoneValidationError,
@@ -42,8 +43,8 @@ import {
 } from '../../src/modules/club-members/club-member.utils';
 import { inferGender, Gender } from './arabic-name-gender';
 import { normalizeForMatch, namesSimilar, makePhoneGenerator } from './member-dedup';
+import { persistImportedMembersWithAppAccounts } from './import-member-account-writer';
 
-const BATCH_SIZE = 500;
 const DEFAULT_FILE = path.resolve(__dirname, '../../../data/2.xlsx');
 
 function arg(name: string): string | undefined {
@@ -109,10 +110,7 @@ async function main() {
 
     const branch = await prisma.tbl_branches.findUnique({ where: { branch_id: branchId } });
     if (!branch) throw new Error(`Branch ${branchId} not found — create it before importing.`);
-    if (!branch.br_code) {
-      throw new Error(`Branch ${branchId} has no br_code — configure it before importing.`);
-    }
-    console.log(`Branch: ${branch.branch_name} (prefix ${branch.br_code})`);
+    console.log(`Branch: ${branch.branch_name} (prefix ${branchCodePrefix(branchId)})`);
 
     const already = await prisma.club_members.count({ where: { notes: { contains: marker } } });
     if (already > 0) {
@@ -130,11 +128,8 @@ async function main() {
     }
     console.log(`Existing phones in DB: ${existingPhones.size}`);
 
-    const codePrefix = branch.br_code;
-    const codes = await prisma.club_members.findMany({
-      where: { member_code: { startsWith: codePrefix } },
-      select: { member_code: true },
-    });
+    const codePrefix = branchCodePrefix(branchId);
+    const codes = await prisma.club_members.findMany({ where: { branch_id: branchId }, select: { member_code: true } });
     let maxSeq = 0;
     for (const { member_code } of codes) {
       if (member_code?.startsWith(codePrefix)) {
@@ -142,7 +137,7 @@ async function main() {
         if (Number.isFinite(n) && n > maxSeq) maxSeq = n;
       }
     }
-    console.log(`Existing codes with prefix ${codePrefix}: ${codes.length} — next code seq: ${maxSeq + 1}`);
+    console.log(`Existing members in branch: ${codes.length} — next code seq: ${maxSeq + 1}`);
 
     // ---- Parse ----
     const wb = new ExcelJS.Workbook();
@@ -294,7 +289,7 @@ async function main() {
 
       seq++;
       return {
-        member_code: formatBranchMemberCode(codePrefix, seq),
+        member_code: formatBranchMemberCode(branchId, seq),
         name: m.name,
         phone: finalPhone,
         email: m.email,
@@ -328,17 +323,10 @@ async function main() {
     const rowsToWrite = limit ? toInsert.slice(0, limit) : toInsert;
     if (limit) console.log(`\n(⚠ --limit=${limit}: writing only the first ${rowsToWrite.length} of ${toInsert.length})`);
     console.log(`\n▶ Inserting ${rowsToWrite.length} members…`);
-    let inserted = 0;
-    for (let i = 0; i < rowsToWrite.length; i += BATCH_SIZE) {
-      const batch = rowsToWrite.slice(i, i + BATCH_SIZE);
-      const res = await prisma.club_members.createMany({ data: batch, skipDuplicates: true });
-      inserted += res.count;
-      console.log(`  batch ${Math.floor(i / BATCH_SIZE) + 1}: +${res.count}`);
-    }
+    const { inserted, appAccountsCreated } = await persistImportedMembersWithAppAccounts(prisma, rowsToWrite);
     const total = await prisma.club_members.count({ where: { branch_id: branchId, is_deleted: false } });
     console.log(`\n✔ Inserted ${inserted} members (${total} total in branch ${branchId}).`);
-    console.log('Next: provision mobile logins ->');
-    console.log('  npx ts-node -r tsconfig-paths/register prisma/scripts/provision-member-app-accounts.ts --commit');
+    console.log(`✔ Created and linked ${appAccountsCreated} mobile app account(s) with password 000000.`);
   } finally {
     await prisma.$disconnect();
   }

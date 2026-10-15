@@ -6,9 +6,26 @@ import {
   assertPositive,
   assertWithinCap,
   intervalsOverlap,
+  isCalendarDate,
+  assertNotPastDate,
 } from './validation.util';
 
 describe('validation.util', () => {
+  describe('calendar dates', () => {
+    it('rejects rolled-over days and accepts actual leap days', () => {
+      expect(isCalendarDate('2027-02-30')).toBe(false);
+      expect(isCalendarDate('2027-02-29')).toBe(false);
+      expect(isCalendarDate('2028-02-29')).toBe(true);
+      expect(() => assertDateOrder('2027-02-30', '2027-03-10')).toThrow('صالحة');
+    });
+    it('uses the Cairo operating day even before midnight UTC', () => {
+      jest.useFakeTimers().setSystemTime(new Date('2026-10-14T22:30:00Z'));
+      try {
+        expect(() => assertNotPastDate('2026-10-14')).toThrow();
+        expect(() => assertNotPastDate('2026-10-15')).not.toThrow();
+      } finally { jest.useRealTimers(); }
+    });
+  });
   describe('assertDateOrder', () => {
     it('allows same day', () => {
       expect(() => assertDateOrder('2026-01-01', '2026-01-01')).not.toThrow();

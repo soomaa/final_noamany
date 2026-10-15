@@ -8,7 +8,7 @@ import type { JwtUser } from '../../common/types/jwt-user';
 
 @UseGuards(JwtAuthGuard)
 @Controller('supplier-reports')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.supplier_payments:view')
 export class SupplierReportsController {
   constructor(private readonly service: SupplierReportsService) {}
 

@@ -18,22 +18,35 @@ export class WorkspaceWidgetsService {
 
   async getWidgets(user: JwtUser, requestedBranchId?: number): Promise<{ config: WorkspaceConfig; data: WidgetPayload }> {
     const config = await this.workspace.getWorkspace(user.sub);
+    const effective = await this.permissions.getEffective(user.sub);
     const data: WidgetPayload = {};
-    const currentUser = user.level === 1
-      ? null
-      : await this.prisma.users.findUnique({
-        where: { user_id: user.sub },
-        select: { branch_id_fk: true },
-      });
     const branchIds = user.level === 1
       ? (requestedBranchId != null && Number.isFinite(requestedBranchId) ? [requestedBranchId] : null)
-      : (Number(currentUser?.branch_id_fk ?? 0) > 0 ? [Number(currentUser?.branch_id_fk)] : []);
+      : (Number(user.branch ?? 0) > 0 ? [Number(user.branch)] : []);
 
     for (const key of config.widgets) {
+      const required = this.widgetPermissions(key);
+      if (!effective.superAdmin && required.some((permission) => !effective.keys.has(permission))) continue;
       data[key] = await this.loadWidget(key, user, branchIds);
     }
 
     return { config, data };
+  }
+
+  private widgetPermissions(key: string): string[] {
+    const rules: Record<string, string[]> = {
+      recent_checkins: ['club.members.attendance:view'],
+      pending_tasks: ['affairs.tasks:view'],
+      expiring_subscriptions: ['club.subscriptions.list:view'],
+      outstanding_balances: ['club.subscriptions.outstanding:view'],
+      club_kpis: ['club.members:view', 'club.subscriptions.list:view', 'club.members.attendance:view'],
+      pending_renewals: ['club.subscriptions.list:view'],
+      attendance_rate: ['club.members.attendance:view'],
+      treasury_today: ['club.subscriptions.treasury:view', 'financial-reports.expenses:view'],
+      today_sales: ['gym-sales.sales.new_receipt:view'],
+      pos_shift: ['gym-sales.sales.new_receipt:view'],
+    };
+    return rules[key] ?? [];
   }
 
   private async loadWidget(key: string, user: JwtUser, branchIds: number[] | null): Promise<unknown> {
@@ -42,19 +55,9 @@ export class WorkspaceWidgetsService {
     const branchWhere = branchIds === null ? {} : { branch_id: { in: branchIds } };
 
     switch (key) {
-      case 'my_subscriptions_today': {
-        const rows = await this.prisma.club_subscriptions.findMany({
-          where: { registration_date: today, created_by: user.sub, ...branchWhere },
-          select: { id: true, paid_amount: true },
-        });
-        return {
-          count: rows.length,
-          paidTotal: rows.reduce((sum, subscription) => sum + toNum(subscription.paid_amount), 0),
-        };
-      }
       case 'recent_checkins': {
         const rows = await this.prisma.club_attendance.findMany({
-          where: { ...branchWhere, attendance_date: today },
+          where: branchWhere,
           orderBy: [{ attendance_date: 'desc' }, { check_in_time: 'desc' }],
           take: 8,
           include: { member: { select: { name: true, member_code: true } } },

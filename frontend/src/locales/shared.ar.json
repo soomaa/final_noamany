@@ -1,4 +1,5 @@
 {
+  "brand": {"poweredBy": "مقدَّم من"},
   "shared": {
     "save": "حفظ",
     "cancel": "إلغاء",
@@ -255,7 +256,7 @@
       "print": "طباعة كشف الرواتب",
       "startCompute": "بدء الاحتساب",
       "submitForApproval": "إرسال للاعتماد",
-      "approveRun": "اعتماد المسيرة",
+      "approveRun": "اعتماد المرتبات",
       "issueSlips": "إصدار الكشوف",
       "generateBankFile": "توليد ملف التحويل البنكي"
     }

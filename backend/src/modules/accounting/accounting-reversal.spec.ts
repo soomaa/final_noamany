@@ -111,13 +111,13 @@ describe("accounting reversal integrity", () => {
                 account_id: 1,
                 debit: 0,
                 credit: 100,
-                account: { code: "1.01.001" },
+                account: { code: "1.01.001", name: "الخزينة" },
               },
               {
                 account_id: 2,
                 debit: 100,
                 credit: 0,
-                account: { code: "1.02.003" },
+                account: { code: "1.02.003", name: "أجهزة" },
               },
             ],
           },
@@ -131,9 +131,125 @@ describe("accounting reversal integrity", () => {
 
     const result = await service.cashFlow({});
 
-    expect(result.investing).toEqual({ inflow: 0, outflow: 100, net: -100 });
+    expect(result.investing).toMatchObject({
+      inflow: 0,
+      outflow: 100,
+      net: -100,
+    });
+    expect(result.investing.outflowItems).toEqual([
+      { code: "1.02.003", name: "أجهزة", amount: 100 },
+    ]);
     expect(result.operating.net).toBe(0);
     expect(result.netChange).toBe(-100);
+  });
+
+  it("splits one entry across the sections of its own counterpart lines", async () => {
+    const prisma = {
+      acc_default_accounts: {
+        findMany: jest.fn().mockResolvedValue([{ account_code: "1.01.001" }]),
+      },
+      acc_accounts: {
+        findMany: jest.fn().mockResolvedValue([{ id: 1, code: "1.01.001" }]),
+      },
+      acc_journal_entries: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            lines: [
+              // 150 paid out of the treasury: 100 buys equipment, 50 is an operating cost.
+              {
+                account_id: 1,
+                debit: 0,
+                credit: 150,
+                account: { code: "1.01.001", name: "الخزينة" },
+              },
+              {
+                account_id: 2,
+                debit: 100,
+                credit: 0,
+                account: { code: "1.02.003", name: "أجهزة" },
+              },
+              {
+                account_id: 3,
+                debit: 50,
+                credit: 0,
+                account: { code: "5.01.001", name: "مصروفات عامة" },
+              },
+            ],
+          },
+        ]),
+      },
+    };
+    const service = new AccountingReportsService(
+      prisma as never,
+      { resolveListFilter: jest.fn().mockReturnValue(null) } as never,
+    );
+
+    const result = await service.cashFlow({});
+
+    expect(result.investing.outflow).toBe(100);
+    expect(result.operating.outflow).toBe(50);
+    expect(result.operating.outflowItems).toEqual([
+      { code: "5.01.001", name: "مصروفات عامة", amount: 50 },
+    ]);
+    expect(result.netChange).toBe(-150);
+  });
+
+  it("allocates a rounding remainder so section items still add up to the cash moved", async () => {
+    const prisma = {
+      acc_default_accounts: {
+        findMany: jest.fn().mockResolvedValue([{ account_code: "1.01.001" }]),
+      },
+      acc_accounts: {
+        findMany: jest.fn().mockResolvedValue([{ id: 1, code: "1.01.001" }]),
+      },
+      acc_journal_entries: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            lines: [
+              {
+                account_id: 1,
+                debit: 10,
+                credit: 0,
+                account: { code: "1.01.001", name: "الخزينة" },
+              },
+              // Three equal counterparts of an amount that cannot be split evenly.
+              {
+                account_id: 2,
+                debit: 0,
+                credit: 1,
+                account: { code: "4.01", name: "اشتراكات" },
+              },
+              {
+                account_id: 3,
+                debit: 0,
+                credit: 1,
+                account: { code: "4.02", name: "مبيعات" },
+              },
+              {
+                account_id: 4,
+                debit: 0,
+                credit: 1,
+                account: { code: "4.06", name: "إيرادات أخرى" },
+              },
+            ],
+          },
+        ]),
+      },
+    };
+    const service = new AccountingReportsService(
+      prisma as never,
+      { resolveListFilter: jest.fn().mockReturnValue(null) } as never,
+    );
+
+    const result = await service.cashFlow({});
+
+    const itemsTotal = result.operating.inflowItems.reduce(
+      (sum, item) => sum + item.amount,
+      0,
+    );
+    expect(itemsTotal).toBeCloseTo(10, 6);
+    expect(result.operating.inflow).toBeCloseTo(10, 6);
+    expect(result.netChange).toBeCloseTo(10, 6);
   });
 
   it("limits income statement totals to the requested period", async () => {
@@ -141,9 +257,12 @@ describe("accounting reversal integrity", () => {
       _sum: { debit: 0, credit: 80 },
     });
     const prisma = {
+      // No cost-of-goods-sold account is mapped, so the statement collapses to
+      // revenue − operating expenses with a zero cost line.
+      acc_default_accounts: { findMany: jest.fn().mockResolvedValue([]) },
       acc_accounts: {
         findMany: jest.fn().mockImplementation(({ where }) =>
-          where.account_type.in.includes("revenue")
+          where.account_type?.in.includes("revenue")
             ? [
                 {
                   id: 4,
@@ -550,6 +669,7 @@ describe("accounting reversal integrity", () => {
       prisma as never,
       moduleLedger as never,
       branchScope as never,
+      { isSuperAdmin: jest.fn().mockResolvedValue(false), scopeFor: jest.fn().mockResolvedValue("own") } as never,
     );
 
     await service.remove(7, 3, { sub: 3 } as never);
@@ -583,10 +703,24 @@ describe("accounting reversal integrity", () => {
       prisma as never,
       {} as never,
       { isBranchAllowed: jest.fn().mockReturnValue(true) } as never,
+      { isSuperAdmin: jest.fn().mockResolvedValue(false), scopeFor: jest.fn().mockResolvedValue("own") } as never,
     );
 
     await expect(
       service.remove(8, 3, { sub: 3 } as never),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+describe('monthly payroll café receivable settlement', () => {
+  it('reduces salary payable and café receivables while preserving salary expense', async () => {
+    const ledger = { postEntry: jest.fn().mockResolvedValue({}) };
+    const service = new ModuleLedgerService(ledger as never, { ensureSeeded: jest.fn() } as never);
+    await service.postPayrollAccrual({ payrollNumber: 77, date: '2026-03-31', grossEarnings: 3000, netPay: 2650, employeeInsurance: 0, employerInsurance: 0, loanDeductions: 0, incomeTax: 100, cafeDeductions: 150, nonLiabilityDeductions: 100 });
+    const input = ledger.postEntry.mock.calls[0][0];
+    expect(input.lines).toContainEqual({ accountCode: 'accounts_receivable', debit: 0, credit: 150 });
+    expect(input.lines.filter((l: any) => l.accountCode === 'salary_expense').reduce((n: number, l: any) => n + l.debit - l.credit, 0)).toBe(2900);
+    expect(input.lines.reduce((n: number, l: any) => n + l.debit - l.credit, 0)).toBe(0);
+    expect(input.lines.some((l: any) => l.accountCode === 'cash')).toBe(false);
   });
 });

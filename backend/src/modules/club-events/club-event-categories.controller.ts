@@ -32,19 +32,19 @@ export class ClubEventCategoriesController {
   }
 
   @Post()
-  @RequiresPermission('club.events.settings:configure')
+  @RequiresPermission('club.events.settings:create')
   create(@Body() body: UpsertClubEventCategoryDto) {
     return this.service.create(body);
   }
 
   @Put(':id')
-  @RequiresPermission('club.events.settings:configure')
+  @RequiresPermission('club.events.settings:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertClubEventCategoryDto>) {
     return this.service.update(id, body);
   }
 
   @Delete(':id')
-  @RequiresPermission('club.events.settings:configure')
+  @RequiresPermission('club.events.settings:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

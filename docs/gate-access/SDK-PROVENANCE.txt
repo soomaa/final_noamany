@@ -1,0 +1,26 @@
+ONE80 Gate Agent - ZKTeco SDK provenance
+=========================================
+
+Source supplied by the gate installer:
+standalone+sdk-6.3.1.37-doc-2.1.0-demo-1.1.15.zip
+
+Source SHA-256:
+ea28338da07864533a7bcc2142333b8398850dc62a5871fc8d6d5f6bc77d4ec6
+
+Standalone SDK package version: 6.3.1.37
+Pull component version: 2.2.0.220
+Architecture bundled with ONE80: Windows x64 only
+
+Only the DLL files required by the TCP Pull integration were copied from:
+SDK-Ver6.3.1.37\64bit
+
+The demo executables, registration batch files, debug symbols, 32-bit build,
+and sample database were deliberately excluded. ONE80 Gate Agent loads
+plcommpro.dll directly and does not require the Standalone SDK demo or COM
+registration.
+
+The required Pull exports were verified statically on 2026-09-14. Final
+compatibility must be confirmed against the installed C3-200 firmware during
+the on-site acceptance test. If the controller rejects the connection or any
+data table, obtain the current C3-compatible Pull SDK and Pull Data Dictionary
+from ZKTeco support/installer.

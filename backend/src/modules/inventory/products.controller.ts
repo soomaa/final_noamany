@@ -61,6 +61,11 @@ export class ProductsController {
     return this.service.productInventory(id, user);
   }
 
+  @Get(':id/recipe-usage')
+  recipeUsage(@Param('id', ParseIntPipe) id: number) {
+    return this.service.recipeUsage(id);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.service.findOne(id);
@@ -77,14 +82,14 @@ export class ProductsController {
 
   @Put(':id')
   @RequiresPermission('gym-sales.inventory.raw_materials:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertProductDto>) {
-    return this.service.update(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertProductDto>, @CurrentUser() user: JwtUser) {
+    return this.service.update(id, body, user.sub, user.branch);
   }
 
   @Patch(':id')
   @RequiresPermission('gym-sales.inventory.raw_materials:update')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertProductDto>) {
-    return this.service.update(id, body);
+  patch(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertProductDto>, @CurrentUser() user: JwtUser) {
+    return this.service.update(id, body, user.sub, user.branch);
   }
 
   @Put(':id/stock')
@@ -104,7 +109,7 @@ export class ProductsController {
   }
 
   @Post(':id/restore')
-  @RequiresPermission('gym-sales.inventory.raw_materials:update', 'gym-sales.inventory.raw_materials:create')
+  @RequiresPermission('gym-sales.inventory.raw_materials:update')
   restore(@Param('id', ParseIntPipe) id: number) {
     return this.service.restore(id);
   }

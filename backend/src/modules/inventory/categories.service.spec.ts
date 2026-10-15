@@ -83,7 +83,7 @@ describe('CategoriesService archive workflow', () => {
           id: 7,
           is_active: false,
           is_deleted: false,
-          _count: { children: 0, products: 0, cafe_products: 1 },
+          _count: { children: 0, products: 0, cafe_products: 0, cafe_product_assignments: 1 },
         }),
         delete: jest.fn(),
       },

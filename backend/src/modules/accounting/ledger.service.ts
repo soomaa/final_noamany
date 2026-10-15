@@ -187,6 +187,7 @@ export class LedgerService {
           branch_id: original.branch_id,
           description: `عكس: ${original.description ?? original.entry_no}`,
           reference: original.entry_no,
+          entry_type: original.entry_type,
           status: 'posted',
           source_module: original.source_module,
           source_doc_type: `${original.source_doc_type}_reversal`,
@@ -313,11 +314,13 @@ export class LedgerService {
 
   private async nextEntryNo(client: Tx, date: string, prefix: 'A' | 'D' | 'M') {
     const bucket = date.replace(/-/g, '');
-    const like = `JE-${prefix}-${bucket}-%`;
-    const count = await client.acc_journal_entries.count({
+    const latest = await client.acc_journal_entries.findFirst({
       where: { entry_no: { startsWith: `JE-${prefix}-${bucket}-` } },
+      orderBy: { entry_no: 'desc' },
+      select: { entry_no: true },
     });
-    const seq = String(count + 1).padStart(4, '0');
+    const latestSequence = latest ? Number(latest.entry_no.split('-').at(-1)) : 0;
+    const seq = String((Number.isSafeInteger(latestSequence) ? latestSequence : 0) + 1).padStart(4, '0');
     return `JE-${prefix}-${bucket}-${seq}`;
   }
 

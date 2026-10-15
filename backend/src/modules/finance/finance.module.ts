@@ -6,7 +6,6 @@ import { ExpenseCategoriesController } from './expense-categories.controller';
 import { ExpenseCategoriesService } from './expense-categories.service';
 import { FinanceReportsController } from './finance-reports.controller';
 import { FinanceReportsService } from './finance-reports.service';
-import { DailyClosingTargetService } from './daily-closing-target.service';
 import { RevenuesController } from './revenues.controller';
 import { RevenuesService } from './revenues.service';
 
@@ -25,9 +24,8 @@ import { FinanceRecurringCron } from './finance-recurring.cron';
     ExpenseCategoriesService,
     RevenuesService,
     FinanceReportsService,
-    DailyClosingTargetService,
     FinanceRecurringCron,
   ],
-  exports: [ExpensesService, RevenuesService, FinanceReportsService, DailyClosingTargetService],
+  exports: [ExpensesService, RevenuesService, FinanceReportsService],
 })
 export class FinanceModule {}

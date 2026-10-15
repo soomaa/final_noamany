@@ -2,6 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { cairoDateString } from '../../common/utils/cairo-date';
+import { markEmployeeExited } from '../employees/employee-exit.util';
 import { CreateClearanceDto, ListClearanceDto, UpdateClearanceDto } from './dto/clearance.dto';
 
 @Injectable()
@@ -81,7 +83,7 @@ export class ClearanceService {
     };
   }
 
-  async create(dto: CreateClearanceDto) {
+  async create(dto: CreateClearanceDto, actorUserId?: number) {
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
 
@@ -90,14 +92,34 @@ export class ClearanceService {
     });
     const groupId = (last?.disclaimer_id ?? 0) + 1;
 
-    await this.insertLines(groupId, dto);
+    await this.prisma.$transaction(async (tx) => {
+      await this.insertLines(groupId, dto, tx);
+      if (dto.completed !== false) {
+        await markEmployeeExited(tx, {
+          employeeId: dto.empId,
+          lastWorkingDate: dto.lastWorkingDate || cairoDateString(),
+          reason: 'إخلاء طرف',
+          actorUserId,
+        });
+      }
+    });
     return { id: groupId };
   }
 
-  async update(groupId: number, dto: UpdateClearanceDto) {
+  async update(groupId: number, dto: UpdateClearanceDto, actorUserId?: number) {
     await this.getGroup(groupId);
-    await this.prisma.hr_disclaimers.deleteMany({ where: { disclaimer_id: groupId } });
-    await this.insertLines(groupId, dto);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.hr_disclaimers.deleteMany({ where: { disclaimer_id: groupId } });
+      await this.insertLines(groupId, dto, tx);
+      if (dto.completed !== false) {
+        await markEmployeeExited(tx, {
+          employeeId: dto.empId,
+          lastWorkingDate: dto.lastWorkingDate || cairoDateString(),
+          reason: 'إخلاء طرف',
+          actorUserId,
+        });
+      }
+    });
     return { id: groupId };
   }
 
@@ -107,9 +129,13 @@ export class ClearanceService {
     return { id: groupId };
   }
 
-  private async insertLines(groupId: number, dto: CreateClearanceDto) {
+  private async insertLines(
+    groupId: number,
+    dto: CreateClearanceDto,
+    client: Prisma.TransactionClient = this.prisma,
+  ) {
     for (const line of dto.lines) {
-      await this.prisma.hr_disclaimers.create({
+      await client.hr_disclaimers.create({
         data: {
           disclaimer_id: groupId,
           emp_id_fk: String(dto.empId),

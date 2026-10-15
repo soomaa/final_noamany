@@ -21,6 +21,8 @@ import { useBranches } from '@/hooks/use-branches';
 import { useLocale } from '@/store/locale';
 import { validateDateOrder } from '@/lib/validators';
 import { uiStatic } from '@/lib/ui-static';
+import { usePermission } from '@/hooks/use-permission';
+import { PermissionForbidden } from '@/components/auth/permission-gate';
 
 const baseSchema = z.object({
   notes: z.string().optional(),
@@ -38,8 +40,6 @@ const schemas: Record<RequestTypeKey, z.ZodType> = {
     if (err) ctx.addIssue({ code: 'custom', message: err, path: ['date_to'] });
   }),
   permission: baseSchema.extend({
-    permission_type: z.string().min(1, uiStatic('نوع الإذن مطلوب')),
-    permission_period: z.string().optional(),
     permission_date: z.string().min(1, uiStatic('التاريخ مطلوب')),
     time_from: z.string().min(1),
     time_to: z.string().min(1),
@@ -62,12 +62,15 @@ const schemas: Record<RequestTypeKey, z.ZodType> = {
   'salary-certificate': baseSchema.extend({ purpose: z.string().min(1, uiStatic('الغرض مطلوب')), directed_to: z.string().optional() }),
   resignation: baseSchema.extend({ last_work_day: z.string().min(1), reason: z.string().min(1) }),
   transfer: baseSchema.extend({ target_branch_id: z.string().min(1), target_department_id: z.string().optional(), reason: z.string().min(1) }),
-  promotion: baseSchema.extend({ new_job_title: z.string().min(1), new_salary: z.string().optional(), reason: z.string().min(1) }),
+  promotion: baseSchema.extend({ new_job_title_id: z.string().min(1, uiStatic('المسمى الجديد مطلوب')), new_salary: z.string().optional(), reason: z.string().min(1) }),
   'data-change': baseSchema.extend({ field_name: z.string().min(1), old_value: z.string().optional(), new_value: z.string().min(1), reason: z.string().min(1) }),
 };
 
 export function RequestNewPage() {
   const { t, ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('leaves.requests:create');
+  const canPrint = can('leaves.requests:print');
   const { type } = useParams<{ type: string }>();
   const requestTypeMap = useMemo(() => getRequestTypeMap(t), [t]);
   const meta = type && REQUEST_TYPE_KEYS.includes(type as RequestTypeKey) ? requestTypeMap[type as RequestTypeKey] : null;
@@ -77,7 +80,7 @@ export function RequestNewPage() {
   const { data: leaveTypes } = useQuery({
     queryKey: ['leaves', 'types'],
     queryFn: async () => {
-      const { data } = await api.get<{ data: { id: number; title: string; agazaTtype?: number; isActive?: boolean }[] }>('/leaves/types', { params: { pageSize: 200 } });
+      const { data } = await api.get<{ data: { id: number; title: string }[] }>('/leaves/types', { params: { pageSize: 200 } });
       return data.data ?? [];
     },
     enabled: meta?.key === 'leave',
@@ -112,6 +115,15 @@ export function RequestNewPage() {
     },
     enabled: meta?.key === 'transfer',
   });
+  const { data: jobTitles } = useQuery({
+    queryKey: ['departments', 'job-titles'],
+    queryFn: async () => {
+      const { data } = await api.get<Array<{ id: number; name: string; status?: number }>>('/departments/job-titles');
+      return data;
+    },
+    enabled: meta?.key === 'promotion',
+    retry: false,
+  });
 
   const employeeOptions = useMemo(
     () => (employees ?? []).map((e) => ({ value: String(e.id), label: e.employee ?? e.name ?? String(e.id) })),
@@ -125,11 +137,15 @@ export function RequestNewPage() {
     () => (departments ?? []).map((d) => ({ value: String(d.id), label: d.title ?? '—' })),
     [departments],
   );
+  const jobTitleOptions = useMemo(
+    () => (jobTitles ?? [])
+      .filter((job) => job.status !== 2)
+      .map((job) => ({ value: String(job.id), label: job.name })),
+    [jobTitles],
+  );
 
   const leaveTypeOptions = useMemo(
-    () => (leaveTypes ?? [])
-      .filter((t) => t.agazaTtype === 0 && t.isActive !== false)
-      .map((t) => ({ value: String(t.id), label: t.title })),
+    () => (leaveTypes ?? []).map((t) => ({ value: String(t.id), label: t.title })),
     [leaveTypes],
   );
   const allowanceTypeOptions = useMemo(
@@ -144,19 +160,6 @@ export function RequestNewPage() {
   const onSubmit = async (values: Record<string, unknown>) => {
     if (!meta) return;
     try {
-      if (meta.key === 'permission') {
-        await api.post('/permissions', {
-          no3Ezn: Number(values.permission_type),
-          fatraFk: values.permission_period ? Number(values.permission_period) : undefined,
-          eznDate: values.permission_date,
-          fromHour: values.time_from,
-          toHour: values.time_to,
-          reason: values.reason,
-        });
-        toast.success(ui('تم إرسال طلب الإذن'));
-        navigate('/permissions');
-        return;
-      }
       await api.post('/requests', { type: meta.key, ...values });
       toast.success(ui('تم إرسال الطلب'));
       navigate('/requests');
@@ -173,6 +176,7 @@ export function RequestNewPage() {
       </div>
     );
   }
+  if (!canCreate) return <PermissionForbidden message={ui('لا تملك صلاحية إضافة طلب جديد.')} />;
 
   const FormBody = () => {
     switch (meta.key) {
@@ -188,14 +192,6 @@ export function RequestNewPage() {
       case 'permission':
         return (
           <>
-            <RHFSelect control={control} name="permission_type" label={ui('نوع الإذن')} required options={[
-              { value: '1', label: ui('استئذان شخصي') },
-              { value: '2', label: ui('استئذان للعمل') },
-            ]} />
-            <RHFSelect control={control} name="permission_period" label={ui('الفترة')} options={[
-              { value: '1', label: ui('فترة صباحية') },
-              { value: '2', label: ui('فترة مسائية') },
-            ]} />
             <DualDateField label={ui('التاريخ')} gregorianValue={watch('permission_date')} onGregorianChange={(v) => setValue('permission_date', v)} />
             <FieldWrapper label={ui('من')}><Time12Input value={watch('time_from')} onValueChange={(value) => setValue('time_from', value, { shouldValidate: true })} /></FieldWrapper>
             <FieldWrapper label={ui('إلى')}><Time12Input value={watch('time_to')} onValueChange={(value) => setValue('time_to', value, { shouldValidate: true })} /></FieldWrapper>
@@ -247,7 +243,13 @@ export function RequestNewPage() {
       case 'promotion':
         return (
           <>
-            <FieldWrapper label={ui('المسمى الجديد')}><Input {...register('new_job_title')} /></FieldWrapper>
+            <RHFSelect
+              control={control}
+              name="new_job_title_id"
+              label={ui('المسمى الجديد')}
+              required
+              options={jobTitleOptions}
+            />
             <FieldWrapper label={ui('الراتب الجديد')}><Input {...register('new_salary')} className="nums" /></FieldWrapper>
             <RHFTextarea control={control} name="reason" label={ui('مبررات الترقية')} required />
           </>
@@ -287,7 +289,7 @@ export function RequestNewPage() {
           </FieldWrapper>
         </Card>
         <div className="mt-6 flex justify-end gap-2">
-          {'printable' in meta && meta.printable && (
+          {'printable' in meta && meta.printable && canPrint && (
             <Button type="button" variant="outline" onClick={() => window.print()}>
               <Printer className="size-4" /> {ui('معاينة الطباعة')}
             </Button>

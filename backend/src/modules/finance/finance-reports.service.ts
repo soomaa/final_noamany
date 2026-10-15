@@ -1,9 +1,10 @@
-import { Injectable, NotFoundException } from "@nestjs/common";
+import { Injectable } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
 import { JwtUser } from "../../common/types/jwt-user";
 import { AccountingReportsService } from "../accounting/accounting-reports.service";
+import { PermissionEngineService } from "../rbac/engine/permission-engine.service";
 import {
   ExpenseReportsQueryDto,
   FinanceAnalysisQueryDto,
@@ -11,6 +12,10 @@ import {
   ProfitLossQueryDto,
   RevenueReportsQueryDto,
 } from "./dto/finance.dto";
+import {
+  createdByFilter,
+  resolveFinanceCreatorScope,
+} from "./finance-user-scope";
 import {
   monthKey,
   plRevenueWhere,
@@ -31,6 +36,9 @@ import {
  * Dashboard, analysis, P&L, report totals, monthly trends, and account breakdowns therefore read
  * the GL directly. Operational tables remain the source for document lists and customer/tax detail,
  * plus an explicit operational-source filter when requested by older clients.
+ *
+ * Creator scope: non-admin finance users only see journal / fin_* rows they created (same pattern
+ * as daily cashier). System admins see everyone.
  */
 @Injectable()
 export class FinanceReportsService {
@@ -38,62 +46,8 @@ export class FinanceReportsService {
     private readonly prisma: PrismaService,
     private readonly branchScope: BranchScopeService,
     private readonly accountingReports: AccountingReportsService,
+    private readonly permissions: PermissionEngineService,
   ) {}
-
-  async disbursementOrders(pageValue?: string, limitValue?: string) {
-    const page = Math.max(Number.parseInt(pageValue ?? "1", 10) || 1, 1);
-    const limit = Math.min(
-      Math.max(Number.parseInt(limitValue ?? "50", 10) || 50, 1),
-      200,
-    );
-    const [rows, total] = await this.prisma.$transaction([
-      this.prisma.fin_disbursement_orders.findMany({
-        orderBy: [{ order_date: "desc" }, { id: "desc" }],
-        skip: (page - 1) * limit,
-        take: limit,
-      }),
-      this.prisma.fin_disbursement_orders.count(),
-    ]);
-    return {
-      data: rows.map((row) => ({
-        ...row,
-        total_amount: toNumber(row.total_amount),
-      })),
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
-  }
-
-  async disbursementOrder(id: number) {
-    const order = await this.prisma.fin_disbursement_orders.findUnique({
-      where: { id },
-    });
-    if (!order) throw new NotFoundException("Disbursement order not found");
-    const [details, attachments] = await this.prisma.$transaction([
-      this.prisma.fin_disbursement_order_details.findMany({
-        where: { order_id: id },
-        orderBy: { id: "asc" },
-      }),
-      this.prisma.fin_disbursement_order_attachments.findMany({
-        where: { order_id: id },
-        orderBy: { id: "asc" },
-      }),
-    ]);
-    return {
-      ...order,
-      total_amount: toNumber(order.total_amount),
-      details: details.map((detail) => ({
-        ...detail,
-        mother_amount: toNumber(detail.mother_amount),
-        young_amount: toNumber(detail.young_amount),
-        adult_amount: toNumber(detail.adult_amount),
-        amount: toNumber(detail.amount),
-      })),
-      attachments,
-    };
-  }
 
   private accountingRange(q: {
     branchId?: string;
@@ -109,6 +63,44 @@ export class FinanceReportsService {
       dateTo: q.dateTo ?? q.endDate,
       branchId: Number.isFinite(requestedBranch) ? requestedBranch : undefined,
     };
+  }
+
+  private async scopedAccountingRange(
+    q: {
+      branchId?: string;
+      dateFrom?: string;
+      dateTo?: string;
+      startDate?: string;
+      endDate?: string;
+      userId?: string;
+    },
+    user?: JwtUser,
+    resource = 'financial-reports.dashboard',
+  ) {
+    const creator = await resolveFinanceCreatorScope(
+      this.permissions,
+      user,
+      q.userId,
+      resource,
+    );
+    return {
+      ...this.accountingRange(q),
+      createdByUserId: creator.selectedUserId,
+    };
+  }
+
+  private async creatorWhere(
+    user?: JwtUser,
+    requestedUserId?: string | null,
+    resource = 'financial-reports',
+  ): Promise<{ created_by: number } | Record<string, never>> {
+    const creator = await resolveFinanceCreatorScope(
+      this.permissions,
+      user,
+      requestedUserId,
+      resource,
+    );
+    return createdByFilter(creator.selectedUserId);
   }
 
   private branchRevenueFilter(
@@ -167,7 +159,7 @@ export class FinanceReportsService {
 
   async dashboard(q: FinanceDashboardQueryDto, user?: JwtUser) {
     const activity = await this.accountingReports.profitLossActivity(
-      this.accountingRange(q),
+      await this.scopedAccountingRange(q, user),
       user,
     );
 
@@ -203,43 +195,68 @@ export class FinanceReportsService {
   }
 
   async expenseReports(q: ExpenseReportsQueryDto, user?: JwtUser) {
-    const activity = await this.accountingReports.profitLossActivity(
-      this.accountingRange(q),
-      user,
-    );
-    const expensesByCategory = activity.expenseByAccount.map((account) => ({
-      category: `${account.code} — ${account.name}`,
-      count: account.count,
-      total: account.total,
-      totalAmount: account.total,
-    }));
-    const monthlyExpenses = activity.monthlyTrend
-      .filter((row) => row.expenses !== 0)
-      .map((row) => ({ month: row.month, total: row.expenses, count: 0 }));
-    const grandTotal = activity.totalExpenses;
-
+    const { dateFrom, dateTo } = this.resolveDateRange(q);
+    const branchIds = this.branchScope.resolveListFilter(user, q.branchId ?? null);
+    const rows = await this.prisma.fin_expenses.findMany({
+      where: {
+        is_deleted: false,
+        approval_status: { not: 'مرفوض' },
+        ...(branchIds ? { branch_id: { in: branchIds } } : {}),
+        ...await this.creatorWhere(user, q.userId, 'financial-reports.reports'),
+        ...(q.businessUnit ? { business_unit: q.businessUnit } : {}),
+        ...(q.category && q.category !== 'all' ? { category: q.category } : {}),
+        expense_date: {
+          ...(dateFrom ? { gte: dateFrom } : {}),
+          ...(dateTo ? { lte: dateTo.length === 10 ? `${dateTo}T23:59:59` : dateTo } : {}),
+        },
+      },
+      orderBy: { expense_date: 'asc' },
+    });
+    const categories = await this.prisma.fin_expense_categories.findMany({
+      orderBy: [{ sort_order: 'asc' }, { name: 'asc' }],
+    });
+    const grouped = new Map<string, { category: string; count: number; total: number; totalAmount: number; paidAmount: number; remainingAmount: number }>();
+    for (const category of categories) {
+      if (q.category && q.category !== 'all' && category.name !== q.category) continue;
+      grouped.set(category.name, { category: category.name, count: 0, total: 0, totalAmount: 0, paidAmount: 0, remainingAmount: 0 });
+    }
+    let paidAmount = 0;
+    let totalAmount = 0;
+    for (const row of rows) {
+      const amount = toNumber(row.total_amount);
+      const paid = row.paid_amount != null ? toNumber(row.paid_amount) : row.payment_status === 'مدفوع' ? amount : 0;
+      const group = grouped.get(row.category) ?? { category: row.category, count: 0, total: 0, totalAmount: 0, paidAmount: 0, remainingAmount: 0 };
+      group.count++;
+      group.total = group.totalAmount = roundMoney(group.total + amount);
+      group.paidAmount = roundMoney(group.paidAmount + paid);
+      group.remainingAmount = roundMoney(group.remainingAmount + Math.max(0, amount - paid));
+      grouped.set(row.category, group);
+      totalAmount = roundMoney(totalAmount + amount);
+      paidAmount = roundMoney(paidAmount + paid);
+    }
+    const expensesByCategory = [...grouped.values()];
+    const monthlyExpenses = this.aggregateMonthlyWithCount(rows.map((row) => ({
+      date: row.expense_date.slice(0, 10), amount: toNumber(row.total_amount),
+    })));
     return {
-      // Canonical fields used by the finance UI.
-      totalAmount: grandTotal,
-      totalExpenses: activity.expenseCount,
-      expensesByCategory,
-      monthlyExpenses,
-      // Backward-compatible aliases used by older report clients.
+      totalAmount, totalExpenses: rows.length, paidAmount,
+      paymentsNeedingReview: rows.filter((row) => row.paid_amount == null && row.payment_status === 'جزئي').length,
+      remainingAmount: roundMoney(totalAmount - paidAmount),
+      expensesByCategory, monthlyExpenses,
       byCategory: expensesByCategory,
-      byMonth: monthlyExpenses.map((row) => ({
-        month: row.month,
-        amount: row.total,
-      })),
-      grandTotal,
+      byMonth: monthlyExpenses.map((row) => ({ month: row.month, amount: row.total })),
+      grandTotal: totalAmount,
     };
   }
 
   async revenueReports(q: RevenueReportsQueryDto, user?: JwtUser) {
     const { dateFrom, dateTo } = this.resolveDateRange(q);
+    const creatorFilter = await this.creatorWhere(user, q.userId, 'financial-reports.revenue_reports');
     const where = plRevenueWhere({
       ...this.branchRevenueFilter(q.branchId, user),
       ...this.dateRevenueFilter(dateFrom, dateTo),
       ...(q.source && q.source !== "all" ? { source: q.source } : {}),
+      ...creatorFilter,
     });
 
     const subscriptionTypeId =
@@ -250,6 +267,7 @@ export class FinanceReportsService {
       user,
       q.branchId ?? null,
     );
+    const scopedRange = await this.scopedAccountingRange(q, user, 'financial-reports.revenue_reports');
 
     const subscriptionFilter: Prisma.club_subscriptionsWhereInput = {
       ...(allowedBranchIds ? { branch_id: { in: allowedBranchIds } } : {}),
@@ -274,7 +292,7 @@ export class FinanceReportsService {
       subscriptionReceipts,
       subscriptionRefunds,
     ] = await Promise.all([
-      this.accountingReports.profitLossActivity(this.accountingRange(q), user),
+      this.accountingReports.profitLossActivity(scopedRange, user),
       this.prisma.fin_revenues.groupBy({
         by: ["source"],
         where,
@@ -298,6 +316,7 @@ export class FinanceReportsService {
         where: {
           ...dateRange("receipt_date"),
           status: { in: ["مدفوعة", "paid"] },
+          ...creatorFilter,
           ...(Object.keys(subscriptionFilter).length
             ? { subscription: { is: subscriptionFilter } }
             : {}),
@@ -317,6 +336,7 @@ export class FinanceReportsService {
         where: {
           status: "completed",
           ...dateRange("refund_date"),
+          ...creatorFilter,
           ...(allowedBranchIds ? { branch_id: { in: allowedBranchIds } } : {}),
           ...(subscriptionTypeId
             ? {
@@ -496,13 +516,24 @@ export class FinanceReportsService {
     }
 
     const branchId = this.accountingRange(q).branchId;
+    const creator = await resolveFinanceCreatorScope(
+      this.permissions,
+      user,
+      q.userId,
+      'financial-reports.analysis',
+    );
     const [currentActivity, previousActivity] = await Promise.all([
       this.accountingReports.profitLossActivity(
-        { dateFrom, dateTo, branchId },
+        { dateFrom, dateTo, branchId, createdByUserId: creator.selectedUserId },
         user,
       ),
       this.accountingReports.profitLossActivity(
-        { dateFrom: prevFrom, dateTo: prevTo, branchId },
+        {
+          dateFrom: prevFrom,
+          dateTo: prevTo,
+          branchId,
+          createdByUserId: creator.selectedUserId,
+        },
         user,
       ),
     ]);
@@ -589,151 +620,17 @@ export class FinanceReportsService {
     };
   }
 
-  /**
-   * Legacy Monthly Analysis reimplemented against the new operational tables.
-   * Its COGS deliberately uses the last purchase-invoice line by id for the
-   * same inventory product, matching the old `one_price_buy ... ORDER BY id DESC`.
-   */
-  async monthlyAnalysis(q: FinanceAnalysisQueryDto, user?: JwtUser) {
-    const { dateFrom, dateTo } = this.resolveDateRange(q);
-    const requestedBranch = Number(q.branchId);
-    const scopedBranches = this.branchScope.resolveListFilter(user, q.branchId ?? null);
-    const branchIsThree = requestedBranch === 3 || (!Number.isFinite(requestedBranch) && scopedBranches?.includes(3));
-    const salesBranchIds = branchIsThree ? [8, 9] : scopedBranches;
-    const operationsBranchIds = branchIsThree ? [3, 8, 9] : scopedBranches;
-    const dateRange = (field: string) =>
-      dateFrom || dateTo
-        ? {
-            [field]: {
-              ...(dateFrom ? { gte: dateFrom } : {}),
-              ...(dateTo ? { lte: dateTo } : {}),
-            },
-          }
-        : {};
-
-    const [subscriptions, lockers, refunds, expenses, sales] = await Promise.all([
-      this.prisma.club_subscriptions.findMany({
-        where: {
-          ...dateRange('registration_date'),
-          ...(salesBranchIds ? { branch_id: { in: salesBranchIds } } : {}),
-          ...(q.gender ? { gender: q.gender } : {}),
-        },
-        select: { paid_amount: true },
-      }),
-      this.prisma.club_locker_subscriptions.findMany({
-        where: {
-          ...dateRange('subscription_start_date'),
-          ...(operationsBranchIds ? { sub_branch_id: { in: operationsBranchIds } } : {}),
-          ...(q.gender ? { gender: q.gender } : {}),
-        },
-        select: { paid_amount: true },
-      }),
-      this.prisma.club_subscription_refunds.findMany({
-        where: {
-          status: 'completed',
-          ...dateRange('refund_date'),
-          ...(operationsBranchIds ? { branch_id: { in: operationsBranchIds } } : {}),
-          ...(q.gender ? { subscription: { is: { gender: q.gender } } } : {}),
-        },
-        select: { refund_amount: true },
-      }),
-      this.prisma.fin_expenses.findMany({
-        where: {
-          is_deleted: false,
-          ...dateRange('expense_date'),
-          ...(operationsBranchIds ? { branch_id: { in: operationsBranchIds } } : {}),
-          ...(q.gender ? { gender_scope: q.gender } : {}),
-        },
-        select: { total_amount: true },
-      }),
-      this.prisma.sales_quick_sales.findMany({
-        where: {
-          ...dateRange('sale_date'),
-          ...(salesBranchIds ? { branch_id: { in: salesBranchIds } } : {}),
-          collected_amount: { not: 0 },
-          customer_member_id: { not: 0 },
-          ...(q.cafeCategoryId != null ? { cafe_category_id: q.cafeCategoryId } : {}),
-          ...(q.gender ? { gender: q.gender } : {}),
-        },
-        select: {
-          discount_amount: true,
-          items: {
-            select: {
-              inventory_product_id: true,
-              quantity: true,
-              line_total: true,
-            },
-          },
-        },
-      }),
-    ]);
-
-    const soldItems = sales.flatMap((sale) => sale.items);
-    const inventoryProductIds = [...new Set(
-      soldItems
-        .map((item) => item.inventory_product_id)
-        .filter((id): id is number => id != null),
-    )];
-    const purchaseItems = inventoryProductIds.length
-      ? await this.prisma.prc_purchase_invoice_items.findMany({
-          where: { product_id: { in: inventoryProductIds } },
-          orderBy: { id: 'desc' },
-          select: { id: true, product_id: true, price: true },
-        })
-      : [];
-    const latestPriceByProduct = new Map<number, number>();
-    for (const item of purchaseItems) {
-      if (!latestPriceByProduct.has(item.product_id)) {
-        latestPriceByProduct.set(item.product_id, toNumber(item.price));
-      }
-    }
-
-    const subscriptionRevenue = roundMoney(subscriptions.reduce((sum, row) => sum + toNumber(row.paid_amount), 0));
-    const lockerRevenue = roundMoney(lockers.reduce((sum, row) => sum + toNumber(row.paid_amount), 0));
-    const salesGross = roundMoney(soldItems.reduce((sum, item) => sum + toNumber(item.line_total), 0));
-    const salesDiscounts = roundMoney(sales.reduce((sum, row) => sum + toNumber(row.discount_amount), 0));
-    const cafeSales = roundMoney(salesGross - salesDiscounts);
-    const subscriptionRefunds = roundMoney(refunds.reduce((sum, row) => sum + toNumber(row.refund_amount), 0));
-    const cogs = roundMoney(soldItems.reduce((sum, item) => {
-      const price = item.inventory_product_id != null ? latestPriceByProduct.get(item.inventory_product_id) : undefined;
-      return price == null ? sum : sum + toNumber(item.quantity) * price;
-    }, 0));
-    const expenseTotal = roundMoney(expenses.reduce((sum, row) => sum + toNumber(row.total_amount), 0));
-    const totalRevenue = roundMoney(subscriptionRevenue + lockerRevenue + cafeSales);
-    const totalExpenses = roundMoney(subscriptionRefunds + cogs + expenseTotal);
-
-    return {
-      period: { dateFrom: dateFrom ?? null, dateTo: dateTo ?? null },
-      filters: {
-        branchId: q.branchId ?? 'all',
-        cafeCategoryId: q.cafeCategoryId ?? null,
-        gender: q.gender ?? null,
-      },
-      subscriptions: subscriptionRevenue,
-      lockers: lockerRevenue,
-      salesGross,
-      salesDiscounts,
-      cafeSales,
-      subscriptionRefunds,
-      cogs,
-      expenses: expenseTotal,
-      totalRevenue,
-      totalExpenses,
-      netProfit: roundMoney(totalRevenue - totalExpenses),
-    };
-  }
-
   async profitLoss(q: ProfitLossQueryDto, user?: JwtUser) {
     const dateFrom = q.dateFrom ?? q.startDate;
     const dateTo = q.dateTo ?? q.endDate;
-    const branchId = this.accountingRange(q).branchId;
-    const income = await this.accountingReports.incomeStatement(
-      { dateFrom, dateTo, branchId },
+    const scoped = await this.scopedAccountingRange(q, user, 'financial-reports.profit_loss');
+    const activity = await this.accountingReports.profitLossActivity(
+      scoped,
       user,
     );
-    const totalExpenses = income.expenses.total;
-    const totalRevenues = income.revenue.total;
-    const netProfit = income.netIncome;
+    const totalExpenses = activity.totalExpenses;
+    const totalRevenues = activity.totalRevenue;
+    const netProfit = activity.netProfit;
 
     return {
       dateFrom,
@@ -746,13 +643,13 @@ export class FinanceReportsService {
         totalRevenues > 0
           ? roundMoney((netProfit / totalRevenues) * 100)
           : null,
-      revenueLines: income.revenue.items.map((item) => ({
+      revenueLines: activity.revenueByAccount.map((item) => ({
         source: `${item.code} — ${item.name}`,
-        amount: item.amount,
+        amount: item.total,
       })),
-      expenseLines: income.expenses.items.map((item) => ({
+      expenseLines: activity.expenseByAccount.map((item) => ({
         category: `${item.code} — ${item.name}`,
-        amount: item.amount,
+        amount: item.total,
       })),
     };
   }

@@ -10,6 +10,8 @@ import { ClubSubscriptionAccountingService } from './club-subscription-accountin
 const admin: JwtUser = {
   sub: 1,
   level: 1,
+  employeeId: 1,
+  employeeCode: 1001,
   emp_code: 1,
   branch: 0,
   branch_name: null,

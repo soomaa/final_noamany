@@ -116,6 +116,12 @@ export class UpsertCafeProductDto {
   @IsInt()
   categoryId?: number;
 
+  @IsOptional()
+  @IsArray()
+  @Transform(({ value }) => Array.isArray(value) ? value.map(Number) : value)
+  @IsInt({ each: true })
+  categoryIds?: number[];
+
   @Transform(({ value }) => Number(value))
   @IsNumber()
   @Min(0, { message: 'سعر البيع لا يمكن أن يكون سالبًا' })

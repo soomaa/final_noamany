@@ -1,3 +1,4 @@
+import { formatMoneyNumber } from '@/lib/formatters';
 import { useQuery } from '@tanstack/react-query';
 import {
   Bar,
@@ -86,7 +87,7 @@ export function FinanceRevenueReportsPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title={ui('إجمالي الإيرادات')}
-          value={isLoading ? '…' : toArabicDigits((data?.totalAmount ?? 0).toFixed(2))}
+          value={isLoading ? '…' : formatMoneyNumber((data?.totalAmount ?? 0))}
           colorIndex={2}
           loading={isLoading}
         />
@@ -98,13 +99,13 @@ export function FinanceRevenueReportsPage() {
         />
         <StatCard
           title={ui('الضرائب')}
-          value={isLoading ? '…' : toArabicDigits((data?.totalTax ?? 0).toFixed(2))}
+          value={isLoading ? '…' : formatMoneyNumber((data?.totalTax ?? 0))}
           colorIndex={1}
           loading={isLoading}
         />
         <StatCard
           title={ui('الخصومات')}
-          value={isLoading ? '…' : toArabicDigits((data?.totalDiscount ?? 0).toFixed(2))}
+          value={isLoading ? '…' : formatMoneyNumber((data?.totalDiscount ?? 0))}
           colorIndex={4}
           loading={isLoading}
         />
@@ -120,7 +121,7 @@ export function FinanceRevenueReportsPage() {
                   <span>{src.source}</span>
                   <div className="flex items-center gap-3">
                     <span className="text-muted-foreground">{toArabicDigits(src.count)}</span>
-                    <span className="nums font-bold text-green-600">{toArabicDigits(src.total.toFixed(2))}</span>
+                    <span className="nums font-bold text-green-600">{formatMoneyNumber(src.total)}</span>
                   </div>
                 </div>
               ))}
@@ -138,7 +139,7 @@ export function FinanceRevenueReportsPage() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                 <YAxis tickFormatter={(v) => toArabicDigits(v)} />
-                <Tooltip formatter={(v: number) => toArabicDigits(v.toFixed(2))} />
+                <Tooltip formatter={(v: number) => formatMoneyNumber(v)} />
                 <Bar dataKey="total" fill="#16a34a" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -160,7 +161,7 @@ export function FinanceRevenueReportsPage() {
                 <span>{c.customerName}</span>
                 <div className="flex items-center gap-3">
                   <span className="text-muted-foreground">{toArabicDigits(c.count)}</span>
-                  <span className="nums font-bold">{toArabicDigits(c.total.toFixed(2))}</span>
+                  <span className="nums font-bold">{formatMoneyNumber(c.total)}</span>
                 </div>
               </div>
             ))}

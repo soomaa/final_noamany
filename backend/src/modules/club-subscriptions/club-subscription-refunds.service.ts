@@ -1,22 +1,22 @@
-import { BadRequestException, ForbiddenException, Injectable, Inject, Logger, NotFoundException } from '@nestjs/common';
-import { ClubBranchGroupService, ClubBranchGroupReader } from '../../common/branch-groups/club-branch-group.service';
-import { assertClubOperationBranch, clubOperationBranchIds } from '../../common/branch-groups/club-operation-scope';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, club_subscription_refunds, club_subscriptions } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { isDryRun, previewResponse, PreviewRow } from '../../common/preview';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
-import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import { localDateString, parseDateOnly } from '../club-members/club-member.utils';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
-import { EXPENSE_APPROVED, mapPaymentMethodToArabic, nextFinDocNumber, REVENUE_PAID, REFUND_EXPENSE_CATEGORY } from '../finance/finance.utils';
+import { EXPENSE_APPROVED, mapPaymentMethodToArabic, nextFinDocNumber, REVENUE_PAID } from '../finance/finance.utils';
 import { ClubSubscriptionAccountingService } from './club-subscription-accounting.service';
 import { ClubReceiptsService } from './club-receipts.service';
-import { daysBetween, deriveSessionAwareStatus, netValue, roundMoney, toNum } from './club-subscription.utils';
-import { UpdateClubSubscriptionRefundDto } from './dto/update-club-subscription-refund.dto';
+import { addDays, daysBetween, netValue, roundMoney, toNum } from './club-subscription.utils';
+import {
+  applyTrainerCommissionRefund,
+  recordTrainerSubscriptionRefund,
+} from './trainer-subscription-refunds';
 
 /** Expense category refunds are booked under (also seeded in fin_expense_categories, is_system). */
-export { REFUND_EXPENSE_CATEGORY } from '../finance/finance.utils';
+export const REFUND_EXPENSE_CATEGORY = 'مردودات اشتراكات الجيم';
 
 export interface RefundPreview {
   subscriptionId: number;
@@ -37,7 +37,6 @@ export interface RefundPreview {
   /** المبلغ المدفوع فعلياً (سقف الاسترداد). */
   paidAmount: number;
   status: 'pending';
-  refundBranchId: number;
 }
 
 @Injectable()
@@ -50,53 +49,31 @@ export class ClubSubscriptionRefundsService {
     private readonly receipts: ClubReceiptsService,
     private readonly audit: BusinessAuditService,
     private readonly branchScope: BranchScopeService,
-    @Inject(ClubBranchGroupService) private readonly branchGroups: Pick<ClubBranchGroupReader, 'siblingBranchIds'> = { siblingBranchIds: async (id) => [id] },
   ) {}
 
-  private async assertBranchAccess(user: JwtUser | undefined, branchId: number | null | undefined) {
-    if (branchId != null && this.branchScope.isBranchAllowed(user, branchId)) return;
-    await assertClubOperationBranch(this.branchScope, this.branchGroups, user, branchId);
+  private assertBranchAccess(user: JwtUser | undefined, branchId: number | null | undefined) {
+    if (branchId == null || !this.branchScope.isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
   }
 
-  private async branchWhere(user?: JwtUser): Promise<Prisma.club_subscription_refundsWhereInput> {
-    const allowed = await clubOperationBranchIds(this.branchScope, this.branchGroups, user);
-    return {
-      ...(allowed === null ? {} : { branch_id: { in: allowed } }),
-    };
-  }
-
-  private async refundBranchId(user: JwtUser | undefined, subscriptionBranch: number, requested?: number) {
-    const own = Number(user?.branch ?? 0);
-    const target = requested == null ? null : Number(requested);
-    if (target != null && (!Number.isInteger(target) || target <= 0)) throw new BadRequestException('فرع صرف المرتجع غير صالح');
-    if (target != null && user && !isSystemAdmin(user) && target !== own) throw new ForbiddenException('مرتجع الاشتراك يجب أن يصرف من فرع حساب الموظف');
-    const branch = target ?? (own > 0 ? own : subscriptionBranch);
-    await this.assertBranchAccess(user, branch);
-    return branch;
+  private branchWhere(user?: JwtUser): Prisma.club_subscription_refundsWhereInput {
+    const allowed = this.branchScope.allowedBranchIds(user);
+    return allowed === null ? {} : { branch_id: { in: allowed } };
   }
 
   async list(user?: JwtUser) {
     const rows = await this.prisma.club_subscription_refunds.findMany({
-      where: { ...await this.branchWhere(user), status: { not: 'cancelled' } },
-      include: {
-        member: { select: { member_code: true, gender: true } },
-        subscription: { select: { subscription_number: true, gender: true, paid_amount: true } },
-      },
+      where: this.branchWhere(user),
       orderBy: { id: 'desc' },
     });
-    return rows.map((r) => ({
-      ...this.map(r),
-      memberCode: r.member?.member_code ?? null,
-      category: r.subscription.gender ?? r.member?.gender ?? null,
-      subscriptionNumber: r.subscription.subscription_number,
-      paidAmount: toNum(r.subscription.paid_amount),
-    }));
+    return rows.map((r) => this.map(r));
   }
 
   async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.club_subscription_refunds.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('الاسترداد غير موجود');
-    await this.assertBranchAccess(user, row.branch_id);
+    this.assertBranchAccess(user, row.branch_id);
     return this.map(row);
   }
 
@@ -142,20 +119,22 @@ export class ClubSubscriptionRefundsService {
   async computePreview(body: {
     subscriptionId: number;
     stopDate: string;
-    branchId?: number;
   }, user?: JwtUser): Promise<RefundPreview> {
     return this.computePreviewWithClient(this.prisma, body, user);
   }
 
   private async computePreviewWithClient(
     client: PrismaService | Prisma.TransactionClient,
-    body: { subscriptionId: number; stopDate: string; branchId?: number },
+    body: { subscriptionId: number; stopDate: string },
     user?: JwtUser,
   ): Promise<RefundPreview> {
     const sub = await client.club_subscriptions.findUnique({ where: { id: body.subscriptionId } });
     if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-    await this.assertBranchAccess(user, sub.branch_id);
-    const refundBranchId = await this.refundBranchId(user, sub.branch_id, body.branchId);
+    this.assertBranchAccess(user, sub.branch_id);
+    if (sub.status === 'frozen' || sub.renewal_hold) throw new BadRequestException('فك التجميد قبل الاسترداد');
+    const successor = await client.club_subscriptions.findUnique({ where: { renewed_from_subscription_id: sub.id } });
+    if (successor) throw new BadRequestException('سوِّ التجديدات اللاحقة أولًا قبل استرداد الاشتراك السابق');
+
 
     const start = sub.subscription_start_date;
     const end = sub.subscription_end_date;
@@ -171,32 +150,34 @@ export class ClubSubscriptionRefundsService {
       _sum: { refund_amount: true },
     });
     const alreadyRefunded = toNum(priorAgg._sum.refund_amount);
-    const refundableCap = Math.max(0, paid - alreadyRefunded);
-    if (refundableCap <= 0) {
-      throw new BadRequestException('لا يوجد مبلغ متبقٍ للاسترداد لهذا الاشتراك');
+    // A completed refund closes the subscription, so a second one has nothing to act on.
+    const priorCompleted = await client.club_subscription_refunds.count({
+      where: { subscription_id: body.subscriptionId, status: 'completed' },
+    });
+    if (priorCompleted > 0) {
+      throw new BadRequestException('تم استرداد هذا الاشتراك وإنهاؤه بالفعل');
     }
+    // Nothing paid (or nothing left) still closes the subscription — the refund is just 0.
+    const refundableCap = Math.max(0, paid - alreadyRefunded);
 
-    let remainingDays = daysBetween(stop, end);
+    let remainingDays = daysBetween(stop, end) + 1;
     let remainingSessions: number | null = null;
     let refundBasis: 'days' | 'sessions' = 'days';
     let dailyRate = 0;
     let consumedValue = 0;
     let unusedValue = 0;
-    const totalDays = daysBetween(start, end);
+    const totalDays = daysBetween(start, end) + 1;
 
     if (sub.is_linked_to_sessions && sub.sessions_count != null && sub.sessions_count > 0) {
       remainingSessions = Math.max(0, sub.sessions_count - sub.sessions_used);
-      if (remainingSessions <= 0) {
-        throw new BadRequestException('لا توجد حصص متبقية للاسترداد');
-      }
       refundBasis = 'sessions';
       const sessionRate = roundMoney(net / sub.sessions_count);
       dailyRate = sessionRate;
       consumedValue = roundMoney(Math.max(0, sub.sessions_used) * sessionRate);
       unusedValue = roundMoney(remainingSessions * sessionRate);
-      remainingDays = daysBetween(stop, end);
+      remainingDays = daysBetween(stop, end) + 1;
     } else {
-      if (remainingDays <= 0) throw new BadRequestException('لا توجد أيام متبقية للاسترداد');
+      remainingDays = Math.max(0, remainingDays);
       dailyRate = roundMoney(totalDays > 0 ? net / totalDays : 0);
       const consumedDaysForValue = Math.max(0, totalDays - remainingDays);
       consumedValue = roundMoney(consumedDaysForValue * dailyRate);
@@ -206,7 +187,7 @@ export class ClubSubscriptionRefundsService {
     // الاسترداد = المتبقي غير المستهلك من المدفوع فقط:
     // لا يتجاوز غير المستخدم، ولا يتجاوز (المدفوع − الاستهلاك − استردادات سابقة).
     // مثال: اشتراك 300 دفع 100 واستهلك بقيمة 100 → يسترد 0 (مش 100).
-    // نرجّع المعاينة حتى لو المسترد 0 عشان الواجهة تعرض التفاصيل المالية.
+    // لو المسترد 0 الاشتراك برضه بيتقفل (مرتجع صفري بدون صرف من الخزينة).
     const refundAmount = roundMoney(
       Math.max(0, Math.min(unusedValue, Math.max(0, refundableCap - consumedValue))),
     );
@@ -228,7 +209,6 @@ export class ClubSubscriptionRefundsService {
       consumedValue,
       paidAmount: paid,
       status: 'pending',
-      refundBranchId,
     };
   }
 
@@ -239,7 +219,6 @@ export class ClubSubscriptionRefundsService {
     notes?: string;
     createdBy?: number;
     dryRun?: boolean;
-    branchId?: number;
   }, user?: JwtUser) {
     if (isDryRun(body.dryRun)) {
       const preview = await this.computePreview(body, user);
@@ -247,7 +226,7 @@ export class ClubSubscriptionRefundsService {
         rows: this.previewRows(preview),
         warning:
           preview.refundAmount <= 0
-            ? 'لا يوجد مبلغ للاسترداد — قيمة الاستهلاك تغطي المبلغ المدفوع'
+            ? 'لا يوجد مبلغ للاسترداد — سيتم إنهاء الاشتراك فوراً بدون صرف من الخزينة'
             : 'سيتم صرف المبلغ من الخزينة وترحيله كمصروف استرداد وإنهاء الاشتراك',
       });
     }
@@ -266,11 +245,6 @@ export class ClubSubscriptionRefundsService {
           if (!locked.length) throw new NotFoundException('الاشتراك غير موجود');
 
           const preview = await this.computePreviewWithClient(tx, body, user);
-          if (preview.refundAmount <= 0) {
-            throw new BadRequestException(
-              'لا يوجد مبلغ للاسترداد — قيمة الاستهلاك تغطي المبلغ المدفوع أو لا يوجد متبقٍ غير مستهلك',
-            );
-          }
 
           const sub = await tx.club_subscriptions.findUnique({
             where: { id: body.subscriptionId },
@@ -305,7 +279,7 @@ export class ClubSubscriptionRefundsService {
               reason: body.reason ?? null,
               notes: body.notes ?? null,
               status: 'pending',
-              branch_id: preview.refundBranchId,
+              branch_id: sub.branch_id,
               created_by: body.createdBy ?? null,
             },
           });
@@ -335,6 +309,9 @@ export class ClubSubscriptionRefundsService {
     const stop = refund.stop_date;
 
     const committed = await this.prisma.$transaction(async (tx) => {
+      const owner = await tx.club_subscriptions.findUnique({ where: { id: refund.subscription_id }, select: { member_id: true } });
+      if (owner?.member_id) await tx.$queryRaw`SELECT id FROM club_members WHERE id = ${owner.member_id} FOR UPDATE`;
+
       const locked = await tx.$queryRaw<{ id: number }[]>`
         SELECT id FROM club_subscriptions
         WHERE id = ${refund.subscription_id}
@@ -360,16 +337,44 @@ export class ClubSubscriptionRefundsService {
         throw new BadRequestException('مبلغ الاسترداد يتجاوز المبلغ المدفوع المتبقي');
       }
 
+      const currentPreview = await this.computePreviewWithClient(tx, { subscriptionId: refund.subscription_id, stopDate: stop });
+      if (refundAmount > currentPreview.refundAmount) throw new BadRequestException('تغير استهلاك الاشتراك؛ أعد معاينة الاسترداد قبل إتمام الصرف');
+
+      const completedAt = new Date();
       const claim = await tx.club_subscription_refunds.updateMany({
         where: { id: refund.id, status: 'pending' },
-        data: { status: 'completed' },
+        data: { status: 'completed', completed_at: completedAt },
       });
       if (claim.count === 0) return null;
 
+      // The stop date is the first unused day (see computePreview), so the subscription's last
+      // valid day is the day before. Status is derived from dates (end date itself is active), so
+      // ending ON the stop date would keep check-in open for that whole day. Session packages
+      // also burn their remaining sessions. Mirrors how transfers close the source subscription.
       await tx.club_subscriptions.update({
         where: { id: refund.subscription_id },
-        data: { subscription_end_date: stop, status: 'expired' },
+        data: {
+          subscription_end_date: addDays(stop, -1),
+          status: 'expired',
+          sessions_used: sub.is_linked_to_sessions
+            ? Math.max(sub.sessions_used, sub.sessions_count ?? sub.sessions_used)
+            : sub.sessions_used,
+        },
       });
+
+      if (refundAmount > 0) {
+        await applyTrainerCommissionRefund(tx, {
+          subscriptionId: refund.subscription_id,
+          refundAmount,
+          refundableBase: Math.max(0, toNum(sub.paid_amount)),
+        });
+        await recordTrainerSubscriptionRefund(tx, {
+          refundId: refund.id,
+          subscriptionId: refund.subscription_id,
+          refundDate: localDateString(completedAt),
+          refundAmount,
+        });
+      }
 
       await this.receipts.recalculateSubscriptionPayments(refund.subscription_id, tx);
       // Cancelled via refund: write off any unpaid remaining so it no longer shows as debt.
@@ -378,7 +383,7 @@ export class ClubSubscriptionRefundsService {
         data: { remaining_amount: 0 },
       });
 
-      await this.accounting.postJournal({
+      if (refundAmount > 0) await this.accounting.postJournal({
         subscriptionNumber: sub.subscription_number,
         sourceDocId: refund.invoice_number,
         paidAmount: refundAmount,
@@ -386,7 +391,7 @@ export class ClubSubscriptionRefundsService {
         discountValue: toNum(sub.discount_value),
         discountEnabled: sub.discount_enabled,
         paymentMethod: sub.payment_method ?? 'cash',
-        branchId: refund.branch_id ?? sub.branch_id,
+        branchId: sub.branch_id,
         createdBy: actorUserId ?? refund.created_by ?? undefined,
         kind: 'refund',
       }, tx);
@@ -402,7 +407,7 @@ export class ClubSubscriptionRefundsService {
       entityId: refund.subscription_id,
       action: 'refund',
       actorUserId,
-      branchId: refund.branch_id ?? committed.branch_id,
+      branchId: committed.branch_id,
       after: {
         refundId: refund.id,
         refundAmount,
@@ -430,7 +435,7 @@ export class ClubSubscriptionRefundsService {
     try {
       await this.prisma.$transaction(async (tx) => {
         const exists = await tx.fin_expenses.findFirst({
-          where: { category: REFUND_EXPENSE_CATEGORY, invoice_number: refund.invoice_number, is_deleted: false },
+          where: { category: REFUND_EXPENSE_CATEGORY, invoice_number: refund.invoice_number },
         });
         if (exists) return;
         const expenseNumber = await nextFinDocNumber(tx, 'fin_expenses', 'expense_number', 'EXP');
@@ -472,7 +477,7 @@ export class ClubSubscriptionRefundsService {
   ) {
     const existing = await this.prisma.club_subscription_refunds.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الاسترداد غير موجود');
-    await this.assertBranchAccess(user, existing.branch_id);
+    this.assertBranchAccess(user, existing.branch_id);
 
     if (status === 'completed') {
       if (existing.status === 'completed') {
@@ -494,219 +499,13 @@ export class ClubSubscriptionRefundsService {
     return this.map(row);
   }
 
-  private async assertRefundCorrectionSafe(
-    tx: Prisma.TransactionClient,
-    refund: club_subscription_refunds,
-    sub: club_subscriptions,
-    nextStopDate: string,
-  ) {
-    if (sub.subscription_end_date !== refund.stop_date || sub.status !== 'expired') {
-      throw new BadRequestException('تم تغيير الاشتراك بعد صرف المسترد، ولا يمكن تعديل المسترد أو حذفه');
-    }
-    const blockers = await Promise.all([
-      tx.club_receipts.count({ where: { subscription_id: sub.id, created_at: { gt: refund.created_at } } }),
-      tx.club_subscription_refunds.count({ where: { subscription_id: sub.id, id: { gt: refund.id }, status: { not: 'cancelled' } } }),
-      tx.club_attendance.count({ where: { subscription_id: sub.id, attendance_date: { gt: nextStopDate } } }),
-      tx.club_subscription_transfers.count({ where: { OR: [{ subscription_id: sub.id }, { destination_subscription_id: sub.id }] } }),
-      tx.club_member_subscription_transfers.count({ where: { OR: [{ source_subscription_id: sub.id }, { destination_subscription_id: sub.id }] } }),
-      tx.club_subscriptions.count({ where: { renewed_from_subscription_id: sub.id } }),
-      tx.club_subscription_freezes.count({ where: { subscription_id: sub.id, created_at: { gt: refund.created_at } } }),
-    ]);
-    if (blockers.some((count) => count > 0)) {
-      throw new BadRequestException('لا يمكن تعديل المسترد أو حذفه بعد حضور أو تحصيل أو عملية لاحقة على الاشتراك');
-    }
-  }
-
-  private async correctRefundExpense(
-    tx: Prisma.TransactionClient,
-    refund: club_subscription_refunds,
-    sub: club_subscriptions,
-    amount: number | null,
-    refundDate?: string,
-  ) {
-    await tx.fin_expenses.updateMany({
-      where: { category: REFUND_EXPENSE_CATEGORY, invoice_number: refund.invoice_number, is_deleted: false },
-      data: { is_deleted: true, deleted_at: new Date() },
-    });
-    if (amount == null) return;
-    const expenseNumber = await nextFinDocNumber(tx, 'fin_expenses', 'expense_number', 'EXP');
-    await tx.fin_expenses.create({ data: {
-      expense_number: expenseNumber,
-      expense_date: refundDate ?? refund.refund_date,
-      category: REFUND_EXPENSE_CATEGORY,
-      amount,
-      tax_amount: 0,
-      total_amount: amount,
-      payment_method: mapPaymentMethodToArabic(sub.payment_method),
-      payment_status: REVENUE_PAID,
-      approval_status: EXPENSE_APPROVED,
-      approved_by: refund.created_by,
-      approved_at: new Date(),
-      description: `مرتجع اشتراك ${sub.subscription_number} — ${refund.invoice_number}`,
-      vendor: refund.customer_name,
-      invoice_number: refund.invoice_number,
-      branch_id: refund.branch_id,
-      created_by: refund.created_by,
-    } });
-  }
-
-  async edit(id: number, body: UpdateClubSubscriptionRefundDto, user: JwtUser) {
-    const amount = roundMoney(Number(body.refundAmount));
-    if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestException('مبلغ الاسترداد غير صالح');
-    const validDate = (value: string) => {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-      const parsed = parseDateOnly(value);
-      const [year, month, day] = value.split('-').map(Number);
-      return parsed.getFullYear() === year && parsed.getMonth() + 1 === month && parsed.getDate() === day;
-    };
-    if (!validDate(body.refundDate) || !validDate(body.stopDate)) {
-      throw new BadRequestException('تاريخ الاسترداد أو الإيقاف غير صالح');
-    }
-    return this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM club_subscription_refunds WHERE id = ${id} FOR UPDATE`;
-      const refund = await tx.club_subscription_refunds.findUnique({ where: { id } });
-      if (!refund) throw new NotFoundException('الاسترداد غير موجود');
-      await this.assertBranchAccess(user, refund.branch_id);
-      if (refund.status === 'cancelled') throw new BadRequestException('لا يمكن تعديل استرداد ملغى');
-      await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${refund.subscription_id} FOR UPDATE`;
-      const sub = await tx.club_subscriptions.findUnique({ where: { id: refund.subscription_id } });
-      if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-      if (parseDateOnly(body.stopDate) < parseDateOnly(refund.original_start_date) ||
-          parseDateOnly(body.stopDate) >= parseDateOnly(refund.original_end_date)) {
-        throw new BadRequestException('تاريخ الإيقاف يجب أن يكون ضمن فترة الاشتراك الأصلية وقبل نهايتها');
-      }
-      const financialChanged = amount !== toNum(refund.refund_amount) ||
-        body.refundDate !== refund.refund_date || body.stopDate !== refund.stop_date;
-      if (!financialChanged) {
-        const updated = await tx.club_subscription_refunds.update({ where: { id }, data: {
-          reason: body.reason?.trim() || null,
-          notes: body.notes?.trim() || null,
-        } });
-        await tx.business_audit_log.create({ data: {
-          entity_type: 'club_subscription_refund', entity_id: String(id), action: 'refund_update',
-          actor_user_id: user.sub, branch_id: refund.branch_id,
-          before_json: { reason: refund.reason, notes: refund.notes },
-          after_json: { reason: updated.reason, notes: updated.notes },
-          changed_fields: ['reason', 'notes'], reason: 'تعديل بيانات مسترد اشتراك',
-        } });
-        return this.map(updated);
-      }
-      if (refund.status === 'completed') await this.assertRefundCorrectionSafe(tx, refund, sub, body.stopDate);
-      const prior = await tx.club_subscription_refunds.aggregate({
-        where: { subscription_id: sub.id, id: { not: refund.id }, status: 'completed' },
-        _sum: { refund_amount: true },
-      });
-      const net = toNum(refund.original_value);
-      const paidCap = Math.max(0, toNum(sub.paid_amount) - toNum(prior._sum.refund_amount));
-      const totalDays = Math.max(1, daysBetween(refund.original_start_date, refund.original_end_date));
-      const remainingDays = daysBetween(body.stopDate, refund.original_end_date);
-      let unusedValue: number;
-      let consumedValue: number;
-      if (sub.is_linked_to_sessions && sub.sessions_count != null && sub.sessions_count > 0) {
-        const remainingSessions = Math.max(0, sub.sessions_count - sub.sessions_used);
-        const sessionRate = roundMoney(net / sub.sessions_count);
-        unusedValue = roundMoney(remainingSessions * sessionRate);
-        consumedValue = roundMoney(sub.sessions_used * sessionRate);
-      } else {
-        const dailyRate = roundMoney(net / totalDays);
-        unusedValue = roundMoney(remainingDays * dailyRate);
-        consumedValue = roundMoney((totalDays - remainingDays) * dailyRate);
-      }
-      const maximum = roundMoney(Math.max(0, Math.min(unusedValue, paidCap - consumedValue)));
-      if (amount > maximum + 0.009) {
-        throw new BadRequestException(`مبلغ الاسترداد يتجاوز الحد المسموح (${maximum.toFixed(2)})`);
-      }
-      if (refund.status === 'completed') {
-        await this.accounting.reverseRefundEntry(refund.invoice_number, `تصحيح المسترد ${refund.invoice_number}`, user.sub, tx);
-      }
-      const updated = await tx.club_subscription_refunds.update({ where: { id }, data: {
-        refund_amount: amount,
-        refund_date: body.refundDate,
-        stop_date: body.stopDate,
-        remaining_days: remainingDays,
-        daily_rate: sub.is_linked_to_sessions && sub.sessions_count ? roundMoney(net / sub.sessions_count) : roundMoney(net / totalDays),
-        reason: body.reason?.trim() || null,
-        notes: body.notes?.trim() || null,
-      } });
-      if (refund.status === 'completed') {
-        await tx.club_subscriptions.update({ where: { id: sub.id }, data: { subscription_end_date: body.stopDate, status: 'expired' } });
-        await this.receipts.recalculateSubscriptionPayments(sub.id, tx);
-        await tx.club_subscriptions.update({ where: { id: sub.id }, data: { remaining_amount: 0 } });
-        await this.accounting.postJournal({
-          subscriptionNumber: sub.subscription_number,
-          sourceDocId: refund.invoice_number,
-          paidAmount: amount,
-          subscriptionValue: toNum(sub.subscription_value),
-          discountValue: toNum(sub.discount_value),
-          discountEnabled: sub.discount_enabled,
-          paymentMethod: sub.payment_method ?? 'cash',
-          branchId: refund.branch_id ?? sub.branch_id,
-          createdBy: user.sub,
-          registrationDate: body.refundDate,
-          kind: 'refund',
-        }, tx);
-        await this.correctRefundExpense(tx, refund, sub, amount, body.refundDate);
-      }
-      await tx.business_audit_log.create({ data: {
-        entity_type: 'club_subscription_refund', entity_id: String(id), action: 'refund_update',
-        actor_user_id: user.sub, branch_id: refund.branch_id,
-        before_json: { refundAmount: toNum(refund.refund_amount), refundDate: refund.refund_date, stopDate: refund.stop_date, reason: refund.reason, notes: refund.notes },
-        after_json: { refundAmount: amount, refundDate: body.refundDate, stopDate: body.stopDate, reason: updated.reason, notes: updated.notes },
-        changed_fields: ['refundAmount', 'refundDate', 'stopDate', 'reason', 'notes'],
-        reason: 'تصحيح مسترد اشتراك',
-      } });
-      return this.map(updated);
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 15000 });
-  }
-
-  async remove(id: number, user: JwtUser) {
-    return this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM club_subscription_refunds WHERE id = ${id} FOR UPDATE`;
-      const refund = await tx.club_subscription_refunds.findUnique({ where: { id } });
-      if (!refund) throw new NotFoundException('الاسترداد غير موجود');
-      await this.assertBranchAccess(user, refund.branch_id);
-      if (refund.status === 'cancelled') throw new BadRequestException('تم حذف هذا المسترد بالفعل');
-      await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${refund.subscription_id} FOR UPDATE`;
-      const sub = await tx.club_subscriptions.findUnique({ where: { id: refund.subscription_id } });
-      if (!sub) throw new NotFoundException('الاشتراك غير موجود');
-      if (refund.status === 'completed') {
-        await this.assertRefundCorrectionSafe(tx, refund, sub, refund.stop_date);
-        await this.accounting.reverseRefundEntry(refund.invoice_number, `إلغاء المسترد ${refund.invoice_number}`, user.sub, tx);
-      }
-      await tx.club_subscription_refunds.update({ where: { id }, data: { status: 'cancelled' } });
-      if (refund.status === 'completed') {
-        await this.receipts.recalculateSubscriptionPayments(sub.id, tx);
-        await tx.club_subscriptions.update({ where: { id: sub.id }, data: {
-          subscription_end_date: refund.original_end_date,
-          status: deriveSessionAwareStatus({
-            startDate: sub.subscription_start_date,
-            endDate: refund.original_end_date,
-            isLinkedToSessions: sub.is_linked_to_sessions,
-            sessionsCount: sub.sessions_count,
-            sessionsUsed: sub.sessions_used,
-          }),
-        } });
-        await this.correctRefundExpense(tx, refund, sub, null);
-      }
-      await tx.business_audit_log.create({ data: {
-        entity_type: 'club_subscription_refund', entity_id: String(id), action: 'refund_delete',
-        actor_user_id: user.sub, branch_id: refund.branch_id,
-        before_json: { status: refund.status, refundAmount: toNum(refund.refund_amount), refundDate: refund.refund_date, stopDate: refund.stop_date },
-        after_json: { status: 'cancelled', restoredEndDate: refund.original_end_date },
-        changed_fields: ['status', 'subscriptionEndDate'], reason: 'إلغاء مسترد اشتراك',
-      } });
-      return { success: true };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 15000 });
-  }
-
   async statistics(user?: JwtUser) {
-    const rows = await this.prisma.club_subscription_refunds.findMany({ where: await this.branchWhere(user) });
-    const completed = rows.filter((r) => r.status === 'completed');
-    const totalRefundAmount = completed.reduce((s, r) => s + toNum(r.refund_amount), 0);
+    const rows = await this.prisma.club_subscription_refunds.findMany({ where: this.branchWhere(user) });
+    const totalRefundAmount = rows.reduce((s, r) => s + toNum(r.refund_amount), 0);
     return {
-      totalRefunds: completed.length,
+      totalRefunds: rows.length,
       totalRefundAmount,
-      averageRefundAmount: completed.length ? totalRefundAmount / completed.length : 0,
+      averageRefundAmount: rows.length ? totalRefundAmount / rows.length : 0,
       pendingRefunds: rows.filter((r) => r.status === 'pending').length,
       completedRefunds: rows.filter((r) => r.status === 'completed').length,
       cancelledRefunds: rows.filter((r) => r.status === 'cancelled').length,

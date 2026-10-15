@@ -1,9 +1,7 @@
 import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
-import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import {
   ClubEventDisplaySettingsService,
   ClubEventLiveCheckinService,
@@ -16,6 +14,7 @@ import {
   ProgramSegmentListQuery,
   UpdateProgramSegmentDto,
 } from './dto/club-event-live.dto';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-events/:eventId/live')
@@ -27,10 +26,12 @@ export class ClubEventLiveController {
     private readonly liveCheckin: ClubEventLiveCheckinService,
   ) {}
 
-  @Public()
   @Get('display-settings')
-  getSettings(@Param('eventId', ParseIntPipe) eventId: number) {
-    return this.settings.get(eventId);
+  getSettings(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.settings.get(eventId, user);
   }
 
   @Put('display-settings')
@@ -38,30 +39,37 @@ export class ClubEventLiveController {
   updateSettings(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Body() body: Record<string, unknown>,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.settings.update(eventId, body, userId);
+    return this.settings.update(eventId, body, user.sub, user);
   }
 
-  @Public()
   @Get('program-segments')
-  listSegments(@Param('eventId', ParseIntPipe) eventId: number, @Query() q: ProgramSegmentListQuery) {
-    return this.segments.list(eventId, q);
+  listSegments(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @Query() q: ProgramSegmentListQuery,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.segments.list(eventId, q, user);
   }
 
   @Get('program-segments/:id')
-  getSegment(@Param('eventId', ParseIntPipe) eventId: number, @Param('id', ParseIntPipe) id: number) {
-    return this.segments.get(eventId, id);
+  getSegment(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.segments.get(eventId, id, user);
   }
 
   @Post('program-segments')
-  @RequiresPermission('club.events.list:update')
+  @RequiresPermission('club.events.list:create')
   createSegment(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Body() body: CreateProgramSegmentDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.segments.create(eventId, body, userId);
+    return this.segments.create(eventId, body, user.sub, user);
   }
 
   @Patch('program-segments/:id')
@@ -70,56 +78,47 @@ export class ClubEventLiveController {
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateProgramSegmentDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.segments.update(eventId, id, body, userId);
+    return this.segments.update(eventId, id, body, user.sub, user);
   }
 
   @Delete('program-segments/:id')
-  @RequiresPermission('club.events.list:update')
+  @RequiresPermission('club.events.list:delete')
   removeSegment(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('id', ParseIntPipe) id: number,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.segments.remove(eventId, id, userId);
+    return this.segments.remove(eventId, id, user.sub, user);
   }
 
-  @Public()
-  @UseGuards(ThrottlerGuard)
-  @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @Get('attendees/by-phone')
-  getByPhone(@Param('eventId', ParseIntPipe) eventId: number, @Query() q: GuestByPhoneQuery) {
-    return this.liveCheckin.getByPhone(eventId, q);
+  @RequiresPermission('club.events.checkin:view')
+  getByPhone(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @Query() q: GuestByPhoneQuery,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.liveCheckin.getByPhone(eventId, q, user);
   }
 
-  @Public()
-  @UseGuards(ThrottlerGuard)
-  @Throttle({ default: { limit: 120, ttl: 60_000 } })
   @Get('attendees/recent')
-  async recentAttendees(@Param('eventId', ParseIntPipe) eventId: number) {
-    const result = await this.liveCheckin.recentCheckins(eventId);
-    return {
-      ...result,
-      // The public display feed must not expose attendee phone numbers.
-      data: result.data.map(({ phone: _phone, ...attendee }) => attendee),
-    };
+  @RequiresPermission('club.events.checkin:view')
+  recentAttendees(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.liveCheckin.recentCheckins(eventId, 50, user);
   }
 
-  @Get('attendees/recent-private')
-  recentAttendeesPrivate(@Param('eventId', ParseIntPipe) eventId: number) {
-    return this.liveCheckin.recentCheckins(eventId);
-  }
-
-  @Public()
-  @UseGuards(ThrottlerGuard)
-  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('guest-checkin')
+  @RequiresPermission('club.events.checkin:create')
   guestCheckin(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Body() body: GuestLiveCheckinDto,
-    @CurrentUser('sub') userId?: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.liveCheckin.guestCheckin(eventId, body, userId);
+    return this.liveCheckin.guestCheckin(eventId, body, user);
   }
 }

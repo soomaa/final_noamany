@@ -17,6 +17,7 @@ import { CreateAgentDto, ListAgentsDto, UpdateAgentDto } from './dto/agents.dto'
 
 @UseGuards(JwtAuthGuard)
 @Controller('agents')
+@RequiresPermission('admin.agents:view')
 export class AgentsController {
   constructor(private readonly agents: AgentsService) {}
 
@@ -31,19 +32,19 @@ export class AgentsController {
   }
 
   @Post()
-  @RequiresPermission('admin.users:create')
+  @RequiresPermission('admin.agents:create')
   create(@Body() dto: CreateAgentDto) {
     return this.agents.create(dto);
   }
 
   @Patch(':id')
-  @RequiresPermission('admin.users:update')
+  @RequiresPermission('admin.agents:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateAgentDto) {
     return this.agents.update(id, dto);
   }
 
   @Delete(':id')
-  @RequiresPermission('admin.users:delete')
+  @RequiresPermission('admin.agents:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.agents.remove(id);
   }

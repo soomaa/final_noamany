@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { PageHeader } from '@/components/common/page-header';
 import { useLocale } from '@/store/locale';
+import { appUploadRoute } from '@/lib/app-upload-route';
 
 export function AppManagementShell({
   title,
@@ -27,12 +28,12 @@ export function AppManagementShell({
   );
 }
 
-export async function uploadAppImage(file: File): Promise<string> {
+export async function uploadAppImage(file: File, category = 'app'): Promise<string> {
   const form = new FormData();
   form.append('file', file);
   const { api } = await import('@/lib/api');
-  const { data } = await api.post<{ url: string; path: string }>('/uploads/app', form, {
+  const { data } = await api.post<{ url: string; path: string }>(appUploadRoute(category), form, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
-  return data.path;
+  return data.url ?? data.path;
 }

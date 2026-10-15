@@ -33,10 +33,6 @@ export class ListClubSubscriptionsDto extends PaginationDto {
 
   @IsOptional()
   @IsString()
-  isLinkedToSessions?: string;
-
-  @IsOptional()
-  @IsString()
   memberId?: string;
 
   @IsOptional()
@@ -68,13 +64,4 @@ export class ListClubSubscriptionsDto extends PaginationDto {
   @IsOptional()
   @IsString()
   expiresWithinDays?: string;
-
-  /** Filter by registration_date range (YYYY-MM-DD). */
-  @IsOptional()
-  @IsString()
-  registrationDateFrom?: string;
-
-  @IsOptional()
-  @IsString()
-  registrationDateTo?: string;
 }

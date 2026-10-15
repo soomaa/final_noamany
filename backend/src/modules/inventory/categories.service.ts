@@ -171,6 +171,7 @@ export class CategoriesService {
             children: true,
             products: true,
             cafe_products: true,
+            cafe_product_assignments: true,
           },
         },
       },
@@ -179,7 +180,7 @@ export class CategoriesService {
     if (existing.is_active && !existing.is_deleted) {
       throw new BadRequestException('عطّل الفئة وانقلها إلى الأرشيف قبل الحذف النهائي');
     }
-    if (existing._count.children || existing._count.products || existing._count.cafe_products) {
+    if (existing._count.children || existing._count.products || existing._count.cafe_products || existing._count.cafe_product_assignments) {
       throw new BadRequestException('لا يمكن حذف الفئة نهائيًا لأنها مستخدمة. اتركها في الأرشيف.');
     }
     await this.prisma.inv_categories.delete({ where: { id } });

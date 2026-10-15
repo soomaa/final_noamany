@@ -45,9 +45,16 @@ export class AccountsController {
     return this.service.seedDefaults();
   }
 
+  @Post('seed-full-chart')
+  @RequiresPermission('accounting.accounts:create')
+  seedFullChart() {
+    return this.service.seedFullGymTree();
+  }
+
+  /** Kept so frontends shipped before the rename keep working. */
   @Post('seed-full-gym')
   @RequiresPermission('accounting.accounts:create')
-  seedFullGym() {
+  seedFullChartLegacy() {
     return this.service.seedFullGymTree();
   }
 
@@ -110,19 +117,19 @@ export class AccountingPeriodsController {
   }
 
   @Post()
-  @RequiresPermission('accounting.settings:update')
+  @RequiresPermission('accounting.settings:create')
   createPeriod(@Body() body: CreateAccountingPeriodDto) {
     return this.service.createPeriod(body);
   }
 
   @Post(':id/close')
-  @RequiresPermission('accounting.settings:update')
+  @RequiresPermission('accounting.settings:execute')
   closePeriod(@Param('id', ParseIntPipe) id: number, @CurrentUser('sub') userId: number) {
     return this.service.closePeriod(id, userId);
   }
 
   @Post(':id/reopen')
-  @RequiresPermission('accounting.settings:update')
+  @RequiresPermission('accounting.settings:execute')
   reopenPeriod(@Param('id', ParseIntPipe) id: number) {
     return this.service.reopenPeriod(id);
   }

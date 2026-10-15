@@ -10,7 +10,6 @@ import { PermissionEngineService } from '../engine/permission-engine.service';
 import { effectiveForRole, StoredCell, unionRoles } from '../engine/permission-resolver';
 import { RbacAuditService } from './audit.service';
 import { AssignRolesDto, SaveMatrixDto } from './dto/role.dto';
-import { AssignOperationalScopeDto, SetSectionExceptionDto } from './dto/operational-scope.dto';
 
 @Injectable()
 export class RbacUsersService {
@@ -82,74 +81,41 @@ export class RbacUsersService {
   }
 
   async setUserRoles(userId: number, dto: AssignRolesDto, actorUserId: number) {
+    if (userId === actorUserId) {
+      throw new ForbiddenException('لا يمكنك تعديل الأدوار المسندة إلى حسابك بنفسك');
+    }
     await this.getUserOrThrow(userId);
     const wanted = [...new Set(dto.roleIds)];
     const valid = await this.prisma.rbac_roles.findMany({
       where: { id: { in: wanted } },
-      select: { id: true },
+      select: { id: true, is_super_admin: true },
     });
+    if (valid.length !== wanted.length) throw new BadRequestException('يوجد دور غير صالح في الطلب');
     const validIds = new Set(valid.map((v) => v.id));
     const filtered = wanted.filter((id) => validIds.has(id));
+    const editor = await this.engine.getEffectiveFresh(actorUserId);
+    const currentSuperAdmin = await this.prisma.rbac_user_roles.count({
+      where: { user_id: userId, role: { is_super_admin: true } },
+    });
+    if (!editor.superAdmin && (valid.some((role) => role.is_super_admin) || currentSuperAdmin > 0)) {
+      throw new ForbiddenException('إسناد أو سحب دور المدير العام متاح للمدير العام فقط');
+    }
+    // `admin.roles:manage` (enforced by the controller) may assign any ordinary
+    // role. The super-admin role remains protected separately above.
 
-    await this.prisma.$transaction([
-      this.prisma.rbac_user_roles.deleteMany({ where: { user_id: userId, role_id: { notIn: filtered.length ? filtered : [-1] } } }),
-      ...filtered.map((role_id) =>
-        this.prisma.rbac_user_roles.upsert({
+    await this.prisma.$transaction(async (tx) => {
+      await tx.rbac_user_roles.deleteMany({ where: { user_id: userId, role_id: { notIn: filtered.length ? filtered : [-1] } } });
+      for (const role_id of filtered) {
+        await tx.rbac_user_roles.upsert({
           where: { user_id_role_id: { user_id: userId, role_id } },
           update: {},
           create: { user_id: userId, role_id, created_by: actorUserId },
-        }),
-      ),
-    ]);
-
-    await this.audit.log({ actorUserId, action: 'role.assign', targetType: 'user', targetId: userId, detail: { roleIds: filtered } });
+        });
+      }
+      await this.audit.log({ actorUserId, action: 'role.assign', targetType: 'user', targetId: userId, detail: { roleIds: filtered } }, tx);
+    });
     this.engine.invalidateUser(userId);
     return { userId, roleIds: filtered };
-  }
-
-  async getOperationalScope(userId: number) {
-    await this.getUserOrThrow(userId);
-    const store = this.prisma as any;
-    const [assignments, exceptions] = await Promise.all([
-      store.rbac_user_operational_scopes.findMany({ where: { user_id: userId } }),
-      store.rbac_user_section_exceptions.findMany({ where: { user_id: userId }, orderBy: { id: 'desc' } }),
-    ]);
-    return { assignments, exceptions };
-  }
-
-  async setOperationalScope(userId: number, dto: AssignOperationalScopeDto, actorUserId: number) {
-    await this.getUserOrThrow(userId);
-    const store = this.prisma as any;
-    await store.rbac_user_operational_scopes.upsert({
-      where: { user_id_branch_id_section: { user_id: userId, branch_id: dto.branchId, section: dto.section } },
-      update: { created_by: actorUserId },
-      create: { user_id: userId, branch_id: dto.branchId, section: dto.section, created_by: actorUserId },
-    });
-    await this.audit.log({ actorUserId, action: 'scope.assign', targetType: 'user', targetId: userId, detail: dto });
-    this.engine.invalidateUser(userId);
-    return this.getOperationalScope(userId);
-  }
-
-  async setSectionException(userId: number, dto: SetSectionExceptionDto, actorUserId: number) {
-    await this.getUserOrThrow(userId);
-    const store = this.prisma as any;
-    await store.rbac_user_section_exceptions.upsert({
-      where: { user_id_branch_id_section: { user_id: userId, branch_id: dto.branchId, section: dto.section } },
-      update: { reason: dto.reason, expires_at: dto.expiresAt ? new Date(dto.expiresAt) : null, created_by: actorUserId },
-      create: { user_id: userId, branch_id: dto.branchId, section: dto.section, reason: dto.reason, expires_at: dto.expiresAt ? new Date(dto.expiresAt) : null, created_by: actorUserId },
-    });
-    await this.audit.log({ actorUserId, action: 'scope.exception.update', targetType: 'user', targetId: userId, detail: dto });
-    this.engine.invalidateUser(userId);
-    return this.getOperationalScope(userId);
-  }
-
-  async clearSectionException(userId: number, branchId: number, section: 'female' | 'male', actorUserId: number) {
-    await this.getUserOrThrow(userId);
-    const store = this.prisma as any;
-    await store.rbac_user_section_exceptions.deleteMany({ where: { user_id: userId, branch_id: branchId, section } });
-    await this.audit.log({ actorUserId, action: 'scope.exception.clear', targetType: 'user', targetId: userId, detail: { branchId, section } });
-    this.engine.invalidateUser(userId);
-    return this.getOperationalScope(userId);
   }
 
   // ---- exceptions ---------------------------------------------------------------------
@@ -208,6 +174,9 @@ export class RbacUsersService {
   }
 
   async setExceptions(userId: number, dto: SaveMatrixDto, actorUserId: number) {
+    if (userId === actorUserId) {
+      throw new ForbiddenException('لا يمكنك تعديل استثناءات صلاحيات حسابك بنفسك');
+    }
     await this.getUserOrThrow(userId);
 
     for (const c of dto.changes) {
@@ -216,45 +185,41 @@ export class RbacUsersService {
       }
     }
 
-    // Anti-escalation: an admin cannot ALLOW (via exception) a permission they don't hold.
-    const editor = await this.engine.getEffective(actorUserId);
-    if (!editor.superAdmin) {
-      const escalations = dto.changes
-        .filter((c) => c.state === 'allow')
-        .map((c) => permKey(c.resourceKey, c.actionKey))
-        .filter((k) => !editor.keys.has(k));
-      if (escalations.length) {
-        throw new ForbiddenException(
-          `لا يمكنك منح صلاحيات لا تملكها: ${escalations.slice(0, 5).join(', ')}${escalations.length > 5 ? ' …' : ''}`,
-        );
-      }
-    }
+    // `admin.exceptions:manage` is the delegation authority for this matrix
+    // (enforced by the controller), so the editor may grant any catalog permission.
 
     const maps = await this.engine.getCatalogMaps();
-    const ops = dto.changes.map((c) => {
-      const resource_id = maps.resourceKeyToId.get(c.resourceKey)!;
-      const action_id = maps.actionKeyToId.get(c.actionKey)!;
-      if (c.state === 'inherit') {
-        return this.prisma.rbac_user_exceptions.deleteMany({ where: { user_id: userId, resource_id, action_id } });
+    await this.prisma.$transaction(async (tx) => {
+      for (const c of dto.changes) {
+        const resource_id = maps.resourceKeyToId.get(c.resourceKey)!;
+        const action_id = maps.actionKeyToId.get(c.actionKey)!;
+        if (c.state === 'inherit') {
+          await tx.rbac_user_exceptions.deleteMany({ where: { user_id: userId, resource_id, action_id } });
+        } else {
+          await tx.rbac_user_exceptions.upsert({
+            where: { user_id_resource_id_action_id: { user_id: userId, resource_id, action_id } },
+            update: { effect: c.state, created_by: actorUserId },
+            create: { user_id: userId, resource_id, action_id, effect: c.state, created_by: actorUserId },
+          });
+        }
       }
-      return this.prisma.rbac_user_exceptions.upsert({
-        where: { user_id_resource_id_action_id: { user_id: userId, resource_id, action_id } },
-        update: { effect: c.state, created_by: actorUserId },
-        create: { user_id: userId, resource_id, action_id, effect: c.state, created_by: actorUserId },
-      });
+      await this.audit.log({ actorUserId, action: 'exception.update', targetType: 'user', targetId: userId, detail: { changes: dto.changes.length } }, tx);
     });
-    await this.prisma.$transaction(ops);
-
-    await this.audit.log({ actorUserId, action: 'exception.update', targetType: 'user', targetId: userId, detail: { changes: dto.changes.length } });
     this.engine.invalidateUser(userId);
     return this.getExceptions(userId);
   }
 
   /** Reset every exception cell to inherit. */
   async clearExceptions(userId: number, actorUserId: number) {
+    if (userId === actorUserId) {
+      throw new ForbiddenException('لا يمكنك مسح استثناءات صلاحيات حسابك بنفسك');
+    }
     await this.getUserOrThrow(userId);
-    await this.prisma.rbac_user_exceptions.deleteMany({ where: { user_id: userId } });
-    await this.audit.log({ actorUserId, action: 'exception.clear', targetType: 'user', targetId: userId });
+    // Clearing exceptions is also governed solely by `admin.exceptions:manage`.
+    await this.prisma.$transaction(async (tx) => {
+      await tx.rbac_user_exceptions.deleteMany({ where: { user_id: userId } });
+      await this.audit.log({ actorUserId, action: 'exception.clear', targetType: 'user', targetId: userId }, tx);
+    });
     this.engine.invalidateUser(userId);
     return this.getExceptions(userId);
   }
@@ -325,4 +290,5 @@ export class RbacUsersService {
       }))
       .filter((c) => c.resourceKey && c.actionKey);
   }
+
 }

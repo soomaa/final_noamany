@@ -176,6 +176,7 @@ function RequisitionsTab() {
       </div>
       <FilterBar fields={filters} searchPlaceholder={uiStatic('بحث في طلبات الشراء…')} />
       <DataTable
+        exportSource={{ resource: 'requisitions', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -386,6 +387,7 @@ function RfqsTab() {
         </Button>
       </div>
       <DataTable
+        exportSource={{ resource: 'rfqs', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -573,6 +575,7 @@ function QuotationsTab() {
         </Button>
       </div>
       <DataTable
+        exportSource={{ resource: 'quotations', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -717,6 +720,7 @@ function ApprovalsTab() {
 
   return (
     <DataTable
+      exportSource={{ resource: 'approvals', params }}
       columns={columns}
       data={data?.data ?? []}
       total={data?.total ?? 0}

@@ -18,7 +18,7 @@ import {
 import { isNotImplemented, usePaginatedList } from '@/lib/api-hooks';
 import { getRequestTypes } from '@/lib/i18n-constants';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 interface RequestRow {
@@ -150,6 +150,7 @@ export function RequestsPage() {
         ]}
       />
       <DataTable
+        exportSource={{ resource: 'requests', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}

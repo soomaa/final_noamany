@@ -4,6 +4,7 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ListQueryDto } from '../../common/dto/list-query.dto';
 import { FormsSettingsService } from './forms-settings.service';
+import { CreateFormSettingDto, UpdateFormSettingDto } from './dto/form-setting.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('settings/forms')
@@ -17,19 +18,19 @@ export class FormsSettingsController {
   }
 
   @Post()
-  @RequiresPermission('admin.forms:update')
-  create(@Body() body: { title: string; type: number; typeName?: string; maxDegree?: string; inOrder?: number }) {
+  @RequiresPermission('admin.forms:create')
+  create(@Body() body: CreateFormSettingDto) {
     return this.service.create(body);
   }
 
   @Patch(':id')
   @RequiresPermission('admin.forms:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: { title?: string; maxDegree?: string; inOrder?: number }) {
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateFormSettingDto) {
     return this.service.update(id, body);
   }
 
   @Delete(':id')
-  @RequiresPermission('admin.forms:update')
+  @RequiresPermission('admin.forms:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

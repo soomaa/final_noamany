@@ -3,6 +3,7 @@ import { api } from '@/lib/api';
 
 export interface ShiftSessionCurrent {
   id: number;
+  sessionDate: string;
   shiftId: number;
   branchId: number | null;
   status: string;

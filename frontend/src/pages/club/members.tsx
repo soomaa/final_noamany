@@ -1,7 +1,11 @@
+import { EntrySoundSettings } from '@/components/club/entry-sound-settings';
+import { prepareEntrySound, playEntrySound } from '@/lib/entry-sounds';
+import { isEntryRejection } from '@/lib/entry-sound-player';
+import { memberAvatarUrl } from '@/lib/member-photo';
 import type { ColumnDef } from '@tanstack/react-table';
-import { AlertTriangle, Archive, Building2, CalendarCheck, CalendarPlus, CalendarX, Copy, ExternalLink, Eye, FileText, Loader2, LockKeyhole, LogIn, LogOut, MoreHorizontal, Paperclip, Pencil, Phone, Plus, RefreshCw, Smartphone, Trash2, Undo2, User, UserCheck, UserMinus, UserX, Users, Wallet, X } from 'lucide-react';
+import { AlertTriangle, Archive, ArrowDown, ArrowUp, ArrowUpDown, Briefcase, Building2, Copy, Eye, Loader2, LockKeyhole, LogIn, LogOut, MoreHorizontal, Pencil, Phone, Plus, RefreshCw, Smartphone, Trash2, Undo2, User, UserCheck, UserX, Wallet, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
@@ -9,6 +13,7 @@ import { FilterBar, type FilterField } from '@/components/common/filter-bar';
 import { PageHeader } from '@/components/common/page-header';
 import { StatusBadge } from '@/components/common/status-badge';
 import { ErrorState } from '@/components/common/states';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { ClubStatCard } from '@/components/club/stat-card';
 import {
   AttendanceSummaryCards,
@@ -19,6 +24,7 @@ import {
   useFirstVisitGuide,
 } from '@/components/club/member-onboarding-guide';
 import { MemberCell } from '@/components/club/member-cell';
+import { MemberProfileSheet, type MemberProfileSubject } from '@/components/club/member-profile-sheet';
 import { DialogFormGrid, DialogFormSection, DialogFormToggle, FormDialogBody, FormDialogFooter, FormDialogHeader, FORM_DIALOG_CONTENT_CLASS } from '@/components/common/dialog-form-layout';
 import { FieldWrapper } from '@/components/common/form-fields';
 import { UploadField } from '@/components/employees/upload-fields';
@@ -43,18 +49,19 @@ import { useBranches } from '@/hooks/use-branches';
 import { useClubT } from '@/hooks/use-club-t';
 import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
-import { buildMemberDocumentFormData } from '@/lib/member-document-model';
-import { formatDateTime, formatMoney, formatTimeFromDate, localToday } from '@/lib/formatters';
+import { formatDate, formatDateTime, formatMoney, formatTimeFromDate, localToday } from '@/lib/formatters';
 import {
   useArrayResource,
   usePaginatedList,
 } from '@/lib/api-hooks';
 import { confirm, afterMenuClose } from '@/lib/confirm';
-import { listQueryToApiParams, useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { useListQuery } from '@/lib/use-list-query';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
 import type { ClubMembersView } from '@/lib/club-routes';
+import { uiStatic } from '@/lib/ui-static';
+import { normalizeReceptionScanCode } from '@/lib/reception-scan';
 import type {
   ClubMemberCreateResponse,
   ClubMemberFormData,
@@ -65,68 +72,13 @@ import type {
 
 const selectCls = 'flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm';
 
-function subDays(dateStr: string, n: number): string {
-  const d = new Date(`${dateStr}T00:00:00`);
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
-}
-
-function DatePresetButtons() {
-  const [sp, setSp] = useSearchParams();
-  const today = localToday();
-  const presets: { label: string; from: string }[] = [
-    { label: 'يوم', from: today },
-    { label: '7 أيام', from: subDays(today, 7) },
-    { label: 'شهر', from: subDays(today, 30) },
-    { label: 'سنة', from: subDays(today, 365) },
-  ];
-  const isActive = (from: string) => sp.get('createdFrom') === from && sp.get('createdTo') === today;
-  const setPreset = (from: string) => {
-    const next = new URLSearchParams(sp);
-    next.set('createdFrom', from);
-    next.set('createdTo', today);
-    next.set('page', '1');
-    setSp(next, { replace: true });
-  };
-  return (
-    <div className="flex flex-wrap gap-1">
-      {presets.map((p) => (
-        <Button
-          key={p.label}
-          variant={isActive(p.from) ? 'brand' : 'outline'}
-          size="sm"
-          className="h-9 px-3 text-xs"
-          onClick={() => setPreset(p.from)}
-        >
-          {p.label}
-        </Button>
-      ))}
-    </div>
-  );
-}
-const MEMBER_PHONE_FORMAT_ERROR = 'رقم الموبايل غير صحيح — يجب أن يكون 11 رقمًا';
-
-type MemberDocument = {
-  id: number;
-  type: string;
-  label: string | null;
-  originalFilename: string;
-  mimeType: string;
-  byteSize: number;
-  uploadedAt: string;
-  downloadUrl: string;
-};
-
-function normalizeMemberPhone(phone: string) {
-  return phone.trim().replace(/[\s\-()+]/g, '');
-}
-
 const EMPTY_FORM: ClubMemberFormData = {
   branchId: 0,
   name: '',
   phone: '',
   gender: 'male',
   cardNumber: '',
+  scannerCode: '',
   email: '',
   dateOfBirth: '',
   address: '',
@@ -135,7 +87,10 @@ const EMPTY_FORM: ClubMemberFormData = {
   profilePicture: '',
   notes: '',
   isActive: true,
+  salesId: undefined,
   employeeId: undefined,
+  guardianName: '',
+  guardianPhone: '',
   autoCreateUser: true,
 };
 
@@ -149,7 +104,7 @@ function resolveBranchName(
   const name = branches?.find((b) => b.id === branchId)?.name?.trim();
   if (name) return name;
   if (userBranchName?.trim() && userBranchId === branchId) return userBranchName.trim();
-  return branches === undefined ? '…' : `فرع رقم ${toArabicDigits(branchId)}`;
+  return branches === undefined ? '…' : `${uiStatic('فرع رقم ')}${formatDigits(branchId)}`;
 }
 
 function blockedMemberDetails(notes: string | null | undefined) {
@@ -165,7 +120,6 @@ function blockedMemberDetails(notes: string | null | undefined) {
 
 interface AttendanceRow {
   id: number;
-  attendanceType?: 'normal' | 'class' | 'spa' | 'inbody';
   memberName: string;
   memberCode: string;
   attendanceDate: string;
@@ -176,7 +130,6 @@ interface AttendanceRow {
 }
 
 interface DailyAttendanceRow {
-  attendanceType?: string;
   date: string;
   memberId: number;
   memberName: string;
@@ -186,6 +139,27 @@ interface DailyAttendanceRow {
   firstCheckIn: string | null;
   lastCheckOut: string | null;
   branchId: number;
+}
+
+interface SubscriptionUtilizationRow {
+  subscriptionId: number;
+  subscriptionNumber: string;
+  subscriptionType: string | null;
+  status: 'active' | 'expired' | 'upcoming' | 'frozen';
+  startDate: string;
+  endDate: string;
+  totalDays: number;
+  remainingDays: number;
+  isLinkedToSessions: boolean;
+  sessionsCount: number | null;
+  sessionsUsed: number;
+  sessionsRemaining: number | null;
+  attendanceDays: number;
+  attendanceEntries: number;
+  attendanceRate: number;
+  lastAttendanceDate: string | null;
+  branchId: number;
+  member: MemberProfileSubject;
 }
 
 interface MemberDeletionRefundPreview {
@@ -258,12 +232,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   const ct = useClubT();
   const { ui } = useLocale();
   const { can } = usePermission();
-  const canViewMembers = can('club.members:view') || can('club.reception:view');
   const canCreateMembers = can('club.members:create');
   const canUpdateMembers = can('club.members:update');
   const canDeleteMembers = can('club.members:delete');
-  const canCreateSubscriptions = can('club.subscriptions:create');
-  const canCreateLockerSubscriptions = can('club.lockers:create');
   const { user } = useAuth();
   const isSystemAdmin = user?.level === 1;
   const memberOnboarding = useFirstVisitGuide('members', user?.sub);
@@ -293,15 +264,28 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   );
   const { data: branches } = useBranches();
   const { data: membershipTypes } = useArrayResource<ClubMembershipType>('club-membership-types');
+  const { data: salesReps } = useQuery({
+    queryKey: ['employees', 'sales-reps'],
+    queryFn: async () => {
+      const { data } = await api.get<Array<{ id: number; name: string | null; empCode: number | null; branchIds: number[] }>>('/employees/sales-reps');
+      return data;
+    },
+  });
+  const salesRepOptions = useMemo(
+    () => (salesReps ?? []).map((e) => ({ value: String(e.id), label: e.name ?? `#${e.id}`, branchIds: e.branchIds })),
+    [salesReps],
+  );
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const { id: memberIdParam } = useParams();
-  const [searchParams] = useSearchParams();
   const attParams = useListQuery({ pageSize: 20 });
+  const [attView, setAttView] = useState<'all' | 'daily' | 'utilization'>('all');
   const [attendanceStartDate, setAttendanceStartDate] = useState(() => localToday());
   const [attendanceEndDate, setAttendanceEndDate] = useState(() => localToday());
   const [attendanceBranch, setAttendanceBranch] = useState('');
-  const [attendanceStatus, setAttendanceStatus] = useState<'all' | 'checked_in' | 'checked_out'>('all');
+  const [attendanceStatus, setAttendanceStatus] = useState<'all' | 'checked_in' | 'checked_out' | 'auto_closed'>('all');
+  const [subscriptionStatus, setSubscriptionStatus] = useState<'active' | 'expired' | 'upcoming' | 'frozen' | 'all'>('active');
+  const [rateBucketFilter, setRateBucketFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all');
+  const [rateSortOrder, setRateSortOrder] = useState<'none' | 'asc' | 'desc'>('none');
   const effectiveAttendanceBranch = isSystemAdmin
     ? attendanceBranch
     : user?.branch
@@ -326,7 +310,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     isError: attError,
     refetch: refetchAttendance,
   } = usePaginatedList<AttendanceRow>('club-attendance', attendanceListParams);
-  const [attView, setAttView] = useState<'all' | 'daily'>('all');
   const dailyParams = useListQuery({ pageSize: 20 });
   const dailyAttendanceListParams = useMemo(
     () => ({
@@ -350,6 +333,30 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     'club-attendance/daily-summary',
     dailyAttendanceListParams,
     attView === 'daily',
+  );
+  const utilizationListParams = useMemo(
+    () => ({
+      ...attParams.params,
+      sort: rateSortOrder === 'none' ? undefined : 'attendanceRate',
+      order: rateSortOrder === 'none' ? undefined : rateSortOrder,
+      filters: {
+        ...attParams.params.filters,
+        branch: effectiveAttendanceBranch,
+        status: subscriptionStatus,
+        rateBucket: rateBucketFilter === 'all' ? '' : rateBucketFilter,
+      },
+    }),
+    [attParams.params, effectiveAttendanceBranch, subscriptionStatus, rateBucketFilter, rateSortOrder],
+  );
+  const {
+    data: subscriptionUtilization,
+    isLoading: utilizationLoading,
+    isError: utilizationError,
+    refetch: refetchUtilization,
+  } = usePaginatedList<SubscriptionUtilizationRow>(
+    'club-attendance/subscription-utilization',
+    utilizationListParams,
+    attView === 'utilization',
   );
   const [financialCode, setFinancialCode] = useState('');
   const { data: financial, refetch: refetchFinancial, isFetching: financialLoading } = useQuery({
@@ -380,10 +387,10 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     },
     enabled: false,
   });
-  const { data: stats, isLoading: statsLoading } = useQuery({
-    queryKey: ['club-members', 'statistics', memberListParams],
+  const { data: stats } = useQuery({
+    queryKey: ['club-members', 'statistics'],
     queryFn: async () => {
-      const { data: s } = await api.get<ClubMemberStatistics>('/club-members/statistics', { params: listQueryToApiParams(memberListParams) });
+      const { data: s } = await api.get<ClubMemberStatistics>('/club-members/statistics');
       return s;
     },
   });
@@ -397,21 +404,17 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   );
 
   const branchOptions = (branches ?? []).map((b) => ({ value: String(b.id), label: b.name ?? '—' }));
-  // Tanta Up/Down are subscription locations, not standalone member records.
-  const memberRegistrationBranchOptions = branchOptions.filter((branch) => !['5', '6'].includes(branch.value));
 
   const filters: FilterField[] = [
     { key: 'branch', label: ct('common.branch'), type: 'select', options: branchOptions },
     { key: 'gender', label: ct('members.gender'), type: 'select', options: genderOptions },
-    { key: 'createdFrom', label: ui('من تاريخ'), type: 'date' },
-    { key: 'createdTo', label: ui('إلى تاريخ'), type: 'date' },
   ];
 
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [photoUploading, setPhotoUploading] = useState(false);
+  const photoUploadInFlight = useRef(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState<ClubMemberFormData>(EMPTY_FORM);
-  const [phoneValidationError, setPhoneValidationError] = useState<string | null>(null);
-  const [checkingPhone, setCheckingPhone] = useState(false);
 
   const formBranchName = useMemo(
     () => resolveBranchName(branches, form.branchId, user?.branch, user?.branch_name),
@@ -422,37 +425,37 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   const [generatedCredentials, setGeneratedCredentials] = useState<{ username: string; password: string } | null>(null);
   const [undoMemberId, setUndoMemberId] = useState<number | null>(null);
   const [editMemberCode, setEditMemberCode] = useState('');
-  const [membershipDocuments, setMembershipDocuments] = useState<MemberDocument[]>([]);
-  const [documentType, setDocumentType] = useState('other');
-  const [memberDocumentUploading, setMemberDocumentUploading] = useState(false);
   const [previewMemberCode, setPreviewMemberCode] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<ClubMemberListItem | null>(null);
+  const [profileMember, setProfileMember] = useState<MemberProfileSubject | undefined>();
   const [deletePreview, setDeletePreview] = useState<MemberDeletionPreview | null>(null);
   const [deleteStopDate, setDeleteStopDate] = useState(localToday());
   const [deletePreviewLoading, setDeletePreviewLoading] = useState(false);
   const [deletingMember, setDeletingMember] = useState(false);
   const [refundingSubscriptionId, setRefundingSubscriptionId] = useState<number | 'all' | null>(null);
 
+  const [checkInCode, setCheckInCode] = useState('');
+  const [checkInLoading, setCheckInLoading] = useState(false);
+  const checkInRef = useRef<HTMLInputElement>(null);
   const didAutoOpenCreate = useRef(false);
   const saveMemberInFlight = useRef(false);
-  const openedDocumentMember = useRef<string | null>(null);
+  // Identity values as loaded for edit: untouched legacy values are not re-sent (and re-validated),
+  // and an inactive gate credential is not wiped by saving an empty scanner field.
+  const editOriginal = useRef<{ cardNumber: string; scannerCode: string; profilePicture: string } | null>(null);
 
   const openCreate = () => {
     if (!canCreateMembers) return;
-    const branchId = !isSystemAdmin && user?.branch && user.branch > 0
-      ? ([5, 6].includes(user.branch) ? 2 : user.branch)
-      : 0;
+    const branchId = user?.branch && user.branch > 0 ? user.branch : (branches?.[0]?.id ?? 0);
     setEditId(null);
+    editOriginal.current = null;
     setForm({
       ...EMPTY_FORM,
       branchId,
       employeeId: user?.emp_code ?? undefined,
     });
     setGeneratedCredentials(null);
-    setPhoneValidationError(null);
     setUndoMemberId(null);
     setEditMemberCode('');
-    setMembershipDocuments([]);
     setPreviewMemberCode('');
     setDialogOpen(true);
   };
@@ -464,95 +467,35 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   }, [openCreateOnMount, canCreateMembers]);
 
   useEffect(() => {
-    if (!dialogOpen || editId || isSystemAdmin) return;
-    const branchId = user?.branch && user.branch > 0
-      ? ([5, 6].includes(user.branch) ? 2 : user.branch)
-      : 0;
+    if (!dialogOpen || editId) return;
+    const branchId = user?.branch && user.branch > 0 ? user.branch : (branches?.[0]?.id ?? 0);
     if (branchId > 0 && form.branchId !== branchId) {
       setForm((f) => ({ ...f, branchId }));
     }
-  }, [dialogOpen, editId, isSystemAdmin, user?.branch, form.branchId]);
+  }, [dialogOpen, editId, user?.branch, branches, form.branchId]);
 
   useEffect(() => {
-    if (!dialogOpen || editId) return;
-    if (!form.branchId) {
-      setPreviewMemberCode('');
-      return;
-    }
-    let cancelled = false;
+    if (!dialogOpen || editId || !form.branchId) return;
     void api
       .get<{ memberCode: string }>('/club-members/next-code', { params: { branchId: form.branchId } })
-      .then(({ data }) => {
-        if (!cancelled) setPreviewMemberCode(data.memberCode);
-      })
+      .then(({ data }) => setPreviewMemberCode(data.memberCode))
       .catch(() => {
-        if (cancelled) return;
         setPreviewMemberCode('');
         toast.error(ct('members.codePreviewFailed'));
       });
-    return () => {
-      cancelled = true;
-    };
   }, [dialogOpen, editId, form.branchId, ct]);
-
-  useEffect(() => {
-    if (!dialogOpen) {
-      setPhoneValidationError(null);
-      setCheckingPhone(false);
-      return;
-    }
-
-    const phone = normalizeMemberPhone(form.phone);
-    if (!phone) {
-      setPhoneValidationError(null);
-      setCheckingPhone(false);
-      return;
-    }
-    if (!/^\d{11}$/.test(phone)) {
-      setPhoneValidationError(MEMBER_PHONE_FORMAT_ERROR);
-      setCheckingPhone(false);
-      return;
-    }
-    if (!form.branchId) return;
-
-    let cancelled = false;
-    setCheckingPhone(true);
-    const checkTimer = window.setTimeout(() => {
-      void api
-        .get<{ hasDuplicates: boolean; duplicates: Array<{ field: string }> }>('/club-members/check-duplicate', {
-          params: { phone, branchId: form.branchId, excludeMemberId: editId ?? undefined },
-        })
-        .then(({ data }) => {
-          if (cancelled) return;
-          setPhoneValidationError(
-            data.hasDuplicates && data.duplicates.some((duplicate) => duplicate.field === 'phone')
-              ? 'الرقم مسجل من قبل'
-              : null,
-          );
-        })
-        .catch(() => {
-          if (!cancelled) setPhoneValidationError(null);
-        })
-        .finally(() => {
-          if (!cancelled) setCheckingPhone(false);
-        });
-    }, 500);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(checkTimer);
-    };
-  }, [dialogOpen, editId, form.branchId, form.phone]);
 
   const openEdit = (row: ClubMemberListItem) => {
     if (!canUpdateMembers) return;
     setEditId(row.id);
+    editOriginal.current = { cardNumber: row.cardNumber ?? '', scannerCode: row.scannerCode ?? '', profilePicture: row.profilePicture ?? '' };
     setForm({
       branchId: row.branchId,
       name: row.name,
       phone: row.phone ?? '',
       gender: row.gender,
       cardNumber: row.cardNumber ?? '',
+      scannerCode: row.scannerCode ?? '',
       email: row.email ?? '',
       dateOfBirth: row.dateOfBirth ?? '',
       address: row.address ?? '',
@@ -561,77 +504,20 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       profilePicture: row.profilePicture ?? '',
       notes: row.notes ?? '',
       isActive: row.isActive,
+      salesId: row.salesId ?? undefined,
       employeeId: row.employeeId ?? undefined,
+      guardianName: row.guardianName ?? '',
+      guardianPhone: row.guardianPhone ?? '',
       autoCreateUser: false,
     });
     setGeneratedCredentials(null);
-    setPhoneValidationError(null);
     setUndoMemberId(null);
     setEditMemberCode(row.memberCode);
-    setMembershipDocuments([]);
     setDialogOpen(true);
   };
 
-  useEffect(() => {
-    if (searchParams.get('tab') !== 'documents' || !memberIdParam || !canUpdateMembers || openedDocumentMember.current === memberIdParam) return;
-    const memberId = Number(memberIdParam);
-    if (!Number.isInteger(memberId) || memberId < 1) return;
-    openedDocumentMember.current = memberIdParam;
-    void api.get<ClubMemberListItem>(`/club-members/${memberId}`).then(({ data: member }) => openEdit(member)).catch(() => toast.error('تعذر فتح مستندات العضو'));
-  }, [memberIdParam, searchParams, canUpdateMembers]);
-
-  useEffect(() => {
-    if (!dialogOpen || !editId) return;
-    let cancelled = false;
-    void api.get<MemberDocument[]>(`/club-members/${editId}/membership-documents`)
-      .then(({ data: documents }) => { if (!cancelled) setMembershipDocuments(documents); })
-      .catch(() => { if (!cancelled) setMembershipDocuments([]); });
-    return () => { cancelled = true; };
-  }, [dialogOpen, editId]);
-
-  const addMemberDocument = async (file: File | null) => {
-    if (!editId || !file) return;
-    setMemberDocumentUploading(true);
-    try {
-      const body = buildMemberDocumentFormData(file, documentType, file.name);
-      const { data } = await api.post<MemberDocument>(`/club-members/${editId}/membership-documents`, body);
-      setMembershipDocuments((current) => [data, ...current]);
-      toast.success('تمت إضافة المستند إلى ملف العضو');
-    } catch (error) {
-      toast.error(apiError(error, 'تعذر حفظ المستند'));
-    } finally {
-      setMemberDocumentUploading(false);
-    }
-  };
-
-  const openMemberDocument = async (document: MemberDocument) => {
-    try {
-      const { data } = await api.get<Blob>(document.downloadUrl, { responseType: 'blob' });
-      const objectUrl = URL.createObjectURL(data);
-      const link = window.document.createElement('a');
-      link.href = objectUrl;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
-    } catch (error) {
-      toast.error(apiError(error, 'تعذر فتح المستند'));
-    }
-  };
-
-  const removeMemberDocument = async (documentId: number) => {
-    if (!editId) return;
-    try {
-      await api.delete(`/club-members/${editId}/membership-documents/${documentId}`);
-      setMembershipDocuments((current) => current.filter((document) => document.id !== documentId));
-      toast.success('تم حذف المستند من ملف العضو');
-    } catch (error) {
-      toast.error(apiError(error, 'تعذر حذف المستند'));
-    }
-  };
-
   const saveMember = async (nextStep: 'none' | 'subscription' = 'none') => {
-    if (editId ? !canUpdateMembers : !canCreateMembers) return;
+    if (photoUploadInFlight.current || (editId ? !canUpdateMembers : !canCreateMembers)) return;
     // `saving` is rendered asynchronously. A synchronous ref closes the tiny window
     // where a double-click/Enter can submit the same new member twice before React
     // disables the buttons, which used to surface as "already registered".
@@ -642,10 +528,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     }
     if (!form.phone.trim()) {
       toast.error(ct('members.phoneRequired'));
-      return;
-    }
-    if (!/^\d{11}$/.test(normalizeMemberPhone(form.phone))) {
-      toast.error(MEMBER_PHONE_FORMAT_ERROR);
       return;
     }
 
@@ -661,6 +543,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     }
 
     const cardNumber = form.cardNumber.trim();
+    const original = editId ? editOriginal.current : null;
+    const cardChanged = !original || cardNumber !== original.cardNumber.trim();
+    const scannerChanged = !original || form.scannerCode.trim() !== original.scannerCode.trim();
 
     saveMemberInFlight.current = true;
     setSaving(true);
@@ -669,7 +554,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         params: {
           phone: form.phone,
           branchId,
-          ...(cardNumber ? { cardNumber } : {}),
+          ...(cardNumber && cardChanged ? { cardNumber } : {}),
           excludeMemberId: editId ?? undefined,
         },
       });
@@ -682,15 +567,21 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       const payload = {
         ...form,
         branchId,
-        ...(cardNumber ? { cardNumber } : {}),
+        cardNumber: cardChanged ? cardNumber : undefined,
+        scannerCode: scannerChanged ? form.scannerCode : undefined,
         email: form.email || undefined,
         dateOfBirth: form.dateOfBirth || undefined,
         address: form.address || undefined,
         maritalStatus: form.maritalStatus || undefined,
         jobTitle: form.jobTitle || undefined,
-        profilePicture: form.profilePicture || undefined,
+        profilePicture: editId
+          ? (form.profilePicture === (original?.profilePicture ?? '') ? undefined : form.profilePicture)
+          : (form.profilePicture || undefined),
         notes: form.notes || undefined,
-        autoCreateUser: form.autoCreateUser,
+        salesId: form.salesId || undefined,
+        guardianName: form.guardianName || undefined,
+        guardianPhone: form.guardianPhone || undefined,
+        autoCreateUser: editId ? form.autoCreateUser : true,
       };
 
       if (editId) {
@@ -738,7 +629,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
           setGeneratedCredentials(created.generatedCredentials);
         }
       }
-      setDialogOpen(false);
       void qc.invalidateQueries({ queryKey: ['club-members'] });
       void qc.invalidateQueries({ queryKey: ['club-members', 'dropdown'] });
     } catch (e) {
@@ -797,8 +687,8 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       await api.post('/club-subscription-refunds', {
         subscriptionId: subscription.id,
         stopDate: refund.stopDate,
-        reason: 'إلغاء عضوية',
-        notes: `استرداد من نافذة حذف العضو ${deleteTarget.memberCode}`,
+        reason: ui('إلغاء عضوية'),
+        notes: `${ui('استرداد من نافذة حذف العضو ')}${deleteTarget.memberCode}`,
       });
       toast.success(ui('تم استرداد المبلغ وإنهاء الاشتراك'));
       await loadDeletionPreview(deleteTarget.id, deleteStopDate);
@@ -841,8 +731,8 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         await api.post('/club-subscription-refunds', {
           subscriptionId: subscription.id,
           stopDate: refund.stopDate,
-          reason: 'إلغاء عضوية',
-          notes: `استرداد من نافذة حذف العضو ${deleteTarget.memberCode}`,
+          reason: ui('إلغاء عضوية'),
+          notes: `${ui('استرداد من نافذة حذف العضو ')}${deleteTarget.memberCode}`,
         });
         completed += 1;
       }
@@ -904,6 +794,54 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     }
   };
 
+  const handleCheckIn = async () => {
+    if (checkInLoading) return;
+    prepareEntrySound();
+    const code = checkInCode.trim();
+    if (!code) {
+      toast.error(ct('members.enterCode'));
+      return;
+    }
+    setCheckInLoading(true);
+    try {
+      // The server resolves the exact member inside the selected branch by membership code,
+      // scanner credential, card number or phone, and refuses an ambiguous match. A code the
+      // scanner typed on the Arabic layout (ش012253) is rebuilt first.
+      const branchId = effectiveAttendanceBranch ? Number(effectiveAttendanceBranch) : undefined;
+      const scan = normalizeReceptionScanCode(code, branchId ?? null);
+      // A bare six-digit scan is a legacy numeric code or a code that lost its branch letter.
+      const candidates = scan.exactCodes && !scan.strict ? scan.exactCodes : [scan.query];
+      const checkInByCode = (memberCode: string) =>
+        api.post<{ attendance: { memberName: string } }>('/club-attendance/check-in', {
+          memberCode,
+          branchId,
+          consumeSession: true,
+        });
+      let response: Awaited<ReturnType<typeof checkInByCode>> | null = null;
+      for (const [index, memberCode] of candidates.entries()) {
+        try {
+          response = await checkInByCode(memberCode);
+          break;
+        } catch (error) {
+          const notFound = (error as { response?: { status?: number } }).response?.status === 404;
+          if (!notFound || index === candidates.length - 1) throw error;
+        }
+      }
+      const data = response!.data;
+      void playEntrySound('granted');
+      toast.success(ct('members.checkInNamed', { name: data.attendance.memberName }));
+      setCheckInCode('');
+      checkInRef.current?.focus();
+      void qc.invalidateQueries({ queryKey: ['club-attendance'] });
+    } catch (e) {
+      if (isEntryRejection(e)) void playEntrySound('rejected');
+      void qc.invalidateQueries({ queryKey: ['club-attendance', 'entry-alerts'] });
+      toast.error(apiError(e));
+    } finally {
+      setCheckInLoading(false);
+    }
+  };
+
   const handleCheckOut = async (attendanceId: number) => {
     try {
       await api.post('/club-attendance/check-out', { attendanceId });
@@ -955,10 +893,11 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       {
         accessorKey: 'phone',
         header: ct('members.phone'),
-        cell: ({ getValue }) => {
-          const v = getValue() as string | null;
-          return v ? <span className="nums">{toArabicDigits(v)}</span> : '—';
-        },
+        cell: ({ row }) => (
+          row.original.phone
+            ? <MaskedPhone value={row.original.phone} memberId={row.original.id} />
+            : '—'
+        ),
       },
       {
         accessorKey: 'gender',
@@ -974,9 +913,12 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         },
       },
       {
-        id: 'branch',
-        header: ct('common.branch'),
-        cell: ({ row }) => resolveBranchName(branches, row.original.branchId, user?.branch, user?.branch_name),
+        accessorKey: 'lastCheckIn',
+        header: ui('آخر دخول للجيم'),
+        cell: ({ getValue }) => {
+          const value = getValue() as string | null | undefined;
+          return value ? <span className="whitespace-nowrap nums">{formatDateTime(value)}</span> : <span className="text-muted-foreground">{ui('لم يحضر بعد')}</span>;
+        },
       },
       {
         accessorKey: 'isActive',
@@ -988,7 +930,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       {
         id: 'actions',
         header: ct('common.actions'),
-        cell: ({ row }) => !canViewMembers && !canUpdateMembers && !canDeleteMembers && !canCreateSubscriptions && !canCreateLockerSubscriptions ? null : (
+        cell: ({ row }) => !canUpdateMembers && !canDeleteMembers ? null : (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="ghost" size="icon" aria-label={ct('common.actions')}>
@@ -996,36 +938,12 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {canViewMembers ? (
-                <>
-                  <DropdownMenuItem onSelect={() => afterMenuClose(() => navigate(`/club/members/${row.original.id}/details`))}>
-                    <Eye className="size-4" /> {ui('تفاصيل')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => afterMenuClose(() => navigate(`/club/members/${row.original.id}/membership-document`))}>
-                    <FileText className="size-4" /> {ui('مستند عضوية')}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => afterMenuClose(() => navigate(`/club/members/${row.original.id}/attachments`))}>
-                    <Paperclip className="size-4" /> {ui('مرفقات')}
-                  </DropdownMenuItem>
-                </>
-              ) : null}
               {canUpdateMembers ? (
                 <DropdownMenuItem onSelect={() => afterMenuClose(() => openEdit(row.original))}>
                   <Pencil className="size-4" /> {ct('common.edit')}
                 </DropdownMenuItem>
               ) : null}
-              {(canViewMembers || canUpdateMembers) && (canCreateSubscriptions || canCreateLockerSubscriptions || canDeleteMembers) ? <DropdownMenuSeparator /> : null}
-              {canCreateSubscriptions ? (
-                <DropdownMenuItem onSelect={() => afterMenuClose(() => navigate('/club/subscriptions/new', { state: { prefillMember: row.original } }))}>
-                  <CalendarPlus className="size-4" /> {ui('إضافة اشتراك')}
-                </DropdownMenuItem>
-              ) : null}
-              {canCreateLockerSubscriptions ? (
-                <DropdownMenuItem onSelect={() => afterMenuClose(() => navigate('/club/lockers/new', { state: { prefillMember: row.original } }))}>
-                  <LockKeyhole className="size-4" /> {ui('إضافة اشتراك لوكر')}
-                </DropdownMenuItem>
-              ) : null}
-              {canDeleteMembers && (canViewMembers || canUpdateMembers || canCreateSubscriptions || canCreateLockerSubscriptions) ? <DropdownMenuSeparator /> : null}
+              {canUpdateMembers && canDeleteMembers ? <DropdownMenuSeparator /> : null}
               {canDeleteMembers ? (
                 <DropdownMenuItem
                   className="text-destructive"
@@ -1039,7 +957,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         ),
       },
     ],
-    [branches, ct, ui, canViewMembers, canUpdateMembers, canDeleteMembers, canCreateSubscriptions, canCreateLockerSubscriptions, navigate, user?.branch, user?.branch_name],
+    [ct, ui, canUpdateMembers, canDeleteMembers],
   );
 
   const blockedColumns = useMemo<ColumnDef<ClubMemberListItem>[]>(
@@ -1064,10 +982,11 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       {
         accessorKey: 'phone',
         header: ct('members.phone'),
-        cell: ({ getValue }) => {
-          const value = getValue() as string | null;
-          return value ? <span className="nums">{toArabicDigits(value)}</span> : '—';
-        },
+        cell: ({ row }) => (
+          row.original.phone
+            ? <MaskedPhone value={row.original.phone} memberId={row.original.id} />
+            : '—'
+        ),
       },
       {
         accessorKey: 'gender',
@@ -1136,7 +1055,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         : []),
       { accessorKey: 'attendanceDate', header: ct('members.attendanceDate'), cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string)}</span> },
       { accessorKey: 'checkInTime', header: ct('members.checkInTime'), cell: ({ getValue }) => <span className="nums">{formatTimeFromDate(getValue() as string)}</span> },
-      { accessorKey: 'attendanceType', header: ui('نوع الحضور'), cell: ({ getValue }) => ui(({ normal: 'عادي', class: 'حصص', spa: 'سبا', inbody: 'إنبودي' } as Record<string, string>)[getValue() as string] ?? 'عادي') },
       {
         accessorKey: 'duration',
         header: ct('members.duration'),
@@ -1183,7 +1101,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
           }]
         : []),
       { accessorKey: 'date', header: ct('members.attendanceDate'), cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string)}</span> },
-      { accessorKey: 'attendanceType', header: ui('نوع الحضور'), cell: ({ getValue }) => ui(({ normal: 'عادي', class: 'حصص', spa: 'سبا', inbody: 'إنبودي' } as Record<string, string>)[getValue() as string] ?? 'عادي') },
       { accessorKey: 'entries', header: ui('عدد مرات الدخول'), cell: ({ getValue }) => <span className="nums font-semibold">{toArabicDigits(getValue() as number)}</span> },
       { accessorKey: 'totalDuration', header: ui('إجمالي المدة (دقيقة)'), cell: ({ getValue }) => <span className="nums">{toArabicDigits((getValue() as number) ?? 0)}</span> },
       {
@@ -1206,6 +1123,165 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     [branches, ct, isSystemAdmin, ui, user?.branch, user?.branch_name],
   );
 
+  const utilizationColumns = useMemo<ColumnDef<SubscriptionUtilizationRow>[]>(
+    () => [
+      {
+        id: 'memberName',
+        header: ct('members.name'),
+        cell: ({ row }) => (
+          <Button
+            type="button"
+            variant="ghost"
+            className="h-auto justify-start gap-2 p-1 text-start hover:bg-primary/5 hover:text-primary"
+            aria-label={`${ui('عرض ملف العضو')} ${row.original.member.name}`}
+            onClick={() => setProfileMember(row.original.member)}
+          >
+            <MemberCell
+              name={row.original.member.name}
+              code={row.original.member.memberCode}
+              profilePicture={row.original.member.profilePicture}
+              showCode={false}
+            />
+            <Eye className="size-4 shrink-0 opacity-55" />
+          </Button>
+        ),
+      },
+      {
+        id: 'memberCode',
+        header: ct('members.memberCode'),
+        cell: ({ row }) => <span className="nums font-mono">{row.original.member.memberCode}</span>,
+      },
+      ...(isSystemAdmin
+        ? [{
+            id: 'branch',
+            header: ct('common.branch'),
+            cell: ({ row }: { row: { original: SubscriptionUtilizationRow } }) =>
+              resolveBranchName(branches, row.original.branchId, user?.branch, user?.branch_name),
+          }]
+        : []),
+      {
+        accessorKey: 'subscriptionType',
+        header: ui('الاشتراك'),
+        cell: ({ row }) => (
+          <div className="min-w-32">
+            <p className="font-medium">{row.original.subscriptionType ?? '—'}</p>
+            <p className="nums mt-0.5 text-xs text-muted-foreground">{row.original.subscriptionNumber}</p>
+          </div>
+        ),
+      },
+      {
+        id: 'subscriptionPeriod',
+        header: ui('فترة الاشتراك'),
+        cell: ({ row }) => (
+          <div className="nums min-w-28 text-sm">
+            <p>{formatDate(row.original.startDate)}</p>
+            <p className="text-muted-foreground">{formatDate(row.original.endDate)}</p>
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'totalDays',
+        header: ui('إجمالي الأيام'),
+        cell: ({ getValue }) => <span className="nums font-semibold">{toArabicDigits(getValue() as number)}</span>,
+      },
+      {
+        accessorKey: 'attendanceEntries',
+        header: ui('مرات الحضور'),
+        cell: ({ row }) => (
+          <div className="nums">
+            <p className="font-semibold">{toArabicDigits(row.original.attendanceEntries)} {ui('مرة')}</p>
+            <p className="text-xs text-muted-foreground">
+              {ui('خلال')} {toArabicDigits(row.original.attendanceDays)} {ui('يوم مختلف')}
+            </p>
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'attendanceRate',
+        header: () => (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1 hover:text-primary"
+            onClick={() =>
+              setRateSortOrder((current) =>
+                current === 'none' ? 'desc' : current === 'desc' ? 'asc' : 'none',
+              )
+            }
+          >
+            <span>{ui('نسبة الحضور')}</span>
+            {rateSortOrder === 'desc' ? (
+              <ArrowDown className="size-3.5 text-primary" />
+            ) : rateSortOrder === 'asc' ? (
+              <ArrowUp className="size-3.5 text-primary" />
+            ) : (
+              <ArrowUpDown className="size-3.5 opacity-50" />
+            )}
+          </button>
+        ),
+        cell: ({ row }) => {
+          const rate = Math.max(0, Math.min(100, row.original.attendanceRate));
+          const level = rate >= 75 ? 'high' : rate >= 40 ? 'medium' : 'low';
+          const barColor = level === 'high' ? 'bg-success' : level === 'medium' ? 'bg-warning' : 'bg-destructive';
+          const textColor = level === 'high' ? 'text-success' : level === 'medium' ? 'text-warning' : 'text-destructive';
+          const label = level === 'high' ? ui('ملتزم') : level === 'medium' ? ui('متوسط') : ui('ضعيف');
+          return (
+            <div className="nums min-w-28 space-y-1">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold">{toArabicDigits(rate)}%</span>
+                <span className={`text-xs font-medium ${textColor}`}>{label}</span>
+              </div>
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted" role="progressbar" aria-valuenow={rate} aria-valuemin={0} aria-valuemax={100}>
+                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${rate}%` }} />
+              </div>
+            </div>
+          );
+        },
+      },
+      {
+        id: 'remaining',
+        header: ui('المتبقي'),
+        cell: ({ row }) => row.original.isLinkedToSessions ? (
+          <div className="nums min-w-24">
+            <p className="font-semibold text-primary">
+              {toArabicDigits(row.original.sessionsRemaining ?? 0)} {ui('حصة')}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              {ui('استخدم')} {toArabicDigits(row.original.sessionsUsed)} {ui('من')} {toArabicDigits(row.original.sessionsCount ?? 0)}
+            </p>
+          </div>
+        ) : (
+          <span className="nums whitespace-nowrap font-semibold text-primary">
+            {toArabicDigits(row.original.remainingDays)} {ui('يوم')}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'lastAttendanceDate',
+        header: ui('آخر حضور'),
+        cell: ({ getValue }) => {
+          const value = getValue() as string | null;
+          return value
+            ? <span className="nums whitespace-nowrap">{formatDate(value)}</span>
+            : <span className="text-muted-foreground">{ui('لم يحضر بعد')}</span>;
+        },
+      },
+      {
+        accessorKey: 'status',
+        header: ct('common.status'),
+        cell: ({ row }) => {
+          const status = row.original.status;
+          return (
+            <StatusBadge
+              status={status === 'active' ? 'active' : status === 'expired' ? 'expired' : status === 'frozen' ? 'info' : 'pending'}
+              label={status === 'active' ? ui('نشط') : status === 'expired' ? ui('منتهي') : status === 'frozen' ? ui('مجمّد') : ui('قادم')}
+            />
+          );
+        },
+      },
+    ],
+    [branches, ct, isSystemAdmin, rateSortOrder, ui, user?.branch, user?.branch_name],
+  );
+
   if (isError) {
     return (
       <div className="space-y-6">
@@ -1218,10 +1294,10 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   return (
     <div className="space-y-6">
       <PageHeader
-        title={singleView === 'attendance' ? ui('الحضور اليومي') : ct('members.title')}
+        title={singleView === 'attendance' ? ui('الحضور واستخدام الاشتراكات') : ct('members.title')}
         description={
           singleView === 'attendance'
-            ? ui('متابعة الموجودين داخل الجيم وسجل خروج اليوم حسب فرع الحساب')
+            ? ui('متابعة حركة الدخول والخروج ومدى استخدام الأعضاء لاشتراكاتهم من مكان واحد')
             : ct('members.description')
         }
         actions={
@@ -1242,23 +1318,12 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         />
       )}
 
-      {tab === 'members' && (
-        <section className="rounded-2xl border border-primary/15 bg-card p-4 shadow-sm md:p-5" aria-live="polite">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-            <div>
-              <h2 className="text-base font-bold">{ui('ملخص الأعضاء')}</h2>
-              <p className="text-xs text-muted-foreground">{ui('يتحدث حسب الفلاتر المحددة')}</p>
-            </div>
-            {statsLoading && <Loader2 className="size-4 animate-spin text-primary" aria-label={ui('جاري تحديث الإحصاءات')} />}
-          </div>
-          <div className="grid gap-3 grid-cols-2 md:grid-cols-5">
-            <ClubStatCard label={ui('إجمالي الأعضاء')} value={statsLoading ? '—' : stats?.total ?? 0} icon={Users} tone="members" />
-            <ClubStatCard label={ui('الأعضاء النشطون')} value={statsLoading ? '—' : stats?.memberActive ?? 0} icon={UserCheck} tone="lockers" />
-            <ClubStatCard label={ui('الأعضاء الغير نشطين')} value={statsLoading ? '—' : stats?.memberInactive ?? 0} icon={UserMinus} tone="alert" />
-            <ClubStatCard label={ui('اشتراكات سارية')} value={statsLoading ? '—' : stats?.active ?? 0} icon={CalendarCheck} tone="revenue" />
-            <ClubStatCard label={ui('اشتراكات منتهية')} value={statsLoading ? '—' : stats?.inactive ?? 0} icon={CalendarX} tone="classes" />
-          </div>
-        </section>
+      {stats && tab === 'members' && (
+        <div className="grid gap-4 sm:grid-cols-3">
+          <ClubStatCard label={ct('members.total')} value={stats.total} />
+          <ClubStatCard label={ct('members.active')} value={stats.active} />
+          <ClubStatCard label={ct('members.inactive')} value={stats.inactive} />
+        </div>
       )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as ClubMembersView)}>
@@ -1289,9 +1354,30 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
               </TabsList>
             </Tabs>
           </div>
-          <FilterBar fields={filters} hideSearch extra={<DatePresetButtons />} />
+          {memberListMode === 'all' ? <div className="rounded-xl border bg-card p-4 shadow-sm">
+            <h3 className="mb-3 flex items-center gap-2 font-medium">
+              <LogIn className="size-4 text-primary" /> {ct('members.barcodeTitle')}
+            </h3>
+            <div className="mb-3"><EntrySoundSettings /></div>
+            <div className="flex flex-wrap gap-2">
+              <Input
+                ref={checkInRef}
+                className="max-w-xs"
+                placeholder={ct('members.barcodePlaceholder')}
+                value={checkInCode}
+                onChange={(e) => setCheckInCode(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && void handleCheckIn()}
+              />
+              <Button variant="brand" onClick={() => void handleCheckIn()} disabled={checkInLoading}>
+                {ct('members.checkIn')}
+              </Button>
+            </div>
+          </div> : null}
+
+          <FilterBar fields={filters} />
 
           <DataTable
+            exportSource={{ resource: 'club-members', params: memberListParams }}
             columns={memberListMode === 'blocked' ? blockedColumns : columns}
             data={data?.data ?? []}
             total={data?.total ?? 0}
@@ -1314,10 +1400,12 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         </TabsContent>
 
         <TabsContent value="attendance" className="space-y-4 pt-4">
-          <AttendanceSummaryCards statistics={attStats} />
+          {attView !== 'utilization' ? <AttendanceSummaryCards statistics={attStats} /> : null}
           <section className="relative overflow-hidden rounded-2xl border border-primary/20 bg-card p-4 shadow-sm md:p-5">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-brand-gradient" />
-            <div className="grid items-end gap-3 md:grid-cols-[minmax(13rem,1fr)_minmax(10rem,.7fr)_minmax(10rem,.7fr)_auto]">
+            <div className={attView === 'utilization'
+              ? 'grid items-end gap-3 md:grid-cols-2'
+              : 'grid items-end gap-3 md:grid-cols-[minmax(13rem,1fr)_minmax(10rem,.7fr)_minmax(10rem,.7fr)_auto]'}>
               <div className="grid gap-1.5">
                 <Label>{ct('common.branch')}</Label>
                 {isSystemAdmin ? (
@@ -1345,56 +1433,79 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                   </div>
                 )}
               </div>
-              <div className="grid gap-1.5">
-                <Label>{ui('من تاريخ')}</Label>
-                <Input
-                  type="date"
-                  value={attendanceStartDate}
-                  onChange={(event) => {
-                    setAttendanceStartDate(event.target.value);
-                    attParams.setParams({ page: 1 });
-                    dailyParams.setParams({ page: 1 });
-                  }}
-                  className="h-11 rounded-xl"
-                />
-              </div>
-              <div className="grid gap-1.5">
-                <Label>{ui('إلى تاريخ')}</Label>
-                <Input
-                  type="date"
-                  value={attendanceEndDate}
-                  min={attendanceStartDate || undefined}
-                  onChange={(event) => {
-                    setAttendanceEndDate(event.target.value);
-                    attParams.setParams({ page: 1 });
-                    dailyParams.setParams({ page: 1 });
-                  }}
-                  className="h-11 rounded-xl"
-                />
-              </div>
-              <Button
-                variant="outline"
-                className="h-11 rounded-xl"
-                disabled={attendanceStartDate === localToday() && attendanceEndDate === localToday()}
-                onClick={() => {
-                  const today = localToday();
-                  setAttendanceStartDate(today);
-                  setAttendanceEndDate(today);
-                  attParams.setParams({ page: 1 });
-                  dailyParams.setParams({ page: 1 });
-                }}
-              >
-                {ui('اليوم')}
-              </Button>
+              {attView === 'utilization' ? (
+                <div className="grid gap-1.5">
+                  <Label>{ui('حالة الاشتراك')}</Label>
+                  <select
+                    className={`${selectCls} h-11 rounded-xl border-primary/25 font-medium`}
+                    value={subscriptionStatus}
+                    onChange={(event) => {
+                      setSubscriptionStatus(event.target.value as typeof subscriptionStatus);
+                      attParams.setParams({ page: 1 });
+                    }}
+                  >
+                    <option value="active">{ui('النشطة')}</option>
+                    <option value="frozen">{ui('المجمّدة')}</option>
+                    <option value="upcoming">{ui('القادمة')}</option>
+                    <option value="expired">{ui('المنتهية')}</option>
+                    <option value="all">{ui('كل الاشتراكات')}</option>
+                  </select>
+                </div>
+              ) : (
+                <>
+                  <div className="grid gap-1.5">
+                    <Label>{ui('من تاريخ')}</Label>
+                    <Input
+                      type="date"
+                      value={attendanceStartDate}
+                      onChange={(event) => {
+                        setAttendanceStartDate(event.target.value);
+                        attParams.setParams({ page: 1 });
+                        dailyParams.setParams({ page: 1 });
+                      }}
+                      className="h-11 rounded-xl"
+                    />
+                  </div>
+                  <div className="grid gap-1.5">
+                    <Label>{ui('إلى تاريخ')}</Label>
+                    <Input
+                      type="date"
+                      value={attendanceEndDate}
+                      min={attendanceStartDate || undefined}
+                      onChange={(event) => {
+                        setAttendanceEndDate(event.target.value);
+                        attParams.setParams({ page: 1 });
+                        dailyParams.setParams({ page: 1 });
+                      }}
+                      className="h-11 rounded-xl"
+                    />
+                  </div>
+                  <Button
+                    variant="outline"
+                    className="h-11 rounded-xl"
+                    disabled={attendanceStartDate === localToday() && attendanceEndDate === localToday()}
+                    onClick={() => {
+                      const today = localToday();
+                      setAttendanceStartDate(today);
+                      setAttendanceEndDate(today);
+                      attParams.setParams({ page: 1 });
+                      dailyParams.setParams({ page: 1 });
+                    }}
+                  >
+                    {ui('اليوم')}
+                  </Button>
+                </>
+              )}
             </div>
 
             <div className="mt-5 grid gap-5 border-t pt-5 lg:grid-cols-2">
               <div className="space-y-2 text-center">
                 <Label className="text-muted-foreground">{ui('طريقة العرض')}</Label>
-                <div className="mx-auto grid w-full max-w-xl grid-cols-2 gap-2 rounded-2xl bg-muted/35 p-1.5">
+                <div className="mx-auto grid w-full max-w-3xl grid-cols-1 gap-2 rounded-2xl bg-muted/35 p-1.5 sm:grid-cols-3">
                   {([
-                    { value: 'all' as const, label: ui('سجل الدخول والخروج') },
-                    { value: 'daily' as const, label: ui('ملخص يومي للأعضاء') },
+                    { value: 'all' as const, label: ui('سجل الحركة اللحظي') },
+                    { value: 'daily' as const, label: ui('إجمالي الحضور اليومي') },
+                    { value: 'utilization' as const, label: ui('نسبة الحضور والالتزام') },
                   ]).map((option) => (
                     <Button
                       key={option.value}
@@ -1410,39 +1521,68 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                 </div>
               </div>
 
-              <div className="space-y-2 text-center">
-                <Label className="text-muted-foreground">{ui('حالة الحضور')}</Label>
-                <div className="mx-auto grid w-full max-w-xl grid-cols-3 gap-2 rounded-2xl bg-muted/35 p-1.5">
-                  {([
-                    { value: 'all' as const, label: ui('الكل'), icon: UserCheck },
-                    { value: 'checked_in' as const, label: ui('داخل الجيم'), icon: LogIn },
-                    { value: 'checked_out' as const, label: ui('سجّل خروج'), icon: LogOut },
-                  ]).map((option) => {
-                    const Icon = option.icon;
-                    return (
+              {attView === 'utilization' ? (
+                <div className="space-y-2 text-center">
+                  <Label className="text-muted-foreground">{ui('مستوى الالتزام')}</Label>
+                  <div className="mx-auto grid w-full max-w-xl grid-cols-2 gap-2 rounded-2xl bg-muted/35 p-1.5 sm:grid-cols-4">
+                    {([
+                      { value: 'all' as const, label: ui('الكل') },
+                      { value: 'high' as const, label: ui('ملتزمون') },
+                      { value: 'medium' as const, label: ui('متوسط') },
+                      { value: 'low' as const, label: ui('ضعاف الحضور') },
+                    ]).map((option) => (
                       <Button
                         key={option.value}
                         type="button"
-                        variant={attendanceStatus === option.value ? 'brand' : 'ghost'}
-                        aria-pressed={attendanceStatus === option.value}
+                        variant={rateBucketFilter === option.value ? 'brand' : 'ghost'}
+                        aria-pressed={rateBucketFilter === option.value}
                         className="h-11 rounded-xl px-2"
                         onClick={() => {
-                          setAttendanceStatus(option.value);
+                          setRateBucketFilter(option.value);
                           attParams.setParams({ page: 1 });
-                          dailyParams.setParams({ page: 1 });
                         }}
                       >
-                        <Icon className="size-4" />
-                        <span>{option.label}</span>
+                        {option.label}
                       </Button>
-                    );
-                  })}
+                    ))}
+                  </div>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-2 text-center">
+                  <Label className="text-muted-foreground">{ui('حالة الحضور')}</Label>
+                  <div className="mx-auto grid w-full max-w-xl grid-cols-3 gap-2 rounded-2xl bg-muted/35 p-1.5">
+                    {([
+                      { value: 'all' as const, label: ui('الكل'), icon: UserCheck },
+                      { value: 'checked_in' as const, label: ui('داخل الجيم'), icon: LogIn },
+                      { value: 'checked_out' as const, label: ui('سجّل خروج'), icon: LogOut },
+                    ]).map((option) => {
+                      const Icon = option.icon;
+                      return (
+                        <Button
+                          key={option.value}
+                          type="button"
+                          variant={attendanceStatus === option.value ? 'brand' : 'ghost'}
+                          aria-pressed={attendanceStatus === option.value}
+                          className="h-11 rounded-xl px-2"
+                          onClick={() => {
+                            setAttendanceStatus(option.value);
+                            attParams.setParams({ page: 1 });
+                            dailyParams.setParams({ page: 1 });
+                          }}
+                        >
+                          <Icon className="size-4" />
+                          <span>{option.label}</span>
+                        </Button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </div>
           </section>
           {attView === 'all' ? (
             <DataTable
+              exportSource={{ resource: 'club-attendance', params: attendanceListParams }}
               columns={attColumns}
               data={attendance?.data ?? []}
               total={attendance?.total ?? 0}
@@ -1457,8 +1597,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
               onRetry={() => void refetchAttendance()}
               emptyTitle={ct('common.noData')}
             />
-          ) : (
+          ) : attView === 'daily' ? (
             <DataTable
+              exportSource={{ resource: 'club-attendance/daily-summary', params: dailyAttendanceListParams }}
               columns={dailyAttColumns}
               data={dailyAttendance?.data ?? []}
               total={dailyAttendance?.total ?? 0}
@@ -1472,6 +1613,58 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
               isError={dailyError}
               onRetry={() => void refetchDaily()}
               emptyTitle={ct('common.noData')}
+            />
+          ) : (
+            <DataTable
+              columns={utilizationColumns}
+              data={subscriptionUtilization?.data ?? []}
+              total={subscriptionUtilization?.total ?? 0}
+              page={attParams.params.page}
+              pageSize={attParams.params.pageSize}
+              onPageChange={(page) => attParams.setParams({ page })}
+              onPageSizeChange={(pageSize) => attParams.setParams({ pageSize, page: 1 })}
+              search={attParams.params.search}
+              onSearchChange={(search) => attParams.setParams({ search, page: 1 })}
+              searchPlaceholder={ui('ابحث باسم العضو أو الكود أو رقم أو نوع الاشتراك…')}
+              isLoading={utilizationLoading}
+              isError={utilizationError}
+              onRetry={() => void refetchUtilization()}
+              emptyTitle={ui('لا توجد اشتراكات مطابقة')}
+              emptyDescription={ui('غيّر حالة الاشتراك أو البحث أو الفرع لعرض نتائج أخرى.')}
+              exportColumns={[
+                { key: 'memberName', header: ui('العضو') },
+                { key: 'memberCode', header: ui('الكود') },
+                { key: 'subscriptionNumber', header: ui('رقم الاشتراك') },
+                { key: 'subscriptionType', header: ui('نوع الاشتراك') },
+                { key: 'startDate', header: ui('البداية') },
+                { key: 'endDate', header: ui('النهاية') },
+                { key: 'totalDays', header: ui('إجمالي الأيام') },
+                { key: 'attendanceEntries', header: ui('مرات الحضور') },
+                { key: 'attendanceDays', header: ui('أيام الحضور') },
+                { key: 'attendanceRate', header: ui('نسبة الحضور') },
+                { key: 'remaining', header: ui('المتبقي') },
+                { key: 'lastAttendanceDate', header: ui('آخر حضور') },
+              ]}
+              exportSource={{
+                resource: 'club-attendance/subscription-utilization',
+                params: utilizationListParams,
+                project: (row) => ({
+                  memberName: row.member.name,
+                  memberCode: row.member.memberCode,
+                  subscriptionNumber: row.subscriptionNumber,
+                  subscriptionType: row.subscriptionType ?? '',
+                  startDate: row.startDate,
+                  endDate: row.endDate,
+                  totalDays: row.totalDays,
+                  attendanceEntries: row.attendanceEntries,
+                  attendanceDays: row.attendanceDays,
+                  attendanceRate: `${row.attendanceRate}%`,
+                  remaining: row.isLinkedToSessions
+                    ? `${row.sessionsRemaining ?? 0} ${ui('حصة')}`
+                    : `${row.remainingDays} ${ui('يوم')}`,
+                  lastAttendanceDate: row.lastAttendanceDate ?? '',
+                }),
+              }}
             />
           )}
         </TabsContent>
@@ -1521,6 +1714,14 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
           )}
         </TabsContent>
       </Tabs>
+
+      <MemberProfileSheet
+        member={profileMember}
+        open={profileMember != null}
+        onOpenChange={(open) => {
+          if (!open) setProfileMember(undefined);
+        }}
+      />
 
       <Dialog
         open={deleteTarget != null}
@@ -1862,7 +2063,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         </DialogContent>
       </Dialog>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen} onOpenChange={(open) => { if (!photoUploadInFlight.current) setDialogOpen(open); }}>
         <DialogContent className={FORM_DIALOG_CONTENT_CLASS} aria-describedby={undefined}>
           <FormDialogHeader>
             <DialogTitle>{editId ? ct('members.editMember') : ct('members.newMember')}</DialogTitle>
@@ -1919,34 +2120,19 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
 
           <div className="space-y-4">
             <DialogFormSection title={ct('members.sectionBasic')} icon={User}>
-              <DialogFormGrid>
-                <FieldWrapper label={ct('common.branch')} required>
-                  {isSystemAdmin && !editId ? (
-                    <select
-                      className={selectCls}
-                      value={form.branchId || ''}
-                      onChange={(e) => setForm((f) => ({ ...f, branchId: Number(e.target.value) || 0 }))}
-                    >
-                      <option value="">{ct('members.selectBranch')}</option>
-                      {memberRegistrationBranchOptions.map((branch) => (
-                        <option key={branch.value} value={branch.value}>{branch.label}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <Input className="bg-muted" value={formBranchName} readOnly />
-                  )}
-                </FieldWrapper>
-                <FieldWrapper
-                  label={ct('members.memberCode')}
-                  hint={!editId && previewMemberCode ? ct('members.codeAutoPreview') : undefined}
-                >
+              {(editId || previewMemberCode) && (
+                <FieldWrapper label={ct('members.memberCode')} hint={!editId && previewMemberCode ? ct('members.codeAutoPreview') : undefined}>
                   <Input
                     className="nums bg-muted font-mono"
                     dir="ltr"
                     value={editId ? editMemberCode : previewMemberCode}
-                    placeholder={!editId && !form.branchId ? ct('members.selectBranchFirst') : undefined}
                     readOnly
                   />
+                </FieldWrapper>
+              )}
+              <DialogFormGrid>
+                <FieldWrapper label={ct('common.branch')} required>
+                  <Input className="bg-muted" value={formBranchName} readOnly />
                 </FieldWrapper>
                 <FieldWrapper label={ct('members.name')} required>
                   <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
@@ -1958,13 +2144,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                     type="tel"
                     inputMode="tel"
                     value={form.phone}
-                    maxLength={11}
-                    aria-invalid={!!phoneValidationError}
                     onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                    placeholder="01012345678"
+                    placeholder="+971 50 123 4567"
                   />
-                  {checkingPhone && <p className="mt-1 text-xs text-muted-foreground">جارٍ التحقق من الرقم…</p>}
-                  {phoneValidationError && <p className="mt-1 flex items-center gap-1 text-xs text-destructive"><AlertTriangle className="size-3.5" />{phoneValidationError}</p>}
                 </FieldWrapper>
                 <FieldWrapper label={ct('members.gender')} required>
                   <select
@@ -1976,6 +2158,21 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                       <option key={g.value} value={g.value}>{g.label}</option>
                     ))}
                   </select>
+                </FieldWrapper>
+                <FieldWrapper
+                  label={ui('كود السكانر')}
+                  hint="امسح الكود أو اكتبه كما هو — الأصفار في البداية مهمة"
+                >
+                  <Input
+                    className="nums font-mono"
+                    dir="ltr"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    maxLength={20}
+                    value={form.scannerCode}
+                    onChange={(e) => setForm((f) => ({ ...f, scannerCode: e.target.value }))}
+                    placeholder="0246999"
+                  />
                 </FieldWrapper>
                 <FieldWrapper label={ct('members.dateOfBirth')}>
                   <Input
@@ -2000,40 +2197,13 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                 <FieldWrapper label={ct('members.photo')}>
                   <UploadField
                     category="club-member"
-                    value={form.profilePicture}
+                    onUploadingChange={(uploading) => { photoUploadInFlight.current = uploading; setPhotoUploading(uploading); }}
+                    accept="image/jpeg,image/png,image/webp"
+                    value={memberAvatarUrl(form.profilePicture)}
                     onChange={(path) => setForm((f) => ({ ...f, profilePicture: path ?? '' }))}
                   />
                 </FieldWrapper>
               </div>
-
-              {editId ? (
-                <FieldWrapper label="ملف العضوية والمستندات" hint="PDF موثّق فقط، بحد أقصى 5 ميجابايت لكل ملف">
-                  <div className="space-y-3 rounded-xl border bg-muted/20 p-3">
-                    <div className="grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)]">
-                      <select className={selectCls} value={documentType} onChange={(event) => setDocumentType(event.target.value)} aria-label="نوع المستند">
-                        <option value="national_id">بطاقة الرقم القومي</option>
-                        <option value="contract">عقد العضوية</option>
-                        <option value="medical_clearance">إقرار طبي</option>
-                        <option value="other">مستند آخر</option>
-                      </select>
-                      <Input type="file" accept="application/pdf,.pdf" disabled={memberDocumentUploading} onChange={(event) => { void addMemberDocument(event.target.files?.[0] ?? null); event.target.value = ''; }} />
-                    </div>
-                    {memberDocumentUploading ? <p className="text-xs text-muted-foreground">جارٍ فحص ورفع المستند…</p> : null}
-                    {membershipDocuments.length ? (
-                      <ul className="divide-y rounded-lg border bg-background">
-                        {membershipDocuments.map((document) => (
-                          <li key={document.id} className="flex items-center gap-2 px-3 py-2 text-sm">
-                            <FileText className="size-4 shrink-0 text-primary" />
-                            <div className="min-w-0 flex-1"><p className="truncate font-medium">{document.label || document.originalFilename || 'مستند عضوية'}</p><p className="text-xs text-muted-foreground">{document.type} {document.byteSize ? `• ${(document.byteSize / 1024).toFixed(1)} KB` : ''}</p></div>
-                            <Button type="button" variant="ghost" size="icon" onClick={() => void openMemberDocument(document)} aria-label="فتح المستند"><ExternalLink className="size-4" /></Button>
-                            <Button type="button" variant="ghost" size="icon" onClick={() => void removeMemberDocument(document.id)} aria-label="حذف المستند"><Trash2 className="size-4 text-destructive" /></Button>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">لا توجد مستندات مرفقة بعد.</p>}
-                  </div>
-                </FieldWrapper>
-              ) : null}
 
               <DialogFormToggle
                 label={ct('members.isActive')}
@@ -2069,11 +2239,34 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                 <FieldWrapper label={ct('members.address')} className="sm:col-span-2">
                   <Input value={form.address ?? ''} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
                 </FieldWrapper>
-                <FieldWrapper label={ct('members.jobTitle')}>
+                <FieldWrapper label={ct('members.jobTitle')} className="sm:col-span-2">
                   <Input value={form.jobTitle ?? ''} onChange={(e) => setForm((f) => ({ ...f, jobTitle: e.target.value }))} />
+                </FieldWrapper>
+              </DialogFormGrid>
+            </DialogFormSection>
+
+            <DialogFormSection title={ct('members.sectionStaff')} icon={Briefcase}>
+              <DialogFormGrid>
+                <FieldWrapper label={ct('members.salesRep')}>
+                  <select
+                    className={selectCls}
+                    value={form.salesId ?? ''}
+                    onChange={(e) => setForm((f) => ({ ...f, salesId: e.target.value ? Number(e.target.value) : undefined }))}
+                  >
+                    <option value="">—</option>
+                    {salesRepOptions.filter((o) => o.branchIds.includes(form.branchId)).map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
                 </FieldWrapper>
                 <FieldWrapper label={ui('الموظف المُسجِّل')}>
                   <Input className="bg-muted" value={user?.name ?? '—'} readOnly />
+                </FieldWrapper>
+                <FieldWrapper label={ct('members.guardianName')}>
+                  <Input value={form.guardianName ?? ''} onChange={(e) => setForm((f) => ({ ...f, guardianName: e.target.value }))} />
+                </FieldWrapper>
+                <FieldWrapper label={ct('members.guardianPhone')}>
+                  <Input className="nums" dir="ltr" value={form.guardianPhone ?? ''} onChange={(e) => setForm((f) => ({ ...f, guardianPhone: e.target.value }))} />
                 </FieldWrapper>
               </DialogFormGrid>
             </DialogFormSection>
@@ -2106,15 +2299,15 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
           </FormDialogBody>
 
           <FormDialogFooter className="justify-between sm:justify-between">
-            <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>{ct('common.cancel')}</Button>
+            <Button type="button" variant="outline" disabled={photoUploading} onClick={() => setDialogOpen(false)}>{ct('common.cancel')}</Button>
             <div className="flex flex-col-reverse gap-3 sm:flex-row">
               {(editId ? canUpdateMembers : canCreateMembers) ? (
-                <Button type="submit" form="member-form" variant="brand" disabled={saving}>
+                <Button type="submit" form="member-form" variant="brand" disabled={saving || photoUploading}>
                   {saving ? ct('common.saving') : editId ? ct('members.saveChanges') : ct('members.saveOnly')}
                 </Button>
               ) : null}
               {!editId && canCreateMembers && (
-                <Button type="button" variant="brand" disabled={saving} onClick={() => void saveMember('subscription')}>
+                <Button type="button" variant="brand" disabled={saving || photoUploading} onClick={() => void saveMember('subscription')}>
                   {saving ? ct('common.saving') : ct('members.saveAndAddSub')}
                 </Button>
               )}

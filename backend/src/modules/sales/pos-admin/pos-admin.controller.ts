@@ -17,6 +17,7 @@ import { PosNotificationRulesService, PosReportTemplatesService, PosSettingsServ
 
 const PERM = 'gym-sales.sales.pos_admin';
 const POS_VIEW = 'gym-sales.sales.new_receipt:view';
+const DRAFTS_VIEW = 'gym-sales.sales.drafts:view';
 
 @UseGuards(JwtAuthGuard)
 @Controller('pos-devices')
@@ -40,7 +41,9 @@ export class PosDevicesController {
 export class PosPaymentMethodsController {
   constructor(private readonly service: PosPaymentMethodsService) {}
 
-  @Get() list(@Query() q: PosListQueryDto) { return this.service.list(q); }
+  @Get()
+  @RequiresPermission(`${PERM}:view`, POS_VIEW, 'gym-sales.sales.drafts:update')
+  list(@Query() q: PosListQueryDto) { return this.service.list(q); }
   @Get('stats') stats() { return this.service.stats(); }
   @Get(':id') findOne(@Param('id', ParseIntPipe) id: number) { return this.service.findOne(id); }
   @Post() @RequiresPermission(`${PERM}:create`) create(@Body() body: UpsertPosPaymentMethodDto, @CurrentUser('sub') uid: number) { return this.service.create(body, uid); }
@@ -53,7 +56,7 @@ export class PosPaymentMethodsController {
 
 @UseGuards(JwtAuthGuard)
 @Controller('pos-invoice-templates')
-@RequiresPermission(`${PERM}:view`, POS_VIEW)
+@RequiresPermission(`${PERM}:view`, POS_VIEW, DRAFTS_VIEW, 'gym-sales.sales.drafts:print')
 export class PosInvoiceTemplatesController {
   constructor(private readonly service: PosInvoiceTemplatesService) {}
 
@@ -105,7 +108,7 @@ export class PosNotificationRulesController {
 
 @UseGuards(JwtAuthGuard)
 @Controller('pos-settings')
-@RequiresPermission(`${PERM}:view`, POS_VIEW)
+@RequiresPermission(`${PERM}:view`, POS_VIEW, DRAFTS_VIEW, 'gym-sales.sales.drafts:print')
 export class PosSettingsController {
   constructor(private readonly service: PosSettingsService) {}
 

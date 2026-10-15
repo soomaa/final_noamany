@@ -23,11 +23,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm, confirmWithPreview } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
 
@@ -53,6 +54,10 @@ const OFF_DAY_LABELS = Object.fromEntries(OFF_DAYS.map((d) => [d.value, d.label]
 
 export function WeeklyLeavesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('employees.weekly_leaves:create');
+  const canUpdate = can('employees.weekly_leaves:update');
+  const canDelete = can('employees.weekly_leaves:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<WeeklyLeaveRow>('weekly-leaves', params);
   const { data: employeeOptions = [] } = useEmployeeOptions();
@@ -146,16 +151,23 @@ export function WeeklyLeavesPage() {
     {
       id: 'actions',
       header: ui('الإجراءات'),
-      cell: ({ row }) => (
-        <div className="flex gap-1">
-          <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
-            <Pencil className="size-4" />
-          </Button>
-          <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
-            <Trash2 className="size-4 text-destructive" />
-          </Button>
-        </div>
-      ),
+      cell: ({ row }) => {
+        if (!canUpdate && !canDelete) return null;
+        return (
+          <div className="flex gap-1">
+            {canUpdate ? (
+              <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+                <Pencil className="size-4" />
+              </Button>
+            ) : null}
+            {canDelete ? (
+              <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
+                <Trash2 className="size-4 text-destructive" />
+              </Button>
+            ) : null}
+          </div>
+        );
+      },
     },
   ];
 
@@ -169,9 +181,11 @@ export function WeeklyLeavesPage() {
         error={error}
         notImplementedTitle={ui('إجازات الموظفين الأسبوعية — قيد الإعداد على الخادم')}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('إجازة أسبوعية جديدة')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCreate}>
+              <Plus className="size-4" /> {ui('إجازة أسبوعية جديدة')}
+            </Button>
+          ) : undefined
         }
         stats={[
           {
@@ -184,6 +198,7 @@ export function WeeklyLeavesPage() {
         statsLoading={isLoading}
       >
         <DataTable
+          exportSource={{ resource: 'weekly-leaves', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -238,7 +253,7 @@ export function WeeklyLeavesPage() {
             <Button variant="outline" onClick={() => setFormOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()} disabled={saving}>
+            <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>
               {ui('حفظ')}
             </Button>
           </DialogFooter>

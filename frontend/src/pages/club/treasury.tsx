@@ -18,6 +18,7 @@ import { localToday } from '@/lib/formatters';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { uiStatic } from '@/lib/ui-static';
 import { useAuth } from '@/store/auth';
+import { useLocale } from '@/store/locale';
 
 const METHOD_LABELS: Record<string, string> = {
   cash: uiStatic('نقدي'),
@@ -51,6 +52,7 @@ function normalizeRange(from: string, to: string): { dateFrom: string; dateTo: s
 }
 
 export function ClubTreasuryPage() {
+  const { ui } = useLocale();
   const ct = useClubT();
   const { user } = useAuth();
   const { can, canRoute } = usePermission();
@@ -63,7 +65,7 @@ export function ClubTreasuryPage() {
   const [expenseForm, setExpenseForm] = useState({
     category: '',
     amount: '',
-    paymentMethod: 'نقدي',
+    paymentMethod: ui('نقدي'),
     description: '',
   });
   const [periodMode, setPeriodMode] = useState<PeriodMode>('today');
@@ -89,11 +91,11 @@ export function ClubTreasuryPage() {
     const amount = Number(expenseForm.amount);
     const targetBranchId = isSystemAdmin ? Number(branchId) : Number(user?.branch ?? 0);
     if (!expenseForm.category.trim() || !Number.isFinite(amount) || amount <= 0) {
-      toast.error('اختر نوع المصروف وأدخل مبلغًا صحيحًا');
+      toast.error(ui('اختر نوع المصروف وأدخل مبلغًا صحيحًا'));
       return;
     }
     if (!targetBranchId) {
-      toast.error('اختر الفرع أولًا لتسجيل المصروف');
+      toast.error(ui('اختر الفرع أولًا لتسجيل المصروف'));
       return;
     }
     setExpenseSaving(true);
@@ -103,13 +105,13 @@ export function ClubTreasuryPage() {
         category: expenseForm.category.trim(),
         amount,
         paymentMethod: expenseForm.paymentMethod,
-        paymentStatus: 'مدفوع',
+        paymentStatus: ui('مدفوع'),
         description: expenseForm.description.trim() || undefined,
         branchId: targetBranchId,
       });
-      toast.success('تم تسجيل المصروف باسم المستخدم الحالي');
+      toast.success(ui('تم تسجيل المصروف باسم المستخدم الحالي'));
       setExpenseOpen(false);
-      setExpenseForm({ category: '', amount: '', paymentMethod: 'نقدي', description: '' });
+      setExpenseForm({ category: '', amount: '', paymentMethod: ui('نقدي'), description: '' });
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['expenses'] }),
         queryClient.invalidateQueries({ queryKey: ['club-treasury'] }),
@@ -183,20 +185,19 @@ export function ClubTreasuryPage() {
         title={ct('subscriptions.treasury')}
         description={
           isSystemAdmin
-            ? 'متابعة كل التحصيلات مع إمكانية اختيار الفرع'
-            : 'تظهر هنا التحصيلات التي سجلتها أنت فقط في فرع حسابك'
+            ? ui('متابعة كل التحصيلات مع إمكانية اختيار الفرع')
+            : ui('تظهر هنا التحصيلات التي سجلتها أنت فقط في فرع حسابك')
         }
         actions={(canRecordExpense || canRoute('/finance/expenses')) ? (
           <div className="flex flex-wrap gap-2">
             {canRecordExpense ? (
               <Button variant="brand" onClick={() => setExpenseOpen(true)}>
-                <ReceiptText className="size-4" />
-                تسجيل مصروف
+                <ReceiptText className="size-4" /> {ui('تسجيل مصروف')}
               </Button>
             ) : null}
             {canRoute('/finance/expenses') ? (
               <Button variant="outline" asChild>
-                <Link to="/finance/expenses">إدارة المصروفات</Link>
+                <Link to="/finance/expenses">{ui('إدارة المصروفات')}</Link>
               </Button>
             ) : null}
           </div>
@@ -212,7 +213,7 @@ export function ClubTreasuryPage() {
               value={branchId}
               onChange={(event) => setBranchId(event.target.value)}
             >
-              <option value="">كل الفروع</option>
+              <option value="">{ui('كل الفروع')}</option>
               {branches.map((branch) => (
                 <option key={branch.id} value={branch.id}>
                   {branch.name ?? `#${branch.id}`}
@@ -222,7 +223,7 @@ export function ClubTreasuryPage() {
           ) : (
             <div className="flex h-10 items-center gap-2 rounded-md border bg-muted/45 px-3 text-sm">
               <Building2 className="size-4 text-primary" />
-              <span className="min-w-0 flex-1 truncate">{user?.branch_name ?? 'فرع الحساب'}</span>
+              <span className="min-w-0 flex-1 truncate">{user?.branch_name ?? ui('فرع الحساب')}</span>
               <LockKeyhole className="size-3.5 text-muted-foreground" />
             </div>
           )}
@@ -337,7 +338,7 @@ export function ClubTreasuryPage() {
                   <tr>
                     <td colSpan={4} className="p-6 text-center text-muted-foreground">
                       {data.summaryOnly
-                        ? 'التفاصيل غير محمّلة لهذه الفترة؛ الإجماليات بالأعلى تشمل الفترة كاملة'
+                        ? ui('التفاصيل غير محمّلة لهذه الفترة؛ الإجماليات بالأعلى تشمل الفترة كاملة')
                         : ct('common.noData')}
                     </td>
                   </tr>
@@ -359,37 +360,37 @@ export function ClubTreasuryPage() {
       <Dialog open={expenseOpen} onOpenChange={setExpenseOpen}>
         <DialogContent aria-describedby={undefined}>
           <DialogHeader>
-            <DialogTitle>تسجيل مصروف جديد</DialogTitle>
+            <DialogTitle>{ui('تسجيل مصروف جديد')}</DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="rounded-xl border bg-muted/35 px-3 py-2 text-sm text-muted-foreground">
-              سيُحفظ المصروف باسم <span className="font-semibold text-foreground">{user?.name ?? 'المستخدم الحالي'}</span>
-              {' '}وفي {isSystemAdmin ? (branches.find((branch) => String(branch.id) === branchId)?.name ?? 'الفرع المختار') : (user?.branch_name ?? 'فرع الحساب')}.
+              سيُحفظ المصروف باسم <span className="font-semibold text-foreground">{user?.name ?? ui('المستخدم الحالي')}</span>
+              {' '}وفي {isSystemAdmin ? (branches.find((branch) => String(branch.id) === branchId)?.name ?? 'الفرع المختار') : (user?.branch_name ?? ui('فرع الحساب'))}.
             </div>
             <div className="grid gap-2">
-              <Label>نوع المصروف</Label>
+              <Label>{ui('نوع المصروف')}</Label>
               <select
                 className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
                 value={expenseForm.category}
                 onChange={(event) => setExpenseForm((form) => ({ ...form, category: event.target.value }))}
               >
-                <option value="">اختر نوع المصروف</option>
+                <option value="">{ui('اختر نوع المصروف')}</option>
                 {expenseCategories.map((category) => (
                   <option key={category.id} value={category.name}>{category.name}</option>
                 ))}
                 {expenseCategories.length === 0 ? (
                   <>
-                    <option value="مصروفات تشغيل">مصروفات تشغيل</option>
-                    <option value="صيانة">صيانة</option>
-                    <option value="مرافق">مرافق</option>
-                    <option value="أخرى">أخرى</option>
+                    <option value="مصروفات تشغيل">{ui('مصروفات تشغيل')}</option>
+                    <option value="صيانة">{ui('صيانة')}</option>
+                    <option value="مرافق">{ui('مرافق')}</option>
+                    <option value="أخرى">{ui('أخرى')}</option>
                   </>
                 ) : null}
               </select>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="grid gap-2">
-                <Label>المبلغ</Label>
+                <Label>{ui('المبلغ')}</Label>
                 <Input
                   type="number"
                   min="0.01"
@@ -400,32 +401,32 @@ export function ClubTreasuryPage() {
                 />
               </div>
               <div className="grid gap-2">
-                <Label>طريقة الدفع</Label>
+                <Label>{ui('طريقة الدفع')}</Label>
                 <select
                   className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
                   value={expenseForm.paymentMethod}
                   onChange={(event) => setExpenseForm((form) => ({ ...form, paymentMethod: event.target.value }))}
                 >
-                  <option value="نقدي">نقدي</option>
-                  <option value="بطاقة">بطاقة</option>
-                  <option value="تحويل بنكي">تحويل بنكي</option>
-                  <option value="محفظة">محفظة</option>
+                  <option value="نقدي">{ui('نقدي')}</option>
+                  <option value="بطاقة">{ui('بطاقة')}</option>
+                  <option value="تحويل بنكي">{ui('تحويل بنكي')}</option>
+                  <option value="محفظة">{ui('محفظة')}</option>
                 </select>
               </div>
             </div>
             <div className="grid gap-2">
-              <Label>البيان</Label>
+              <Label>{ui('البيان')}</Label>
               <Textarea
                 value={expenseForm.description}
                 onChange={(event) => setExpenseForm((form) => ({ ...form, description: event.target.value }))}
-                placeholder="تفاصيل المصروف (اختياري)"
+                placeholder={ui('تفاصيل المصروف (اختياري)')}
               />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setExpenseOpen(false)}>إلغاء</Button>
-            <Button variant="brand" onClick={() => void saveExpense()} disabled={expenseSaving}>
-              {expenseSaving ? 'جارٍ الحفظ…' : 'حفظ المصروف'}
+            <Button variant="outline" onClick={() => setExpenseOpen(false)}>{ui('إلغاء')}</Button>
+            <Button permissionAction="create" variant="brand" onClick={() => void saveExpense()} disabled={expenseSaving}>
+              {expenseSaving ? ui('جارٍ الحفظ…') : ui('حفظ المصروف')}
             </Button>
           </DialogFooter>
         </DialogContent>

@@ -16,6 +16,26 @@ import {
   GeneralLedgerQueryDto,
   ReportDateRangeDto,
 } from "./dto/accounting.dto";
+import { createdByFilter } from "../finance/finance-user-scope";
+
+type CashFlowSection = "operating" | "investing" | "financing";
+
+interface CashFlowLineAccumulator {
+  direction: "inflow" | "outflow";
+  code: string;
+  name: string;
+  amount: number;
+}
+
+interface CashFlowBucketAccumulator {
+  inflow: number;
+  outflow: number;
+  items: Map<string, CashFlowLineAccumulator>;
+}
+
+/** Label for cash that moved without an identifiable counterpart account. */
+const UNCLASSIFIED_CODE = "UNCLASSIFIED";
+const UNCLASSIFIED_NAME = "حركة نقدية غير مصنّفة / Unclassified cash movement";
 
 @Injectable()
 export class AccountingReportsService {
@@ -235,45 +255,6 @@ export class AccountingReportsService {
       orderBy: { code: "asc" },
     });
 
-    if (!accounts.length) return { sections: [] };
-    const accountIds = accounts.map((account) => account.id);
-    const entryFilter = {
-      status: { in: LEDGER_REPORT_STATUSES },
-      ...this.branchEntryFilter(q.branchId, user),
-    };
-    const [openingRows, allLines] = await Promise.all([
-      q.dateFrom
-        ? this.prisma.acc_journal_entry_lines.groupBy({
-            by: ['account_id'],
-            where: { account_id: { in: accountIds }, entry: { ...entryFilter, date: { lt: q.dateFrom } } },
-            _sum: { debit: true, credit: true },
-          })
-        : Promise.resolve([]),
-      this.prisma.acc_journal_entry_lines.findMany({
-        where: {
-          account_id: { in: accountIds },
-          entry: {
-            ...entryFilter,
-            ...(q.dateFrom || q.dateTo ? { date: {
-              ...(q.dateFrom ? { gte: q.dateFrom } : {}),
-              ...(q.dateTo ? { lte: q.dateTo } : {}),
-            } } : {}),
-          },
-        },
-        include: { entry: { select: { entry_no: true, date: true, description: true } } },
-        orderBy: [{ account_id: 'asc' }, { entry: { date: 'asc' } }, { line_order: 'asc' }],
-      }),
-    ]);
-    const openings = new Map<number, { debit: number; credit: number }>(openingRows.map((row) => [row.account_id, {
-      debit: roundMoney(row._sum.debit ?? 0), credit: roundMoney(row._sum.credit ?? 0),
-    }] as const));
-    const linesByAccount = new Map<number, typeof allLines>();
-    for (const line of allLines) {
-      const lines = linesByAccount.get(line.account_id) ?? [];
-      lines.push(line);
-      linesByAccount.set(line.account_id, lines);
-    }
-
     const sections: Array<{
       accountId: number;
       code: string;
@@ -291,8 +272,40 @@ export class AccountingReportsService {
       closingBalance: number;
     }> = [];
     for (const acc of accounts) {
-      const opening = openings.get(acc.id) ?? { debit: 0, credit: 0 };
-      const lines = linesByAccount.get(acc.id) ?? [];
+      const opening = q.dateFrom
+        ? await this.sumLines(
+            {
+              account_id: acc.id,
+              entry: {
+                status: { in: LEDGER_REPORT_STATUSES },
+                ...this.branchEntryFilter(q.branchId, user),
+              },
+            },
+            q.dateFrom,
+          )
+        : { debit: 0, credit: 0 };
+
+      const lines = await this.prisma.acc_journal_entry_lines.findMany({
+        where: {
+          account_id: acc.id,
+          entry: {
+            status: { in: LEDGER_REPORT_STATUSES },
+            ...this.branchEntryFilter(q.branchId, user),
+            ...(q.dateFrom || q.dateTo
+              ? {
+                  date: {
+                    ...(q.dateFrom ? { gte: q.dateFrom } : {}),
+                    ...(q.dateTo ? { lte: q.dateTo } : {}),
+                  },
+                }
+              : {}),
+          },
+        },
+        include: {
+          entry: { select: { entry_no: true, date: true, description: true } },
+        },
+        orderBy: [{ entry: { date: "asc" } }, { line_order: "asc" }],
+      });
 
       if (lines.length === 0 && opening.debit === 0 && opening.credit === 0)
         continue;
@@ -335,6 +348,34 @@ export class AccountingReportsService {
     return { sections };
   }
 
+  /**
+   * Resolves configured default accounts (by `acc_default_accounts.key`) to the ids of
+   * those accounts *and every descendant*, so a report keeps working after a user nests
+   * sub-accounts under a mapped account. Codes are never hard-coded — the mapping is the
+   * single source of truth, exactly as the posting services use it.
+   */
+  private async defaultAccountTreeIds(keys: string[]): Promise<number[]> {
+    const defaults = await this.prisma.acc_default_accounts.findMany({
+      where: { key: { in: keys } },
+      select: { account_code: true },
+    });
+    const codes = [...new Set(defaults.map((d) => d.account_code))];
+    if (!codes.length) return [];
+    const roots = await this.prisma.acc_accounts.findMany({
+      where: { code: { in: codes } },
+      select: { id: true },
+    });
+    if (!roots.length) return [];
+    const all = await this.prisma.acc_accounts.findMany({
+      select: { id: true, parent_id: true },
+    });
+    const ids = new Set<number>();
+    for (const root of roots) {
+      for (const id of collectDescendantIds(all, root.id)) ids.add(id);
+    }
+    return [...ids];
+  }
+
   private async typeTotals(
     types: AccountType[],
     q: {
@@ -344,12 +385,18 @@ export class AccountingReportsService {
       asOfDate?: string;
     },
     user?: JwtUser,
+    /** Narrows the accounts of those types to (or away from) a specific set. */
+    scope?: { onlyAccountIds?: number[]; exceptAccountIds?: number[] },
   ) {
     const accounts = await this.prisma.acc_accounts.findMany({
       where: {
         is_active: true,
         is_postable: true,
         account_type: { in: types },
+        ...(scope?.onlyAccountIds ? { id: { in: scope.onlyAccountIds } } : {}),
+        ...(scope?.exceptAccountIds?.length
+          ? { id: { notIn: scope.exceptAccountIds } }
+          : {}),
       },
     });
     let total = 0;
@@ -383,26 +430,44 @@ export class AccountingReportsService {
     return { total, items };
   }
 
+  /**
+   * Multi-step income statement: revenue − cost of goods sold = gross profit,
+   * then less operating expenses = net income. Cost of goods sold is reported on its
+   * own line and excluded from operating expenses so it is never counted twice
+   * (net income therefore still equals revenue − all expenses).
+   */
   async incomeStatement(q: ReportDateRangeDto, user?: JwtUser) {
+    const cogsIds = await this.defaultAccountTreeIds(["cost_of_goods_sold"]);
     const revenue = await this.typeTotals(["revenue"], q, user);
-    const expenses = await this.typeTotals(["expense"], q, user);
-    const netIncome = roundMoney(revenue.total - expenses.total);
+    const costOfGoodsSold = cogsIds.length
+      ? await this.typeTotals(["expense"], q, user, { onlyAccountIds: cogsIds })
+      : { total: 0, items: [] as Array<{ code: string; name: string; amount: number }> };
+    const expenses = await this.typeTotals(["expense"], q, user, {
+      exceptAccountIds: cogsIds,
+    });
+    const grossProfit = roundMoney(revenue.total - costOfGoodsSold.total);
+    const netIncome = roundMoney(grossProfit - expenses.total);
     return {
       revenue,
+      costOfGoodsSold,
+      grossProfit,
       expenses,
-      grossProfit: revenue.total,
       netIncome,
     };
   }
 
   /** Authoritative P&L activity used by both accounting and finance dashboards. */
-  async profitLossActivity(q: ReportDateRangeDto, user?: JwtUser) {
+  async profitLossActivity(
+    q: ReportDateRangeDto & { createdByUserId?: number | null },
+    user?: JwtUser,
+  ) {
     const lines = await this.prisma.acc_journal_entry_lines.findMany({
       where: {
         account: { account_type: { in: ["revenue", "expense"] } },
         entry: {
           status: { in: LEDGER_REPORT_STATUSES },
           ...this.branchEntryFilter(q.branchId, user),
+          ...createdByFilter(q.createdByUserId ?? null),
           ...(q.dateFrom || q.dateTo
             ? {
                 date: {
@@ -597,30 +662,37 @@ export class AccountingReportsService {
     });
     const cashIds = cashAccounts.map((a) => a.id);
 
-    const classify = (
-      codesToClassify: string[],
-    ): "operating" | "investing" | "financing" => {
-      if (
-        codesToClassify.some(
-          (code) => code.startsWith("2.02") || code.startsWith("3"),
-        )
-      ) {
-        return "financing";
-      }
-      if (
-        codesToClassify.some(
-          (code) => code.startsWith("1.02") || code.startsWith("1.03"),
-        )
-      ) {
-        return "investing";
-      }
+    // Classification is per counterpart LINE, not per entry: a single entry that both
+    // buys equipment and pays an operating cost belongs to two sections, and judging it
+    // by whichever code happens to match first would push the whole entry into one.
+    const classify = (code: string): CashFlowSection => {
+      if (code.startsWith("2.02") || code.startsWith("3")) return "financing";
+      if (code.startsWith("1.02") || code.startsWith("1.03")) return "investing";
       return "operating";
     };
 
-    const buckets = {
-      operating: { inflow: 0, outflow: 0 },
-      investing: { inflow: 0, outflow: 0 },
-      financing: { inflow: 0, outflow: 0 },
+    const buckets: Record<CashFlowSection, CashFlowBucketAccumulator> = {
+      operating: { inflow: 0, outflow: 0, items: new Map() },
+      investing: { inflow: 0, outflow: 0, items: new Map() },
+      financing: { inflow: 0, outflow: 0, items: new Map() },
+    };
+
+    /** Books one counterpart's share of an entry's cash movement. */
+    const record = (
+      section: CashFlowSection,
+      code: string,
+      name: string,
+      amount: number,
+    ) => {
+      if (amount === 0) return;
+      const bucket = buckets[section];
+      const direction = amount > 0 ? "inflow" : "outflow";
+      const magnitude = Math.abs(amount);
+      bucket[direction] = roundMoney(bucket[direction] + magnitude);
+      const key = `${direction}:${code}`;
+      const existing = bucket.items.get(key);
+      if (existing) existing.amount = roundMoney(existing.amount + magnitude);
+      else bucket.items.set(key, { direction, code, name, amount: magnitude });
     };
 
     const entries = await this.prisma.acc_journal_entries.findMany({
@@ -639,7 +711,7 @@ export class AccountingReportsService {
       },
       include: {
         lines: {
-          include: { account: { select: { code: true } } },
+          include: { account: { select: { code: true, name: true } } },
         },
       },
     });
@@ -657,31 +729,69 @@ export class AccountingReportsService {
       );
       // Transfers between cash/bank/card accounts do not change total cash.
       if (cashNet === 0) continue;
-      const counterpartCodes = entry.lines
-        .filter((line) => !cashIdSet.has(line.account_id))
-        .map((line) => line.account.code);
-      const section = classify(counterpartCodes);
-      if (cashNet > 0) {
-        buckets[section].inflow = roundMoney(buckets[section].inflow + cashNet);
-      } else {
-        buckets[section].outflow = roundMoney(
-          buckets[section].outflow + Math.abs(cashNet),
-        );
+
+      const counterparts = entry.lines.filter(
+        (line) => !cashIdSet.has(line.account_id),
+      );
+      if (!counterparts.length) {
+        // A cash movement with no counterpart still moved money; never drop it.
+        record("operating", UNCLASSIFIED_CODE, UNCLASSIFIED_NAME, cashNet);
+        continue;
       }
+
+      // Split the entry's cash movement across its counterparts in proportion to each
+      // counterpart line, giving the last share the rounding remainder so the allocated
+      // amounts add back up to cashNet exactly.
+      const weights = counterparts.map((line) =>
+        Math.abs(roundMoney(line.debit) - roundMoney(line.credit)),
+      );
+      const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+      let allocated = 0;
+      counterparts.forEach((line, index) => {
+        const isLast = index === counterparts.length - 1;
+        const share = isLast
+          ? roundMoney(cashNet - allocated)
+          : roundMoney(
+              totalWeight > 0
+                ? (cashNet * weights[index]) / totalWeight
+                : cashNet / counterparts.length,
+            );
+        allocated = roundMoney(allocated + share);
+        record(
+          classify(line.account.code),
+          line.account.code,
+          line.account.name,
+          share,
+        );
+      });
     }
 
-    const net = (b: { inflow: number; outflow: number }) =>
-      roundMoney(b.inflow - b.outflow);
+    const finalize = (bucket: CashFlowBucketAccumulator) => {
+      const items = [...bucket.items.values()].sort(
+        (a, b) => b.amount - a.amount,
+      );
+      return {
+        inflow: bucket.inflow,
+        outflow: bucket.outflow,
+        net: roundMoney(bucket.inflow - bucket.outflow),
+        inflowItems: items
+          .filter((i) => i.direction === "inflow")
+          .map(({ code, name, amount }) => ({ code, name, amount })),
+        outflowItems: items
+          .filter((i) => i.direction === "outflow")
+          .map(({ code, name, amount }) => ({ code, name, amount })),
+      };
+    };
+
+    const operating = finalize(buckets.operating);
+    const investing = finalize(buckets.investing);
+    const financing = finalize(buckets.financing);
 
     return {
-      operating: { ...buckets.operating, net: net(buckets.operating) },
-      investing: { ...buckets.investing, net: net(buckets.investing) },
-      financing: { ...buckets.financing, net: net(buckets.financing) },
-      netChange: roundMoney(
-        net(buckets.operating) +
-          net(buckets.investing) +
-          net(buckets.financing),
-      ),
+      operating,
+      investing,
+      financing,
+      netChange: roundMoney(operating.net + investing.net + financing.net),
     };
   }
 

@@ -2,10 +2,11 @@ import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query,
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 import { isDryRun } from '../../common/preview/dry-run.util';
 import { JwtUser } from '../../common/types/jwt-user';
 import { WeeklyLeavesService } from './weekly-leaves.service';
-import { ListWeeklyLeavesDto } from './dto/list-weekly-leaves.dto';
+import { CreateWeeklyLeaveDto, UpdateWeeklyLeaveDto } from './dto/weekly-leave.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('weekly-leaves')
@@ -14,13 +15,14 @@ export class WeeklyLeavesController {
   constructor(private readonly service: WeeklyLeavesService) {}
 
   @Get()
-  list(@Query() q: ListWeeklyLeavesDto) {
+  list(@Query() q: PaginationDto) {
     return this.service.list(q);
   }
 
   @Post()
+  @RequiresPermission('employees.weekly_leaves:create')
   create(
-    @Body() body: { empId: number; offDay: string },
+    @Body() body: CreateWeeklyLeaveDto,
     @CurrentUser() user: JwtUser,
     @Query('dryRun') dryRun?: string,
   ) {
@@ -28,9 +30,10 @@ export class WeeklyLeavesController {
   }
 
   @Patch(':id')
+  @RequiresPermission('employees.weekly_leaves:update')
   update(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { empId?: number; offDay?: string },
+    @Body() body: UpdateWeeklyLeaveDto,
     @CurrentUser() user: JwtUser,
     @Query('dryRun') dryRun?: string,
   ) {
@@ -38,6 +41,7 @@ export class WeeklyLeavesController {
   }
 
   @Delete(':id')
+  @RequiresPermission('employees.weekly_leaves:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

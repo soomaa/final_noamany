@@ -2,12 +2,29 @@
 <html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/png" href="/noamany-logo.png" />
+    <link rel="icon" type="image/png" href="/one-logo.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#ED1C24" />
-    <meta name="description" content="Noamany Fitness Center — منصة متكاملة لإدارة النادي واللياقة والموظفين." />
-    <title>Noamany Fitness Center — إدارة متكاملة</title>
-    <script src="/theme-init.js"></script>
+    <meta name="theme-color" content="#0A2342" />
+    <title>ONE80 Gym & Fitness Hub — الموارد البشرية</title>
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem('one80_theme');
+          var prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+          if (theme === 'dark' || (!theme && prefersDark)) {
+            document.documentElement.classList.add('dark');
+          }
+          var locale = localStorage.getItem('one80_locale');
+          if (locale === 'en') {
+            document.documentElement.setAttribute('lang', 'en');
+            document.documentElement.setAttribute('dir', 'ltr');
+          } else {
+            document.documentElement.setAttribute('lang', 'ar');
+            document.documentElement.setAttribute('dir', 'rtl');
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

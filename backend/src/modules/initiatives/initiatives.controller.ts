@@ -55,13 +55,13 @@ export class InitiativesController {
   }
 
   @Post(':id/approve')
-  @RequiresPermission('affairs.initiatives:update')
+  @RequiresPermission('affairs.initiatives:approve')
   approve(@Param('id', ParseIntPipe) id: number) {
     return this.initiatives.approve(id);
   }
 
   @Post(':id/reject')
-  @RequiresPermission('affairs.initiatives:update')
+  @RequiresPermission('affairs.initiatives:reject')
   reject(@Param('id', ParseIntPipe) id: number, @Body() dto: RejectInitiativeDto) {
     return this.initiatives.reject(id, dto);
   }

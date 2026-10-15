@@ -1,0 +1,6 @@
+Anatomical vector artwork by Ryan Graves, CC BY 4.0.
+Source: https://www.figma.com/community/file/1320468164820924031
+License: https://creativecommons.org/licenses/by/4.0/
+Obtained via muscle_mapper 1.2.2 (Surya Mouly, MIT).
+Changes: extracted SVG paths into JSON; mapped anatomical IDs to training muscle groups; recolored at runtime; added bilateral illustrative lumbar erector regions for lower-back targeting.
+These are illustrative anatomical maps, not a personal anatomical model.

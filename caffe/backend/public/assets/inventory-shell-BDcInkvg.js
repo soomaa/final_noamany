@@ -1,0 +1,1 @@
+import{u as i,j as o}from"./index-BaoRHNB2.js";import{P as n}from"./page-header-BaN7nH79.js";function m({title:r,description:s,children:a,actions:t}){const{ui:e}=i();return o.jsxs("div",{className:"space-y-6",children:[o.jsx(n,{title:e(r),description:s?e(s):void 0,eyebrow:e("إدارة الكافيه والمخزون"),actions:t}),a]})}export{m as I};

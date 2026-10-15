@@ -1,6 +1,8 @@
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsArray,
+  ValidateNested,
   IsDateString,
   IsIn,
   IsInt,
@@ -12,16 +14,31 @@ import {
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class ListExpensesDto extends PaginationDto {
+  @IsOptional() @IsIn(['gym', 'cafe']) businessUnit?: string;
   @IsOptional() @IsString() branchId?: string;
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() approvalStatus?: string;
   @IsOptional() @IsString() paymentStatus?: string;
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
-  @IsOptional() @IsIn(['male', 'female', 'all']) genderScope?: string;
+  /** Only global/branch finance scopes may select another creator. */
+  @IsOptional() @IsString() userId?: string;
+}
+
+export class ExpenseUserOptionsQueryDto {
+  @IsOptional() @IsIn(['gym', 'cafe']) businessUnit?: string;
+  @IsOptional() @IsString() branchId?: string;
+}
+
+export class ExpensePaymentDto {
+  @IsIn(['cash', 'card', 'visa', 'transfer', 'bank', 'wallet', 'instapay', 'online']) method!: string;
+  @IsNumber() @Min(0) amount!: number;
 }
 
 export class UpsertExpenseDto {
+  @IsOptional() @IsIn(['gym', 'cafe']) businessUnit?: string;
+  @IsOptional() @IsNumber() @Min(0) paidAmount?: number;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => ExpensePaymentDto) payments?: ExpensePaymentDto[];
   @IsOptional() @IsString() expenseDate?: string;
   @IsString() category!: string;
   @IsOptional() @IsString() subCategory?: string;
@@ -38,14 +55,7 @@ export class UpsertExpenseDto {
   @IsOptional() @IsBoolean() isRecurring?: boolean;
   @IsOptional() @IsString() recurringFrequency?: string;
   @IsOptional() @IsString() nextRecurringDate?: string;
-  /** نطاق الجنس: تحديد ما إذا كان المصروف خاصاً بقسم الرجال أو الحريم */
-  @IsOptional() @IsIn(['male', 'female']) genderScope?: 'male' | 'female';
-  /** تفعيل التوزيع بالنسب بين الرجال والحريم */
-  @IsOptional() @IsBoolean() hasPercentage?: boolean;
-  /** نسبة الرجال (0-100) — مطلوبة عند hasPercentage=true */
-  @IsOptional() @IsNumber() @Min(0) malePercentage?: number;
-  /** نسبة الحريم (0-100) — مطلوبة عند hasPercentage=true */
-  @IsOptional() @IsNumber() @Min(0) femalePercentage?: number;
+  @IsOptional() @IsBoolean() deductFromDrawer?: boolean;
 }
 
 export class UpsertExpenseCategoryDto {
@@ -59,9 +69,11 @@ export class RejectExpenseDto {
 }
 
 export class ExpenseStatisticsQueryDto {
+  @IsOptional() @IsIn(['gym', 'cafe']) businessUnit?: string;
   @IsOptional() @IsString() branchId?: string;
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
+  @IsOptional() @IsString() userId?: string;
 }
 
 export class ListRevenuesDto extends PaginationDto {
@@ -70,6 +82,8 @@ export class ListRevenuesDto extends PaginationDto {
   @IsOptional() @IsString() paymentStatus?: string;
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
+  /** Admin-only filter; non-admins are always locked to themselves server-side. */
+  @IsOptional() @IsString() userId?: string;
 }
 
 export class UpsertRevenueDto {
@@ -90,6 +104,7 @@ export class UpsertRevenueDto {
   @IsOptional() @IsBoolean() isRecurring?: boolean;
   @IsOptional() @IsString() recurringFrequency?: string;
   @IsOptional() @IsString() nextRecurringDate?: string;
+  @IsOptional() @IsBoolean() deductFromDrawer?: boolean;
 }
 
 export class SyncRevenuesDto {
@@ -102,6 +117,7 @@ export class RevenueStatisticsQueryDto {
   @IsOptional() @IsString() branchId?: string;
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
+  @IsOptional() @IsString() userId?: string;
 }
 
 export class TopCustomersQueryDto extends PaginationDto {
@@ -109,6 +125,7 @@ export class TopCustomersQueryDto extends PaginationDto {
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) limit?: number;
+  @IsOptional() @IsString() userId?: string;
 }
 
 export class FinanceDashboardQueryDto {
@@ -118,14 +135,18 @@ export class FinanceDashboardQueryDto {
   /** Alias accepted from older frontend query params. */
   @IsOptional() @IsDateString() startDate?: string;
   @IsOptional() @IsDateString() endDate?: string;
+  @IsOptional() @IsString() userId?: string;
 }
 
 export class ExpenseReportsQueryDto {
+  @IsOptional() @IsIn(['gym', 'cafe']) businessUnit?: string;
+  @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() branchId?: string;
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
   @IsOptional() @IsDateString() startDate?: string;
   @IsOptional() @IsDateString() endDate?: string;
+  @IsOptional() @IsString() userId?: string;
 }
 
 export class RevenueReportsQueryDto {
@@ -138,36 +159,16 @@ export class RevenueReportsQueryDto {
   @IsOptional() @IsString() source?: string;
   /** Scope the subscriptions breakdown (receipts + refunds) to one club_subscription_types id. */
   @IsOptional() @IsString() subscriptionTypeId?: string;
+  @IsOptional() @IsString() userId?: string;
 }
 
 export class FinanceAnalysisQueryDto {
   @IsOptional() @IsString() branchId?: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) cafeCategoryId?: number;
-  @IsOptional() @IsIn(['male', 'female']) gender?: 'male' | 'female';
   @IsOptional() @IsDateString() dateFrom?: string;
   @IsOptional() @IsDateString() dateTo?: string;
   @IsOptional() @IsDateString() startDate?: string;
   @IsOptional() @IsDateString() endDate?: string;
-}
-
-export class DailyClosingQueryDto {
-  @IsOptional() @IsString() branchId?: string;
-  @IsOptional() @IsDateString() fromDate?: string;
-  @IsOptional() @IsDateString() toDate?: string;
-  @IsOptional() @IsIn(['male', 'female']) gender?: 'male' | 'female';
-}
-
-export class TargetReportQueryDto {
-  @IsOptional() @IsString() branchId?: string;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) employeeId?: number;
-  /** Compatibility alias for clients that name the selected salesperson explicitly. */
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) targetEmployeeId?: number;
-  @IsOptional() @IsIn(['subscriptions', 'sales', 'all'])
-  operationType?: 'subscriptions' | 'sales' | 'all';
-  @IsOptional() @IsIn(['subscriptions', 'sales', 'all'])
-  operation?: 'subscriptions' | 'sales' | 'all';
-  @IsOptional() @IsDateString() fromDate?: string;
-  @IsOptional() @IsDateString() toDate?: string;
+  @IsOptional() @IsString() userId?: string;
 }
 
 export class ProfitLossQueryDto {
@@ -176,4 +177,5 @@ export class ProfitLossQueryDto {
   @IsOptional() @IsDateString() dateTo?: string;
   @IsOptional() @IsDateString() startDate?: string;
   @IsOptional() @IsDateString() endDate?: string;
+  @IsOptional() @IsString() userId?: string;
 }

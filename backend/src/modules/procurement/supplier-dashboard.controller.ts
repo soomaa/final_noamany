@@ -8,7 +8,7 @@ import { SupplierDashboardService } from './supplier-dashboard.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('supplier-dashboard')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.cafe_purchases:view')
 export class SupplierDashboardController {
   constructor(
     private readonly service: SupplierDashboardService,
@@ -41,7 +41,7 @@ export class SupplierDashboardController {
   }
 
   @Post('export')
-  @RequiresPermission('gym-sales.procurement:export')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:export')
   async exportSuppliers(@Query('format') format: string | undefined, @Res() res: Response) {
     const top = await this.service.top({ limit: 1000 });
     const cols = [

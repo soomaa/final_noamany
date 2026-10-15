@@ -1,29 +1,33 @@
-import { EmployeeType, LeaveType } from '../../common/constants/hr-codes';
+import { LeaveType } from '../../common/constants/hr-codes';
+import { addDateOnlyDays, cairoDateBounds, cairoDateString, dateOnlyParts } from '../../common/utils/cairo-date';
 import { SUSPEND_APPROVED, SuspendStatus } from '../../common/utils/suspend-status.util';
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { decimal, payrollPeriod } from './payroll-status.util';
-
-/** Allowance/deduction codes (badl) keyed in hr_finance_employes. */
-const BADL = {
-  BASIC: 100,
-  HOUSING: 101,
-  TRANSPORT: 102,
-  NATURE: 103,
-  ASSIGNMENT: 104,
-  MEAL: 105,
-  COMM: 106,
-  INSURANCE: 200,
-} as const;
+import {
+  applyNamedAllowance,
+  buildPayrollEmployeeWhere,
+  clipIsoRange,
+  computeComponentAmount,
+  countInclusiveDays,
+  emptyNamedAllowances,
+  ENGINE_BADL,
+  isFinanceRowExpired,
+  isNamedAllowanceCode,
+  resolveEngineBadlCode,
+  roundMoney,
+} from './salary-component.util';
+import { PayrollTaxPolicyService, ResolvedPayrollTaxPolicy } from './payroll-tax-policy.service';
+import { calculatePeriodicIncomeTax } from './payroll-tax.util';
+import { DisabledGymIncentiveAdapter, GYM_INCENTIVE_ADAPTER, GymIncentiveAdapter } from '../../ports/payroll/gym-incentive.adapter';
 
 export interface ComputedEmployeeSalary {
   empId: number;
   empCode: number;
   empName: string;
   mosmaWazefyN: string | null;
-  branchId: number | null;
   ratebAsasy: number;
   badalSakn: number;
   badalMowaslat: number;
@@ -35,18 +39,22 @@ export interface ComputedEmployeeSalary {
   totMokafaa: number;
   totEntdab: number;
   zeyadaRateb: number;
-  manualEarnings: number;
   khasmKeyab: number;
   agazaBdonRateb: number;
-  khasmAgazat: number;
-  khasmBasma: number;
   khasmTakher: number;
   khasmEzn: number;
   khasmGezaa: number;
   khasmTamen: number;
   taminHesaOner: number;
   khasmSolaf: number;
-  totOkraaKhasm: number;
+  otherAllowances: number;
+  otherDeductions: number;
+  taxableEarnings: number;
+  incomeTax: number;
+  taxPolicyId: number;
+  taxPolicyVersion: string;
+  taxPolicySnapshot: Prisma.InputJsonObject;
+  taxBreakdown: Prisma.InputJsonObject;
   totalEsthkak: number;
   totalKhsomat: number;
   safi: number;
@@ -65,6 +73,9 @@ export interface SalaryOverrides {
   privateBonus?: number;
   taqeemValue?: number;
   targetValue?: number;
+  manualIncrease?: number;
+  manualDeduction?: number;
+  cafeDeduction?: number;
 }
 
 @Injectable()
@@ -77,6 +88,9 @@ export class PayrollEngineService {
   constructor(
     private readonly prisma: PrismaService,
     config: ConfigService,
+    private readonly taxPolicies: PayrollTaxPolicyService,
+    @Optional() @Inject(GYM_INCENTIVE_ADAPTER)
+    private readonly incentives: GymIncentiveAdapter = new DisabledGymIncentiveAdapter(),
   ) {
     this.workingDays = config.get<number>('payroll.workingDays') ?? 30;
     this.hoursPerDay = config.get<number>('payroll.hoursPerDay') ?? 8;
@@ -86,25 +100,28 @@ export class PayrollEngineService {
     );
   }
 
-  async computeAll(month: number, year: number): Promise<ComputedEmployeeSalary[]> {
-    const { fromDate, toDate } = payrollPeriod(month, year);
-    return this.computeAllForPeriod(fromDate, toDate);
-  }
-
-  /** Live legacy salary sheet for an arbitrary date range and optional branch. */
-  async computeAllForPeriod(
-    fromDate: string,
-    toDate: string,
-    branchIds?: number[],
-  ): Promise<ComputedEmployeeSalary[]> {
-    const end = new Date(`${toDate}T00:00:00Z`);
-    const month = end.getUTCMonth() + 1;
-    const year = end.getUTCFullYear();
+  async computeAll(month: number, year: number, window?: { fromDate: string; toDate: string }, overridesByEmployee: Map<number, SalaryOverrides> = new Map()): Promise<ComputedEmployeeSalary[]> {
+    const { fromDate, toDate } = window ?? payrollPeriod(month, year);
+    const taxPolicy = await this.taxPolicies.resolveForPeriod(fromDate, toDate);
+    const settlementBounds = cairoDateBounds(fromDate, toDate);
+    const settledEmployees = await this.prisma.hr_final_settlements.findMany({
+      where: {
+        status: { in: ['approved', 'posted', 'paid'] },
+        termination_date: {
+          gte: settlementBounds.start,
+          lt: settlementBounds.endExclusive,
+        },
+      },
+      select: { employee_id: true },
+    });
     const employees = await this.prisma.employees.findMany({
       where: {
-        employee_type: EmployeeType.ACTIVE,
-        OR: [{ leave_emp: null }, { leave_emp: 0 }],
-        ...(branchIds != null ? { branch_id_fk: { in: branchIds } } : {}),
+        AND: [
+          buildPayrollEmployeeWhere({ fromDate, toDate }),
+          ...(settledEmployees.length
+            ? [{ id: { notIn: settledEmployees.map((row) => row.employee_id) } }]
+            : []),
+        ],
       },
       orderBy: { id: 'asc' },
     });
@@ -115,7 +132,7 @@ export class PayrollEngineService {
     const results: ComputedEmployeeSalary[] = [];
     for (const emp of employees) {
       if (!emp.emp_code) continue;
-      const computed = await this.computeOne(emp, fromDate, toDate, month, year, insuranceRates);
+      const computed = await this.computeOne(emp, fromDate, toDate, month, year, insuranceRates, taxPolicy, overridesByEmployee.get(emp.id));
       if (computed) results.push(computed);
     }
     return results;
@@ -127,14 +144,16 @@ export class PayrollEngineService {
     month: number,
     year: number,
     overrides?: SalaryOverrides,
+    window?: { fromDate: string; toDate: string },
   ): Promise<ComputedEmployeeSalary | null> {
-    const { fromDate, toDate } = payrollPeriod(month, year);
+    const { fromDate, toDate } = window ?? payrollPeriod(month, year);
     const emp = await this.prisma.employees.findFirst({
-      where: { id: empId, employee_type: EmployeeType.ACTIVE },
+      where: { id: empId, ...buildPayrollEmployeeWhere({ fromDate, toDate }) },
     });
     if (!emp || !emp.emp_code) return null;
     const insuranceRates = await this.loadInsuranceRates();
-    return this.computeOne(emp, fromDate, toDate, month, year, insuranceRates, overrides);
+    const taxPolicy = await this.taxPolicies.resolveForPeriod(fromDate, toDate);
+    return this.computeOne(emp, fromDate, toDate, month, year, insuranceRates, taxPolicy, overrides);
   }
 
   private async computeOne(
@@ -144,9 +163,9 @@ export class PayrollEngineService {
       employee: string | null;
       mosma_wazefy_n: string | null;
       emp_sign: string | null;
-      emp_code_gym: number | null;
-      branch_id_fk: number | null;
       nationality: string | null;
+      leave_emp: number | null;
+      end_service_date_m: string | null;
       basic_salary: Prisma.Decimal | null;
       tamin_rateb: Prisma.Decimal | null;
       tamin_hesa_emp: Prisma.Decimal | null;
@@ -157,75 +176,92 @@ export class PayrollEngineService {
     month: number,
     year: number,
     insuranceRates: InsuranceRateTable,
+    taxPolicy: ResolvedPayrollTaxPolicy,
     overrides?: SalaryOverrides,
   ): Promise<ComputedEmployeeSalary | null> {
     const empCode = emp.emp_code!;
-    const badlBasic = await this.getBadlValue(BADL.BASIC, empCode);
-    const ratebAsasy = decimal(emp.basic_salary) || badlBasic;
+    const profileBasic = decimal(emp.basic_salary);
+    const components = await this.resolveSalaryComponents(emp.id, empCode, profileBasic);
+    const ratebAsasy = profileBasic || components.named.basicFallback;
 
-    const badalSakn = await this.getBadlValue(BADL.HOUSING, empCode);
-    const badalMowaslat = await this.getBadlValue(BADL.TRANSPORT, empCode);
-    const badalTabe3aAmal = await this.getBadlValue(BADL.NATURE, empCode);
-    const badalTaklef = await this.getBadlValue(BADL.ASSIGNMENT, empCode);
-    // The active legacy salary sheet uses codes 100,101,102,103,104 and 106.
-    // Code 105 is not included in its earnings formula.
-    const badalE3asha = 0;
-    const badalEtsal = await this.getBadlValue(BADL.COMM, empCode);
+    let badalSakn = components.named.housing;
+    let badalMowaslat = components.named.transport;
+    let badalTabe3aAmal = components.named.nature;
+    let badalTaklef = components.named.assignment;
+    let badalE3asha = components.named.meal;
+    let badalEtsal = components.named.communication;
+    let otherAllowances = components.otherAllowances;
+    const recurringDeductions = components.recurringDeductions;
     const zeyadaRateb = await this.getZeyadaRateb(empCode);
 
+    // Final / pro-rata settlement: a leaver whose last day falls in this window
+    // is paid only through that day, then excluded from later ordinary runs.
+    let prorationFactor = 1;
+    const lastDay = emp.end_service_date_m?.slice(0, 10) ?? null;
+    if (emp.leave_emp === 1 && lastDay && lastDay >= fromDate && lastDay <= toDate) {
+      const periodDays = countInclusiveDays(fromDate, toDate);
+      const workedDays = countInclusiveDays(fromDate, lastDay);
+      prorationFactor = periodDays > 0 ? workedDays / periodDays : 1;
+      const prorate = (n: number) => roundMoney(n * prorationFactor);
+      badalSakn = prorate(badalSakn);
+      badalMowaslat = prorate(badalMowaslat);
+      badalTabe3aAmal = prorate(badalTabe3aAmal);
+      badalTaklef = prorate(badalTaklef);
+      badalE3asha = prorate(badalE3asha);
+      badalEtsal = prorate(badalEtsal);
+      otherAllowances = prorate(otherAllowances);
+    }
+    const ratebAsasyPaid = roundMoney(ratebAsasy * prorationFactor);
+
     // ── Insurance (GOSI): rate-based from hr_insurance_settings × nationality. ──
-    // Rates calculate the employer share; the employee deduction remains legacy badl-200.
-    const ins = this.computeInsurance(emp, ratebAsasy, badalSakn, insuranceRates);
-    // Active Employee_salaries_model deducts finance component 200 verbatim.
-    const khasmTamen = await this.getBadlValue(BADL.INSURANCE, empCode);
-    ins.empShare = khasmTamen;
+    // Legacy salary path used flat badl-200; here we apply the configured rates
+    // (Hr_insurance_settings_model / Finance_employee_model::get_emp_setting) to the
+    // insurable base, falling back to the stored flat values when no rates exist.
+    const ins = this.computeInsurance(emp, ratebAsasyPaid, badalSakn, insuranceRates);
+    const khasmTamen = ins.empShare;
     const taminHesaOner = ins.ownerShare;
 
-    const baseSalary = ratebAsasy + badalSakn + badalMowaslat + zeyadaRateb;
+    const baseSalary = ratebAsasyPaid + badalSakn + badalMowaslat + zeyadaRateb;
     const agrSa3a = baseSalary / (this.workingDays * this.hoursPerDay);
     const agrYom = agrSa3a * this.hoursPerDay;
 
-    const hoursEdafi = await this.getHoursEdafi(empCode, fromDate, toDate);
+    const hoursEdafiManual = await this.getHoursEdafi(empCode, fromDate, toDate);
     const sheftEdafi = await this.getSheftEdafi(empCode, fromDate, toDate);
+    const attendanceOt = await this.getAttendanceOvertimeHours(empCode, fromDate, toDate);
+    // Prefer extra-hours table on a given day; add attendance OT only for days
+    // that were not already entered manually (no double pay).
+    const hoursEdafi = hoursEdafiManual + attendanceOt.hours;
     const hoursEdafiValue = hoursEdafi * agrSa3a;
     const daysEdafiValue = sheftEdafi * agrYom;
     const totEdafi = hoursEdafiValue + daysEdafiValue;
+    const khasmEarlyLeave = (attendanceOt.earlyLeaveMin / 60) * agrSa3a;
 
     const khasmGezaa = await this.getGezaaByDate(empCode, fromDate, toDate);
     const khasmSolaf = await this.getSolafByDate(empCode, fromDate, toDate);
     // Bonuses (مكافآت): sum hr_mokafat_details suspend=4 option='rateb' in window.
     const totMokafaa = await this.getMokafaaByDate(empCode, fromDate, toDate);
 
-    // Incentives / commissions (حوافز): gym target+sales+classes paid out by configured
-    // split rate (tbl_gym_setting for_user). Persisted into tot_entdab (commissions report).
-    const incentives = await this.getIncentives(emp.id, empCode, fromDate, toDate);
-    // The legacy sheet pays classes and protein from the configured employee percentage.
-    // Target is kept separate because its payable amount remains editable in the sheet.
-    const totEntdab = incentives.classCommission + incentives.proteinCommission;
+    // Optional provider incentives. The portable default is explicitly disabled (zero).
+    const totEntdab = await this.getIncentives(emp.id, empCode, fromDate, toDate);
 
-    const absence = await this.getActualAbsence(empCode, fromDate, toDate);
+    // An open month is a projection: tomorrow (and today's unfinished shift) is not absence.
+    const lastFinishedDay = addDateOnlyDays(cairoDateString(), -1);
+    const absenceTo = toDate < lastFinishedDay ? toDate : lastFinishedDay;
+    const absence = absenceTo < fromDate ? { count: 0, days: [] } : await this.getActualAbsence(empCode, fromDate, absenceTo);
     const keyab = await this.getKeyabByDate(empCode, fromDate, toDate);
     let absenceDays = absence.count;
-    let paidLeaveDays = keyab.withSalaryDays;
     let unpaidLeaveDays = keyab.withoutSalaryDays;
-    let forgottenFingerprint = await this.getForgottenFingerprintByDate(empCode, fromDate, toDate);
     let late = await this.getLateByDate(empCode, fromDate, toDate);
     let khasmKeyabAmount = absenceDays * agrYom;
-    let khasmAgazat = paidLeaveDays * agrYom;
     let agazaBdonRateb = unpaidLeaveDays * agrYom;
-    let khasmBasma = forgottenFingerprint.deductionDays * agrYom;
     let khasmTakherAmount = (late.lateWithoutPermission / 60) * agrSa3a;
     let khasmEznAmount = (late.lateWithPermission / 60) * agrSa3a;
 
     if (this.deductionExemptEmpCodes.has(empCode)) {
       absenceDays = 0;
-      paidLeaveDays = 0;
       unpaidLeaveDays = 0;
       khasmKeyabAmount = 0;
-      khasmAgazat = 0;
       agazaBdonRateb = 0;
-      khasmBasma = 0;
-      forgottenFingerprint = { count: 0, deductionDays: 0 };
       khasmTakherAmount = 0;
       khasmEznAmount = 0;
       late = { lateWithPermission: 0, lateWithoutPermission: 0 };
@@ -234,12 +270,12 @@ export class PayrollEngineService {
     // Manual slip overrides (مكافأة خاصة / تقييم / تارجت) — earnings additions.
     const privateBonus = overrides?.privateBonus ?? 0;
     const taqeemValue = overrides?.taqeemValue ?? 0;
-    // Default target payable = target base × configured employee rate. Payroll officers can
-    // still replace that value from the editable "نسبة التارجت" cell, as in the legacy sheet.
-    const targetValue = legacyTargetPayable(incentives.targetCommission, overrides?.targetValue);
+    const targetValue = overrides?.targetValue ?? 0;
+
+    const otherDeductions = roundMoney(recurringDeductions + khasmEarlyLeave + (overrides?.manualDeduction ?? 0) + (overrides?.cafeDeduction ?? 0));
 
     const totalEsthkak =
-      ratebAsasy +
+      ratebAsasyPaid +
       badalSakn +
       badalMowaslat +
       badalTabe3aAmal +
@@ -250,24 +286,38 @@ export class PayrollEngineService {
       totEdafi +
       totMokafaa +
       totEntdab +
+      otherAllowances +
       privateBonus +
       taqeemValue +
-      targetValue;
+      targetValue + (overrides?.manualIncrease ?? 0);
+
+    const taxableEarnings = roundMoney(totalEsthkak);
+    const taxResult = calculatePeriodicIncomeTax({
+      periodicTaxableEarnings: taxableEarnings,
+      periodicReliefs: khasmTamen,
+      periodsPerYear: taxPolicy.periodsPerYear,
+      annualAllowance: taxPolicy.annualAllowance,
+      annualTaxCredit: taxPolicy.annualTaxCredit,
+      brackets: taxPolicy.brackets,
+    });
+    const incomeTax = taxResult.periodicTax;
 
     const totalKhsomat =
       khasmKeyabAmount +
-      khasmAgazat +
       agazaBdonRateb +
-      khasmBasma +
       khasmTakherAmount +
       khasmEznAmount +
       khasmGezaa +
       khasmTamen +
-      khasmSolaf;
+      khasmSolaf +
+      incomeTax +
+      otherDeductions;
 
-    // Active legacy formula: net salary is gross earnings minus all deductions, without flooring.
-    const safi = legacyNetPay(totalEsthkak, totalKhsomat);
-    const totOkraaKhasm = khasmAgazat + khasmBasma;
+    // Net pay is floored at 0: a large penalty / loan / unpaid-absence must never produce a
+    // NEGATIVE net that would be persisted to hr_mosayer_details.safi and emitted as a negative
+    // line in the bank CSV. The gross (totalEsthkak) and deduction (totalKhsomat) breakdown are
+    // kept intact for the slip — only the payable net is floored.
+    const safi = Math.max(0, roundMoney(totalEsthkak - totalKhsomat));
 
     const bank = await this.getBankDetails(empCode);
 
@@ -292,8 +342,7 @@ export class PayrollEngineService {
       empCode,
       empName: emp.employee ?? '',
       mosmaWazefyN: emp.mosma_wazefy_n,
-      branchId: emp.branch_id_fk,
-      ratebAsasy,
+      ratebAsasy: ratebAsasyPaid,
       badalSakn,
       badalMowaslat,
       badalEtsal,
@@ -304,18 +353,29 @@ export class PayrollEngineService {
       totMokafaa,
       totEntdab,
       zeyadaRateb,
-      manualEarnings: privateBonus + taqeemValue + targetValue,
       khasmKeyab: khasmKeyabAmount,
       agazaBdonRateb,
-      khasmAgazat,
-      khasmBasma,
       khasmTakher: khasmTakherAmount + khasmEznAmount,
       khasmEzn: khasmEznAmount,
       khasmGezaa,
       khasmTamen,
       taminHesaOner,
       khasmSolaf,
-      totOkraaKhasm,
+      otherAllowances: roundMoney(otherAllowances + privateBonus + taqeemValue + targetValue + (overrides?.manualIncrease ?? 0)),
+      otherDeductions,
+      taxableEarnings,
+      incomeTax,
+      taxPolicyId: taxPolicy.id,
+      taxPolicyVersion: taxPolicy.key,
+      taxPolicySnapshot: taxPolicy.snapshot,
+      taxBreakdown: {
+        policy: taxPolicy.snapshot,
+        inputs: {
+          periodicTaxableEarnings: taxableEarnings,
+          periodicReliefs: khasmTamen,
+        },
+        result: taxResult,
+      },
       totalEsthkak,
       totalKhsomat,
       safi,
@@ -328,20 +388,28 @@ export class PayrollEngineService {
       breakdown: {
         period: { fromDate, toDate, month, year },
         hoursEdafi,
+        hoursEdafiManual,
+        attendanceOtHours: attendanceOt.hours,
+        attendanceOtDates: attendanceOt.dates,
+        earlyLeaveMin: attendanceOt.earlyLeaveMin,
         sheftEdafi,
         hoursEdafiValue,
         daysEdafiValue,
+        khasmEarlyLeave,
+        otherAllowances,
+        recurringDeductions,
+        prorationFactor,
         absenceDays,
-        paidLeaveDays,
         unpaidLeaveDays,
-        forgottenFingerprint,
         late,
         khasmTakherAmount,
         khasmEznAmount,
+        manualIncrease: overrides?.manualIncrease ?? 0,
+        manualDeduction: overrides?.manualDeduction ?? 0,
+        cafeDeduction: overrides?.cafeDeduction ?? 0,
         privateBonus,
         taqeemValue,
         targetValue,
-        incentives,
         insurance: {
           base: ins.base,
           empRate: ins.empRate,
@@ -356,17 +424,101 @@ export class PayrollEngineService {
     };
   }
 
-  /** Legacy get_badl_value — respects specific_period expiry. */
-  async getBadlValue(badlCode: number, empCode: number): Promise<number> {
-    const row = await this.prisma.hr_finance_employes.findFirst({
-      where: { badl_code: badlCode, emp_code: empCode },
-    });
-    if (!row) return 0;
-    if (row.specific_period === '1' && row.date_to) {
-      const today = new Date().toISOString().slice(0, 10);
-      if (row.date_to <= today) return 0;
+  /**
+   * Resolve one named allowance/deduction for an employee. Prefers the unified
+   * catalog+title mapping; still accepts a legacy 100–106 `badl_code`.
+   */
+  async getBadlValue(badlCode: number, empCode: number, empId?: number): Promise<number> {
+    const components = await this.resolveSalaryComponents(empId ?? null, empCode, 0);
+    switch (badlCode) {
+      case ENGINE_BADL.BASIC:
+        return components.named.basicFallback;
+      case ENGINE_BADL.HOUSING:
+        return components.named.housing;
+      case ENGINE_BADL.TRANSPORT:
+        return components.named.transport;
+      case ENGINE_BADL.NATURE:
+        return components.named.nature;
+      case ENGINE_BADL.ASSIGNMENT:
+        return components.named.assignment;
+      case ENGINE_BADL.MEAL:
+        return components.named.meal;
+      case ENGINE_BADL.COMM:
+        return components.named.communication;
+      default:
+        return 0;
     }
-    return row.value ?? 0;
+  }
+
+  /**
+   * Single salary-component resolution: catalog id + title + stored code, then
+   * apply type (1=allowance, 2=deduction) and method_to_count.
+   */
+  async resolveSalaryComponents(
+    empId: number | null,
+    empCode: number,
+    basicSalary: number,
+  ): Promise<{
+    named: ReturnType<typeof emptyNamedAllowances>;
+    otherAllowances: number;
+    recurringDeductions: number;
+  }> {
+    const named = emptyNamedAllowances();
+    let otherAllowances = 0;
+    let recurringDeductions = 0;
+    const where: Prisma.hr_finance_employesWhereInput = empId
+      ? { OR: [{ emp_id: empId }, { emp_code: empCode }] }
+      : { emp_code: empCode };
+    const rows = await this.prisma.hr_finance_employes.findMany({ where });
+    const catalogIds = [
+      ...new Set(
+        rows
+          .map((r) => r.badl_discount_id_fk)
+          .filter((id): id is number => id != null && id > 0),
+      ),
+    ];
+    const catalogs = catalogIds.length
+      ? await this.prisma.all_defined_setting.findMany({
+          where: { defined_id: { in: catalogIds } },
+          select: { defined_id: true, defined_title: true, defined_type: true },
+        })
+      : [];
+    const catalogById = new Map(catalogs.map((c) => [c.defined_id, c]));
+    const today = cairoDateString();
+    const seen = new Set<number>();
+
+    for (const row of rows) {
+      if (seen.has(row.id)) continue;
+      seen.add(row.id);
+      if (isFinanceRowExpired(row, today)) continue;
+      const catalog = row.badl_discount_id_fk
+        ? catalogById.get(row.badl_discount_id_fk)
+        : undefined;
+      const code = resolveEngineBadlCode({
+        badlCode: row.badl_code,
+        catalogId: row.badl_discount_id_fk,
+        title: catalog?.defined_title,
+      });
+      const amount = computeComponentAmount({
+        value: row.value ?? 0,
+        method: row.method_to_count,
+        basicSalary,
+        periodDays: this.workingDays,
+      });
+      if (amount === 0) continue;
+      const type = row.badl_type ?? catalog?.defined_type ?? 1;
+      if (type === 2) {
+        recurringDeductions = roundMoney(recurringDeductions + amount);
+        continue;
+      }
+      if (code != null && isNamedAllowanceCode(code)) {
+        applyNamedAllowance(named, code, amount);
+      } else {
+        otherAllowances = roundMoney(otherAllowances + amount);
+      }
+    }
+
+    return { named, otherAllowances, recurringDeductions };
   }
 
   async getZeyadaRateb(empCode: number): Promise<number> {
@@ -396,6 +548,52 @@ export class PayrollEngineService {
         sheft_date: { gte: fromDate, lte: toDate },
       },
     });
+  }
+
+  /**
+   * Attendance checkout writes overtime (`num_min`) and early leave (`mobaker_min`)
+   * on tbl_hdoor_emps. Extra-hours table remains authoritative for a given date
+   * so the same minutes are not paid twice.
+   */
+  async getAttendanceOvertimeHours(
+    empCode: number,
+    fromDate: string,
+    toDate: string,
+  ): Promise<{ hours: number; earlyLeaveMin: number; dates: string[] }> {
+    const [manualHours, punches] = await Promise.all([
+      this.prisma.tbl_emps_hours_edafi.findMany({
+        where: {
+          emp_code_fk: empCode,
+          edafa_date: { gte: fromDate, lte: toDate },
+        },
+        select: { edafa_date: true },
+      }),
+      this.prisma.tbl_hdoor_emps.findMany({
+        where: {
+          employee_code: empCode,
+          action_date: { gte: fromDate, lte: toDate },
+          OR: [{ num_min: { gt: 0 } }, { mobaker_min: { gt: 0 } }],
+        },
+        select: { action_date: true, num_min: true, mobaker_min: true },
+      }),
+    ]);
+    const manualDates = new Set(
+      manualHours.map((r) => r.edafa_date).filter((d): d is string => !!d),
+    );
+    let otMin = 0;
+    let earlyLeaveMin = 0;
+    const dates: string[] = [];
+    for (const row of punches) {
+      const date = row.action_date ?? '';
+      earlyLeaveMin += Math.max(0, row.mobaker_min ?? 0);
+      if (date && manualDates.has(date)) continue;
+      const minutes = Math.max(0, row.num_min ?? 0);
+      if (minutes > 0) {
+        otMin += minutes;
+        if (date) dates.push(date);
+      }
+    }
+    return { hours: otMin / 60, earlyLeaveMin, dates };
   }
 
   async getGezaaByDate(empCode: number, fromDate: string, toDate: string): Promise<number> {
@@ -455,11 +653,14 @@ export class PayrollEngineService {
     toDate: string,
     client: Prisma.TransactionClient = this.prisma,
   ): Promise<number> {
+    const empCodes = await this.runEmployeeCodes(mosayerRkm, client);
+    if (!empCodes.length) return 0;
     const res = await client.$executeRaw`
       UPDATE hr_gezaat
       SET mosayer_rkm_fk = ${mosayerRkm}
       WHERE suspend = ${SuspendStatus.APPROVED}
         AND mosayer_rkm_fk IS NULL
+        AND emp_code IN (${Prisma.join(empCodes)})
         AND STR_TO_DATE(CONCAT(year, '-', LPAD(month, 2, '0'), '-25'), '%Y-%m-%d')
             BETWEEN STR_TO_DATE(${fromDate}, '%Y-%m-%d') AND STR_TO_DATE(${toDate}, '%Y-%m-%d')
     `;
@@ -477,16 +678,32 @@ export class PayrollEngineService {
     toDate: string,
     client: Prisma.TransactionClient = this.prisma,
   ): Promise<number> {
+    const empCodes = await this.runEmployeeCodes(mosayerRkm, client);
+    if (!empCodes.length) return 0;
     const res = await client.$executeRaw`
       UPDATE hr_mokafat_details
       SET mosayer_rkm_fk = ${mosayerRkm}
       WHERE suspend = ${SuspendStatus.APPROVED}
         AND mokafa_option = 'rateb'
         AND mosayer_rkm_fk IS NULL
+        AND emp_code IN (${Prisma.join(empCodes)})
         AND STR_TO_DATE(CONCAT(year, '-', LPAD(month, 2, '0'), '-25'), '%Y-%m-%d')
             BETWEEN STR_TO_DATE(${fromDate}, '%Y-%m-%d') AND STR_TO_DATE(${toDate}, '%Y-%m-%d')
     `;
     return Number(res);
+  }
+
+  private async runEmployeeCodes(
+    mosayerRkm: number,
+    client: Prisma.TransactionClient = this.prisma,
+  ): Promise<number[]> {
+    const details = await client.hr_mosayer_details.findMany({
+      where: { mosayer_rkm_fk: mosayerRkm },
+      select: { emp_code: true },
+    });
+    return Array.from(
+      new Set(details.map((d) => d.emp_code).filter((c): c is number => c != null)),
+    );
   }
 
   /**
@@ -522,7 +739,7 @@ export class PayrollEngineService {
 
     const lateRows = await this.prisma.tbl_hdoor_emps.findMany({
       where: {
-        member_code: empCode,
+        employee_code: empCode,
         action_date: { gte: fromDate, lte: toDate },
         late_min: { gt: 0 },
       },
@@ -565,7 +782,7 @@ export class PayrollEngineService {
     // 3) actual attendance days.
     const attendance = await this.prisma.tbl_hdoor_emps.findMany({
       where: {
-        member_code: empCode,
+        employee_code: empCode,
         action_date: { gte: fromDate, lte: toDate },
       },
       select: { action_date: true },
@@ -665,12 +882,24 @@ export class PayrollEngineService {
     return Number(rows[0]?.total ?? 0);
   }
 
-  /** Paid/unpaid leave day counts in window (get_emp_keyab_by_date). type 17 = unpaid. */
+  /** Paid/unpaid leave day counts in the window, driven by leave-type policy. */
   async getKeyabByDate(
     empCode: number,
     fromDate: string,
     toDate: string,
   ): Promise<{ withSalaryDays: number; withoutSalaryDays: number }> {
+    const offRow = await this.prisma.hr_emp_agazat_dayes.findFirst({
+      where: { emp_code_fk: empCode },
+    });
+    const empOffDay = offRow?.off_day ?? this.defaultOffDay;
+    const weekday = (ds: string) => weekdayName(ds);
+
+    const unpaidTypes = await this.prisma.holiday_setting.findMany({
+      where: { is_paid: false },
+      select: { id: true },
+    });
+    const unpaidTypeIds = new Set(unpaidTypes.map((type) => type.id));
+
     const rows = await this.prisma.hr_all_agzat_orders.findMany({
       where: {
         emp_code_fk: empCode,
@@ -678,42 +907,22 @@ export class PayrollEngineService {
         agaza_from_date_m: { lte: toDate },
         agaza_to_date_m: { gte: fromDate },
       },
-      select: { num_days: true, no3_agaza: true },
+      select: { num_days: true, no3_agaza: true, agaza_from_date_m: true, agaza_to_date_m: true },
     });
     let withSalaryDays = 0;
     let withoutSalaryDays = 0;
     for (const r of rows) {
-      const days = Number(r.num_days ?? 0);
-      if (r.no3_agaza === LeaveType.UNPAID) withoutSalaryDays += days;
+      if (!r.agaza_from_date_m || !r.agaza_to_date_m) continue;
+      const clipped = clipIsoRange(r.agaza_from_date_m, r.agaza_to_date_m, fromDate, toDate);
+      if (!clipped) continue;
+      let days = 0;
+      for (const ds of eachDay(clipped.from, clipped.to)) {
+        if (weekday(ds) !== empOffDay) days += 1;
+      }
+      if (r.no3_agaza != null && unpaidTypeIds.has(r.no3_agaza)) withoutSalaryDays += days;
       else withSalaryDays += days;
     }
     return { withSalaryDays, withoutSalaryDays };
-  }
-
-  /**
-   * Missing one side of the fingerprint pair counts progressively like the active legacy sheet:
-   * first occurrence = 1/4 day, second = 1/2 day, every later occurrence = one full day.
-   */
-  async getForgottenFingerprintByDate(
-    empCode: number,
-    fromDate: string,
-    toDate: string,
-  ): Promise<{ count: number; deductionDays: number }> {
-    const rows = await this.prisma.tbl_hdoor_emps.findMany({
-      where: {
-        member_code: empCode,
-        action_date: { gte: fromDate, lte: toDate },
-      },
-      select: { hdoor_time: true, ensraf_time: true },
-    });
-    const count = rows.reduce((total, row) => {
-      const hasIn = Boolean(row.hdoor_time?.trim());
-      const hasOut = Boolean(row.ensraf_time?.trim());
-      return total + (hasIn !== hasOut ? 1 : 0);
-    }, 0);
-    const deductionDays =
-      count === 0 ? 0 : 0.25 + (count >= 2 ? 0.5 : 0) + Math.max(0, count - 2);
-    return { count, deductionDays };
   }
 
   // ── Insurance (GOSI) rate table ────────────────────────────────────────────
@@ -794,95 +1003,15 @@ export class PayrollEngineService {
     };
   }
 
-  // ── Incentives / gym commissions ───────────────────────────────────────────
+  // ── Optional provider incentives ───────────────────────────────────────────
 
-  /**
-   * Gym incentives are calculated from the live ONE80 documents. Attribution accepts either
-   * the employee selected on the document or the authenticated user linked to that employee.
-   */
   async getIncentives(
     employeeId: number,
     employeeCode: number,
     fromDate: string,
     toDate: string,
-  ): Promise<{
-    targetBase: number;
-    proteinBase: number;
-    classesBase: number;
-    targetCommission: number;
-    proteinCommission: number;
-    classCommission: number;
-  }> {
-    const users = await this.prisma.users.findMany({
-      where: { emp_code: employeeCode },
-      select: { user_id: true },
-    });
-    const userIds = users.map((u) => u.user_id);
-    const createdBy = userIds.length ? { in: userIds } : { in: [-1] };
-    const settings = await this.prisma.tbl_gym_setting.findMany({
-      select: { ttype: true, for_user: true },
-      orderBy: { id: 'desc' },
-    });
-    const rate = (type: 'target' | 'proten' | 'classes') =>
-      Number(settings.find((s) => s.ttype === type)?.for_user ?? 0) / 100;
-
-    const [targetReceipts, lockers, sales, classReceipts] = await Promise.all([
-      this.prisma.club_receipts.aggregate({
-        where: {
-          receipt_date: { gte: fromDate, lte: toDate },
-          status: { in: ['مدفوعة', 'paid'] },
-          subscription: {
-            is: {
-              is_special: false,
-              type: { is: { is_part_of_target: true } },
-              OR: [{ employee_id: employeeId }, { created_by: createdBy }],
-            },
-          },
-        },
-        _sum: { amount: true },
-      }),
-      this.prisma.club_locker_subscriptions.aggregate({
-        where: {
-          subscription_start_date: { gte: fromDate, lte: toDate },
-          OR: [{ recommended_employee_id: employeeId }, { created_by: createdBy }],
-        },
-        _sum: { paid_amount: true },
-      }),
-      this.prisma.sales_quick_sales.aggregate({
-        where: {
-          sale_date: { gte: fromDate, lte: toDate },
-          status: 'completed',
-          OR: [{ employee_id: employeeId }, { created_by: createdBy }],
-        },
-        _sum: { collected_amount: true },
-      }),
-      this.prisma.club_receipts.aggregate({
-        where: {
-          receipt_date: { gte: fromDate, lte: toDate },
-          status: { in: ['مدفوعة', 'paid'] },
-          subscription: {
-            is: {
-              is_special: true,
-              OR: [{ employee_id: employeeId }, { created_by: createdBy }],
-            },
-          },
-        },
-        _sum: { amount: true },
-      }),
-    ]);
-
-    const targetBase =
-      decimal(targetReceipts._sum.amount) + decimal(lockers._sum.paid_amount);
-    const salesBase = decimal(sales._sum.collected_amount);
-    const classesBase = decimal(classReceipts._sum.amount);
-    return {
-      targetBase: roundMoney(targetBase),
-      proteinBase: roundMoney(salesBase),
-      classesBase: roundMoney(classesBase),
-      targetCommission: roundMoney(targetBase * rate('target')),
-      proteinCommission: roundMoney(salesBase * rate('proten')),
-      classCommission: roundMoney(classesBase * rate('classes')),
-    };
+  ): Promise<number> {
+    return this.incentives.calculate({ employeeId, employeeCode, fromDate, toDate });
   }
 
   // ── Bank details ───────────────────────────────────────────────────────────
@@ -906,35 +1035,22 @@ export class PayrollEngineService {
   }
 }
 
-/** Round a money amount to 2 decimals (avoids binary-float drift, e.g. 0.1+0.2). */
-function roundMoney(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
-}
-
-export function legacyNetPay(totalEarnings: number, totalDeductions: number): number {
-  return roundMoney(totalEarnings - totalDeductions);
-}
-
-/** The configured target commission is the default; an explicit sheet value replaces it. */
-export function legacyTargetPayable(calculatedCommission: number, override?: number): number {
-  return override ?? calculatedCommission;
-}
-
 /** nationality_type → { summed emp/society rate, whether any rows exist }. */
 type InsuranceRateTable = Map<number, { emp: number; society: number; hasRows: boolean }>;
 
 /** Inclusive day iterator over Y-m-d strings, computed in UTC to avoid TZ drift. */
 function* eachDay(fromDate: string, toDate: string): Generator<string> {
-  const start = new Date(`${fromDate}T00:00:00Z`);
-  const end = new Date(`${toDate}T00:00:00Z`);
-  for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
-    yield d.toISOString().slice(0, 10);
+  let current = fromDate;
+  while (current <= toDate) {
+    yield current;
+    current = addDateOnlyDays(current, 1);
   }
 }
 
 /** Weekday name for a Y-m-d string (UTC-stable, matches PHP DateTime::format('l')). */
 function weekdayName(ds: string): string {
-  return new Date(`${ds}T00:00:00Z`).toLocaleDateString('en-US', {
+  const { year, month, day } = dateOnlyParts(ds);
+  return new Date(Date.UTC(year, month - 1, day)).toLocaleDateString('en-US', {
     weekday: 'long',
     timeZone: 'UTC',
   });

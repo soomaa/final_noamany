@@ -1,12 +1,14 @@
 import { Module } from '@nestjs/common';
-import { LoansModule } from '../loans/loans.module';
 import { RequestsController } from './requests.controller';
 import { RequestsService } from './requests.service';
+import { BusinessAuditModule } from '../../common/audit/business-audit.module';
+import { RequestEffectService } from './request-effect.service';
+import { LeavesModule } from '../leaves/leaves.module';
 
 @Module({
-  imports: [LoansModule],
+  imports: [BusinessAuditModule, LeavesModule],
   controllers: [RequestsController],
-  providers: [RequestsService],
+  providers: [RequestsService, RequestEffectService],
   exports: [RequestsService],
 })
 export class RequestsModule {}

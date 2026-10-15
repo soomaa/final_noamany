@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { equipmentPhoto } from './equipment-media';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertDateOrder } from '../../common/validators';
@@ -7,19 +8,41 @@ import { localDateString, toNum } from './club-fitness.utils';
 import { ListClubFitnessDto } from './dto/list-club-fitness.dto';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
 import { recordSystemExpense } from '../finance/system-expense.util';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @Injectable()
 export class ClubFacilitiesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly moduleLedger: ModuleLedgerService,
+    private readonly branchScope: BranchScopeService,
   ) {}
+
+  private assertBranchAccess(user: JwtUser | undefined, branchId: number) {
+    if (!this.branchScope.isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
+  }
+
+  private async assertFacilityInBranch(facilityId: number, branchId: number) {
+    const facility = await this.prisma.club_facilities.findFirst({
+      where: { id: facilityId, is_active: true },
+      select: { branch_id: true },
+    });
+    if (!facility) throw new NotFoundException('المنشأة غير موجودة');
+    if (facility.branch_id !== branchId) {
+      throw new BadRequestException('المنشأة والمعدة يجب أن تتبعا نفس الفرع');
+    }
+  }
 
   // --- Facilities ---
 
-  async listFacilities(q: ListClubFitnessDto) {
+  async listFacilities(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_facilitiesWhereInput = { is_active: true };
     if (q.branch && q.branch !== 'all') where.branch_id = Number(q.branch);
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) where.branch_id = { in: scope };
     if (q.search?.trim()) where.name = { contains: q.search.trim() };
 
     const [rows, total] = await Promise.all([
@@ -50,11 +73,12 @@ export class ClubFacilitiesService {
     );
   }
 
-  async findFacility(id: number) {
+  async findFacility(id: number, user?: JwtUser) {
     const row = await this.prisma.club_facilities.findFirst({
       where: { id, is_active: true },
     });
     if (!row) throw new NotFoundException('المنشأة غير موجودة');
+    this.assertBranchAccess(user, row.branch_id);
     return {
       id: row.id,
       name: row.name,
@@ -69,14 +93,16 @@ export class ClubFacilitiesService {
     };
   }
 
-  async createFacility(body: Record<string, unknown>) {
+  async createFacility(body: Record<string, unknown>, user?: JwtUser) {
     if (!body.name || !body.branchId) {
       throw new BadRequestException('اسم المنشأة والفرع مطلوبان');
     }
+    const branchId = Number(body.branchId);
+    this.assertBranchAccess(user, branchId);
     const row = await this.prisma.club_facilities.create({
       data: {
         name: String(body.name).trim(),
-        branch_id: Number(body.branchId),
+        branch_id: branchId,
         facility_type: body.facilityType ? String(body.facilityType) : 'general',
         capacity: body.capacity != null ? Number(body.capacity) : null,
         description: body.description ? String(body.description) : null,
@@ -84,11 +110,12 @@ export class ClubFacilitiesService {
         is_active: body.isActive !== false,
       },
     });
-    return this.findFacility(row.id);
+    return this.findFacility(row.id, user);
   }
 
-  async updateFacility(id: number, body: Record<string, unknown>) {
-    await this.findFacility(id);
+  async updateFacility(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    await this.findFacility(id, user);
+    if (body.branchId != null) this.assertBranchAccess(user, Number(body.branchId));
     await this.prisma.club_facilities.update({
       where: { id },
       data: {
@@ -101,11 +128,11 @@ export class ClubFacilitiesService {
         ...(body.isActive !== undefined ? { is_active: Boolean(body.isActive) } : {}),
       },
     });
-    return this.findFacility(id);
+    return this.findFacility(id, user);
   }
 
-  async removeFacility(id: number) {
-    await this.findFacility(id);
+  async removeFacility(id: number, user?: JwtUser) {
+    await this.findFacility(id, user);
     await this.prisma.club_facilities.update({
       where: { id },
       data: { is_active: false },
@@ -115,9 +142,11 @@ export class ClubFacilitiesService {
 
   // --- Equipment ---
 
-  async listEquipment(q: ListClubFitnessDto) {
+  async listEquipment(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_equipmentWhereInput = { is_active: true };
     if (q.branch && q.branch !== 'all') where.branch_id = Number(q.branch);
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) where.branch_id = { in: scope };
     if (q.search?.trim()) {
       const s = q.search.trim();
       where.OR = [{ name: { contains: s } }, { serial_number: { contains: s } }];
@@ -138,6 +167,7 @@ export class ClubFacilitiesService {
         id: r.id,
         facilityId: r.facility_id,
         name: r.name,
+        imageUrl: r.image_url,
         serialNumber: r.serial_number,
         branchId: r.branch_id,
         status: r.status,
@@ -154,16 +184,18 @@ export class ClubFacilitiesService {
     );
   }
 
-  async findEquipment(id: number) {
+  async findEquipment(id: number, user?: JwtUser) {
     const row = await this.prisma.club_equipment.findFirst({
       where: { id, is_active: true },
       include: { facility: { select: { id: true, name: true } } },
     });
     if (!row) throw new NotFoundException('المعدة غير موجودة');
+    this.assertBranchAccess(user, row.branch_id);
     return {
       id: row.id,
       facilityId: row.facility_id,
       name: row.name,
+      imageUrl: row.image_url,
       serialNumber: row.serial_number,
       branchId: row.branch_id,
       status: row.status,
@@ -176,16 +208,29 @@ export class ClubFacilitiesService {
     };
   }
 
-  async createEquipment(body: Record<string, unknown>) {
+  private async validatedEquipmentPhoto(value: unknown) {
+    const photo = equipmentPhoto(value);
+    if (photo?.startsWith('public-file:')) {
+      const file = await this.prisma.private_file_metadata.findFirst({where:{id:photo.slice(12),category:'equipment-image',deleted_at:null},select:{id:true}});
+      if (!file) throw new BadRequestException('اختر صورة جهاز مرفوعة وصالحة');
+    }
+    return photo;
+  }
+
+  async createEquipment(body: Record<string, unknown>, user?: JwtUser) {
     if (!body.name || !body.branchId) {
       throw new BadRequestException('اسم المعدة والفرع مطلوبان');
     }
+    const branchId = Number(body.branchId);
+    this.assertBranchAccess(user, branchId);
+    if (body.facilityId != null) await this.assertFacilityInBranch(Number(body.facilityId), branchId);
     const row = await this.prisma.club_equipment.create({
       data: {
         facility_id: body.facilityId != null ? Number(body.facilityId) : null,
         name: String(body.name).trim(),
+        image_url: await this.validatedEquipmentPhoto(body.imageUrl),
         serial_number: body.serialNumber ? String(body.serialNumber) : null,
-        branch_id: Number(body.branchId),
+        branch_id: branchId,
         status: (body.status as Prisma.EnumClubFitnessHallStatusFieldUpdateOperationsInput['set']) ?? 'available',
         purchase_date: body.purchaseDate ? String(body.purchaseDate) : null,
         notes: body.notes ? String(body.notes) : null,
@@ -193,16 +238,20 @@ export class ClubFacilitiesService {
       },
       include: { facility: { select: { id: true, name: true } } },
     });
-    return this.findEquipment(row.id);
+    return this.findEquipment(row.id, user);
   }
 
-  async updateEquipment(id: number, body: Record<string, unknown>) {
-    await this.findEquipment(id);
+  async updateEquipment(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const existing = await this.findEquipment(id, user);
+    const branchId = body.branchId != null ? Number(body.branchId) : existing.branchId;
+    this.assertBranchAccess(user, branchId);
+    if (body.facilityId != null) await this.assertFacilityInBranch(Number(body.facilityId), branchId);
     await this.prisma.club_equipment.update({
       where: { id },
       data: {
         ...(body.facilityId !== undefined ? { facility_id: body.facilityId != null ? Number(body.facilityId) : null } : {}),
         ...(body.name != null ? { name: String(body.name).trim() } : {}),
+        ...(body.imageUrl !== undefined ? { image_url: await this.validatedEquipmentPhoto(body.imageUrl) } : {}),
         ...(body.serialNumber !== undefined ? { serial_number: body.serialNumber ? String(body.serialNumber) : null } : {}),
         ...(body.branchId != null ? { branch_id: Number(body.branchId) } : {}),
         ...(body.status != null ? { status: String(body.status) as Prisma.EnumClubFitnessHallStatusFieldUpdateOperationsInput['set'] } : {}),
@@ -211,11 +260,11 @@ export class ClubFacilitiesService {
         ...(body.isActive !== undefined ? { is_active: Boolean(body.isActive) } : {}),
       },
     });
-    return this.findEquipment(id);
+    return this.findEquipment(id, user);
   }
 
-  async removeEquipment(id: number) {
-    await this.findEquipment(id);
+  async removeEquipment(id: number, user?: JwtUser) {
+    await this.findEquipment(id, user);
     await this.prisma.club_equipment.update({
       where: { id },
       data: { is_active: false },
@@ -225,9 +274,11 @@ export class ClubFacilitiesService {
 
   // --- Equipment maintenance ---
 
-  async listMaintenance(q: ListClubFitnessDto, equipmentId?: string) {
+  async listMaintenance(q: ListClubFitnessDto, equipmentId?: string, user?: JwtUser) {
     const where: Prisma.club_equipment_maintenanceWhereInput = {};
     if (equipmentId) where.equipment_id = Number(equipmentId);
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) where.equipment = { branch_id: { in: scope } };
 
     const [rows, total] = await Promise.all([
       this.prisma.club_equipment_maintenance.findMany({
@@ -258,12 +309,13 @@ export class ClubFacilitiesService {
     );
   }
 
-  async findMaintenance(id: number) {
+  async findMaintenance(id: number, user?: JwtUser) {
     const row = await this.prisma.club_equipment_maintenance.findUnique({
       where: { id },
-      include: { equipment: { select: { id: true, name: true, serial_number: true } } },
+      include: { equipment: { select: { id: true, name: true, serial_number: true, branch_id: true } } },
     });
     if (!row) throw new NotFoundException('سجل الصيانة غير موجود');
+    this.assertBranchAccess(user, row.equipment.branch_id);
     return {
       id: row.id,
       equipmentId: row.equipment_id,
@@ -278,7 +330,7 @@ export class ClubFacilitiesService {
     };
   }
 
-  async createMaintenance(body: Record<string, unknown>, userId?: number) {
+  async createMaintenance(body: Record<string, unknown>, userId?: number, user?: JwtUser) {
     if (!body.equipmentId || !body.scheduledDate) {
       throw new BadRequestException('المعدة وتاريخ الصيانة مطلوبان');
     }
@@ -286,6 +338,7 @@ export class ClubFacilitiesService {
       where: { id: Number(body.equipmentId), is_active: true },
     });
     if (!equipment) throw new NotFoundException('المعدة غير موجودة');
+    this.assertBranchAccess(user, equipment.branch_id);
     const scheduledDate = String(body.scheduledDate);
     const completedDate = body.completedDate ? String(body.completedDate) : null;
     if (completedDate) assertDateOrder(scheduledDate, completedDate, 'تاريخ الإتمام يجب أن يكون بعد تاريخ الجدولة');
@@ -330,11 +383,11 @@ export class ClubFacilitiesService {
       }
       return created;
     });
-    return this.findMaintenance(row.id);
+    return this.findMaintenance(row.id, user);
   }
 
-  async updateMaintenance(id: number, body: Record<string, unknown>, userId?: number) {
-    const existing = await this.findMaintenance(id);
+  async updateMaintenance(id: number, body: Record<string, unknown>, userId?: number, user?: JwtUser) {
+    const existing = await this.findMaintenance(id, user);
     const scheduledDate = body.scheduledDate != null ? String(body.scheduledDate) : existing.scheduledDate;
     const completedDate =
       body.completedDate !== undefined
@@ -357,6 +410,7 @@ export class ClubFacilitiesService {
     const equipmentId = body.equipmentId != null ? Number(body.equipmentId) : existing.equipmentId;
     const equipment = await this.prisma.club_equipment.findFirst({ where: { id: equipmentId, is_active: true } });
     if (!equipment) throw new NotFoundException('المعدة غير موجودة');
+    this.assertBranchAccess(user, equipment.branch_id);
     if (nextStatus === 'completed' && nextCost > 0) await this.moduleLedger.ensureChart();
 
     await this.prisma.$transaction(async (tx) => {
@@ -401,11 +455,11 @@ export class ClubFacilitiesService {
         });
       }
     });
-    return this.findMaintenance(id);
+    return this.findMaintenance(id, user);
   }
 
-  async removeMaintenance(id: number) {
-    const existing = await this.findMaintenance(id);
+  async removeMaintenance(id: number, user?: JwtUser) {
+    const existing = await this.findMaintenance(id, user);
     if (existing.status === 'completed' && (existing.cost ?? 0) > 0) {
       throw new BadRequestException('لا يمكن حذف صيانة مرحّلة محاسبيًا');
     }

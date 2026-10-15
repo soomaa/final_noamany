@@ -14,7 +14,7 @@ import { BookingsService } from './bookings.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('bookings')
-@RequiresPermission('gym-sales.sales:view')
+@RequiresPermission('gym-sales.sales.bookings:view')
 export class BookingsController {
   constructor(private readonly service: BookingsService) {}
 
@@ -44,13 +44,13 @@ export class BookingsController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.sales:create')
+  @RequiresPermission('gym-sales.sales.bookings:create')
   create(@Body() body: CreateBookingDto, @CurrentUser('sub') userId: number) {
     return this.service.create(body, userId);
   }
 
   @Post(':id/payments')
-  @RequiresPermission('gym-sales.sales:create')
+  @RequiresPermission('gym-sales.sales.bookings:create')
   addPayment(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: BookingPaymentDto,
@@ -60,7 +60,7 @@ export class BookingsController {
   }
 
   @Post(':id/refunds')
-  @RequiresPermission('gym-sales.sales:update')
+  @RequiresPermission('gym-sales.sales.bookings:update')
   addRefund(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: BookingPaymentDto,
@@ -70,7 +70,7 @@ export class BookingsController {
   }
 
   @Patch(':id/status')
-  @RequiresPermission('gym-sales.sales:update')
+  @RequiresPermission('gym-sales.sales.bookings:update')
   updateStatus(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateBookingStatusDto) {
     return this.service.updateStatus(id, body.status);
   }

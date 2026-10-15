@@ -8,8 +8,9 @@ import { Button } from '@/components/ui/button';
 import { useClubT } from '@/hooks/use-club-t';
 import { api, apiError } from '@/lib/api';
 import { formatTimeFromDate, localToday } from '@/lib/formatters';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 interface ReceptionAttendanceRow {
   id: number;
@@ -19,7 +20,7 @@ interface ReceptionAttendanceRow {
   attendanceDate: string;
   checkInTime: string;
   checkOutTime: string | null;
-  status: 'checked_in' | 'checked_out';
+  status: 'checked_in' | 'checked_out' | 'auto_closed';
   duration: number | null;
   branchId: number;
 }
@@ -31,37 +32,44 @@ function formatAttendanceTime(value: string | null, locale: string) {
 
 export function ReceptionDailyAttendanceTable({
   branchId,
+  gender,
   branches = [],
   showBranch = false,
 }: {
   branchId?: string;
+  gender?: 'male' | 'female';
   branches?: Array<{ id: number; name: string | null }>;
   showBranch?: boolean;
 }) {
   const { ui, locale } = useLocale();
+  const { can } = usePermission();
+  const canUpdate = can('club.reception:update');
   const ct = useClubT();
   const queryClient = useQueryClient();
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState('');
+  const debouncedSearch = search.trim();
   const [checkingOutId, setCheckingOutId] = useState<number | null>(null);
   const today = localToday();
 
   useEffect(() => {
     setPage(1);
-  }, [branchId]);
+  }, [branchId, gender]);
+
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['club-attendance', 'reception-today', today, branchId || 'all', page, pageSize, search],
+    queryKey: ['club-attendance', 'reception-today', today, branchId || 'all', gender || 'all', page, pageSize, debouncedSearch],
     queryFn: async ({ signal }) => {
       const response = await api.get<PaginatedResponse<ReceptionAttendanceRow>>('/club-attendance', {
         params: {
           page,
           pageSize,
-          search: search || undefined,
+          search: debouncedSearch || undefined,
           startDate: today,
           endDate: today,
           branch: branchId || undefined,
+          gender,
         },
         signal,
       });
@@ -72,6 +80,7 @@ export function ReceptionDailyAttendanceTable({
   });
 
   const checkOut = useCallback(async (attendanceId: number) => {
+    if (!canUpdate) return;
     setCheckingOutId(attendanceId);
     try {
       await api.post('/club-attendance/check-out', { attendanceId });
@@ -85,7 +94,7 @@ export function ReceptionDailyAttendanceTable({
     } finally {
       setCheckingOutId(null);
     }
-  }, [queryClient, ui]);
+  }, [canUpdate, queryClient, ui]);
 
   const columns = useMemo<ColumnDef<ReceptionAttendanceRow>[]>(
     () => [
@@ -110,7 +119,7 @@ export function ReceptionDailyAttendanceTable({
               return (
                 <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-medium">
                   <Building2 className="size-3.5 text-primary" />
-                  {name || `${ui('فرع رقم')} ${toArabicDigits(id)}`}
+                  {name || `${ui('فرع رقم')} ${formatDigits(id)}`}
                 </span>
               );
             },
@@ -140,7 +149,7 @@ export function ReceptionDailyAttendanceTable({
         id: 'actions',
         header: ct('common.actions'),
         cell: ({ row }) =>
-          row.original.status === 'checked_in' ? (
+          canUpdate && row.original.status === 'checked_in' ? (
             <Button
               size="sm"
               variant="outline"
@@ -157,7 +166,7 @@ export function ReceptionDailyAttendanceTable({
           ),
       },
     ],
-    [branches, checkOut, checkingOutId, ct, locale, showBranch, ui],
+    [branches, canUpdate, checkOut, checkingOutId, ct, locale, showBranch, ui],
   );
 
   return (

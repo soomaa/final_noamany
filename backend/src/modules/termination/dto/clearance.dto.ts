@@ -1,4 +1,4 @@
-import { IsArray, IsInt, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { IsArray, IsBoolean, IsInt, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
@@ -25,6 +25,15 @@ export class CreateClearanceDto {
   @ValidateNested({ each: true })
   @Type(() => ClearanceLineDto)
   lines!: ClearanceLineDto[];
+
+  @IsOptional()
+  @IsString()
+  lastWorkingDate?: string;
+
+  /** Completing clearance participates in employee exit (`leave_emp = 1`). */
+  @IsOptional()
+  @IsBoolean()
+  completed?: boolean;
 }
 
 export class UpdateClearanceDto extends CreateClearanceDto {}

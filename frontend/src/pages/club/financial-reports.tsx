@@ -213,13 +213,17 @@ export function ClubFinancialReportsPage() {
               <h3 className="mb-4 font-medium">{ct('dashboard.totalRevenue')}</h3>
               <ResponsiveContainer width="100%" height={260}>
                 <PieChart>
-                  <Pie data={revenueBreakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90} label>
+                  <Pie data={revenueBreakdown} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={90}>
                     {revenueBreakdown.map((_, i) => (
                       <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />
                     ))}
                   </Pie>
                   <Tooltip formatter={(v: number) => toArabicDigits(v)} />
-                  <Legend />
+                  <Legend formatter={(name, entry) => (
+                    <span className="text-xs text-foreground">
+                      {name} <span className="nums ms-1 inline-block" dir="ltr">{toArabicDigits(entry.payload?.value ?? 0)}</span>
+                    </span>
+                  )} />
                 </PieChart>
               </ResponsiveContainer>
             </div>

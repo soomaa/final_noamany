@@ -112,7 +112,7 @@ export function GymSalesHubBody() {
               <XAxis dataKey="name" tick={{ fontSize: 11 }} />
               <YAxis tickFormatter={(v) => toArabicDigits(v)} />
               <Tooltip formatter={(v: number) => toArabicDigits(v)} />
-              <Bar dataKey="value" fill="#ED1C24" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="value" fill="#EAB308" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ChartCard>
         </div>

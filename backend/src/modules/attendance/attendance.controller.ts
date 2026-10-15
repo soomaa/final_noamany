@@ -3,18 +3,18 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   Param,
   ParseIntPipe,
   Patch,
   Post,
   Put,
   Query,
-  UploadedFile,
   UseGuards,
-  UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Public } from '../../common/decorators/public.decorator';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -28,104 +28,100 @@ import {
   ListEdafiDto,
 } from './dto/edafi.dto';
 import { AttendanceReportDto } from './dto/report.dto';
-import { JwtUser } from '../../common/types/jwt-user';
+import { CreateAttendanceDeviceDto } from './dto/device.dto';
+import { AttendanceDeviceEventBatchDto } from './dto/device-ingest.dto';
+import { UpdateAttendanceChannelsDto, UpdateAttendanceRulesDto } from './dto/settings.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('attendance')
-@RequiresPermission('attendance:view')
+@RequiresPermission('attendance.board:view')
 export class AttendanceController {
   constructor(private readonly attendance: AttendanceService) {}
 
   // -------- rules / settings --------
   @Get('rules')
+  @RequiresPermission('attendance.rules:view')
   getRules() {
     return this.attendance.getRules();
   }
 
   @Patch('rules')
-  @RequiresPermission('attendance:update')
-  patchRules(@Body() body: { rules?: unknown[] }) {
-    return this.attendance.patchRules(body as Parameters<AttendanceService['patchRules']>[0]);
+  @RequiresPermission('attendance.rules:configure')
+  patchRules(@Body() body: UpdateAttendanceRulesDto) {
+    return this.attendance.patchRules(body);
   }
 
   @Get('settings')
+  @RequiresPermission('attendance.settings:view')
   getSettings() {
     return this.attendance.getSettings();
   }
 
   @Patch('settings')
-  @RequiresPermission('attendance:update')
-  patchSettings(@Body() body: { channels?: Record<string, boolean> }) {
+  @RequiresPermission('attendance.settings:configure')
+  patchSettings(@Body() body: UpdateAttendanceChannelsDto) {
     return this.attendance.patchSettings(body);
-  }
-
-  @Get('weekly-schedule-rollout')
-  getWeeklyScheduleRollout() {
-    return this.attendance.getWeeklyScheduleRollout();
-  }
-
-  @Post('weekly-schedule-rollout/activate')
-  @RequiresPermission('attendance:update')
-  activateWeeklyScheduleRollout() {
-    return this.attendance.activateWeeklyScheduleRollout();
   }
 
   // -------- shifts (tbl_hdodr_setting) --------
   @Get('shifts')
+  @RequiresPermission('attendance.settings:view')
   listShifts(@Query() query: PaginationDto) {
     return this.attendance.listShifts(query);
   }
 
   @Post('shifts')
-  @RequiresPermission('attendance:create')
+  @RequiresPermission('attendance.settings:create')
   createShift(@Body() dto: UpsertShiftDto) {
     return this.attendance.createShift(dto);
   }
 
   @Put('shifts/:id')
-  @RequiresPermission('attendance:update')
+  @RequiresPermission('attendance.settings:update')
   updateShift(@Param('id', ParseIntPipe) id: number, @Body() dto: UpsertShiftDto) {
     return this.attendance.updateShift(id, dto);
   }
 
   @Delete('shifts/:id')
-  @RequiresPermission('attendance:delete')
+  @RequiresPermission('attendance.settings:delete')
   removeShift(@Param('id', ParseIntPipe) id: number) {
     return this.attendance.removeShift(id);
   }
 
   // -------- shift swap / extra shift (tbl_emps_shef_edafi) --------
   @Get('shift-swaps')
+  @RequiresPermission('attendance.settings:view')
   listShiftSwaps(@Query() query: ListEdafiDto) {
     return this.attendance.listShiftSwaps(query);
   }
 
   @Post('shift-swaps')
-  @RequiresPermission('attendance:view', 'hr:view')
+  @RequiresPermission('attendance.settings:create')
   createShiftSwap(@Body() dto: CreateShiftSwapDto, @CurrentUser('sub') userId: number) {
     return this.attendance.createShiftSwap(dto, userId);
   }
 
   @Delete('shift-swaps/:id')
-  @RequiresPermission('attendance:delete')
+  @RequiresPermission('attendance.settings:delete')
   removeShiftSwap(@Param('id', ParseIntPipe) id: number) {
     return this.attendance.removeShiftSwap(id);
   }
 
   // -------- extra hours (tbl_emps_hours_edafi) --------
   @Get('extra-hours')
+  @RequiresPermission('attendance.settings:view')
   listExtraHours(@Query() query: ListEdafiDto) {
     return this.attendance.listExtraHours(query);
   }
 
   @Post('extra-hours')
-  @RequiresPermission('attendance:view', 'hr:view')
+  @RequiresPermission('attendance.settings:create')
   createExtraHours(@Body() dto: CreateExtraHoursDto, @CurrentUser('sub') userId: number) {
     return this.attendance.createExtraHours(dto, userId);
   }
 
   @Delete('extra-hours/:id')
-  @RequiresPermission('attendance:delete')
+  @RequiresPermission('attendance.settings:delete')
   removeExtraHours(@Param('id', ParseIntPipe) id: number) {
     return this.attendance.removeExtraHours(id);
   }
@@ -136,19 +132,9 @@ export class AttendanceController {
     return this.attendance.basmaReport(query);
   }
 
-  @Get('reports/full-sheet')
-  fullAttendanceSheet(@Query() query: AttendanceReportDto) {
-    return this.attendance.fullAttendanceSheet(query);
-  }
-
   @Get('reports/late')
   lateReport(@Query() query: AttendanceReportDto) {
     return this.attendance.lateReport(query);
-  }
-
-  @Get('reports/absence')
-  absenceReport(@Query() query: AttendanceReportDto) {
-    return this.attendance.absenceReport(query);
   }
 
   @Get('reports/overtime')
@@ -163,56 +149,65 @@ export class AttendanceController {
 
   // -------- devices --------
   @Get('devices')
+  @RequiresPermission('attendance.devices:view')
   listDevices(@Query() query: PaginationDto) {
     return this.attendance.listDevices(query);
   }
 
   @Post('devices')
-  @RequiresPermission('attendance:create')
-  createDevice(@Body() body: { title?: string; ip?: string; branchId?: number }) {
+  @RequiresPermission('attendance.devices:create')
+  createDevice(@Body() body: CreateAttendanceDeviceDto) {
     return this.attendance.createDevice(body);
   }
 
-  @Post('devices/sync-all')
-  @RequiresPermission('attendance:update')
-  syncAll() {
-    return this.attendance.syncAllDevices();
+  @Post('devices/connectivity-check-all')
+  @RequiresPermission('attendance.devices:execute')
+  checkAllConnectivity() {
+    return this.attendance.checkAllDeviceConnectivity();
   }
 
+  @Post('devices/:id/rotate-ingest-key')
+  @RequiresPermission('attendance.devices:configure')
+  rotateIngestKey(@Param('id', ParseIntPipe) id: number) {
+    return this.attendance.rotateDeviceIngestKey(id);
+  }
+
+  @Public()
+  @UseGuards(ThrottlerGuard)
+  @Throttle({ default: { limit: 60, ttl: 60_000 } })
+  @Post('devices/:id/events')
+  ingestEvents(
+    @Param('id', ParseIntPipe) id: number,
+    @Headers('x-device-key') deviceKey: string | undefined,
+    @Body() body: AttendanceDeviceEventBatchDto,
+  ) {
+    return this.attendance.ingestDeviceEvents(id, deviceKey, body);
+  }
+
+  @Post('devices/:id/connectivity-check')
+  @RequiresPermission('attendance.devices:execute')
+  checkConnectivity(@Param('id', ParseIntPipe) id: number) {
+    return this.attendance.checkDeviceConnectivity(id);
+  }
+
+  /** Compatibility endpoint: never report TCP reachability as imported attendance. */
   @Post('devices/:id/sync')
-  @RequiresPermission('attendance:update')
+  @RequiresPermission('attendance.devices:execute')
   syncDevice(@Param('id', ParseIntPipe) id: number) {
     return this.attendance.syncDevice(id);
   }
 
   @Delete('devices/:id')
-  @RequiresPermission('attendance:delete')
+  @RequiresPermission('attendance.devices:delete')
   removeDevice(@Param('id', ParseIntPipe) id: number) {
     return this.attendance.removeDevice(id);
   }
 
   // -------- punch + board --------
   @Post('check')
-  @RequiresPermission('attendance:update')
-  manualCheck(@Body() body: CheckPunchDto, @CurrentUser() user: JwtUser) {
-    return this.attendance.manualCheckForUser(body, user);
-  }
-
-  @Get('manual-options')
-  manualOptions(@Query('branchId') branchId: string | undefined, @CurrentUser() user: JwtUser) {
-    return this.attendance.manualOptions(user, branchId);
-  }
-
-  /** Legacy Hdoor::add_emp_hdoor XLSX import (multipart field: hdoor_file). */
-  @Post('imports/device-file')
-  @RequiresPermission('attendance:create')
-  @UseInterceptors(FileInterceptor('hdoor_file', { limits: { fileSize: 2 * 1024 * 1024 } }))
-  importDeviceFile(
-    @UploadedFile() file: Express.Multer.File,
-    @CurrentUser('sub') userId: number,
-    @CurrentUser('name') userName?: string,
-  ) {
-    return this.attendance.importDeviceFile(file, userId, userName);
+  @RequiresPermission('attendance.board:update')
+  manualCheck(@Body() body: CheckPunchDto, @CurrentUser('sub') userId: number) {
+    return this.attendance.manualCheck(body, userId);
   }
 
   @Get()

@@ -1,23 +1,14 @@
+import uiMap from '@/locales/hr-ui-map.json';
 import { getStoredLocale } from '@/lib/formatters';
 import { translateUiText } from '@/lib/ui-translate';
-
-let uiMap: Record<string, string> = {};
-
-/** Populate the legacy synchronous translator after the English dictionary is lazy-loaded. */
-export function setUiStaticMap(map: Record<string, string>): void {
-  uiMap = map;
-}
-
-export function getUiStaticMap(): Record<string, string> {
-  return uiMap;
-}
+import { uiTranslationMap } from '@/ports/ui-translation-registry';
 
 /** Translate Arabic UI copy using the current locale from localStorage (safe at module scope). */
 export function uiStatic(text: string): string {
   if (!text) return text;
   try {
     const locale = getStoredLocale();
-    const map = uiMap;
+    const map = uiTranslationMap(uiMap as Record<string, string>);
     if (locale === 'ar') {
       if (text in map) return text;
       // Module-level option lists may have been created while English was active.

@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { firstOfMonth, todayLocal } from '@/components/reports/date-range-filter';
+import { uiStatic } from '@/lib/ui-static';
 
 export type DatePresetKey = 'today' | 'last7' | 'last30' | 'month' | 'quarter';
 
@@ -23,11 +24,11 @@ function quarterStart(): string {
 }
 
 export const DATE_PRESETS: DatePreset[] = [
-  { key: 'today', labelAr: 'اليوم', labelEn: 'Today', range: () => ({ start: todayLocal(), end: todayLocal() }) },
-  { key: 'last7', labelAr: 'آخر ٧ أيام', labelEn: 'Last 7 days', range: () => ({ start: daysAgo(6), end: todayLocal() }) },
-  { key: 'last30', labelAr: 'آخر ٣٠ يوم', labelEn: 'Last 30 days', range: () => ({ start: daysAgo(29), end: todayLocal() }) },
-  { key: 'month', labelAr: 'الشهر', labelEn: 'This month', range: () => ({ start: firstOfMonth(), end: todayLocal() }) },
-  { key: 'quarter', labelAr: 'الربع', labelEn: 'This quarter', range: () => ({ start: quarterStart(), end: todayLocal() }) },
+  { key: 'today', labelAr: uiStatic('اليوم'), labelEn: 'Today', range: () => ({ start: todayLocal(), end: todayLocal() }) },
+  { key: 'last7', labelAr: uiStatic('آخر ٧ أيام'), labelEn: 'Last 7 days', range: () => ({ start: daysAgo(6), end: todayLocal() }) },
+  { key: 'last30', labelAr: uiStatic('آخر ٣٠ يوم'), labelEn: 'Last 30 days', range: () => ({ start: daysAgo(29), end: todayLocal() }) },
+  { key: 'month', labelAr: uiStatic('الشهر'), labelEn: 'This month', range: () => ({ start: firstOfMonth(), end: todayLocal() }) },
+  { key: 'quarter', labelAr: uiStatic('الربع'), labelEn: 'This quarter', range: () => ({ start: quarterStart(), end: todayLocal() }) },
 ];
 
 interface DatePresetsProps {

@@ -24,7 +24,7 @@ import { SupplierSettingsService } from './supplier-settings.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('supplier-settings')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.suppliers:view')
 export class SupplierSettingsController {
   constructor(private readonly service: SupplierSettingsService) {}
 
@@ -44,13 +44,13 @@ export class SupplierSettingsController {
   }
 
   @Post('supplier-categories')
-  @RequiresPermission('gym-sales.procurement:create')
+  @RequiresPermission('gym-sales.procurement.suppliers:create')
   createCategory(@Body() body: UpsertSupplierCategoryDto) {
     return this.service.createCategory(body);
   }
 
   @Put('supplier-categories/:id')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.suppliers:update')
   updateCategory(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertSupplierCategoryDto>,
@@ -59,7 +59,7 @@ export class SupplierSettingsController {
   }
 
   @Delete('supplier-categories/:id')
-  @RequiresPermission('gym-sales.procurement:delete')
+  @RequiresPermission('gym-sales.procurement.suppliers:delete')
   removeCategory(@Param('id', ParseIntPipe) id: number) {
     return this.service.removeCategory(id);
   }
@@ -80,13 +80,13 @@ export class SupplierSettingsController {
   }
 
   @Post('supply-regions')
-  @RequiresPermission('gym-sales.procurement:create')
+  @RequiresPermission('gym-sales.procurement.suppliers:create')
   createRegion(@Body() body: UpsertSupplyRegionDto) {
     return this.service.createRegion(body);
   }
 
   @Put('supply-regions/:id')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.suppliers:update')
   updateRegion(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertSupplyRegionDto>,
@@ -95,7 +95,7 @@ export class SupplierSettingsController {
   }
 
   @Delete('supply-regions/:id')
-  @RequiresPermission('gym-sales.procurement:delete')
+  @RequiresPermission('gym-sales.procurement.suppliers:delete')
   removeRegion(@Param('id', ParseIntPipe) id: number) {
     return this.service.removeRegion(id);
   }
@@ -116,13 +116,13 @@ export class SupplierSettingsController {
   }
 
   @Post('payment-terms')
-  @RequiresPermission('gym-sales.procurement:create')
+  @RequiresPermission('gym-sales.procurement.suppliers:create')
   createPaymentTerm(@Body() body: UpsertPaymentTermDto) {
     return this.service.createPaymentTerm(body);
   }
 
   @Put('payment-terms/:id')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.suppliers:update')
   updatePaymentTerm(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertPaymentTermDto>,
@@ -131,7 +131,7 @@ export class SupplierSettingsController {
   }
 
   @Delete('payment-terms/:id')
-  @RequiresPermission('gym-sales.procurement:delete')
+  @RequiresPermission('gym-sales.procurement.suppliers:delete')
   removePaymentTerm(@Param('id', ParseIntPipe) id: number) {
     return this.service.removePaymentTerm(id);
   }

@@ -51,7 +51,7 @@ export function SettingsDashboardBody() {
             <XAxis type="number" tickFormatter={(v) => toArabicDigits(v)} />
             <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 11 }} />
             <Tooltip formatter={(v: number) => toArabicDigits(v)} />
-            <RechartsBar dataKey="users" name={ui('مستخدمون')} fill="#ED1C24" radius={[0, 4, 4, 0]} />
+            <RechartsBar dataKey="users" name={ui('مستخدمون')} fill="#EAB308" radius={[0, 4, 4, 0]} />
           </RechartsBarChart>
         </ChartCard>
 

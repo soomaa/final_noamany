@@ -4,7 +4,6 @@ import { PageHeader } from '@/components/common/page-header';
 import { StatCard } from '@/components/common/stat-card';
 import { NotImplementedState } from '@/components/common/states';
 import { isNotImplemented } from '@/lib/api-hooks';
-import { cn } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 interface StatItem {
@@ -28,7 +27,6 @@ interface ListPageShellProps {
   isLoading?: boolean;
   onRetry?: () => void;
   notImplementedTitle?: string;
-  compact?: boolean;
   children: ReactNode;
 }
 
@@ -43,7 +41,6 @@ export function ListPageShell({
   isError,
   error,
   notImplementedTitle,
-  compact = false,
   children,
 }: ListPageShellProps) {
   const { ui } = useLocale();
@@ -53,27 +50,21 @@ export function ListPageShell({
       <div>
         {title ? <PageHeader title={title} description={description} eyebrow={eyebrow} /> : null}
         <NotImplementedState
-          title={notImplementedTitle ?? ui(`${title ?? ''} — قيد الإعداد على الخادم`)}
+          title={notImplementedTitle ?? `${title ?? ''}${ui(' — قيد الإعداد على الخادم')}`}
         />
       </div>
     );
   }
 
   return (
-    <div className={cn(compact ? 'space-y-4' : 'space-y-6')}>
+    <div className="space-y-6">
       {title ? (
-        <PageHeader
-          title={title}
-          description={description}
-          eyebrow={eyebrow}
-          actions={actions}
-          className={compact ? 'mb-0' : undefined}
-        />
+        <PageHeader title={title} description={description} eyebrow={eyebrow} actions={actions} />
       ) : actions ? (
         <div className="flex justify-end">{actions}</div>
       ) : null}
       {stats && stats.length > 0 && (
-        <div className={cn('grid sm:grid-cols-2 lg:grid-cols-4', compact ? 'gap-2' : 'gap-4')}>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {stats.map((s, i) => (
             <StatCard
               key={s.title}
@@ -83,7 +74,6 @@ export function ListPageShell({
               icon={s.icon}
               colorIndex={s.colorIndex ?? i}
               loading={statsLoading}
-              className={compact ? 'p-3 [&_.nums]:text-2xl' : undefined}
             />
           ))}
         </div>

@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
@@ -13,6 +13,8 @@ import {
   UpdateEventDisplaySettingsDto,
   UpdateProgramSegmentDto,
 } from './dto/club-event-live.dto';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 const SETTINGS_MAX_JSON_BYTES = 64 * 1024;
 
@@ -21,27 +23,36 @@ export class ClubEventDisplaySettingsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: BusinessAuditService,
+    private readonly branchScope: BranchScopeService,
   ) {}
 
-  private async assertEvent(eventId: number) {
+  private async assertEvent(eventId: number, user?: JwtUser) {
     const event = await this.prisma.club_events.findFirst({ where: { id: eventId, is_deleted: false } });
     if (!event) throw new NotFoundException('الفعالية غير موجودة');
+    if (!this.branchScope.isBranchAllowed(user, event.branch_id)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
     return event;
   }
 
-  async get(eventId: number): Promise<Record<string, unknown>> {
-    await this.assertEvent(eventId);
-    const row = await this.prisma.club_event_display_settings.upsert({
+  async get(eventId: number, user?: JwtUser): Promise<Record<string, unknown>> {
+    await this.assertEvent(eventId, user);
+    // GET must stay read-only. The row is created only when an authorised user
+    // actually saves settings.
+    const row = await this.prisma.club_event_display_settings.findUnique({
       where: { event_id: eventId },
-      create: { event_id: eventId, data: {} },
-      update: {},
     });
-    const data = (row.data ?? {}) as Record<string, unknown>;
-    return { ...data, id: row.id, eventId };
+    const data = (row?.data ?? {}) as Record<string, unknown>;
+    return { ...data, id: row?.id ?? null, eventId };
   }
 
-  async update(eventId: number, dto: UpdateEventDisplaySettingsDto, userId?: number) {
-    await this.assertEvent(eventId);
+  async update(
+    eventId: number,
+    dto: UpdateEventDisplaySettingsDto,
+    userId?: number,
+    user?: JwtUser,
+  ) {
+    await this.assertEvent(eventId, user);
     const { id: _ignored, eventId: _e, ...payload } = dto as Record<string, unknown>;
     if (Object.keys(payload).length === 0) {
       throw new BadRequestException('لا توجد إعدادات للحفظ');
@@ -84,11 +95,15 @@ export class ClubEventProgramSegmentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: BusinessAuditService,
+    private readonly branchScope: BranchScopeService,
   ) {}
 
-  private async assertEvent(eventId: number) {
+  private async assertEvent(eventId: number, user?: JwtUser) {
     const event = await this.prisma.club_events.findFirst({ where: { id: eventId, is_deleted: false } });
     if (!event) throw new NotFoundException('الفعالية غير موجودة');
+    if (!this.branchScope.isBranchAllowed(user, event.branch_id)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
     return event;
   }
 
@@ -129,8 +144,8 @@ export class ClubEventProgramSegmentsService {
     };
   }
 
-  async list(eventId: number, q: ProgramSegmentListQuery) {
-    await this.assertEvent(eventId);
+  async list(eventId: number, q: ProgramSegmentListQuery, user?: JwtUser) {
+    await this.assertEvent(eventId, user);
     const onlyEnabled = q.onlyEnabled === 'true';
     const rows = await this.prisma.club_event_program_segments.findMany({
       where: {
@@ -143,7 +158,8 @@ export class ClubEventProgramSegmentsService {
     return { data: rows.map((r) => this.mapSegment(r)), total: rows.length };
   }
 
-  async get(eventId: number, id: number) {
+  async get(eventId: number, id: number, user?: JwtUser) {
+    await this.assertEvent(eventId, user);
     const row = await this.prisma.club_event_program_segments.findFirst({
       where: { id, event_id: eventId, deleted_at: null },
     });
@@ -151,8 +167,13 @@ export class ClubEventProgramSegmentsService {
     return this.mapSegment(row);
   }
 
-  async create(eventId: number, dto: CreateProgramSegmentDto, userId?: number) {
-    await this.assertEvent(eventId);
+  async create(
+    eventId: number,
+    dto: CreateProgramSegmentDto,
+    userId?: number,
+    user?: JwtUser,
+  ) {
+    await this.assertEvent(eventId, user);
     const maxOrder = await this.prisma.club_event_program_segments.aggregate({
       where: { event_id: eventId, deleted_at: null },
       _max: { order_index: true },
@@ -183,8 +204,14 @@ export class ClubEventProgramSegmentsService {
     return this.mapSegment(row);
   }
 
-  async update(eventId: number, id: number, dto: UpdateProgramSegmentDto, userId?: number) {
-    await this.get(eventId, id);
+  async update(
+    eventId: number,
+    id: number,
+    dto: UpdateProgramSegmentDto,
+    userId?: number,
+    user?: JwtUser,
+  ) {
+    await this.get(eventId, id, user);
     const data: Prisma.club_event_program_segmentsUncheckedUpdateInput = {};
     if (dto.title !== undefined) data.title = dto.title;
     if (dto.description !== undefined) data.description = dto.description ?? null;
@@ -208,8 +235,8 @@ export class ClubEventProgramSegmentsService {
     return this.mapSegment(row);
   }
 
-  async remove(eventId: number, id: number, userId?: number) {
-    await this.get(eventId, id);
+  async remove(eventId: number, id: number, userId?: number, user?: JwtUser) {
+    await this.get(eventId, id, user);
     await this.prisma.club_event_program_segments.update({
       where: { id },
       data: { deleted_at: new Date() },
@@ -230,7 +257,17 @@ export class ClubEventLiveCheckinService {
     private readonly prisma: PrismaService,
     private readonly registrations: ClubEventRegistrationsService,
     private readonly checkin: ClubEventCheckinService,
+    private readonly branchScope: BranchScopeService,
   ) {}
+
+  private async assertEventAccess(eventId: number, user: JwtUser) {
+    const event = await this.prisma.club_events.findFirst({ where: { id: eventId, is_deleted: false } });
+    if (!event) throw new NotFoundException('الفعالية غير موجودة');
+    if (!this.branchScope.isBranchAllowed(user, event.branch_id)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
+    return event;
+  }
 
   private parseHonorific(notes: string | null): string | null {
     if (!notes) return null;
@@ -267,7 +304,8 @@ export class ClubEventLiveCheckinService {
     };
   }
 
-  async getByPhone(eventId: number, q: GuestByPhoneQuery) {
+  async getByPhone(eventId: number, q: GuestByPhoneQuery, user: JwtUser) {
+    await this.assertEventAccess(eventId, user);
     const phone = q.phone.replace(/\s/g, '');
     const registration = await this.prisma.club_event_registrations.findFirst({
       where: {
@@ -290,9 +328,9 @@ export class ClubEventLiveCheckinService {
     };
   }
 
-  async guestCheckin(eventId: number, dto: GuestLiveCheckinDto, userId?: number) {
+  async guestCheckin(eventId: number, dto: GuestLiveCheckinDto, user: JwtUser) {
     const phone = dto.phone.replace(/\s/g, '');
-    const existing = await this.getByPhone(eventId, { phone });
+    const existing = await this.getByPhone(eventId, { phone }, user);
     if (existing) {
       throw new ConflictException({
         message: 'تم التسجيل مسبقاً',
@@ -300,8 +338,7 @@ export class ClubEventLiveCheckinService {
       });
     }
 
-    const event = await this.prisma.club_events.findFirst({ where: { id: eventId, is_deleted: false } });
-    if (!event) throw new NotFoundException('الفعالية غير موجودة');
+    const event = await this.assertEventAccess(eventId, user);
     if (!['approved', 'published', 'ongoing'].includes(event.status)) {
       throw new BadRequestException('تسجيل الحضور غير متاح لهذه الفعالية في حالتها الحالية');
     }
@@ -317,15 +354,17 @@ export class ClubEventLiveCheckinService {
         channel: dto.source === 'qr' ? 'qr' : 'kiosk',
         notes,
       },
-      userId,
+      user.sub,
       { liveSelfCheckin: true },
+      user,
     );
 
     const checkin = await this.checkin.liveGuest(
       registration.id,
       eventId,
       dto.source === 'qr' ? 'qr' : 'manual',
-      userId,
+      user.sub,
+      user,
     );
 
     return {
@@ -336,9 +375,8 @@ export class ClubEventLiveCheckinService {
     };
   }
 
-  async recentCheckins(eventId: number, limit = 50) {
-    const event = await this.prisma.club_events.findFirst({ where: { id: eventId, is_deleted: false } });
-    if (!event) throw new NotFoundException('الفعالية غير موجودة');
+  async recentCheckins(eventId: number, limit = 50, user: JwtUser) {
+    await this.assertEventAccess(eventId, user);
 
     const checkins = await this.prisma.club_event_checkins.findMany({
       where: { event_id: eventId },

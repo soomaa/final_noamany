@@ -1,0 +1,14 @@
+OFFICIAL ZKTECO DOWNLOADS
+=========================
+
+Pull SDK (use the current official X64 package; listed version when prepared:
+2.2.1.13):
+https://www.zkteco.com.pk/PullSDK/pullsdk
+
+QR50BE product page, User Manual, Datasheet, and QR50 Config Demo:
+https://www.zkteco.com/en/QR_Reader/QR50
+
+The official download site may require a ZKTeco account/Silver login. If the
+installer cannot download it, obtain the same official package from the
+authorized ZKTeco agent. Do not replace the official DLLs with files from
+unknown download sites.

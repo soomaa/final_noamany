@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { JwtUser } from '../../common/types/jwt-user';
 import {
@@ -22,6 +23,7 @@ import { MessagingService } from './messaging.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('messages')
+@RequiresPermission('affairs.messages:view')
 export class MessagingController {
   constructor(private readonly messaging: MessagingService) {}
 
@@ -41,6 +43,7 @@ export class MessagingController {
   }
 
   @Post('memos')
+  @RequiresPermission('affairs.messages:create')
   createMemo(@Body() dto: CreateMemoDto, @CurrentUser() user: JwtUser) {
     return this.messaging.createMemo(dto, user);
   }
@@ -51,11 +54,13 @@ export class MessagingController {
   }
 
   @Post()
+  @RequiresPermission('affairs.messages:create')
   create(@Body() dto: CreateMessageDto, @CurrentUser() user: JwtUser) {
     return this.messaging.create(dto, user);
   }
 
   @Post(':id/reply')
+  @RequiresPermission('affairs.messages:create')
   reply(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: ReplyMessageDto,
@@ -65,6 +70,7 @@ export class MessagingController {
   }
 
   @Delete(':id')
+  @RequiresPermission('affairs.messages:delete')
   remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
     return this.messaging.remove(id, user);
   }

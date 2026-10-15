@@ -49,7 +49,7 @@ const EventLiveGuest = () => {
       if (existing) {
         setSubmitting(false);
         const at = existing.checkedInAt ?? existing.checked_in_at ?? existing.createdAt;
-        const t = new Date(at).toLocaleTimeString('ar-SA', { hour: '2-digit', minute: '2-digit', hour12: true });
+        const t = new Date(at).toLocaleTimeString('ar-SA-u-nu-latn', { hour: '2-digit', minute: '2-digit', hour12: true });
         toast.error(`${ui("هذا الرقم مسجل باسم")} ${existing.title ? `${existing.title} / ${existing.name}` : existing.name} ${ui("في الساعة")} ${t}`);
         return;
       }
@@ -79,7 +79,7 @@ const EventLiveGuest = () => {
         <div className="container mx-auto px-4 py-3 flex items-center gap-3">
           <img
             src={resolveEventLogo(settings.logo_url)}
-            alt={ui("شعار Noamany")}
+            alt={ui("شعار ONE80")}
             className="w-10 h-10 rounded-lg object-contain bg-card border border-border/40 p-1"
           />
           <div className="min-w-0">

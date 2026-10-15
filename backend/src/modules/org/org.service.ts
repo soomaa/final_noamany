@@ -1,11 +1,11 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { ConflictException, Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
   assertCodeRangeOrder,
   assertNoCodeRangeOverlap,
 } from '../../common/validators/validation.util';
 import { ensureRoleForJobTitle, removeRoleForJobTitle } from '../rbac/job-title-role.util';
-import { syncAllEmployeeTrainers } from '../club-fitness/trainer-sync.util';
+import { DisabledWorkforceAdapter, WORKFORCE_ADAPTER, WorkforceAdapter } from '../../ports/workforce/workforce.adapter';
 import { CreateDepartmentDto, UpdateDepartmentDto } from './dto/department.dto';
 import { CreateJobTitleDto, UpdateJobTitleDto } from './dto/job-title.dto';
 
@@ -33,7 +33,11 @@ export interface DeptView {
 
 @Injectable()
 export class OrgService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Optional() @Inject(WORKFORCE_ADAPTER)
+    private readonly workforce: WorkforceAdapter = new DisabledWorkforceAdapter(),
+  ) {}
 
   private toView(d: {
     id: number;
@@ -217,7 +221,7 @@ export class OrgService {
       },
     });
     await ensureRoleForJobTitle(this.prisma, row);
-    if (row.is_trainer) await syncAllEmployeeTrainers(this.prisma);
+    if (row.is_trainer) await this.workforce.syncAllEmployees();
     return this.toJobView(row);
   }
 
@@ -237,7 +241,7 @@ export class OrgService {
     });
     await ensureRoleForJobTitle(this.prisma, row);
     // Re-sync the trainer roster whenever the flag might have flipped (on or off).
-    if (row.is_trainer !== existing.is_trainer) await syncAllEmployeeTrainers(this.prisma);
+    if (row.is_trainer !== existing.is_trainer) await this.workforce.syncAllEmployees();
     return this.toJobView(row);
   }
 

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { clubEventsLiveApi } from '@/lib/api/club-events-live';
 import { useEventLiveContext } from './event-live-context';
 import { APP_LIVE_THEME, GYM_LOGO_URL } from './live-brand';
+import { uiStatic } from '@/lib/ui-static';
 
 export interface EventSettings {
   id: string;
@@ -71,15 +72,15 @@ export interface EventSettings {
 }
 
 export const DEFAULT_TITLES = [
-  'السيد', 'السيدة', 'الأستاذ', 'الأستاذة', 'الدكتور', 'الدكتورة',
-  'المهندس', 'المهندسة', 'الكابتن', 'معالي', 'سعادة', 'ضيفنا', 'ضيفتنا',
+  uiStatic('السيد'), uiStatic('السيدة'), uiStatic('الأستاذ'), uiStatic('الأستاذة'), uiStatic('الدكتور'), uiStatic('الدكتورة'),
+  uiStatic('المهندس'), uiStatic('المهندسة'), uiStatic('الكابتن'), uiStatic('معالي'), uiStatic('سعادة'), uiStatic('ضيفنا'), uiStatic('ضيفتنا'),
 ];
 
 export const DEFAULT_SETTINGS: EventSettings = {
   id: '',
-  event_name: 'فعالية النادي',
-  welcome_title: 'يسعدنا حضور',
-  thank_you_message: 'شكراً لتشريفنا بحضورك، نتمنى لك وقتاً ممتعاً في النادي',
+  event_name: uiStatic('فعالية النادي'),
+  welcome_title: uiStatic('يسعدنا حضور'),
+  thank_you_message: uiStatic('شكراً لتشريفنا بحضورك، نتمنى لك وقتاً ممتعاً في النادي'),
   primary_color: APP_LIVE_THEME.primaryHsl,
   secondary_color: APP_LIVE_THEME.secondaryHsl,
   logo_url: GYM_LOGO_URL,
@@ -115,22 +116,22 @@ export const DEFAULT_SETTINGS: EventSettings = {
   btn_settings_guest: true,
   btn_print_staff: true,
   btn_print_guest: true,
-  hero_text: 'أهلاً وسهلاً',
+  hero_text: uiStatic('أهلاً وسهلاً'),
   hero_font: 'Cairo',
   hero_color: APP_LIVE_THEME.accentGold,
   hero_size_px: 96,
   hero_italic: false,
-  hero_subtitle_text: 'بضيوفنا الكرام',
+  hero_subtitle_text: uiStatic('بضيوفنا الكرام'),
   hero_subtitle_color: APP_LIVE_THEME.accentInk,
-  intro_highlight: 'أهلاً وسهلاً بكم،',
-  intro_text: 'يسعدنا تشريفكم في فعاليتنا. نرجو تسجيل حضوركم عبر الخطوات التالية.',
+  intro_highlight: uiStatic('أهلاً وسهلاً بكم،'),
+  intro_text: uiStatic('يسعدنا تشريفكم في فعاليتنا. نرجو تسجيل حضوركم عبر الخطوات التالية.'),
   checkin_steps: [
-    'وجّه كاميرا جوالك إلى رمز QR',
-    'اضغط الرابط الذي سيظهر',
-    'أدخل اسمك ورقم جوالك ثم اضغط تأكيد',
+    uiStatic('وجّه كاميرا جوالك إلى رمز QR'),
+    uiStatic('اضغط الرابط الذي سيظهر'),
+    uiStatic('أدخل اسمك ورقم جوالك ثم اضغط تأكيد'),
   ],
-  thank_title: 'شكراً لتشريفكم',
-  thank_body: 'حضوركم أضفى علينا بهجةً، نتمنى لكم أجمل الأوقات.',
+  thank_title: uiStatic('شكراً لتشريفكم'),
+  thank_body: uiStatic('حضوركم أضفى علينا بهجةً، نتمنى لكم أجمل الأوقات.'),
   hero_font_url: null,
   hero_font_family: null,
   display_welcome_color: APP_LIVE_THEME.accentGold,

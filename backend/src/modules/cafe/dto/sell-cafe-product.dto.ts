@@ -1,8 +1,9 @@
 import { Transform } from 'class-transformer';
-import { IsEnum, IsIn, IsInt, IsNumber, IsOptional, Min } from 'class-validator';
+import { IsEnum, IsInt, IsNumber, IsOptional, Min } from 'class-validator';
 import { SalesPaymentMethod } from '@prisma/client';
+import { CafeInvoiceClassificationDto } from './cafe-invoice-classification.dto';
 
-export class SellCafeProductDto {
+export class SellCafeProductDto extends CafeInvoiceClassificationDto {
   @Transform(({ value }) => Number(value))
   @IsNumber()
   @Min(0.001)
@@ -11,14 +12,6 @@ export class SellCafeProductDto {
   @Transform(({ value }) => Number(value))
   @IsInt()
   branchId!: number;
-
-  @IsIn(['male', 'female'])
-  gender!: 'male' | 'female';
-
-  @Transform(({ value }) => Number(value))
-  @IsInt()
-  @Min(1)
-  cafeCategoryId!: number;
 
   @IsOptional()
   @Transform(({ value }) => (value != null ? Number(value) : undefined))

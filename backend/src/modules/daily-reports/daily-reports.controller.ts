@@ -55,13 +55,13 @@ export class DailyReportsController {
   }
 
   @Post(':id/approve')
-  @RequiresPermission('affairs.daily_reports:update')
+  @RequiresPermission('affairs.daily_reports:approve')
   approve(@Param('id', ParseIntPipe) id: number) {
     return this.dailyReports.approve(id);
   }
 
   @Post(':id/reject')
-  @RequiresPermission('affairs.daily_reports:update')
+  @RequiresPermission('affairs.daily_reports:reject')
   reject(@Param('id', ParseIntPipe) id: number, @Body() dto: RejectDailyReportDto) {
     return this.dailyReports.reject(id, dto);
   }

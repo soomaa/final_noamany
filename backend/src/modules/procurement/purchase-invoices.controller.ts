@@ -17,7 +17,7 @@ import { PurchaseInvoicesService } from './purchase-invoices.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('purchase-invoices')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.cafe_purchases:view')
 export class PurchaseInvoicesController {
   constructor(private readonly service: PurchaseInvoicesService) {}
 
@@ -32,13 +32,13 @@ export class PurchaseInvoicesController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.procurement:create')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:create')
   create(@Body() body: UpsertPurchaseInvoiceDto) {
     return this.service.create(body);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertPurchaseInvoiceDto>,
@@ -47,13 +47,13 @@ export class PurchaseInvoicesController {
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.procurement:delete')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }
 
   @Post(':id/match')
-  @RequiresPermission('gym-sales.procurement:approve')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:approve')
   match(@Param('id', ParseIntPipe) id: number) {
     return this.service.match(id);
   }

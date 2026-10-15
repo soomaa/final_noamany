@@ -1,8 +1,11 @@
 import { useState } from 'react';
-import { ChevronDown, Coffee, CupSoda, Dumbbell, PackageCheck, type LucideIcon } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { ArrowLeftRight, Boxes, ChevronDown, Coffee, CupSoda, Dumbbell, PackageCheck, type LucideIcon } from 'lucide-react';
 import { InventoryPageShell } from '@/pages/inventory/inventory-shell';
 import { ProductsTab } from '@/pages/inventory/products-tab';
+import { IngredientSwapWorkspace } from '@/components/cafe/ingredient-swap-workspace';
 import { Card, CardContent } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import type { InventorySection } from '@/types/inventory';
@@ -19,6 +22,9 @@ interface MaterialSection {
 
 export function CafeRawMaterialsPage() {
   const { ui } = useLocale();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') === 'swap' ? 'swap' : 'materials';
+  const initialSourceId = searchParams.get('sourceIngredientId') ?? undefined;
   const [openSection, setOpenSection] = useState<InventorySection>('preparation_ingredients');
   const sections: MaterialSection[] = [
     {
@@ -64,7 +70,24 @@ export function CafeRawMaterialsPage() {
       title={ui('إدارة الخامات')}
       description={ui('كل نوع في قسم واضح ومستقل، مع نفس دورة الموردين والمشتريات والمخزون')}
     >
-      <div className="space-y-3">
+      <Tabs
+        value={activeTab}
+        onValueChange={(tab) => {
+          const next = new URLSearchParams(searchParams);
+          if (tab === 'swap') next.set('tab', 'swap');
+          else {
+            next.delete('tab');
+            next.delete('sourceIngredientId');
+          }
+          setSearchParams(next, { replace: true });
+        }}
+        className="space-y-4"
+      >
+        <TabsList className="grid h-auto w-full max-w-xl grid-cols-2 gap-2 rounded-2xl bg-muted/60 p-2">
+          <TabsTrigger value="materials" className="gap-2 rounded-xl py-2.5"><Boxes className="size-4" />{ui('قائمة الخامات')}</TabsTrigger>
+          <TabsTrigger value="swap" className="gap-2 rounded-xl py-2.5"><ArrowLeftRight className="size-4" />{ui('تبديل الخامات')}</TabsTrigger>
+        </TabsList>
+        <TabsContent value="materials" className="mt-0 space-y-3">
         {sections.map((section) => {
           const Icon = section.icon;
           const open = openSection === section.id;
@@ -97,7 +120,9 @@ export function CafeRawMaterialsPage() {
             </Card>
           );
         })}
-      </div>
+        </TabsContent>
+        <TabsContent value="swap" className="mt-0"><IngredientSwapWorkspace initialSourceId={initialSourceId} /></TabsContent>
+      </Tabs>
     </InventoryPageShell>
   );
 }

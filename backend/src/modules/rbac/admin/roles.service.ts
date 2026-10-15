@@ -1,13 +1,12 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { flattenCatalog, permKey } from '../catalog/rbac.catalog';
-import { ensureRoleForJobTitle, isJobTitleRoleKey } from '../job-title-role.util';
+import { isJobTitleRoleKey } from '../job-title-role.util';
 import { PermissionEngineService } from '../engine/permission-engine.service';
 import { effectiveForRole, StoredCell } from '../engine/permission-resolver';
 import { RbacAuditService } from './audit.service';
@@ -29,8 +28,6 @@ export class RbacRolesService {
   // ---- list / CRUD --------------------------------------------------------------------
 
   async list() {
-    // Reading the permissions screen must not replace employee role assignments.
-    // Job-title provisioning belongs to explicit job/employee changes, not GET.
     const [allRoles, counts] = await Promise.all([
       this.prisma.rbac_roles.findMany({ orderBy: [{ id: 'asc' }] }),
       this.prisma.rbac_user_roles.groupBy({ by: ['role_id'], _count: { _all: true } }),
@@ -138,7 +135,9 @@ export class RbacRolesService {
       }
     }
 
-    // Anti-escalation: the editor cannot grant a permission they do not effectively hold.
+    // `admin.roles:manage` is the delegation authority for this matrix (enforced by
+    // the controller guard). A matrix administrator may grant any catalog permission,
+    // even when that operational permission is not part of their own day-to-day role.
     const current = await this.loadRoleCells(id);
     const proposed = this.applyChanges(current, dto.changes);
     const input = this.engine.getResolveInput();
@@ -146,38 +145,29 @@ export class RbacRolesService {
     const after = effectiveForRole(proposed, input);
     const newlyGranted = [...after].filter((k) => !before.has(k));
 
-    const editor = await this.engine.getEffective(actorUserId);
-    if (!editor.superAdmin) {
-      const escalations = newlyGranted.filter((k) => !editor.keys.has(k));
-      if (escalations.length) {
-        throw new ForbiddenException(
-          `لا يمكنك منح صلاحيات لا تملكها: ${escalations.slice(0, 5).join(', ')}${escalations.length > 5 ? ' …' : ''}`,
-        );
-      }
-    }
-
     // Persist the diff.
     const maps = await this.engine.getCatalogMaps();
-    const ops = dto.changes.map((c) => {
-      const resource_id = maps.resourceKeyToId.get(c.resourceKey)!;
-      const action_id = maps.actionKeyToId.get(c.actionKey)!;
-      if (c.state === 'inherit') {
-        return this.prisma.rbac_role_permissions.deleteMany({ where: { role_id: id, resource_id, action_id } });
+    await this.prisma.$transaction(async (tx) => {
+      for (const c of dto.changes) {
+        const resource_id = maps.resourceKeyToId.get(c.resourceKey)!;
+        const action_id = maps.actionKeyToId.get(c.actionKey)!;
+        if (c.state === 'inherit') {
+          await tx.rbac_role_permissions.deleteMany({ where: { role_id: id, resource_id, action_id } });
+        } else {
+          await tx.rbac_role_permissions.upsert({
+            where: { role_id_resource_id_action_id: { role_id: id, resource_id, action_id } },
+            update: { effect: c.state },
+            create: { role_id: id, resource_id, action_id, effect: c.state },
+          });
+        }
       }
-      return this.prisma.rbac_role_permissions.upsert({
-        where: { role_id_resource_id_action_id: { role_id: id, resource_id, action_id } },
-        update: { effect: c.state },
-        create: { role_id: id, resource_id, action_id, effect: c.state },
-      });
-    });
-    await this.prisma.$transaction(ops);
-
-    await this.audit.log({
-      actorUserId,
-      action: 'role.matrix.update',
-      targetType: 'role',
-      targetId: id,
-      detail: { changes: dto.changes.length, granted: newlyGranted.length },
+      await this.audit.log({
+        actorUserId,
+        action: 'role.matrix.update',
+        targetType: 'role',
+        targetId: id,
+        detail: { changes: dto.changes.length, granted: newlyGranted.length },
+      }, tx);
     });
     await this.engine.invalidateRole(id);
 

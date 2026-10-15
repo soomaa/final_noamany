@@ -190,6 +190,7 @@ export function ProcurementPurchaseOrdersPage() {
 
       <FilterBar fields={filters} searchPlaceholder={ui('بحث في أوامر الشراء…')} />
       <DataTable
+        exportSource={{ resource: 'purchase-orders', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}

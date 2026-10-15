@@ -1,24 +1,25 @@
-/**
- * JWT claims — mirror the 7 legacy CodeIgniter session keys
- * (userid, level, emp_code, image, name, branch, man_women_type).
- */
+/** Staff identity and current authorization scope. */
 export interface JwtUser {
   /** users.user_id (JWT `sub`) */
   sub: number;
+  /** Server-side staff session id; populated on authenticated requests. */
+  sessionId?: string;
   /** users.level — 1 admin, 2 employee, 3 branch/dept manager */
   level: number | null;
-  /** Resolved active RBAC super-admin role. Never trusted directly from a stale token. */
-  is_super_admin?: boolean;
-  /** users.emp_code — linkage to the employee row (legacy stores employees.id here) */
+  /** employees.id — canonical database identity used by foreign keys. */
+  employeeId: number | null;
+  /** employees.emp_code — human/business identifier displayed on documents. */
+  employeeCode: number | null;
+  /** @deprecated Legacy alias of employeeId. New code must use employeeId/employeeCode. */
   emp_code: number | null;
-  /** employees.branch_id_fk (or 0). NOTE: branch === 3 is a virtual parent of [6,7,3]. */
+  /** employees.branch_id_fk (or 0); any host fan-out is explicit configuration. */
   branch: number;
+  /** Optional live normalized branch assignments (used by multi-branch sales staff). */
+  branchIds?: number[];
   /** Resolved branch display name (available without org.branches permission). */
   branch_name: string | null;
-  /** employees.emp_type — 1 men, 2 women, 3 both (or legacy 0). */
+  /** employees.emp_type — men/women dashboard scope (or 0) */
   man_women_type: number;
-  /** Effective gender sections refreshed from active individual exceptions. */
-  member_sections?: Array<'male' | 'female'>;
   name: string | null;
   /** Avatar path — employee photo preferred over default user placeholder. */
   image: string | null;
@@ -26,6 +27,6 @@ export interface JwtUser {
   job_title: string | null;
   /** True only when the linked employee currently has an active trainer roster row. */
   is_trainer: boolean;
-  /** club_trainers.id for trainer-scoped APIs. */
+  /** Optional workforce-provider record id for provider-scoped APIs. */
   trainer_id: number | null;
 }

@@ -1,11 +1,12 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { EmployeeType } from '../../common/constants/hr-codes';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { todayIso } from '../../common/utils/legacy-date.util';
+import { cairoTimeString, dateOnlyEpochSeconds } from '../../common/utils/cairo-date';
 import { PushService } from '../push/push.service';
-import { CreateCircularDto, ListCircularsDto, UpdateCircularDto } from './dto/circular.dto';
+import { CreateCircularDto, ListCircularsDto } from './dto/circular.dto';
 
 function stripHtml(html: string | null | undefined): string {
   if (!html) return '';
@@ -14,8 +15,6 @@ function stripHtml(html: string | null | undefined): string {
 
 @Injectable()
 export class CircularsService {
-  private readonly logger = new Logger(CircularsService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly push: PushService,
@@ -37,21 +36,15 @@ export class CircularsService {
     ]);
 
     const counts = await Promise.all(
-      rows.map(async (r) => ({
-        total: await this.prisma.hr_ta3mem_details.count({ where: { ta3mem_id_fk: r.id } }),
-        read: await this.prisma.hr_ta3mem_details.count({ where: { ta3mem_id_fk: r.id, seen: 1 } }),
-      })),
+      rows.map((r) => this.prisma.hr_ta3mem_details.count({ where: { ta3mem_id_fk: r.id } })),
     );
 
     const data = rows.map((row, i) => ({
       id: row.id,
       title: row.ta3mem_title,
-      subject: stripHtml(row.subject),
+      employeeName: stripHtml(row.subject),
       createdAt: row.ta3mem_date,
-      image: row.img,
-      recipientCount: counts[i].total,
-      readCount: counts[i].read,
-      published: row.send_all_t3mem === 1,
+      recipientCount: counts[i],
     }));
 
     return paginated(data, total, q.page, q.pageSize);
@@ -64,18 +57,12 @@ export class CircularsService {
       where: { ta3mem_id_fk: id },
       orderBy: { id: 'asc' },
     });
-    const attachments = await this.prisma.hr_ta3mem_attaches.findMany({
-      where: { ta3mem_id_fk: id },
-      orderBy: { id: 'asc' },
-    });
     return {
       id: row.id,
       title: row.ta3mem_title,
       subject: row.subject,
       date: row.ta3mem_date,
-      image: row.img,
       type: row.type,
-      published: row.send_all_t3mem === 1,
       details: details.map((d) => ({
         id: d.id,
         empId: d.emp_id,
@@ -84,11 +71,6 @@ export class CircularsService {
         seen: d.seen,
         seenDate: d.seen_date,
         seenTime: d.seen_time,
-      })),
-      attachments: attachments.map((attachment) => ({
-        id: attachment.id,
-        title: attachment.title,
-        file: attachment.file,
       })),
     };
   }
@@ -106,117 +88,36 @@ export class CircularsService {
     return rows.map((r) => ({ id: r.id, title: r.title }));
   }
 
-  async create(dto: CreateCircularDto, publisherId?: number, publisherName?: string | null) {
+  async create(dto: CreateCircularDto, publisherId?: number) {
     const dateStr = dto.date ?? todayIso();
-    const empIds = await this.resolveRecipientEmpIds(dto);
-    if (!empIds.length) {
-      throw new BadRequestException('يجب اختيار موظف أو إدارة واحدة على الأقل، أو اختيار جميع الموظفين');
-    }
     const row = await this.prisma.hr_ta3mem.create({
       data: {
         ta3mem_title: dto.title,
         subject: dto.subject,
         ta3mem_date: dateStr,
         type: 't3mem',
-        date: Math.floor(new Date(dateStr).getTime() / 1000),
-        date_ar: Math.floor(new Date(dateStr).getTime() / 1000),
+        date: dateOnlyEpochSeconds(dateStr),
+        date_ar: dateOnlyEpochSeconds(dateStr),
         publisher: publisherId,
-        img: dto.image,
-        send_all_t3mem: 1,
       },
     });
 
     // Resolve the targeted employee set (legacy load_tahwel routing).
-    {
+    const empIds = await this.resolveRecipientEmpIds(dto);
+    if (empIds.length) {
       await this.insertRecipients(row.id, empIds);
       const userIds = await this.resolveUserIdsForEmployees(empIds);
       if (userIds.length) {
-        // Notification delivery must never make the admin save operation fail.
-        // The circular and its recipients have already been persisted.
-        try {
-          await this.push.sendToUsers(
-            userIds,
-            dto.title,
-            stripHtml(dto.subject) || 'تعميم جديد',
-            publisherId,
-          );
-        } catch (error) {
-          this.logger.error('Circular saved but its push notifications could not be sent', error);
-        }
+        await this.push.sendToUsers(
+          userIds,
+          dto.title,
+          stripHtml(dto.subject) || 'تعميم جديد',
+          publisherId,
+        );
       }
-    }
-
-    for (const attachment of dto.attachments ?? []) {
-      await this.prisma.hr_ta3mem_attaches.create({
-        data: {
-          ta3mem_id_fk: row.id,
-          title: attachment.title,
-          file: attachment.file,
-          date: dateStr,
-          date_ar: dateStr,
-          publisher: publisherId,
-          publisher_name: publisherName,
-        },
-      });
     }
 
     return { id: row.id };
-  }
-
-  async update(
-    id: number,
-    dto: UpdateCircularDto,
-    publisherId?: number,
-    publisherName?: string | null,
-  ) {
-    const existing = await this.prisma.hr_ta3mem.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException('التعميم غير موجود');
-
-    const recipientsChanged = dto.sendToAll != null || dto.recipientType != null
-      || dto.empIds != null || dto.edaraIds != null;
-    const empIds = recipientsChanged ? await this.resolveRecipientEmpIds(dto) : [];
-    if (recipientsChanged && !empIds.length) {
-      throw new BadRequestException('يجب اختيار موظف أو إدارة واحدة على الأقل، أو اختيار جميع الموظفين');
-    }
-
-    const dateStr = dto.date ?? existing.ta3mem_date ?? todayIso();
-    await this.prisma.hr_ta3mem.update({
-      where: { id },
-      data: {
-        ...(dto.title != null ? { ta3mem_title: dto.title } : {}),
-        ...(dto.subject != null ? { subject: dto.subject } : {}),
-        ...(dto.date != null ? {
-          ta3mem_date: dateStr,
-          date: Math.floor(new Date(dateStr).getTime() / 1000),
-          date_ar: Math.floor(new Date(dateStr).getTime() / 1000),
-        } : {}),
-        ...(dto.image != null ? { img: dto.image } : {}),
-        publisher: publisherId,
-        send_all_t3mem: 1,
-      },
-    });
-
-    if (recipientsChanged) {
-      await this.prisma.hr_ta3mem_details.deleteMany({ where: { ta3mem_id_fk: id } });
-      await this.insertRecipients(id, empIds);
-    }
-    if (dto.attachments != null) {
-      await this.prisma.hr_ta3mem_attaches.deleteMany({ where: { ta3mem_id_fk: id } });
-      for (const attachment of dto.attachments) {
-        await this.prisma.hr_ta3mem_attaches.create({
-          data: {
-            ta3mem_id_fk: id,
-            title: attachment.title,
-            file: attachment.file,
-            date: dateStr,
-            date_ar: dateStr,
-            publisher: publisherId,
-            publisher_name: publisherName,
-          },
-        });
-      }
-    }
-    return { id };
   }
 
   /**
@@ -225,17 +126,8 @@ export class CircularsService {
    *    edara_id OR qsm_id falls under one of the targeted edarat.
    *  - recipientType 2 (default): the explicit empIds.
    */
-  private async resolveRecipientEmpIds(dto: Pick<CreateCircularDto,
-    'sendToAll' | 'recipientType' | 'empIds' | 'edaraIds'>): Promise<number[]> {
+  private async resolveRecipientEmpIds(dto: CreateCircularDto): Promise<number[]> {
     const ids = new Set<number>();
-
-    if (dto.sendToAll) {
-      const emps = await this.prisma.employees.findMany({
-        where: { employee_type: EmployeeType.ACTIVE },
-        select: { id: true },
-      });
-      for (const e of emps) ids.add(e.id);
-    }
 
     if (dto.recipientType === 1) {
       const edaraIds = dto.edaraIds ?? [];
@@ -257,15 +149,13 @@ export class CircularsService {
     return [...ids];
   }
 
-  async markSeen(id: number, employeeId: number | null) {
+  async markSeen(id: number, empId: number | null) {
     const circular = await this.prisma.hr_ta3mem.findUnique({ where: { id } });
     if (!circular) throw new NotFoundException('التعميم غير موجود');
-    if (!employeeId) throw new NotFoundException('المستخدم غير مرتبط بموظف');
-    const employee = await this.prisma.employees.findUnique({ where: { id: employeeId } });
-    if (!employee) throw new NotFoundException('الموظف غير موجود');
+    if (!empId) throw new NotFoundException('المستخدم غير مرتبط بموظف');
 
     const detail = await this.prisma.hr_ta3mem_details.findFirst({
-      where: { ta3mem_id_fk: id, emp_id: employee.id },
+      where: { ta3mem_id_fk: id, emp_id: empId },
     });
     if (!detail) throw new NotFoundException('التعميم غير موجه لهذا الموظف');
 
@@ -275,7 +165,7 @@ export class CircularsService {
       data: {
         seen: 1,
         seen_date: dateStr,
-        seen_time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
+        seen_time: cairoTimeString(),
       },
     });
     return { id, seen: true };
@@ -283,35 +173,35 @@ export class CircularsService {
 
   async remove(id: number) {
     await this.getOne(id);
-    await this.prisma.hr_ta3mem_attaches.deleteMany({ where: { ta3mem_id_fk: id } });
     await this.prisma.hr_ta3mem_details.deleteMany({ where: { ta3mem_id_fk: id } });
     await this.prisma.hr_ta3mem.delete({ where: { id } });
     return { id };
   }
 
   private async insertRecipients(ta3memId: number, empIds: number[]) {
-    const employees = await this.prisma.employees.findMany({
-      where: { id: { in: empIds } },
-      select: { id: true, emp_code: true, employee: true },
-    });
-    if (!employees.length) return;
-
-    await this.prisma.hr_ta3mem_details.createMany({
-      data: employees.map((employee) => ({
-        ta3mem_id_fk: ta3memId,
-        emp_id: employee.id,
-        emp_code: employee.emp_code,
-        // The legacy recipient column is VARCHAR(100), while employee names
-        // are VARCHAR(200). Never let one long name abort a broadcast save.
-        emp_name: employee.employee?.slice(0, 100) ?? null,
-      })),
-    });
+    for (const empId of empIds) {
+      const emp = await this.prisma.employees.findUnique({ where: { id: empId } });
+      if (!emp) continue;
+      await this.prisma.hr_ta3mem_details.create({
+        data: {
+          ta3mem_id_fk: ta3memId,
+          emp_id: emp.id,
+          emp_code: emp.emp_code,
+          emp_name: emp.employee,
+        },
+      });
+    }
   }
 
   private async resolveUserIdsForEmployees(empIds: number[]): Promise<number[]> {
+    const emps = await this.prisma.employees.findMany({
+      where: { id: { in: empIds } },
+      select: { emp_code: true },
+    });
+    const codes = emps.map((e) => e.emp_code).filter((c): c is number => c != null);
+    if (!codes.length) return [];
     const users = await this.prisma.users.findMany({
-      // users.emp_code stores employees.id in the legacy schema.
-      where: { emp_code: { in: empIds } },
+      where: { emp_code: { in: codes } },
       select: { user_id: true },
     });
     return users.map((u) => u.user_id);

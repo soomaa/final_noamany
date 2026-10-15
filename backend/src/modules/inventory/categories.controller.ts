@@ -18,6 +18,7 @@ export class CategoriesController {
   constructor(private readonly service: CategoriesService) {}
 
   @Get()
+  @RequiresPermission('club.cafe.categories:view', 'club.cafe.products:view', 'gym-sales.sales.new_receipt:view', 'gym-sales.inventory.raw_materials:view', 'gym-sales.sales.drafts:update')
   list(@Query() query: ListCategoriesDto) {
     return this.service.list(query);
   }

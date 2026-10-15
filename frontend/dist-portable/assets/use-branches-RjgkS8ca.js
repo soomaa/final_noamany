@@ -1,0 +1,1 @@
+import{aj as a,e as s,b as t}from"./portable-index-BjYQo9_9.js";async function u(){try{const{data:r}=await t.get("/branch-options");if(Array.isArray(r)&&r.length>=0)return r}catch{}return[]}function c(){const r=a(n=>{var e;return(e=n.user)==null?void 0:e.sub});return s({queryKey:["branches","options",r??"anonymous"],queryFn:u,enabled:r!=null,retry:!1})}export{c as u};

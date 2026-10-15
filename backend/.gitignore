@@ -6,6 +6,8 @@ prisma/*.db
 coverage
 .DS_Store
 uploads
+!src/modules/uploads/
+!src/modules/uploads/**
 backups/
 .env.*
 !.env.example

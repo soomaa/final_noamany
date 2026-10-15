@@ -21,6 +21,12 @@ export class ListClubMembersDto extends PaginationDto {
   @IsBoolean()
   forSelect?: boolean;
 
+  /** Provision missing gate credentials for the QR management page only. */
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === '1')
+  @IsBoolean()
+  includeGateCredentials?: boolean;
+
   /** Include members created on or after this date (YYYY-MM-DD). */
   @IsOptional()
   @IsISO8601()

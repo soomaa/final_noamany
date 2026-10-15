@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { Check, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
@@ -9,7 +10,8 @@ const PAYROLL_STEP_DEFS = [
   { id: 'review', label: uiStatic('مراجعة المرتبات'), action: 'review' },
   { id: 'approve', label: uiStatic('اعتماد المرتبات'), action: 'approve' },
   { id: 'post', label: uiStatic('إصدار كشف المرتب'), action: 'post' },
-  { id: 'bank', label: uiStatic('التحويل البنكي'), action: 'bank' },
+  { id: 'bank', label: uiStatic('تجهيز ملف البنك'), action: 'bank' },
+  { id: 'settlement', label: uiStatic('تأكيد تسوية البنك'), action: 'bank-sync' },
   { id: 'print', label: uiStatic('طباعة كشف الرواتب'), action: 'print' },
 ] as const;
 
@@ -20,9 +22,10 @@ interface PayrollStepperProps {
   onAction?: (action: string) => void;
   loading?: boolean;
   className?: string;
+  canAction?: (action: string) => boolean;
 }
 
-export function PayrollStepper({ currentStep, onAction, loading, className }: PayrollStepperProps) {
+export function PayrollStepper({ currentStep, onAction, loading, className, canAction = () => true }: PayrollStepperProps) {
   const { ui } = useLocale();
   const currentIndex = PAYROLL_STEP_DEFS.findIndex((s) => s.id === currentStep);
 
@@ -42,13 +45,13 @@ export function PayrollStepper({ currentStep, onAction, loading, className }: Pa
                 !active && !done && 'border-border text-muted-foreground',
               )}
             >
-              {done ? <Check className="size-4" /> : <span className="nums">{i + 1}</span>}
+              {done ? <Check className="size-4" /> : <span className="nums">{formatDisplayNumber(i + 1)}</span>}
               {ui(step.label)}
             </div>
           );
         })}
       </div>
-      {onAction && PAYROLL_STEP_DEFS[currentIndex]?.action && (
+      {onAction && PAYROLL_STEP_DEFS[currentIndex]?.action && canAction(PAYROLL_STEP_DEFS[currentIndex].action) && (
         <Button
           onClick={() => {
             const action = PAYROLL_STEP_DEFS[currentIndex].action!;
@@ -60,10 +63,11 @@ export function PayrollStepper({ currentStep, onAction, loading, className }: Pa
           {loading && <Loader2 className="size-4 animate-spin" />}
           {currentIndex === 0 && ui('بدء الاحتساب')}
           {currentIndex === 1 && ui('إرسال للاعتماد')}
-          {currentIndex === 2 && ui('اعتماد المسيرة')}
+          {currentIndex === 2 && ui('اعتماد المرتبات')}
           {currentIndex === 3 && ui('إصدار الكشوف')}
           {currentIndex === 4 && ui('توليد ملف التحويل البنكي')}
-          {currentIndex === 5 && ui('طباعة')}
+          {currentIndex === 5 && ui('مزامنة تأكيد البنك')}
+          {currentIndex === 6 && ui('طباعة')}
         </Button>
       )}
     </div>
@@ -77,6 +81,7 @@ export function statusToPayrollStep(status?: string): PayrollStepId {
     reviewing: 'review',
     approved: 'post',
     posted: 'bank',
+    bank_prepared: 'settlement',
     banked: 'print',
     completed: 'print',
   };

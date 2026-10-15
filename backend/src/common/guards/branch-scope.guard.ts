@@ -1,20 +1,11 @@
-import {
-  CanActivate,
-  ExecutionContext,
-  ForbiddenException,
-  Injectable,
-  Inject,
-} from "@nestjs/common";
-import { Reflector } from '@nestjs/core';
-import { ClubBranchGroupService, ClubBranchGroupReader } from '../branch-groups/club-branch-group.service';
-import { CLUB_GROUP_OPERATION, clubOperationBranchIds } from '../branch-groups/club-operation-scope';
-import { BranchScopeService } from "../branch-scope/branch-scope.service";
-import { JwtUser } from "../types/jwt-user";
+import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import { BranchScopeService } from '../branch-scope/branch-scope.service';
+import { JwtUser } from '../types/jwt-user';
 
 /**
- * Global guard: non-admins are restricted to their branch. Explicitly marked club
- * refund/transfer routes may target branches in the same active persisted group.
- * Requests outside the applicable allowed set are rejected with 403.
+ * Global guard: a branch-scoped user (e.g. a branch manager) may not read or write
+ * another branch's data by passing a foreign branch id. Any request that explicitly
+ * targets a branch outside the user's allowed set is rejected with 403.
  *
  * This closes the active cross-branch access vector on every endpoint at once. It only
  * REJECTS clearly-unauthorized requests — it never changes a service's own logic, so it
@@ -28,56 +19,74 @@ import { JwtUser } from "../types/jwt-user";
 export class BranchScopeGuard implements CanActivate {
   /** Query/body keys across the app that denote a target branch. */
   private static readonly BRANCH_KEYS = [
-    "branchId",
-    "branch_id",
-    "mainBranchId",
-    "main_branch_id",
-    "subBranchId",
-    "sub_branch_id",
-    "branch",
+    'branchId',
+    'branch_id',
+    'branch_id_fk',
+    'mainBranchId',
+    'main_branch_id',
+    'subBranchId',
+    'sub_branch_id',
+    'branch',
   ];
 
-  constructor(
-    private readonly scope: BranchScopeService,
-    private readonly reflector: Reflector = new Reflector(),
-    @Inject(ClubBranchGroupService) private readonly branchGroups: Pick<ClubBranchGroupReader, 'siblingBranchIds'> = { siblingBranchIds: async (id) => [id] },
-  ) {}
+  /** Branch arrays used by package/settings forms. */
+  private static readonly BRANCH_ARRAY_KEYS = ['branchIds', 'branch_ids'];
 
-  async canActivate(context: ExecutionContext): Promise<boolean> {
+  /**
+   * Request bodies can carry branch selectors below the first level (for example
+   * trainerSchedules[].slots[].branchId or branchPrices[].branchId). Walk the plain JSON
+   * body so nested cross-branch writes are rejected by the same global guard.
+   */
+  private branchTargets(value: unknown, seen = new Set<object>()): number[] {
+    if (value == null || typeof value !== 'object') return [];
+    if (seen.has(value as object)) return [];
+    seen.add(value as object);
+
+    if (Array.isArray(value)) {
+      return value.flatMap((item) => this.branchTargets(item, seen));
+    }
+
+    const bag = value as Record<string, unknown>;
+    const targets: number[] = [];
+    for (const key of BranchScopeGuard.BRANCH_KEYS) {
+      const raw = bag[key];
+      if (raw == null || raw === '' || raw === 'all') continue;
+      const branchId = Number(raw);
+      // Non-numeric (e.g. a name) or 0/"unassigned" → not a concrete foreign branch.
+      if (Number.isFinite(branchId) && branchId > 0) targets.push(branchId);
+    }
+    for (const key of BranchScopeGuard.BRANCH_ARRAY_KEYS) {
+      const raw = bag[key];
+      if (!Array.isArray(raw)) continue;
+      for (const item of raw) {
+        const branchId = Number(item);
+        if (Number.isFinite(branchId) && branchId > 0) targets.push(branchId);
+      }
+    }
+
+    for (const nested of Object.values(bag)) {
+      if (nested != null && typeof nested === 'object') {
+        targets.push(...this.branchTargets(nested, seen));
+      }
+    }
+    return targets;
+  }
+
+  constructor(private readonly scope: BranchScopeService) {}
+
+  canActivate(context: ExecutionContext): boolean {
     const req = context.switchToHttp().getRequest();
     const user = req?.user as JwtUser | undefined;
-    // Public routes run through the global guard chain without an authenticated user.
-    // Authentication is handled by JwtAuthGuard; branch scoping has nothing to do here.
-    if (!user) return true;
-
-    const groupOperation = context.getHandler && this.reflector.getAllAndOverride<boolean>(CLUB_GROUP_OPERATION, [context.getHandler(), context.getClass()]);
-    const allowed = groupOperation
-      ? await clubOperationBranchIds(this.scope, this.branchGroups, user)
-      : this.scope.allowedBranchIds(user);
+    const allowed = this.scope.allowedBranchIds(user);
 
     // Expose the resolved scope for services that opt into default scoping.
     req.branchScope = allowed;
 
-    if (allowed === null) return true; // unrestricted super-admin
-    if (allowed.length === 0) {
-      throw new ForbiddenException(
-        "يجب ربط حساب المستخدم بفرع قبل استخدام النظام",
-      );
-    }
+    if (allowed === null) return true; // unrestricted (super-admin / unassigned)
 
-    for (const key of BranchScopeGuard.BRANCH_KEYS) {
-      for (const bag of [req.query, req.body]) {
-        if (!bag || typeof bag !== "object") continue;
-        const raw = bag[key];
-        if (raw == null || raw === "" || raw === "all") continue;
-        const value = Number(raw);
-        // Non-numeric (e.g. a name) or 0/"unassigned" → not a concrete foreign branch.
-        if (!Number.isFinite(value) || value === 0) continue;
-        if (!allowed.includes(value)) {
-          throw new ForbiddenException(
-            "لا تملك صلاحية الوصول لبيانات هذا الفرع",
-          );
-        }
+    for (const target of this.branchTargets([req.query, req.body])) {
+      if (!allowed.includes(target)) {
+        throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
       }
     }
     return true;

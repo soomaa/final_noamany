@@ -11,17 +11,21 @@ describe('EntitlementService branch isolation', () => {
       },
     };
     const policies = {
-      get: jest.fn().mockResolvedValue({ allowCheckInWithOutstanding: false }),
+      get: jest.fn().mockResolvedValue({
+        allowCheckInWithOutstanding: false,
+        allowGraceSessions: false,
+      }),
     };
     const service = new EntitlementService(prisma as never, policies as never);
 
     const result = await service.validate({ memberId: 10, branchId: 2 });
 
     expect(result.allowed).toBe(false);
+    expect(result.allowGraceSessions).toBe(false);
     expect(result.reasons.map((reason) => reason.code)).toContain('member_branch_mismatch');
     expect(prisma.club_subscriptions.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ member_id: 10, branch_id: { in: [2] } }),
+        where: expect.objectContaining({ member_id: 10, branch_id: 2 }),
       }),
     );
   });
@@ -43,7 +47,10 @@ describe('EntitlementService branch isolation', () => {
       club_subscriptions: { findMany: jest.fn().mockResolvedValue([]) },
     };
     const policies = {
-      get: jest.fn().mockResolvedValue({ allowCheckInWithOutstanding: false }),
+      get: jest.fn().mockResolvedValue({
+        allowCheckInWithOutstanding: false,
+        allowGraceSessions: false,
+      }),
     };
     const service = new EntitlementService(prisma as never, policies as never);
 

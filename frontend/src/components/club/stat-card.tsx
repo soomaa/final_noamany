@@ -1,5 +1,6 @@
 import type { LucideIcon } from 'lucide-react';
 import { cn, toArabicDigits, withAlpha } from '@/lib/utils';
+import { uiStatic } from '@/lib/ui-static';
 
 /** Semantic tones — each metric family gets a distinct, consistent colour. */
 const TONES = {
@@ -13,7 +14,7 @@ const TONES = {
   spa: '#EC4899',
   alert: '#E5736B',
   neutral: '#6FB7E6',
-  primary: '#ED1C24',
+  primary: '#EAB308',
 } as const;
 
 export type StatTone = keyof typeof TONES;
@@ -23,15 +24,15 @@ const FALLBACK = [TONES.primary, TONES.members, TONES.attendance, TONES.trainers
 
 /** Keyword → tone map (Arabic). Revenue is checked first so "إيرادات السبا" reads as money. */
 const KEYWORDS: Array<[StatTone, string[]]> = [
-  ['revenue', ['إيراد', 'مبيع', 'خزينة', 'تحصيل', 'مدفوع', 'دخل', 'فاتور', 'إيصال']],
-  ['profit', ['ربح', 'صافي']],
-  ['alert', ['منتهي', 'متأخر', 'مستحق', 'معلق', 'تنبيه', 'متبق', 'غياب']],
-  ['members', ['عضو', 'أعضاء', 'عملاء', 'عميل', 'مشترك']],
-  ['attendance', ['حضور', 'نسبة', 'دخول', 'تسجيل', 'داخل']],
-  ['trainers', ['مدرب']],
-  ['classes', ['حصص', 'حصة', 'فعالي', 'نشاط', 'برنامج']],
-  ['lockers', ['لوكر', 'خزائن', 'خزنة']],
-  ['spa', ['سبا', 'سبأ']],
+  ['revenue', [uiStatic('إيراد'), uiStatic('مبيع'), uiStatic('خزينة'), uiStatic('تحصيل'), uiStatic('مدفوع'), uiStatic('دخل'), uiStatic('فاتور'), uiStatic('إيصال')]],
+  ['profit', [uiStatic('ربح'), uiStatic('صافي')]],
+  ['alert', [uiStatic('منتهي'), uiStatic('متأخر'), uiStatic('مستحق'), uiStatic('معلق'), uiStatic('تنبيه'), uiStatic('متبق'), uiStatic('غياب')]],
+  ['members', [uiStatic('عضو'), uiStatic('أعضاء'), uiStatic('عملاء'), uiStatic('عميل'), uiStatic('مشترك')]],
+  ['attendance', [uiStatic('حضور'), uiStatic('نسبة'), uiStatic('دخول'), uiStatic('تسجيل'), uiStatic('داخل')]],
+  ['trainers', [uiStatic('مدرب')]],
+  ['classes', [uiStatic('حصص'), uiStatic('حصة'), uiStatic('فعالي'), uiStatic('نشاط'), uiStatic('برنامج')]],
+  ['lockers', [uiStatic('لوكر'), uiStatic('خزائن'), uiStatic('خزنة')]],
+  ['spa', [uiStatic('سبا'), uiStatic('سبأ')]],
 ];
 
 function toneForLabel(label: string): string {
@@ -86,7 +87,7 @@ export function ClubStatCard({ label, value, icon: Icon, suffix, tone, className
         className={cn('relative mt-2 text-2xl font-bold tracking-tight nums dark:!text-white', centered && 'text-center')}
         style={{ color }}
       >
-        {typeof value === 'number' ? toArabicDigits(value) : value}
+        {toArabicDigits(value)}
         {suffix && <span className="ms-1 text-base font-normal text-muted-foreground dark:text-white/70">{suffix}</span>}
       </p>
     </div>

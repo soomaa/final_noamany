@@ -24,7 +24,8 @@ import { api, apiError } from '@/lib/api';
 import { isNotImplemented, useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { cn, toArabicDigits } from '@/lib/utils';
+import { cn, toArabicDigits, formatDigits } from '@/lib/utils';
+import { usePermission } from '@/hooks/use-permission';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
 
@@ -61,6 +62,9 @@ function getExpiryStatus(expiryDate?: string): 'expired' | 'expiring' | 'active'
 
 export function DocumentsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('employees.documents:create');
+  const canDelete = can('employees.documents:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<DocumentRow>('documents', params);
 
@@ -163,11 +167,12 @@ export function DocumentsPage() {
     {
       id: 'actions',
       header: ui('الإجراءات'),
-      cell: ({ row }) => (
-        <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
-          <Trash2 className="size-4 text-destructive" />
-        </Button>
-      ),
+      cell: ({ row }) =>
+        canDelete ? (
+          <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
+            <Trash2 className="size-4 text-destructive" />
+          </Button>
+        ) : null,
     },
   ];
 
@@ -186,9 +191,11 @@ export function DocumentsPage() {
         title={ui('المستندات')}
         description={ui('متابعة مستندات الموظفين وتنبيهات انتهاء الصلاحية')}
         actions={
-          <Button variant="brand" size="sm" onClick={() => setCreateOpen(true)}>
-            <Plus className="size-4" /> {ui('مستند جديد')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={() => setCreateOpen(true)}>
+              <Plus className="size-4" /> {ui('مستند جديد')}
+            </Button>
+          ) : undefined
         }
       />
       <FilterBar
@@ -207,6 +214,7 @@ export function DocumentsPage() {
         ]}
       />
       <DataTable
+        exportSource={{ resource: 'documents', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -251,7 +259,7 @@ export function DocumentsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>{ui('إلغاء')}</Button>
-            <Button variant="brand" onClick={() => void saveDocument()} disabled={saving}>{ui('حفظ')}</Button>
+            <Button permissionAction="create" variant="brand" onClick={() => void saveDocument()} disabled={saving}>{ui('حفظ')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

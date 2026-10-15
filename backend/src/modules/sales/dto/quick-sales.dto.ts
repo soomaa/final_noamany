@@ -16,6 +16,7 @@ import {
   ValidateNested,
 } from "class-validator";
 import { PaginationDto } from "../../../common/dto/pagination.dto";
+import { CafeInvoiceClassificationDto } from '../../cafe/dto/cafe-invoice-classification.dto';
 
 export class ListQuickSalesDto extends PaginationDto {
   @IsOptional() @IsString() branchId?: string;
@@ -25,8 +26,8 @@ export class ListQuickSalesDto extends PaginationDto {
   @IsOptional()
   @IsIn(["cash", "card", "wallet", "transfer", "mixed", "all"])
   paymentMethod?: string;
-  @IsOptional() @IsIn(["customer", "employee", "partner"]) saleType?:
-    "customer" | "employee" | "partner";
+  @IsOptional() @IsIn(["customer", "employee", "partner", "hospitality"]) saleType?:
+    "customer" | "employee" | "partner" | "hospitality";
   @IsOptional() @Type(() => Number) @IsInt() employeeId?: number;
   @IsOptional() @Type(() => Number) @IsInt() partnerId?: number;
   @IsOptional() @IsIn(["immediate", "daily", "monthly"]) billingCycle?:
@@ -41,10 +42,30 @@ export class ListQuickSalesDto extends PaginationDto {
   @IsOptional() @IsString() shiftSessionIds?: string;
 }
 
+export class ListCafeCustomersDto extends PaginationDto {
+  @IsInt() @Type(() => Number) branchId!: number;
+  @IsOptional() @IsIn(["customer", "employee"]) kind?:
+    | "customer"
+    | "employee";
+  @IsOptional() @IsIn(["spend", "orders"]) sortBy?: "spend" | "orders";
+}
+
+export class BundleSelectionItemDto {
+  @IsInt() groupId!: number;
+  @IsInt() cafeProductId!: number;
+  @IsOptional() @IsInt() cafeVariantId?: number;
+}
+
 export class CreateQuickSaleItemDto {
   @IsOptional() @IsInt() productId?: number;
   @IsOptional() @IsInt() cafeProductId?: number;
   @IsOptional() @IsInt() cafeVariantId?: number;
+  @IsOptional() @IsInt() bundleId?: number;
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => BundleSelectionItemDto)
+  bundleSelections?: BundleSelectionItemDto[];
   @IsString() name!: string;
   @IsOptional() @IsString() productCode?: string;
   @IsOptional() @IsString() @MaxLength(300) itemNote?: string;
@@ -57,17 +78,13 @@ export class CreateQuickSaleItemDto {
 export class PosPaymentDto {
   @IsIn(["cash", "card", "wallet", "transfer"]) method!: string;
   @IsNumber() @Min(0) amount!: number;
+  @IsOptional() @IsInt() @Min(1) catalogPaymentMethodId?: number;
   @IsOptional() @IsString() reference?: string;
 }
 
-export class CreateQuickSaleDto {
+export class CreateQuickSaleDto extends CafeInvoiceClassificationDto {
+  @IsOptional() @IsInt() @Min(0) expectedEmployeeFreeDrinks?: number;
   @IsInt() branchId!: number;
-  @IsIn(["male", "female"])
-  gender!: "male" | "female";
-  @Transform(({ value }) => Number(value))
-  @IsInt()
-  @Min(1)
-  cafeCategoryId!: number;
   @IsOptional() @IsString() customerName?: string;
   @IsOptional()
   @IsString()
@@ -78,11 +95,14 @@ export class CreateQuickSaleDto {
     message: "رقم الجوال غير صحيح. استخدم رقمًا محليًا أو دوليًا صالحًا",
   })
   customerPhone?: string;
-  @IsOptional() @IsIn(["customer", "employee", "partner"]) saleType?:
-    "customer" | "employee" | "partner";
+  @IsOptional() @IsIn(["customer", "employee", "partner", "hospitality"]) saleType?:
+    "customer" | "employee" | "partner" | "hospitality";
   @IsOptional() @IsInt() employeeId?: number;
-  @IsOptional() @Type(() => Number) @IsInt() @Min(1) targetEmployeeId?: number;
   @IsOptional() @IsInt() partnerId?: number;
+  // House hospitality "directed by / beneficiary" — reporting only, never billed.
+  @IsOptional() @IsIn(["employee", "partner"]) hospitalityHostKind?: "employee" | "partner";
+  @IsOptional() @IsInt() hospitalityHostId?: number;
+  @IsOptional() @IsString() @MaxLength(150) hospitalityHostName?: string;
   @IsOptional() @IsIn(["immediate", "daily", "monthly"]) billingCycle?:
     "immediate" | "daily" | "monthly";
   @IsArray()
@@ -94,6 +114,8 @@ export class CreateQuickSaleDto {
   @IsOptional()
   @IsIn(["cash", "card", "wallet", "transfer", "mixed"])
   paymentMethod?: string;
+  @IsOptional() @IsInt() @Min(1) catalogPaymentMethodId?: number;
+  @IsOptional() @IsString() @MaxLength(100) paymentReference?: string;
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
@@ -101,6 +123,8 @@ export class CreateQuickSaleDto {
   payments?: PosPaymentDto[];
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() receiptComment?: string;
+  /** One id per logical sale attempt; a retry with the same id returns the saved invoice. */
+  @IsOptional() @IsString() @MaxLength(64) @Matches(/^[A-Za-z0-9_-]+$/) clientRequestId?: string;
   @IsOptional() @IsInt() warehouseId?: number;
   @IsOptional() @IsBoolean() onHold?: boolean;
   @IsOptional()
@@ -110,6 +134,10 @@ export class CreateQuickSaleDto {
   )
   @IsBoolean()
   allowIngredientShortage?: boolean;
+}
+
+export class EditCompletedQuickSaleDto extends CreateQuickSaleDto {
+  @IsInt() @Min(0) expectedRevision!: number;
 }
 
 export class InvoiceFeedbackDto {

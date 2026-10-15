@@ -53,5 +53,5 @@ fi
 echo ""
 echo "✅ Go-live complete."
 echo "   Open: https://one80.alatheertech.com"
-echo "   Login: admin / one80@123"
+echo "   Existing production accounts and business data were preserved."
 echo "   If you still see a file list → cPanel → Node.js App → Restart (startup: dist/main.js)"

@@ -95,11 +95,6 @@ export interface UserRolesResponse {
   roles: { id: number; nameAr: string; isSuperAdmin: boolean; assigned: boolean; expiresAt: string | null }[];
 }
 
-export interface OperationalScopeResponse {
-  assignments: { id: number; branch_id: number; section: 'female' | 'male' }[];
-  exceptions: { id: number; branch_id: number; section: 'female' | 'male'; reason: string; expires_at: string | null }[];
-}
-
 export interface AuditEntry {
   id: number;
   action: string;

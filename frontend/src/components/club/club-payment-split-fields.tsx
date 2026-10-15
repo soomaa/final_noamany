@@ -1,4 +1,6 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { Plus, X } from 'lucide-react';
+import { useId } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -84,8 +86,6 @@ interface ClubPaymentSplitFieldsProps {
   onTotalChange?: (total: number) => void;
   className?: string;
   disabled?: boolean;
-  /** Set false when the workflow accepts one payment method only. */
-  allowMultipleMethods?: boolean;
 }
 
 /**
@@ -102,9 +102,9 @@ export function ClubPaymentSplitFields({
   onTotalChange,
   className,
   disabled,
-  allowMultipleMethods = true,
 }: ClubPaymentSplitFieldsProps) {
   const ct = useClubT();
+  const fieldId = useId();
   const split = rows.length > 1;
   const allocated = splitRowsTotal(rows);
   const unallocated = Math.round((total - allocated) * 100) / 100;
@@ -137,19 +137,23 @@ export function ClubPaymentSplitFields({
       {rows.map((row, index) => (
         <div key={index} className="flex items-end gap-2">
           <div className="min-w-0 flex-1">
-            <Label className="mb-1 block text-xs text-muted-foreground">
+            <Label htmlFor={`${fieldId}-method-${index}`} className="mb-1 block text-xs text-muted-foreground">
               {ct('subscriptions.paymentMethod')}
             </Label>
             <ClubPaymentMethodSelect
+              id={`${fieldId}-method-${index}`}
+              ariaLabel={`${ct('subscriptions.paymentMethod')} ${index + 1}`}
               value={row.method}
               onChange={(method) => setRow(index, { method })}
             />
           </div>
           <div className="w-32 shrink-0">
-            <Label className="mb-1 block text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+            <Label htmlFor={`${fieldId}-amount-${index}`} className="mb-1 block text-xs font-semibold text-emerald-700 dark:text-emerald-300">
               {ct('subscriptions.paid')}
             </Label>
             <Input
+              id={`${fieldId}-amount-${index}`}
+              aria-label={`${ct('subscriptions.paid')} ${formatDisplayNumber(index + 1)}`}
               className="nums h-11 border-emerald-500/45 bg-emerald-500/[0.07] text-center font-semibold text-emerald-800 focus-visible:border-emerald-500 focus-visible:ring-emerald-500/20 dark:text-emerald-200"
               type="number"
               min={0}
@@ -160,7 +164,7 @@ export function ClubPaymentSplitFields({
               onChange={(event) => setRow(index, { amount: event.target.value })}
             />
           </div>
-          {split && allowMultipleMethods ? (
+          {split ? (
             <Button
               type="button"
               variant="ghost"
@@ -177,18 +181,16 @@ export function ClubPaymentSplitFields({
       ))}
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        {allowMultipleMethods ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={disabled || rows.length >= CLUB_PAYMENT_METHODS.length}
-            onClick={addRow}
-          >
-            <Plus className="me-1 size-4" />
-            {ct('subscriptions.addPaymentMethod')}
-          </Button>
-        ) : null}
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={disabled || rows.length >= CLUB_PAYMENT_METHODS.length}
+          onClick={addRow}
+        >
+          <Plus className="me-1 size-4" />
+          {ct('subscriptions.addPaymentMethod')}
+        </Button>
         {split ? (
           <span
             className={cn(

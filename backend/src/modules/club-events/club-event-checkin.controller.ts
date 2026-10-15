@@ -6,6 +6,7 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ClubEventCheckinService } from './club-event-checkin.service';
 import { ScanClubEventCheckinDto, MemberClubEventCheckinDto } from './dto/scan-club-event-checkin.dto';
+import { JwtUser } from '../../common/types/jwt-user';
 
 class ManualCheckinBody {
   @Transform(({ value }) => Number(value))
@@ -30,29 +31,30 @@ export class ClubEventCheckinController {
 
   @Post('scan')
   @RequiresPermission('club.events.checkin:create')
-  scan(@Body() body: ScanClubEventCheckinDto, @CurrentUser('sub') userId: number) {
-    return this.service.scan(body, userId);
+  scan(@Body() body: ScanClubEventCheckinDto, @CurrentUser() user: JwtUser) {
+    return this.service.scan(body, user);
   }
 
   @Post('member')
   @RequiresPermission('club.events.checkin:create')
-  byMember(@Body() body: MemberClubEventCheckinDto, @CurrentUser('sub') userId: number) {
-    return this.service.byMember(body, userId);
+  byMember(@Body() body: MemberClubEventCheckinDto, @CurrentUser() user: JwtUser) {
+    return this.service.byMember(body, user);
   }
 
   @Post('manual')
   @RequiresPermission('club.events.checkin:create')
-  manual(@Body() body: ManualCheckinBody, @CurrentUser('sub') userId: number) {
-    return this.service.manual(body.registrationId, body.eventId, body.sessionId, userId);
+  manual(@Body() body: ManualCheckinBody, @CurrentUser() user: JwtUser) {
+    return this.service.manual(body.registrationId, body.eventId, body.sessionId, user);
   }
 
   @Get('event/:eventId')
-  roster(@Param('eventId', ParseIntPipe) eventId: number) {
-    return this.service.roster(eventId);
+  roster(@Param('eventId', ParseIntPipe) eventId: number, @CurrentUser() user: JwtUser) {
+    return this.service.roster(eventId, user);
   }
 
   @Get('event/:eventId/statistics')
-  statistics(@Param('eventId', ParseIntPipe) eventId: number) {
-    return this.service.statistics(eventId);
+  statistics(@Param('eventId', ParseIntPipe) eventId: number, @CurrentUser() user: JwtUser) {
+    return this.service.statistics(eventId, user);
   }
 }
+

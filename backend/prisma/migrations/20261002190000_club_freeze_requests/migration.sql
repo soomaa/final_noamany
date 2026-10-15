@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS `club_freeze_requests` (
+  `id` INTEGER NOT NULL AUTO_INCREMENT,
+  `member_id` INTEGER NOT NULL,
+  `subscription_id` INTEGER NOT NULL,
+  `branch_id` INTEGER NOT NULL,
+  `start_date` VARCHAR(10) NOT NULL,
+  `days` INTEGER NOT NULL,
+  `reason` VARCHAR(500) NULL,
+  `status` VARCHAR(20) NOT NULL DEFAULT 'pending',
+  `decision_note` VARCHAR(255) NULL,
+  `decided_by` INTEGER NULL,
+  `decided_at` DATETIME(3) NULL,
+  `freeze_applied_at` DATETIME(3) NULL,
+  `created_at` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  `updated_at` DATETIME(3) NOT NULL,
+  INDEX `idx_freeze_req_branch_status`(`branch_id`, `status`),
+  INDEX `idx_freeze_req_sub_status`(`subscription_id`, `status`),
+  INDEX `idx_freeze_req_member`(`member_id`),
+  PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

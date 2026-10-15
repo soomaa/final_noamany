@@ -7,22 +7,37 @@ describe('job-title starter permissions', () => {
     ]);
   });
 
-  it('gives sales staff the member-to-subscription workflow', () => {
+  it('gives sales staff only the personal follow-up portal', () => {
     const cells = defaultPermissionCellsForJobTitle('موظف مبيعات');
     expect(cells).toContainEqual({
-      resourceKey: 'club.members',
-      actionKey: 'create',
+      resourceKey: 'sales.portal',
+      actionKey: 'view',
       effect: 'allow',
     });
     expect(cells).toContainEqual({
-      resourceKey: 'club.subscriptions',
-      actionKey: 'create',
+      resourceKey: 'sales.portal',
+      actionKey: 'update',
       effect: 'allow',
     });
-    expect(cells.some((cell) => cell.actionKey === 'delete')).toBe(false);
+    expect(cells.some((cell) => cell.resourceKey === 'club.members')).toBe(false);
+    expect(cells.some((cell) => cell.resourceKey === 'club.subscriptions')).toBe(false);
   });
 
   it('does not infer broad access for an unknown title', () => {
     expect(defaultPermissionCellsForJobTitle('مسمى مخصص')).toEqual([]);
+  });
+
+  it('gives HR officers departments and insurance settings', () => {
+    const cells = defaultPermissionCellsForJobTitle('موارد بشرية');
+    expect(cells).toContainEqual({
+      resourceKey: 'org.edarat',
+      actionKey: 'view',
+      effect: 'allow',
+    });
+    expect(cells).toContainEqual({
+      resourceKey: 'admin.insurance',
+      actionKey: 'update',
+      effect: 'allow',
+    });
   });
 });

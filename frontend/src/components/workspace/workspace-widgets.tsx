@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { LockKeyhole } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
@@ -43,7 +44,7 @@ function ExpiringWidget({ data }: { data: unknown }) {
           <li key={i}>{s.customerName} — {toArabicDigits(s.endDate)}</li>
         ))}
       </ul>
-      <p className="text-xs text-muted-foreground">{uiStatic('ضمن نطاق صلاحياتك')}</p>
+      <Link to="/club/subscriptions/expired" className="text-xs text-primary hover:underline">{uiStatic('عرض الكل')}</Link>
     </div>
   );
 }
@@ -54,7 +55,7 @@ function OutstandingWidget({ data }: { data: unknown }) {
     <div>
       <p className="text-2xl font-bold nums dark:text-white">{toArabicDigits(d?.totalOutstanding?.toFixed(0) ?? '0')}</p>
       <p className="text-sm text-muted-foreground dark:text-white/75">{toArabicDigits(d?.count ?? 0)} {uiStatic('اشتراك بمستحقات')}</p>
-      <p className="text-xs text-muted-foreground">{uiStatic('ضمن نطاق صلاحياتك')}</p>
+      <Link to="/club/subscriptions/outstanding" className="text-xs text-primary hover:underline">{uiStatic('تحصيل')}</Link>
     </div>
   );
 }
@@ -130,13 +131,12 @@ function PendingTasksWidget({ data }: { data: unknown }) {
           <li key={i} className="truncate">{t.title}</li>
         ))}
       </ul>
-      <p className="text-xs text-muted-foreground">{uiStatic('المهام ضمن نطاقك')}</p>
+      <Link to="/settings/automation" className="text-xs text-primary hover:underline">{uiStatic('المهام')}</Link>
     </div>
   );
 }
 
 const WIDGET_TITLES: Record<string, string> = {
-  my_subscriptions_today: uiStatic('اشتراكاتي اليوم'),
   recent_checkins: uiStatic('آخر الداخلين'),
   pending_tasks: uiStatic('مهام معلقة'),
   expiring_subscriptions: uiStatic('اشتراكات تنتهي قريباً'),
@@ -151,7 +151,6 @@ const WIDGET_TITLES: Record<string, string> = {
 
 /** Accent colour per widget so the KPI row reads as distinct, colourful tiles. */
 const WIDGET_TONES: Record<string, string> = {
-  my_subscriptions_today: '#3B82F6',
   treasury_today: '#2FBF87',
   today_sales: '#2FBF87',
   outstanding_balances: '#E5736B',
@@ -166,17 +165,6 @@ const WIDGET_TONES: Record<string, string> = {
 
 function renderWidget(key: string, data: unknown) {
   switch (key) {
-    case 'my_subscriptions_today': {
-      const d = data as { count?: number; paidTotal?: number };
-      return (
-        <div className="space-y-1">
-          <p className="text-2xl font-bold nums dark:text-white">{toArabicDigits(d?.count ?? 0)}</p>
-          <p className="text-sm text-muted-foreground dark:text-white/75">
-            {uiStatic('إجمالي المحصل')}: {toArabicDigits(d?.paidTotal?.toFixed(0) ?? '0')}
-          </p>
-        </div>
-      );
-    }
     case 'recent_checkins':
       return <RecentCheckinsWidget data={data} />;
     case 'expiring_subscriptions':

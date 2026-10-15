@@ -1,14 +1,15 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InventoryTxnType, MovementDirection, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { isDryRun, previewResponse, PreviewRow } from '../../common/preview';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { InventoryStockService } from './inventory-stock.service';
+import { InventoryStockService, roundStock } from './inventory-stock.service';
 import { InventoryLocationService } from './inventory-location.service';
 import { notDeletedFilter, toNumber } from './inventory.utils';
 import type { JwtUser } from '../../common/types/jwt-user';
 import { ListOpeningStocksDto, UpsertOpeningStockDto } from './dto/inventory.dto';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 
 @Injectable()
 export class OpeningStocksService {
@@ -17,7 +18,15 @@ export class OpeningStocksService {
     private readonly stock: InventoryStockService,
     private readonly location: InventoryLocationService,
     private readonly moduleLedger: ModuleLedgerService,
+    private readonly branchScope: BranchScopeService,
   ) {}
+
+  /** Path params bypass the global BranchScopeGuard, so branch access is asserted here. */
+  private assertBranchAccess(user: JwtUser | undefined, branchId: number | null) {
+    if (branchId != null && !this.branchScope.isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
+  }
 
   private map(row: Prisma.inv_opening_stocksGetPayload<object>) {
     return {
@@ -37,10 +46,11 @@ export class OpeningStocksService {
     };
   }
 
-  async list(q: ListOpeningStocksDto) {
+  async list(q: ListOpeningStocksDto, user?: JwtUser) {
     const and: Prisma.inv_opening_stocksWhereInput[] = [notDeletedFilter()];
     if (q.search?.trim()) and.push({ item_code: { contains: q.search.trim() } });
-    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
+    const scopedBranches = this.branchScope.resolveListFilter(user, q.branchId ?? null);
+    if (scopedBranches) and.push({ branch_id: { in: scopedBranches } });
     if (q.warehouseId && q.warehouseId !== 'all') and.push({ warehouse_id: Number(q.warehouseId) });
     const where = { AND: and };
     const [rows, total] = await Promise.all([
@@ -50,7 +60,8 @@ export class OpeningStocksService {
     return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
   }
 
-  async byBranch(branchId: number) {
+  async byBranch(branchId: number, user?: JwtUser) {
+    this.assertBranchAccess(user, branchId);
     const rows = await this.prisma.inv_opening_stocks.findMany({
       where: { branch_id: branchId, ...notDeletedFilter() },
       orderBy: { id: 'desc' },
@@ -58,7 +69,13 @@ export class OpeningStocksService {
     return rows.map((r) => this.map(r));
   }
 
-  async byWarehouse(warehouseId: number) {
+  async byWarehouse(warehouseId: number, user?: JwtUser) {
+    const warehouse = await this.prisma.inv_warehouses.findUnique({
+      where: { id: warehouseId },
+      select: { branch_id: true },
+    });
+    if (!warehouse) throw new NotFoundException('المخزن غير موجود');
+    this.assertBranchAccess(user, warehouse.branch_id);
     const rows = await this.prisma.inv_opening_stocks.findMany({
       where: { warehouse_id: warehouseId, ...notDeletedFilter() },
       orderBy: { id: 'desc' },
@@ -66,13 +83,17 @@ export class OpeningStocksService {
     return rows.map((r) => this.map(r));
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.inv_opening_stocks.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!row) throw new NotFoundException('رصيد الافتتاح غير موجود');
+    this.assertBranchAccess(user, row.branch_id);
     return this.map(row);
   }
 
   async create(dto: UpsertOpeningStockDto, user: JwtUser, dryRun = false) {
+    if (!Number.isFinite(dto.quantity) || dto.quantity <= 0 || roundStock(dto.quantity) <= 0) {
+      throw new BadRequestException('كمية رصيد الافتتاح يجب أن تكون أكبر من صفر');
+    }
     const branchId = this.location.requireUserBranch(user);
     const warehouseId = await this.location.resolveBranchStockLocation(branchId);
     let productId = dto.productId ?? null;
@@ -95,19 +116,18 @@ export class OpeningStocksService {
       },
     });
     const currentStock = balance ? toNumber(balance.current_stock) : 0;
-    const willAdd = currentStock > 0;
-    const newStock = willAdd ? currentStock + dto.quantity : dto.quantity;
+    const newStock = roundStock(currentStock + dto.quantity);
 
     const previewRows: PreviewRow[] = [
       { label: 'الرصيد الحالي', before: String(currentStock), after: String(newStock) },
       { label: 'الكمية المضافة', after: String(dto.quantity) },
-      { label: 'العملية', after: willAdd ? 'إضافة للرصيد' : 'تعيين رصيد افتتاحي' },
+      { label: 'العملية', after: 'إضافة للرصيد' },
     ];
 
     if (isDryRun(dryRun)) {
       return previewResponse({ productId, currentStock, newStock, quantity: dto.quantity }, {
         rows: previewRows,
-        warning: willAdd ? 'سيتم إضافة الكمية للرصيد الحالي (وليس استبداله)' : undefined,
+        warning: 'سيتم إضافة الكمية إلى الرصيد الموجود وقت الحفظ',
       });
     }
 
@@ -137,7 +157,7 @@ export class OpeningStocksService {
         warehouseId,
         direction: MovementDirection.in,
         quantity: dto.quantity,
-        operation: willAdd ? 'add' : 'set',
+        operation: 'add',
         txnType: InventoryTxnType.adjustment,
         unitCost: dto.unitCost,
         docType: 'opening_stock',
@@ -159,9 +179,10 @@ export class OpeningStocksService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertOpeningStockDto>) {
+  async update(id: number, dto: Partial<UpsertOpeningStockDto>, user?: JwtUser) {
     const existing = await this.prisma.inv_opening_stocks.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!existing) throw new NotFoundException('رصيد الافتتاح غير موجود');
+    this.assertBranchAccess(user, existing.branch_id);
     const financialChange = [
       dto.openingStockDate, dto.itemCode, dto.quantity, dto.unitCost, dto.totalCost,
       dto.branchId, dto.warehouseId, dto.productId, dto.sparePartId,
@@ -187,9 +208,10 @@ export class OpeningStocksService {
     return this.map(row);
   }
 
-  async remove(id: number) {
+  async remove(id: number, user?: JwtUser) {
     const existing = await this.prisma.inv_opening_stocks.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!existing) throw new NotFoundException('رصيد الافتتاح غير موجود');
+    this.assertBranchAccess(user, existing.branch_id);
     throw new BadRequestException('لا يمكن حذف رصيد أول مدة مُرحّل؛ استخدم تسوية مخزون');
   }
 }

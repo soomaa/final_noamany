@@ -1,12 +1,10 @@
 import {
   Body,
   Controller,
-  Delete,
   Get,
   Param,
   ParseIntPipe,
   Post,
-  Put,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -18,7 +16,6 @@ import { PermissionsService } from './permissions.service';
 import { CreatePermissionDto } from './dto/create-permission.dto';
 import { ActionPermissionDto } from './dto/action-permission.dto';
 import { ListPermissionsDto } from './dto/list-permissions.dto';
-import { UpdatePermissionDto } from './dto/update-permission.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('permissions')
@@ -39,29 +36,14 @@ export class PermissionsController {
     return this.permissions.available(empId, eznDate);
   }
 
-  @Get(':id')
-  details(@Param('id', ParseIntPipe) id: number) {
-    return this.permissions.details(id);
-  }
-
   @Post()
+  @RequiresPermission('leaves.permissions:create')
   create(@Body() body: CreatePermissionDto, @CurrentUser() user: JwtUser) {
     return this.permissions.create(body, user.sub, user.name ?? undefined);
   }
 
-  @Put(':id')
-  @RequiresPermission('leaves.permissions:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: UpdatePermissionDto) {
-    return this.permissions.update(id, body);
-  }
-
-  @Delete(':id')
-  @RequiresPermission('leaves.permissions:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.permissions.remove(id);
-  }
-
   @Post(':id/action')
+  @RequiresPermission('leaves.permissions:update')
   action(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: ActionPermissionDto,

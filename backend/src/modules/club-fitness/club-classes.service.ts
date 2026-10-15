@@ -1,13 +1,13 @@
+import { eligibleEnrollmentSource } from './class-enrollment-entitlement';
 import {
   BadRequestException,
   ConflictException,
-  Inject,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { ClubClassAudience, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
-import { ClubBranchGroupReader, ClubBranchGroupService } from '../../common/branch-groups/club-branch-group.service';
 import { assertNotPastDate } from '../../common/validators';
 import { paginated } from '../../common/dto/list-result';
 import { EntitlementService } from '../gym-ops/entitlement.service';
@@ -16,6 +16,13 @@ import { WebhookService } from '../webhooks/webhook.service';
 import { assertEndTimeAfterStart, isActiveEnrollment, localDateString, toNum } from './club-fitness.utils';
 import { attachMemberBrief, loadMemberBriefMap } from '../club-members/club-member-brief.utils';
 import { ListClubClassesDto } from './dto/list-club-classes.dto';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
+import { ClubSubscriptionLifecycleService } from '../club-subscriptions/club-subscription-lifecycle.service';
+import { packageSessionValue, attendanceCommission } from './class-attendance-value';
+import { ClubReceiptsService } from '../club-subscriptions/club-receipts.service';
+import { ModuleLedgerService } from '../accounting/module-ledger.service';
+import { resolveClubPayments, primaryClubPaymentMethod } from '../club-subscriptions/club-subscription.utils';
 
 @Injectable()
 export class ClubClassesService {
@@ -24,11 +31,39 @@ export class ClubClassesService {
     private readonly entitlement: EntitlementService,
     private readonly calendar: ClubCalendarService,
     private readonly webhooks: WebhookService,
-    @Inject(ClubBranchGroupService)
-    private readonly branchGroups: Pick<ClubBranchGroupReader, 'siblingBranchIds'> = {
-      siblingBranchIds: async (branchId) => [branchId],
-    },
+    private readonly branchScope: BranchScopeService,
+    private readonly lifecycle: ClubSubscriptionLifecycleService,
+    private readonly receipts?: ClubReceiptsService,
+    private readonly moduleLedger?: ModuleLedgerService,
   ) {}
+
+  private assertBranchAccess(user: JwtUser | undefined, branchId: number) {
+    if (!this.branchScope.isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
+  }
+
+  async permissionResourceForClass(id: number) {
+    const row = await this.prisma.club_classes.findFirst({
+      where: { id, is_deleted: false },
+      select: { class_type_id: true },
+    });
+    if (!row) throw new NotFoundException('الحصة غير موجودة');
+    return row.class_type_id == null
+      ? 'club.fitness.personal_sessions'
+      : 'club.subscriptions.special';
+  }
+
+  private async assertMemberInBranch(memberId: number, branchId: number) {
+    const member = await this.prisma.club_members.findFirst({
+      where: { id: memberId, is_deleted: false },
+      select: { branch_id: true },
+    });
+    if (!member) throw new NotFoundException('العضو غير موجود');
+    if (member.branch_id !== branchId) {
+      throw new ForbiddenException('لا يمكن استخدام عضو من فرع آخر في هذه الحصة');
+    }
+  }
 
   private async countActiveEnrollments(classId: number, tx?: Prisma.TransactionClient) {
     const db = tx ?? this.prisma;
@@ -54,6 +89,9 @@ export class ClubClassesService {
       endTime: row.end_time,
       maxCapacity: row.max_capacity,
       price: toNum(row.price),
+      commissionPercentage: row.commission_percentage == null ? null : Number(row.commission_percentage),
+      allowExternal: row.allow_external ?? false,
+      linkedSubscriptionTypeIds: row.linked_subscription_type_ids ?? [],
       status: row.status,
       audience: row.audience,
       cancelledReason: row.cancelled_reason,
@@ -98,16 +136,21 @@ export class ClubClassesService {
     };
   }
 
-  async list(q: ListClubClassesDto) {
+  async list(q: ListClubClassesDto, user?: JwtUser) {
     const and: Prisma.club_classesWhereInput[] = [{ is_deleted: false }];
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({ OR: [{ class_name: { contains: s } }, { description: { contains: s } }] });
     }
     if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) and.push({ branch_id: { in: scope } });
     if (q.trainer && q.trainer !== 'all') and.push({ trainer_id: Number(q.trainer) });
     if (q.status && q.status !== 'all') {
       and.push({ status: q.status as Prisma.EnumClubFitnessClassStatusFilter['equals'] });
+    }
+    if (q.audience && q.audience !== 'all') {
+      and.push({ audience: q.audience as ClubClassAudience });
     }
     if (q.dateFrom && q.dateTo) {
       and.push({ class_date: { gte: q.dateFrom, lte: q.dateTo } });
@@ -116,7 +159,8 @@ export class ClubClassesService {
     } else if (q.dateTo) {
       and.push({ class_date: { lte: q.dateTo } });
     }
-    if (q.personalOnly) and.push({ max_capacity: 1 });
+    if (q.personalOnly) and.push({ class_type_id: null });
+    else and.push({ class_type_id: { not: null } });
 
     const where: Prisma.club_classesWhereInput = { AND: and };
     const [rows, total] = await Promise.all([
@@ -146,9 +190,14 @@ export class ClubClassesService {
     );
   }
 
-  async statistics(query?: { branch?: string; trainer?: string; dateFrom?: string; dateTo?: string }) {
+  async statistics(
+    query?: { branch?: string; trainer?: string; dateFrom?: string; dateTo?: string },
+    user?: JwtUser,
+  ) {
     const and: Prisma.club_classesWhereInput[] = [{ is_deleted: false }];
     if (query?.branch && query.branch !== 'all') and.push({ branch_id: Number(query.branch) });
+    const scope = this.branchScope.resolveListFilter(user, query?.branch ?? null);
+    if (scope !== null) and.push({ branch_id: { in: scope } });
     if (query?.trainer && query.trainer !== 'all') and.push({ trainer_id: Number(query.trainer) });
     if (query?.dateFrom && query?.dateTo) {
       and.push({ class_date: { gte: query.dateFrom, lte: query.dateTo } });
@@ -187,7 +236,7 @@ export class ClubClassesService {
     };
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.club_classes.findFirst({
       where: { id, is_deleted: false },
       include: {
@@ -198,6 +247,7 @@ export class ClubClassesService {
       },
     });
     if (!row) throw new NotFoundException('الحصة غير موجودة');
+    this.assertBranchAccess(user, row.branch_id);
     return this.enrichClass(this.mapClass(row));
   }
 
@@ -266,7 +316,7 @@ export class ClubClassesService {
       throw new BadRequestException('المدرب والفرع مطلوبان');
     }
     const trainer = await this.prisma.club_trainers.findFirst({
-      where: { id: trainerId, is_deleted: false },
+      where: { id: trainerId, is_deleted: false, is_active: true },
     });
     if (!trainer) throw new NotFoundException('المدرب غير موجود');
 
@@ -276,10 +326,7 @@ export class ClubClassesService {
         include: { eligible_trainers: { select: { trainer_id: true } } },
       });
       if (!classType) throw new NotFoundException('نوع الحصة غير موجود');
-      const eligibleIds = classType.eligible_trainers.map((x) => x.trainer_id);
-      if (eligibleIds.length && !eligibleIds.includes(trainerId)) {
-        throw new BadRequestException('المدرب المختار غير مؤهل لتقديم هذه الحصة');
-      }
+      if (classType.eligible_trainers.length && !classType.eligible_trainers.some(row => row.trainer_id === trainerId)) throw new BadRequestException('المدرب غير مسؤول عن هذا الكلاس');
     }
 
     if (body.hallId) {
@@ -290,18 +337,19 @@ export class ClubClassesService {
     }
   }
 
-  async create(body: Record<string, unknown>) {
+  async create(body: Record<string, unknown>, user?: JwtUser) {
     if ((!body.className && !body.classTypeId) || !body.classDate || !body.startTime || !body.endTime) {
       throw new BadRequestException('يرجى إدخال جميع الحقول المطلوبة');
     }
-    let classType: { id: number; name: string; single_session_price: Prisma.Decimal } | null = null;
+    let classType: Prisma.club_class_typesGetPayload<object> | null = null;
     if (body.classTypeId) {
       classType = await this.prisma.club_class_types.findFirst({
         where: { id: Number(body.classTypeId), is_deleted: false, is_active: true },
-        select: { id: true, name: true, single_session_price: true },
       });
       if (!classType) throw new NotFoundException('نوع الحصة غير موجود');
     }
+    const branchId = Number(body.branchId);
+    this.assertBranchAccess(user, branchId);
     await this.validateReferences(body);
     await this.assertSchedule({
       trainerId: Number(body.trainerId),
@@ -313,13 +361,17 @@ export class ClubClassesService {
     });
 
     const maxCapacity = body.maxCapacity != null ? Number(body.maxCapacity) : 10;
+    const price = body.price != null ? Number(body.price) : toNum(classType?.single_session_price);
+    if (!Number.isFinite(price) || price < 0) throw new BadRequestException('سعر الحصة غير صحيح');
+    const percentage = body.commissionPercentage == null ? (classType?.commission_percentage == null ? null : Number(classType.commission_percentage)) : Number(body.commissionPercentage);
+    if (percentage != null && (!Number.isFinite(percentage) || percentage < 0 || percentage > 100)) {
+      throw new BadRequestException('نسبة الكابتن لازم تكون من صفر إلى 100');
+    }
     const memberIds = Array.isArray(body.memberIds)
       ? [...new Set(body.memberIds.map((m) => Number(m)).filter((m) => m > 0))]
       : [];
 
-    if (memberIds.length > maxCapacity) {
-      throw new BadRequestException(`عدد الأعضاء (${memberIds.length}) يتجاوز السعة القصوى (${maxCapacity})`);
-    }
+    await Promise.all(memberIds.map((memberId) => this.assertMemberInBranch(memberId, branchId)));
 
     const created = await this.prisma.$transaction(async (tx) => {
       const cls = await tx.club_classes.create({
@@ -335,7 +387,10 @@ export class ClubClassesService {
           start_time: String(body.startTime),
           end_time: String(body.endTime),
           max_capacity: maxCapacity,
-          price: body.price != null ? Number(body.price) : toNum(classType?.single_session_price),
+          price,
+          commission_percentage: percentage,
+          allow_external: body.allowExternal === true || (body.allowExternal == null && classType?.allow_external === true),
+          linked_subscription_type_ids: Array.isArray(body.linkedSubscriptionTypeIds) ? body.linkedSubscriptionTypeIds.map(Number) : (classType?.linked_subscription_type_ids ?? []) as Prisma.InputJsonValue,
           notes: body.notes ? String(body.notes) : null,
           status: 'scheduled',
           audience: this.classAudience(body.audience),
@@ -357,11 +412,13 @@ export class ClubClassesService {
       return cls;
     });
 
-    return this.findOne(created.id);
+    return this.findOne(created.id, user);
   }
 
-  async update(id: number, body: Record<string, unknown>) {
-    const existing = await this.findOne(id);
+  async update(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    if (body.commissionPercentage != null && (!Number.isFinite(Number(body.commissionPercentage)) || Number(body.commissionPercentage) < 0 || Number(body.commissionPercentage) > 100)) throw new BadRequestException('نسبة الكابتن لازم تكون من صفر إلى 100');
+    if (body.price != null && (!Number.isFinite(Number(body.price)) || Number(body.price) < 0)) throw new BadRequestException('سعر الحصة غير صحيح');
+    const existing = await this.findOne(id, user);
     if (body.trainerId != null || body.branchId != null || body.hallId != null || body.classTypeId != null) {
       await this.validateReferences({
         trainerId: body.trainerId ?? existing.trainerId,
@@ -376,6 +433,7 @@ export class ClubClassesService {
     const endTime = body.endTime != null ? String(body.endTime) : existing.endTime;
     const trainerId = body.trainerId != null ? Number(body.trainerId) : existing.trainerId;
     const branchId = body.branchId != null ? Number(body.branchId) : existing.branchId;
+    this.assertBranchAccess(user, branchId);
     const hallId = body.hallId !== undefined ? (body.hallId ? Number(body.hallId) : null) : existing.hallId;
 
     if (
@@ -394,15 +452,6 @@ export class ClubClassesService {
     const prevMaxCapacity = existing.maxCapacity;
     const newMaxCapacity = body.maxCapacity != null ? Number(body.maxCapacity) : prevMaxCapacity;
 
-    if (body.maxCapacity != null) {
-      const activeCount = await this.countActiveEnrollments(id);
-      if (activeCount > newMaxCapacity) {
-        throw new BadRequestException(
-          `لا يمكن تقليل السعة — يوجد ${activeCount} تسجيل نشط`,
-        );
-      }
-    }
-
     await this.prisma.$transaction(async (tx) => {
       await tx.club_classes.update({
         where: { id },
@@ -420,6 +469,9 @@ export class ClubClassesService {
           ...(body.endTime != null ? { end_time: endTime } : {}),
           ...(body.maxCapacity != null ? { max_capacity: newMaxCapacity } : {}),
           ...(body.price != null ? { price: Number(body.price) } : {}),
+          ...(body.commissionPercentage !== undefined ? { commission_percentage: body.commissionPercentage == null ? null : Number(body.commissionPercentage) } : {}),
+          ...(body.allowExternal !== undefined ? { allow_external: body.allowExternal === true } : {}),
+          ...(Array.isArray(body.linkedSubscriptionTypeIds) ? { linked_subscription_type_ids: body.linkedSubscriptionTypeIds.map(Number) } : {}),
           ...(body.status != null ? { status: String(body.status) as Prisma.EnumClubFitnessClassStatusFieldUpdateOperationsInput['set'] } : {}),
           ...(body.audience !== undefined ? { audience: this.classAudience(body.audience) } : {}),
           ...(body.cancelledReason !== undefined
@@ -433,22 +485,18 @@ export class ClubClassesService {
         },
       });
 
-      if (newMaxCapacity > prevMaxCapacity) {
-        let activeCount = await this.countActiveEnrollments(id, tx);
-        while (activeCount < newMaxCapacity) {
-          const before = activeCount;
-          await this.promoteWaitlist(id, tx);
-          activeCount = await this.countActiveEnrollments(id, tx);
-          if (activeCount === before) break;
-        }
+      // Nothing is held back by capacity any more, so anybody still waiting is let in.
+      for (let guard = 0; guard < 500; guard++) {
+        const promoted = await this.promoteWaitlist(id, tx);
+        if (!promoted) break;
       }
     });
 
-    return this.findOne(id);
+    return this.findOne(id, user);
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, user?: JwtUser) {
+    await this.findOne(id, user);
     await this.prisma.club_classes.update({
       where: { id },
       data: { is_deleted: true, is_active: false },
@@ -460,93 +508,31 @@ export class ClubClassesService {
     classId: number,
     memberId: number,
     options?: { waitlistIfFull?: boolean; force?: boolean; bookingSource?: string; subscriptionId?: number },
+    user?: JwtUser,
   ) {
     const cls = await this.prisma.club_classes.findFirst({
       where: { id: classId, is_deleted: false },
     });
     if (!cls) throw new NotFoundException('الحصة غير موجودة');
+    this.assertBranchAccess(user, cls.branch_id);
+    await this.assertMemberInBranch(memberId, cls.branch_id);
     assertNotPastDate(cls.class_date, 'لا يمكن التسجيل في حصة بتاريخ ماضٍ');
-    const compatibleBranchIds = await this.branchGroups.siblingBranchIds(cls.branch_id);
-
-    let entitlement;
-    let resolvedSubscriptionId = options?.subscriptionId;
-    if (cls.class_type_id && !options?.force) {
-      const eligibleSubscriptions = await this.prisma.club_subscriptions.findMany({
-        where: {
-          member_id: memberId,
-          type: { class_types: { some: { class_type_id: cls.class_type_id } } },
-        },
-        select: { id: true },
-        orderBy: { subscription_end_date: 'desc' },
-      });
-      if (options?.subscriptionId && !eligibleSubscriptions.some((sub) => sub.id === options.subscriptionId)) {
-        throw new BadRequestException('الاشتراك المختار لا يشمل نوع هذه الحصة');
-      }
-
-      const candidateIds = options?.subscriptionId
-        ? [options.subscriptionId]
-        : eligibleSubscriptions.map((sub) => sub.id);
-      let lastResult: Awaited<ReturnType<EntitlementService['validate']>> | null = null;
-      for (const subscriptionId of candidateIds) {
-        const result = await this.entitlement.validate({
-          memberId,
-          branchId: cls.branch_id,
-          branchIds: compatibleBranchIds,
-          subscriptionId,
-          blockOnOutstanding: true,
-          requireActiveSubscription: true,
-        });
-        lastResult = result;
-        if (result.allowed) {
-          entitlement = result;
-          resolvedSubscriptionId = subscriptionId;
-          break;
-        }
-      }
-      if (!entitlement) {
-        throw new BadRequestException({
-          message: eligibleSubscriptions.length
-            ? 'لا توجد باقة مؤهلة ونشطة تسمح بهذه الحصة'
-            : 'باقة العميل لا تشمل نوع هذه الحصة',
-          entitlement: lastResult,
-        });
-      }
-    } else {
-      entitlement = await this.entitlement.validate({
-        memberId,
-        branchId: cls.branch_id,
-        branchIds: compatibleBranchIds,
-        subscriptionId: options?.subscriptionId,
-        blockOnOutstanding: !options?.force,
-        requireActiveSubscription: true,
-      });
-    }
-
-    if (!entitlement.allowed && !options?.force) {
-      throw new BadRequestException({
-        message: 'العضو غير مؤهل للتسجيل في الحصة',
-        entitlement,
-      });
-    }
+    const member = await this.prisma.club_members.findFirst({ where: { id: memberId, is_deleted: false }, select: { gender: true } });
+    if ((cls.audience === 'men' && member?.gender !== 'male') || (cls.audience === 'women' && member?.gender !== 'female')) throw new BadRequestException('فئة العضو لا تطابق فئة الحصة');
 
     return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM club_classes WHERE id = ${classId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM club_members WHERE id = ${memberId} FOR UPDATE`;
+      const currentClass = await tx.club_classes.findUnique({ where: { id: classId } });
+      if (!currentClass) throw new NotFoundException('الحصة غير موجودة');
+      const resolvedSubscriptionId = await eligibleEnrollmentSource(tx, currentClass, memberId, options?.subscriptionId);
       const member = await tx.club_members.findFirst({
         where: { id: memberId, is_deleted: false },
       });
       if (!member) throw new NotFoundException('العضو غير موجود');
 
-      const activeCount = await this.countActiveEnrollments(classId, tx);
-      if (activeCount >= cls.max_capacity) {
-        if (options?.waitlistIfFull) {
-          return this.addToWaitlist(classId, memberId, tx);
-        }
-        throw new BadRequestException({
-          message: 'الحصة ممتلئة',
-          code: 'CLASS_FULL',
-          waitlistAvailable: true,
-        });
-      }
-
+      // Capacity is informational: reception lets walk-ins in regardless, so booking must not
+      // refuse them either. `max_capacity` stays on the row as the planned headcount.
       const existing = await tx.club_class_enrollments.findUnique({
         where: { class_id_member_id: { class_id: classId, member_id: memberId } },
       });
@@ -587,50 +573,12 @@ export class ClubClassesService {
         className: cls.class_name,
       });
 
-      return this.findOne(classId);
+      return this.findOne(classId, user);
     });
   }
 
-  private async addToWaitlist(classId: number, memberId: number, tx: Prisma.TransactionClient) {
-    const existing = await tx.club_class_waitlist.findUnique({
-      where: { class_id_member_id: { class_id: classId, member_id: memberId } },
-    });
-    if (existing && existing.status === 'waiting') {
-      throw new ConflictException('العضو موجود بالفعل في قائمة الانتظار');
-    }
-
-    const count = await tx.club_class_waitlist.count({
-      where: { class_id: classId, status: 'waiting' },
-    });
-
-    const row = existing
-      ? await tx.club_class_waitlist.update({
-          where: { id: existing.id },
-          data: { status: 'waiting', position: count + 1 },
-        })
-      : await tx.club_class_waitlist.create({
-          data: {
-            class_id: classId,
-            member_id: memberId,
-            position: count + 1,
-            status: 'waiting',
-          },
-        });
-
-    const member = await tx.club_members.findUnique({ where: { id: memberId } });
-    const cls = await tx.club_classes.findUnique({ where: { id: classId } });
-    void this.webhooks.dispatch('class_waitlisted', {
-      classId,
-      memberId,
-      memberName: member?.name,
-      className: cls?.class_name,
-      position: row.position,
-    });
-
-    return { waitlisted: true, position: row.position, classId, memberId };
-  }
-
-  async listWaitlist(classId: number) {
+  async listWaitlist(classId: number, user?: JwtUser) {
+    await this.findOne(classId, user);
     const rows = await this.prisma.club_class_waitlist.findMany({
       where: { class_id: classId, status: 'waiting' },
       orderBy: { position: 'asc' },
@@ -653,7 +601,9 @@ export class ClubClassesService {
     }));
   }
 
-  async removeFromWaitlist(classId: number, memberId: number) {
+  async removeFromWaitlist(classId: number, memberId: number, user?: JwtUser) {
+    const cls = await this.findOne(classId, user);
+    await this.assertMemberInBranch(memberId, cls.branchId);
     await this.prisma.club_class_waitlist.updateMany({
       where: { class_id: classId, member_id: memberId, status: 'waiting' },
       data: { status: 'cancelled' },
@@ -662,46 +612,37 @@ export class ClubClassesService {
   }
 
   private async promoteWaitlist(classId: number, tx: Prisma.TransactionClient) {
-    const next = await tx.club_class_waitlist.findFirst({
-      where: { class_id: classId, status: 'waiting' },
-      orderBy: { position: 'asc' },
-    });
-    if (!next) return;
-
+    await tx.$queryRaw`SELECT id FROM club_classes WHERE id = ${classId} FOR UPDATE`;
     const cls = await tx.club_classes.findUnique({ where: { id: classId } });
-    if (!cls) return;
+    if (!cls || cls.status !== 'scheduled' || cls.class_date < localDateString()) return false;
 
-    const activeCount = await this.countActiveEnrollments(classId, tx);
-    if (activeCount >= cls.max_capacity) return;
-
-    const today = localDateString();
-    const existing = await tx.club_class_enrollments.findUnique({
-      where: { class_id_member_id: { class_id: classId, member_id: next.member_id } },
-    });
-
-    if (existing) {
-      await tx.club_class_enrollments.update({
-        where: { id: existing.id },
-        data: { enrollment_date: today, attendance_status: 'registered' },
-      });
-    } else {
-      await tx.club_class_enrollments.create({
-        data: {
-          class_id: classId,
-          member_id: next.member_id,
-          enrollment_date: today,
-          attendance_status: 'registered',
-        },
-      });
+    const waiting = await tx.club_class_waitlist.findMany({ where: { class_id: classId, status: 'waiting' }, orderBy: [{ position: 'asc' }, { id: 'asc' }] });
+    for (const next of waiting) {
+      await tx.$queryRaw`SELECT id FROM club_members WHERE id = ${next.member_id} FOR UPDATE`;
+      const existing = await tx.club_class_enrollments.findUnique({ where: { class_id_member_id: { class_id: classId, member_id: next.member_id } } });
+      if (existing && isActiveEnrollment(existing.attendance_status)) {
+        await tx.club_class_waitlist.update({ where: { id: next.id }, data: { status: 'cancelled' } });
+        continue;
+      }
+      let subscriptionId: number;
+      try { subscriptionId = await eligibleEnrollmentSource(tx, cls, next.member_id); }
+      catch (error) {
+        if (!(error instanceof BadRequestException)) throw error;
+        await tx.club_class_waitlist.update({ where: { id: next.id }, data: { status: 'cancelled' } });
+        continue;
+      }
+      const data = { enrollment_date: localDateString(), attendance_status: 'registered' as const, attendance_time: null, subscription_id: subscriptionId };
+      if (existing) await tx.club_class_enrollments.update({ where: { id: existing.id }, data });
+      else await tx.club_class_enrollments.create({ data: { class_id: classId, member_id: next.member_id, ...data } });
+      await tx.club_class_waitlist.update({ where: { id: next.id }, data: { status: 'promoted' } });
+      return true;
     }
-
-    await tx.club_class_waitlist.update({
-      where: { id: next.id },
-      data: { status: 'promoted' },
-    });
+    return false;
   }
 
-  async unenrollMember(classId: number, memberId: number) {
+  async unenrollMember(classId: number, memberId: number, user?: JwtUser) {
+    const cls = await this.findOne(classId, user);
+    await this.assertMemberInBranch(memberId, cls.branchId);
     const enrollment = await this.prisma.club_class_enrollments.findUnique({
       where: { class_id_member_id: { class_id: classId, member_id: memberId } },
     });
@@ -710,10 +651,13 @@ export class ClubClassesService {
     }
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.club_class_enrollments.update({
-        where: { id: enrollment.id },
+      await tx.$queryRaw`SELECT id FROM club_classes WHERE id = ${classId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM club_members WHERE id = ${memberId} FOR UPDATE`;
+      const changed = await tx.club_class_enrollments.updateMany({
+        where: { id: enrollment.id, attendance_status: enrollment.attendance_status },
         data: { attendance_status: 'cancelled' },
       });
+      if (changed.count !== 1) return;
       if (enrollment.attendance_status === 'attended' && enrollment.subscription_id) {
         const subscription = await tx.club_subscriptions.findUnique({
           where: { id: enrollment.subscription_id },
@@ -729,14 +673,17 @@ export class ClubClassesService {
       await this.promoteWaitlist(classId, tx);
     });
 
-    return this.findOne(classId);
+    return this.findOne(classId, user);
   }
 
   async updateAttendance(
     classId: number,
     memberId: number,
     body: { attendanceStatus?: string; attendanceTime?: string },
+    user?: JwtUser,
   ) {
+    const cls = await this.findOne(classId, user);
+    await this.assertMemberInBranch(memberId, cls.branchId);
     const enrollment = await this.prisma.club_class_enrollments.findUnique({
       where: { class_id_member_id: { class_id: classId, member_id: memberId } },
     });
@@ -745,14 +692,37 @@ export class ClubClassesService {
     }
 
     const nextStatus = body.attendanceStatus ?? enrollment.attendance_status;
-    await this.prisma.$transaction(async (tx) => {
-      await tx.club_class_enrollments.update({
-        where: { id: enrollment.id },
+    const activatedSubscriptionId = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM club_classes WHERE id = ${classId} FOR UPDATE`;
+      await tx.$queryRaw`SELECT id FROM club_members WHERE id = ${memberId} FOR UPDATE`;
+      if (nextStatus === 'attended' && enrollment.attendance_status !== 'attended') {
+        const currentClass = await tx.club_classes.findUnique({ where: { id: classId } });
+        if (!currentClass) throw new NotFoundException('الحصة غير موجودة');
+        await eligibleEnrollmentSource(tx, currentClass, memberId, enrollment.subscription_id ?? undefined, enrollment.id);
+      }
+
+      let snapshot: { session_value_snapshot: number; commission_percentage_snapshot: number; package_value_snapshot: number; package_sessions_snapshot: number } | undefined;
+      if (nextStatus === 'attended' && enrollment.attendance_status !== 'attended' && enrollment.session_value_snapshot == null) {
+        const subscription = enrollment.subscription_id ? await tx.club_subscriptions.findUnique({
+          where: { id: enrollment.subscription_id },
+          select: { subscription_value: true, discount_enabled: true, discount_value: true, sessions_count: true },
+        }) : null;
+        const value = packageSessionValue(subscription);
+        const session = await tx.club_classes.findUnique({ where: { id: classId }, select: { commission_percentage: true, trainer_id: true, class_date: true } });
+        const salary = session && session.commission_percentage == null ? await tx.club_trainer_salaries.findFirst({
+          where: { trainer_id: session.trainer_id, effective_date: { lte: session.class_date } }, orderBy: { effective_date: 'desc' },
+        }) : null;
+        if (value != null && subscription) snapshot = { session_value_snapshot: value, commission_percentage_snapshot: Number(session?.commission_percentage ?? salary?.class_commission_percentage ?? 0), package_value_snapshot: Number(subscription.subscription_value) - (subscription.discount_enabled ? Number(subscription.discount_value) : 0), package_sessions_snapshot: subscription.sessions_count! };
+      }
+      const transitioned = await tx.club_class_enrollments.updateMany({
+        where: { id: enrollment.id, attendance_status: enrollment.attendance_status },
         data: {
+          ...snapshot,
           ...(body.attendanceStatus != null ? { attendance_status: body.attendanceStatus as Prisma.EnumClubFitnessEnrollmentStatusFieldUpdateOperationsInput['set'] } : {}),
           ...(body.attendanceTime !== undefined ? { attendance_time: body.attendanceTime || null } : {}),
         },
       });
+      if (transitioned.count !== 1) return null;
 
       if (enrollment.subscription_id && enrollment.attendance_status !== nextStatus) {
         const subscription = await tx.club_subscriptions.findUnique({
@@ -764,10 +734,29 @@ export class ClubClassesService {
             if (subscription.sessions_count != null && subscription.sessions_used >= subscription.sessions_count) {
               throw new BadRequestException('لا توجد حصص متبقية في باقة العميل');
             }
-            await tx.club_subscriptions.update({
-              where: { id: enrollment.subscription_id },
+            const consumed = await tx.club_subscriptions.updateMany({
+              where: {
+                id: enrollment.subscription_id,
+                sessions_used: subscription.sessions_used,
+                sessions_count: subscription.sessions_count,
+                is_linked_to_sessions: true,
+              },
               data: { sessions_used: { increment: 1 } },
             });
+            if (consumed.count !== 1) {
+              throw new BadRequestException('تم استهلاك آخر حصة بالفعل؛ حدّث الصفحة وحاول مرة أخرى');
+            }
+            if (
+              subscription.sessions_count != null &&
+              subscription.sessions_used + 1 >= subscription.sessions_count
+            ) {
+              const promotion = await this.lifecycle.promoteAfterQuotaExhaustion(
+                enrollment.subscription_id,
+                localDateString(),
+                tx,
+              );
+              return promotion.activatedSubscriptionId;
+            }
           } else if (enrollment.attendance_status === 'attended' && nextStatus !== 'attended' && subscription.sessions_used > 0) {
             await tx.club_subscriptions.update({
               where: { id: enrollment.subscription_id },
@@ -776,17 +765,24 @@ export class ClubClassesService {
           }
         }
       }
+      return null;
     });
 
-    return this.findOne(classId);
+    if (activatedSubscriptionId) {
+      await this.lifecycle.syncActivatedMember(activatedSubscriptionId);
+    }
+
+    return this.findOne(classId, user);
   }
 
-  async receptionCheckIn(classId: number, memberId: number) {
+  async receptionCheckIn(classId: number, memberId: number, user?: JwtUser, subscriptionId?: number) {
+    const cls = await this.findOne(classId, user);
+    await this.assertMemberInBranch(memberId, cls.branchId);
     const existing = await this.prisma.club_class_enrollments.findUnique({
       where: { class_id_member_id: { class_id: classId, member_id: memberId } },
     });
     if (!existing || !isActiveEnrollment(existing.attendance_status)) {
-      await this.enrollMember(classId, memberId, { force: true, bookingSource: 'walk_in' });
+      await this.enrollMember(classId, memberId, { force: false, bookingSource: 'walk_in', subscriptionId }, user);
     }
     return this.updateAttendance(classId, memberId, {
       attendanceStatus: 'attended',
@@ -796,130 +792,80 @@ export class ClubClassesService {
         minute: '2-digit',
         hour12: false,
       }),
-    });
+    }, user);
   }
 
-  async checkInByBarcode(classId: number, memberCode: string) {
-    const code = memberCode?.trim();
-    if (!code) throw new BadRequestException('كود العضو مطلوب');
-    const member = await this.prisma.club_members.findFirst({
-      where: { member_code: code, is_active: true, is_deleted: false },
-      select: { id: true },
-    });
-    if (!member) throw new NotFoundException('لم يتم العثور على عضو بهذا الكود');
-    const existing = await this.prisma.club_class_enrollments.findUnique({
-      where: { class_id_member_id: { class_id: classId, member_id: member.id } },
-    });
-    if (!existing || !isActiveEnrollment(existing.attendance_status)) {
-      // This is a walk-in, not a reservation.  enrollMember resolves and validates
-      // the current eligible subscription before creating the attendance record.
-      await this.enrollMember(classId, member.id, { bookingSource: 'barcode' });
-    } else {
-      if (!existing.subscription_id) {
-        throw new BadRequestException('لا يوجد اشتراك فعّال مرتبط بحضور هذه الحصة');
-      }
-      const cls = await this.prisma.club_classes.findFirst({
-        where: { id: classId, is_deleted: false },
-        select: { branch_id: true },
-      });
-      if (!cls) throw new NotFoundException('الحصة غير موجودة');
-      const entitlement = await this.entitlement.validate({
-        memberId: member.id,
-        branchId: cls.branch_id,
-        branchIds: await this.branchGroups.siblingBranchIds(cls.branch_id),
-        subscriptionId: existing.subscription_id,
-        blockOnOutstanding: true,
-        requireActiveSubscription: true,
-      });
-      if (!entitlement.allowed) throw new BadRequestException('الاشتراك الفعّال لا يسمح بدخول هذه الحصة');
+  async receptionDay(branchId: number | undefined, user: JwtUser) {
+    if (branchId !== undefined) {
+      if (!Number.isInteger(branchId) || branchId <= 0) throw new BadRequestException('الفرع غير صحيح');
+      this.assertBranchAccess(user, branchId);
     }
-    return this.updateAttendance(classId, member.id, {
-      attendanceStatus: 'attended',
-      attendanceTime: new Date().toLocaleTimeString('en-GB', {
-        timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', hour12: false,
-      }),
-    });
+    const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
+    return this.prisma.club_classes.findMany({ where: {
+      is_deleted: false, class_date: localDateString(), status: { not: 'cancelled' },
+      ...(scope !== null ? { branch_id: { in: scope } } : {}),
+    }, select: { id: true, class_name: true, class_type_id: true, trainer_id: true,
+      trainer: { select: { name: true } }, start_time: true, end_time: true, audience: true,
+      price: true, allow_external: true, branch_id: true }, orderBy: { start_time: 'asc' } });
   }
 
-  /** Scanner flow: infer the single class currently running in the scanner user's branch. */
-  async checkInByCurrentBarcode(memberCode: string, userId: number) {
-    const code = memberCode?.trim();
-    if (!code) throw new BadRequestException('كود العضو مطلوب');
-
-    const scanner = await this.prisma.users.findUnique({
-      where: { user_id: userId },
-      select: { branch_id_fk: true },
-    });
-    let branchId = scanner?.branch_id_fk ?? null;
-    if (!branchId) {
-      const member = await this.prisma.club_members.findFirst({
-        where: { member_code: code, is_active: true, is_deleted: false },
-        select: { branch_id: true },
-      });
-      if (!member) throw new NotFoundException('لم يتم العثور على عضو بهذا الكود');
-      branchId = member.branch_id;
+  async receptionAttendance(classId: number, body: Record<string, unknown>, user: JwtUser) {
+    const identifier = String(body.identifier ?? '').trim().replace(/\s/g, '');
+    if (!identifier || identifier.length > 50) throw new BadRequestException('اكتب كود العضو أو رقم الموبايل');
+    const cls = await this.prisma.club_classes.findFirst({ where: { id: classId, is_deleted: false } });
+    if (!cls) throw new NotFoundException('الحصة غير موجودة');
+    this.assertBranchAccess(user, cls.branch_id);
+    if (cls.class_date !== localDateString() || cls.status === 'cancelled') throw new BadRequestException('الحضور متاح لحصص اليوم غير الملغاة فقط');
+    const members = await this.prisma.club_members.findMany({ where: { is_deleted: false, branch_id: cls.branch_id,
+      OR: [{ member_code: identifier }, { phone: identifier }] }, take: 2 });
+    if (members.length > 1) throw new BadRequestException('الموبايل مرتبط بأكثر من عضو؛ استخدم كود العضو');
+    if (members.length === 1) return this.receptionCheckIn(classId, members[0].id, user, body.subscriptionId ? Number(body.subscriptionId) : undefined);
+    if (!cls.allow_external) throw new BadRequestException('الحصة لا تسمح بالحضور الخارجي');
+    const name = String(body.name ?? '').trim();
+    const gender = String(body.gender ?? '');
+    if (!/^\+?\d{8,15}$/.test(identifier) || !name || name.length > 200 || !['male', 'female'].includes(gender)) {
+      throw new BadRequestException('للضيف الجديد: اكتب موبايل صحيح والاسم واختر رجالي أو حريمي');
     }
-    if (!branchId) throw new BadRequestException('تعذر تحديد فرع جهاز الحضور');
-
-    const now = new Date().toLocaleTimeString('en-GB', {
-      timeZone: 'Africa/Cairo', hour: '2-digit', minute: '2-digit', hour12: false,
+    if ((cls.audience === 'men' && gender !== 'male') || (cls.audience === 'women' && gender !== 'female')) throw new BadRequestException('فئة الضيف لا تطابق فئة الحصة');
+    if (!this.receipts || !this.moduleLedger) throw new BadRequestException('خدمة الدفع غير متاحة');
+    const rawPayments = body.payments as { method: string; amount: number }[] | undefined;
+    const amount = Number(cls.price);
+    if (!Number.isFinite(amount) || amount <= 0 || !Array.isArray(rawPayments) || !rawPayments.length || rawPayments.some((p) => !p || !Number.isFinite(p.amount) || p.amount <= 0 || !['cash', 'card', 'visa', 'bank', 'transfer', 'wallet', 'instapay', 'online'].includes(p.method))) throw new BadRequestException('سجل دفع سعر الحصة بالكامل');
+    const payments = resolveClubPayments(amount, null, rawPayments);
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM club_classes WHERE id = ${classId} FOR UPDATE`);
+      const current = await tx.club_classes.findUnique({ where: { id: classId } });
+      if (!current || current.is_deleted || current.status === 'cancelled' || current.class_date !== localDateString() || !current.allow_external || Number(current.price) !== amount) throw new BadRequestException('بيانات الحصة اتغيرت؛ حدّث الصفحة');
+      const existing = await tx.club_class_guest_attendance.findUnique({ where: { class_id_phone: { class_id: classId, phone: identifier } } });
+      if (existing) return { alreadyAttended: true, receiptId: existing.receipt_id };
+      const salary = current.commission_percentage == null ? await tx.club_trainer_salaries.findFirst({ where: { trainer_id: current.trainer_id, effective_date: { lte: current.class_date } }, orderBy: { effective_date: 'desc' } }) : null;
+      const receipt = await tx.club_receipts.create({ data: {
+        receipt_number: await this.receipts!.nextReceiptNumber(tx), member_name: name,
+        branch_id: cls.branch_id, amount, type: 'حصة خارجية', receipt_date: localDateString(),
+        status: 'مدفوعة', payment_method: primaryClubPaymentMethod(payments), created_by: user.sub,
+        description: `${cls.class_name} — ${identifier}`, payments: { create: payments },
+      } });
+      await tx.club_class_guest_attendance.create({ data: { class_id: classId, name, phone: identifier, gender,
+        amount, commission_percentage: current.commission_percentage ?? salary?.class_commission_percentage ?? 0,
+        receipt_id: receipt.id, created_by: user.sub } });
+      for (const [index, payment] of payments.entries()) await this.moduleLedger!.postOtherRevenue({
+        sourceRef: `CLASS-GUEST-${receipt.id}-${index}`, branchId: cls.branch_id, date: localDateString(), amount: payment.amount,
+        paymentMethod: payment.method, createdBy: user.sub, description: `حضور خارجي ${cls.class_name} — ${receipt.receipt_number}`,
+      }, tx);
+      return { success: true, receiptNumber: receipt.receipt_number };
     });
-    const running = await this.prisma.club_classes.findMany({
-      where: {
-        branch_id: branchId,
-        class_date: localDateString(),
-        start_time: { lte: now },
-        end_time: { gte: now },
-        status: { in: ['scheduled', 'ongoing'] },
-        is_active: true,
-        is_deleted: false,
-      },
-      select: { id: true },
-      orderBy: { start_time: 'asc' },
-    });
-    if (!running.length) throw new BadRequestException('لا توجد حصة جارية الآن في هذا الفرع');
-    if (running.length > 1) throw new BadRequestException('توجد أكثر من حصة جارية الآن؛ يلزم فصل أجهزة المسح حسب القاعة');
-    return this.checkInByBarcode(running[0].id, code);
   }
 
-  async listAttendanceReport(q: ListClubClassesDto) {
-    const classWhere: Prisma.club_classesWhereInput = { is_deleted: false };
-    if (q.branch && q.branch !== 'all') classWhere.branch_id = Number(q.branch);
-    if (q.dateFrom || q.dateTo) classWhere.class_date = { ...(q.dateFrom ? { gte: q.dateFrom } : {}), ...(q.dateTo ? { lte: q.dateTo } : {}) };
-    if (q.classTypeId && q.classTypeId !== 'all') classWhere.class_type_id = Number(q.classTypeId);
-
-    const where: Prisma.club_class_enrollmentsWhereInput = { attendance_status: 'attended', class: classWhere };
-    if (q.search?.trim()) {
-      const members = await this.prisma.club_members.findMany({
-        where: { is_deleted: false, OR: [{ name: { contains: q.search.trim() } }, { member_code: { contains: q.search.trim() } }] },
-        select: { id: true },
-      });
-      where.member_id = { in: members.map((member) => member.id) };
-    }
-    const [rows, total] = await Promise.all([
-      this.prisma.club_class_enrollments.findMany({
-        where,
-        include: { class: { include: { class_type: { select: { id: true, name: true, color: true } } } } },
-        orderBy: { updated_at: 'desc' },
-        skip: q.skip,
-        take: q.take,
-      }),
-      this.prisma.club_class_enrollments.count({ where }),
-    ]);
-    const members = await loadMemberBriefMap(this.prisma, rows.map((row) => row.member_id));
-    return paginated(rows.map((row) => ({
-      id: row.id, memberId: row.member_id, ...attachMemberBrief(row.member_id, members),
-      classId: row.class_id, className: row.class.class_name, classType: row.class.class_type,
-      branchId: row.class.branch_id, classDate: row.class.class_date, attendanceTime: row.attendance_time,
-      subscriptionId: row.subscription_id,
-    })), total, q.page, q.pageSize);
-  }
-
-  async generateFromDefault(body: { weekStart?: string; branchId?: number; classTypeId?: number }) {
+  async generateFromDefault(
+    body: { weekStart?: string; branchId?: number; classTypeId?: number },
+    user?: JwtUser,
+  ) {
     const weekStart = String(body.weekStart ?? '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
       throw new BadRequestException('تاريخ بداية الأسبوع غير صالح');
     }
+    if (body.branchId) this.assertBranchAccess(user, Number(body.branchId));
+    const scope = this.branchScope.resolveListFilter(user, body.branchId ?? null);
     const classTypes = await this.prisma.club_class_types.findMany({
       where: {
         is_deleted: false,
@@ -931,6 +877,7 @@ export class ClubClassesService {
           where: {
             is_active: true,
             ...(body.branchId ? { branch_id: Number(body.branchId) } : {}),
+            ...(scope !== null ? { branch_id: { in: scope } } : {}),
           },
           include: { trainer: true },
           orderBy: [{ weekday: 'asc' }, { start_time: 'asc' }],
@@ -1000,7 +947,12 @@ export class ClubClassesService {
           end_time: slot.end_time,
           max_capacity: slot.max_capacity,
           price: classType.single_session_price,
+          allow_external: classType.allow_external,
+          linked_subscription_type_ids: classType.linked_subscription_type_ids ?? Prisma.JsonNull,
+          commission_percentage: classType.commission_percentage,
           status: 'scheduled',
+          // Each weekly slot carries its own audience (men / women / kids / mixed).
+          audience: slot.audience,
         },
       });
       createdIds.push(created.id);
@@ -1015,11 +967,14 @@ export class ClubClassesService {
     branchId?: number;
     trainerId?: number;
     classTypeId?: number;
-  }) {
+  }, user?: JwtUser) {
+    if (query?.branchId) this.assertBranchAccess(user, query.branchId);
+    const scope = this.branchScope.resolveListFilter(user, query?.branchId ?? null);
     const rows = await this.prisma.club_classes.findMany({
       where: {
         is_deleted: false,
         ...(query?.branchId ? { branch_id: query.branchId } : {}),
+        ...(scope !== null ? { branch_id: { in: scope } } : {}),
         ...(query?.trainerId ? { trainer_id: query.trainerId } : {}),
         ...(query?.classTypeId ? { class_type_id: query.classTypeId } : {}),
         ...((query?.dateFrom || query?.dateTo)
@@ -1036,20 +991,58 @@ export class ClubClassesService {
     const trainerIds = [...new Set(rows.map((r) => r.trainer_id))];
     const salaries = trainerIds.length
       ? await this.prisma.club_trainer_salaries.findMany({
-          where: { trainer_id: { in: trainerIds }, is_active: true },
+          where: { trainer_id: { in: trainerIds } },
           orderBy: { effective_date: 'desc' },
         })
       : [];
     const salaryByTrainer = new Map<number, (typeof salaries)[number]>();
     for (const salary of salaries) if (!salaryByTrainer.has(salary.trainer_id)) salaryByTrainer.set(salary.trainer_id, salary);
 
+    const subscriptionIds = [...new Set(rows.flatMap((row) => row.enrollments.map((e) => e.subscription_id)).filter((id): id is number => id != null))];
+    const subscriptions = subscriptionIds.length ? await this.prisma.club_subscriptions.findMany({
+      where: { id: { in: subscriptionIds } },
+      select: { id: true, subscription_number: true, subscription_type: true, subscription_value: true, discount_enabled: true, discount_value: true, sessions_count: true },
+    }) : [];
+    const subscriptionMap = new Map(subscriptions.map((s) => [s.id, s]));
+    const memberMap = await loadMemberBriefMap(this.prisma, rows.flatMap((row) => row.enrollments.map((e) => e.member_id)));
+    const guests = rows.length ? await this.prisma.club_class_guest_attendance.findMany({ where: { class_id: { in: rows.map((row) => row.id) } } }) : [];
+    const sessionHistory = rows.filter((row) => row.status !== 'cancelled').map((row) => {
+      const effectiveSalary = salaries.find((salary) => salary.trainer_id === row.trainer_id && salary.effective_date <= row.class_date);
+      const defaultPercentage = Number(row.commission_percentage ?? effectiveSalary?.class_commission_percentage ?? 0);
+      const attendees = row.enrollments.filter((e) => e.attendance_status === 'attended').map((e) => {
+        const subscription = e.subscription_id ? subscriptionMap.get(e.subscription_id) : undefined;
+        const value = e.session_value_snapshot != null ? Number(e.session_value_snapshot) : packageSessionValue(subscription);
+        const percentage = Number(e.commission_percentage_snapshot ?? defaultPercentage);
+        const member = memberMap.get(e.member_id);
+        return { enrollmentId: e.id, memberId: e.member_id, memberName: member?.name ?? `#${e.member_id}`,
+          subscriptionNumber: subscription?.subscription_number ?? null, subscriptionType: subscription?.subscription_type ?? null,
+          packageValue: e.package_value_snapshot != null ? Number(e.package_value_snapshot) : subscription ? Number(subscription.subscription_value) - (subscription.discount_enabled ? Number(subscription.discount_value) : 0) : null,
+          packageSessions: e.package_sessions_snapshot ?? subscription?.sessions_count ?? null, sessionValue: value, percentage,
+          commission: value == null ? null : attendanceCommission(value, percentage),
+          historicalEstimate: e.session_value_snapshot == null,
+        };
+      });
+      for (const guest of guests.filter((g) => g.class_id === row.id)) attendees.push({
+        enrollmentId: -guest.id, memberId: 0, memberName: `${guest.name} (خارجي)`, subscriptionNumber: `إيصال #${guest.receipt_id}`,
+        subscriptionType: 'دفع سعر الحصة', packageValue: Number(guest.amount), packageSessions: 1,
+        sessionValue: Number(guest.amount), percentage: Number(guest.commission_percentage),
+        commission: attendanceCommission(Number(guest.amount), Number(guest.commission_percentage)), historicalEstimate: false,
+      });
+      return { id: row.id, className: row.class_name, classDate: row.class_date, startTime: row.start_time, endTime: row.end_time,
+        trainerId: row.trainer_id, trainerName: row.trainer.name, status: row.status, percentage: defaultPercentage,
+        attendance: attendees.length, revenue: Math.round(attendees.reduce((sum, a) => sum + (a.sessionValue ?? 0), 0) * 100) / 100,
+        commission: Math.round(attendees.reduce((sum, a) => sum + (a.commission ?? 0), 0) * 100) / 100,
+        unresolvedValues: attendees.filter((a) => a.sessionValue == null).length, attendees };
+    });
+    const historyMap = new Map(sessionHistory.map((s) => [s.id, s]));
+
     const typeMap = new Map<number | string, any>();
     const trainerMap = new Map<number, any>();
     for (const row of rows) {
-      const attended = row.enrollments.filter((e) => e.attendance_status === 'attended').length;
+      const attended = historyMap.get(row.id)?.attendance ?? 0;
       const absent = row.enrollments.filter((e) => e.attendance_status === 'absent').length;
       const booked = row.enrollments.filter((e) => e.attendance_status !== 'cancelled').length;
-      const revenue = toNum(row.price) * attended;
+      const revenue = historyMap.get(row.id)?.revenue ?? 0;
       const typeKey = row.class_type_id ?? `legacy:${row.class_name}`;
       const type = typeMap.get(typeKey) ?? {
         classTypeId: row.class_type_id,
@@ -1059,6 +1052,7 @@ export class ClubClassesService {
         attendance: 0,
         bookings: 0,
         revenue: 0,
+        commissionValue: 0,
         days: {} as Record<string, number>,
         trainers: {} as Record<string, { id: number; name: string; sessions: number }>,
       };
@@ -1096,6 +1090,7 @@ export class ClubClassesService {
       trainer.attendance += attended;
       trainer.noShows += absent;
       trainer.revenue += revenue;
+      trainer.commissionValue = (trainer.commissionValue ?? 0) + (historyMap.get(row.id)?.commission ?? 0);
       trainerMap.set(row.trainer_id, trainer);
     }
 
@@ -1120,7 +1115,7 @@ export class ClubClassesService {
 
     const trainers = [...trainerMap.values()].map((trainer) => {
       const salary = salaryByTrainer.get(trainer.trainerId);
-      const commissionPercentage = salary ? toNum(salary.class_commission_percentage) : 0;
+      const commissionPercentage = trainer.revenue > 0 ? Math.round((trainer.commissionValue ?? 0) / trainer.revenue * 10000) / 100 : salary ? toNum(salary.class_commission_percentage) : 0;
       return {
         trainerId: trainer.trainerId,
         name: trainer.name,
@@ -1134,11 +1129,12 @@ export class ClubClassesService {
         cancelledSessions: trainer.cancelled,
         noShows: trainer.noShows,
         commissionPercentage,
-        commissionValue: trainer.revenue * commissionPercentage / 100,
+        commissionValue: Math.round(trainer.commissionValue * 100) / 100,
       };
     });
 
     return {
+      sessionHistory: sessionHistory.sort((a, b) => b.classDate.localeCompare(a.classDate) || a.startTime.localeCompare(b.startTime)),
       summary: {
         sessions: rows.length,
         attendance: classTypes.reduce((sum, x) => sum + x.totalAttendance, 0),

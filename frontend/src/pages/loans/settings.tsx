@@ -13,8 +13,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api } from '@/lib/api';
 import { isNotImplemented, usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { toast } from 'sonner';
+import { usePermission } from '@/hooks/use-permission';
 import { useLocale } from '@/store/locale';
 
 interface MainSettings {
@@ -36,6 +37,8 @@ interface DawabtRow {
 
 export function LoanSettingsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canConfigure = can('finance.loan_settings:configure');
   const { params, setParams } = useListQuery();
   const { data: dawabt, isLoading: dawabtLoading, isError, error } = usePaginatedList<DawabtRow>('loans/settings', params);
   const { data: main, isLoading: mainLoading, refetch } = useQuery({
@@ -53,6 +56,7 @@ export function LoanSettingsPage() {
   const patch = (k: keyof MainSettings, v: string) => setForm((f) => ({ ...f, [k]: Number(v) || 0 }));
 
   const saveMain = async () => {
+    if (!canConfigure) return;
     setSaving(true);
     try {
       const payload = { ...main, ...form };
@@ -75,7 +79,7 @@ export function LoanSettingsPage() {
   };
 
   const columns: ColumnDef<DawabtRow>[] = [
-    { accessorKey: 'id', header: ui('م'), cell: ({ row }) => toArabicDigits(row.index + 1) },
+    { accessorKey: 'id', header: ui('م'), cell: ({ row }) => formatDigits(row.index + 1) },
     { accessorKey: 'title', header: ui('العنوان') },
     { accessorKey: 'employeeName', header: ui('النوع') },
   ];
@@ -103,10 +107,12 @@ export function LoanSettingsPage() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <CardTitle className="text-base">{ui('سياسة السلف')}</CardTitle>
-              <Button variant="brand" size="sm" onClick={() => void saveMain()} disabled={saving || mainLoading}>
-                {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-                {ui('حفظ')}
-              </Button>
+              {canConfigure && (
+                <Button permissionResource="finance.loan_settings" permissionAction="configure" variant="brand" size="sm" onClick={() => void saveMain()} disabled={saving || mainLoading}>
+                  {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
+                  {ui('حفظ')}
+                </Button>
+              )}
             </CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-3">
               {[
@@ -123,6 +129,7 @@ export function LoanSettingsPage() {
                   <Input
                     type="number"
                     className="nums"
+                    disabled={!canConfigure}
                     defaultValue={m[key as keyof MainSettings] ?? ''}
                     onChange={(e) => patch(key as keyof MainSettings, e.target.value)}
                   />
@@ -133,6 +140,7 @@ export function LoanSettingsPage() {
         </TabsContent>
         <TabsContent value="dawabt">
           <DataTable
+            exportSource={{ resource: 'loans/settings', params }}
             columns={columns}
             data={dawabt?.data ?? []}
             total={dawabt?.total ?? 0}

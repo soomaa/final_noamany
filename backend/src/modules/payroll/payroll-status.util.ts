@@ -1,4 +1,5 @@
 import { hr_mosayer } from '@prisma/client';
+import { cairoDateString, cairoTimeString } from '../../common/utils/cairo-date';
 
 export type PayrollRunStatus =
   | 'draft'
@@ -6,6 +7,7 @@ export type PayrollRunStatus =
   | 'reviewing'
   | 'approved'
   | 'posted'
+  | 'bank_prepared'
   | 'banked'
   | 'completed';
 
@@ -47,13 +49,15 @@ export function monthLabel(month: number): string {
 }
 
 export function runTitle(month: number, year: number): string {
-  return `مسيرة رواتب ${monthLabel(month)} ${year}`;
+  return `مرتبات ${monthLabel(month)} ${year}`;
 }
 
 /** Map legacy hr_mosayer suspend/taghez fields → frontend PayrollStepper status. */
 export function mapRunStatus(row: hr_mosayer): PayrollRunStatus {
   if (row.finish_sarf_date) return 'completed';
-  if (row.file_downloded || row.tanfez_ezn_sarf === 'yes') return 'banked';
+  // A generated file is only a prepared batch, never proof of settlement.
+  if (row.tanfez_ezn_sarf === 'yes') return 'banked';
+  if (row.file_downloded) return 'bank_prepared';
   if (row.halet_sarf === 'yes') return 'posted';
   if (row.approved === 1 || row.suspend_moder_3am === 'yes') return 'approved';
   if (
@@ -73,10 +77,9 @@ export function decimal(n: unknown): number {
 }
 
 export function todayAr(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return cairoDateString();
 }
 
 export function timeAr(): string {
-  return new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+  return cairoTimeString();
 }

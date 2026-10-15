@@ -1,33 +1,18 @@
+import { IsArray, IsInt, IsOptional, IsString, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
-import {
-  ArrayUnique,
-  IsArray,
-  IsIn,
-  IsInt,
-  Max,
-  IsOptional,
-  IsString,
-  Min,
-  ValidateNested,
-} from 'class-validator';
 
 export class RewardDetailDto {
   @IsInt()
   empCode!: number;
 
+  // Reward value must be non-negative: a negative reward would be summed by the
+  // engine (getMokafaaByDate) as a negative bonus, i.e. it would DEDUCT from pay.
   @IsOptional()
   @IsInt()
   @Min(0)
   value?: number;
 }
 
-/**
- * Legacy reward form contract:
- * - recipientType 2 = selected employees, 3 = every active employee
- * - option rateb = paid with salary, alone = separate statement
- *
- * `details` remains accepted for backward compatibility with the first React page.
- */
 export class CreateRewardDto {
   @IsString()
   title!: string;
@@ -38,40 +23,24 @@ export class CreateRewardDto {
 
   @IsOptional()
   @IsInt()
-  @Min(1)
-  @Max(12)
-  month?: number;
+  mokafaType?: number;
+
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => RewardDetailDto)
+  details!: RewardDetailDto[];
+}
+
+export class UpdateRewardDto {
+  @IsOptional()
+  @IsString()
+  title?: string;
 
   @IsOptional()
-  @IsInt()
-  @IsIn([2, 3])
-  recipientType?: number;
+  @IsString()
+  date?: string;
 
   @IsOptional()
   @IsInt()
   mokafaType?: number;
-
-  @IsOptional()
-  @IsString()
-  @IsIn(['rateb', 'alone'])
-  option?: string;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  value?: number;
-
-  @IsOptional()
-  @IsArray()
-  @ArrayUnique()
-  @IsInt({ each: true })
-  employeeIds?: number[];
-
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => RewardDetailDto)
-  details?: RewardDetailDto[];
 }
-
-export class UpdateRewardDto extends CreateRewardDto {}

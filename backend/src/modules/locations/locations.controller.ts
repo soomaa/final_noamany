@@ -21,6 +21,7 @@ import {
 
 @UseGuards(JwtAuthGuard)
 @Controller('locations')
+@RequiresPermission('admin.locations:view')
 export class LocationsController {
   constructor(private readonly locations: LocationsService) {}
 
@@ -35,7 +36,7 @@ export class LocationsController {
   }
 
   @Post()
-  @RequiresPermission('admin.locations:update')
+  @RequiresPermission('admin.locations:create')
   create(@Body() dto: CreateLocationDto) {
     return this.locations.create(dto);
   }
@@ -47,7 +48,7 @@ export class LocationsController {
   }
 
   @Delete(':id')
-  @RequiresPermission('admin.locations:update')
+  @RequiresPermission('admin.locations:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.locations.remove(id);
   }

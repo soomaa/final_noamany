@@ -1,14 +1,21 @@
-import { BadRequestException, Injectable, UnauthorizedException, Inject, forwardRef } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException, Inject, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService, JwtSignOptions } from '@nestjs/jwt';
-import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
-import { createHmac } from 'crypto';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
-import { MemberLoginResult } from '../../common/types/member-jwt-user';
-import { MemberAuthService } from '../member/member-auth.service';
 import { isBcryptHash, legacyMatches } from './legacy-hash.util';
+import { randomUUID } from 'node:crypto';
+import { parseTtlMilliseconds } from './staff-session.policy';
+import { SessionContext, StaffSessionService } from './staff-session.service';
+import { DisabledWorkforceAdapter, WORKFORCE_ADAPTER, WorkforceAdapter } from '../../ports/workforce/workforce.adapter';
+import {
+  DisabledExternalIdentityAdapter,
+  EXTERNAL_IDENTITY_ADAPTER,
+  ExternalIdentityAdapter,
+  ExternalIdentityClaims,
+  ExternalIdentitySelectionResult,
+} from '../../ports/identity/external-identity.adapter';
 
 /** Faithful to legacy Auth.php: same failure message whether user is missing,
  *  password is wrong, or the account is not approved. */
@@ -24,21 +31,16 @@ function resolveSessionImage(userImage: string | null, personalPhoto: string | n
   return img ?? null;
 }
 
-export interface StaffLoginResult {
-  accessToken: string;
-  refreshToken: string;
-  user: JwtUser;
-  message: string;
-}
-
 export interface LoginResult {
   accessToken: string;
   refreshToken: string;
-  user: JwtUser | MemberLoginResult['user'];
+  user: JwtUser | ExternalIdentityClaims;
   message: string;
-  accountType: 'staff' | 'member';
-  /** Members only: true while still on the default password (000000). Always false for staff. */
+  accountType: string;
+  /** Host identities may require a password change. Always false for staff. */
   mustChangePassword: boolean;
+  exposeTokensInBody: boolean;
+  requiresBranchSelection?: false;
 }
 
 @Injectable()
@@ -47,43 +49,60 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
-    @Inject(forwardRef(() => MemberAuthService))
-    private readonly memberAuth: MemberAuthService,
+    @Optional() @Inject(EXTERNAL_IDENTITY_ADAPTER)
+    private readonly externalIdentity: ExternalIdentityAdapter = new DisabledExternalIdentityAdapter(),
+    private readonly staffSessions: StaffSessionService,
+    @Optional() @Inject(WORKFORCE_ADAPTER)
+    private readonly workforce: WorkforceAdapter = new DisabledWorkforceAdapter(),
   ) {}
 
-  async login(username: string, password: string): Promise<LoginResult> {
+  async login(
+    username: string,
+    password: string,
+    context: SessionContext = {},
+  ): Promise<LoginResult | ExternalIdentitySelectionResult> {
     const normalizedUsername = username.trim();
     const user = await this.prisma.users.findFirst({
       where: { username: normalizedUsername },
     });
     if (user && user.approved === 1) {
-      const staffResult = await this.loginStaff(user, password);
-      return { ...staffResult, accountType: 'staff', mustChangePassword: false };
+      const staffResult = await this.loginStaff(user, password, context);
+      return {
+        ...staffResult,
+        accountType: 'staff',
+        mustChangePassword: false,
+        exposeTokensInBody: false,
+      };
     }
 
-    const memberResult = await this.memberAuth.login(username, password);
-    return {
-      accessToken: memberResult.accessToken,
-      refreshToken: memberResult.refreshToken,
-      user: memberResult.user,
-      message: memberResult.message,
-      accountType: 'member',
-      mustChangePassword: memberResult.mustChangePassword,
-    };
+    return this.externalIdentity.login(username, password);
   }
 
   /**
    * Staff-only authentication used by the POS handover flow. It deliberately does not
-   * fall back to member login, and returns a complete token pair so the refresh cookie
+   * fall back to external identity login, and returns a complete token pair so the refresh cookie
    * cannot silently restore the previous cashier later.
    */
-  async authenticateStaff(username: string, password: string): Promise<StaffLoginResult> {
+  async authenticateStaff(
+    username: string,
+    password: string,
+    context: SessionContext = {},
+  ) {
     const normalizedUsername = username.trim();
     const user = await this.prisma.users.findFirst({
       where: { username: normalizedUsername, approved: 1 },
     });
     if (!user) throw new UnauthorizedException(LOGIN_FAILED);
-    return this.loginStaff(user, password);
+    return this.loginStaff(user, password, context);
+  }
+
+  /** Verify a staff handover credential without creating a browser session yet. */
+  async verifyStaffCredentials(username: string, password: string): Promise<JwtUser> {
+    const user = await this.prisma.users.findFirst({
+      where: { username: username.trim(), approved: 1 },
+    });
+    if (!user) throw new UnauthorizedException(LOGIN_FAILED);
+    return this.verifyStaffIdentity(user, password);
   }
 
   private async loginStaff(
@@ -97,14 +116,34 @@ export class AuthService {
       x_y_z?: string | null;
     },
     password: string,
-  ): Promise<StaffLoginResult> {
+    context: SessionContext,
+  ): Promise<Omit<LoginResult, 'accountType' | 'mustChangePassword' | 'exposeTokensInBody'>> {
+    const claims = await this.verifyStaffIdentity(user, password);
+    return {
+      ...(await this.signTokens(claims, context)),
+      user: claims,
+      message: 'تم تسجيل الدخول بنجاح',
+    };
+  }
+
+  private async verifyStaffIdentity(
+    user: {
+      user_id: number;
+      password: string | null;
+      approved: number | null;
+      user_pass?: string | null;
+      app_pass?: string | null;
+      pass_demo?: string | null;
+      x_y_z?: string | null;
+    },
+    password: string,
+  ): Promise<JwtUser> {
     const { valid, needsRehash, plaintext } = await this.verifyStaffPassword(user, password);
     if (!valid) {
       throw new UnauthorizedException(LOGIN_FAILED);
     }
 
     // 3) Transparent migration: rehash legacy password to bcrypt, drop plaintext copies.
-    let refreshPassword = user.password ?? null;
     if (needsRehash) {
       const rounds = this.config.get<number>('bcryptRounds') ?? 12;
       const bhash = await bcrypt.hash(plaintext, rounds);
@@ -112,15 +151,9 @@ export class AuthService {
         where: { user_id: user.user_id },
         data: { password: bhash, x_y_z: null, app_pass: null, pass_demo: null, user_pass: null },
       });
-      refreshPassword = bhash;
     }
 
-    const claims = await this.buildJwtUser(user.user_id);
-    return {
-      ...(await this.signTokens(claims, this.refreshSessionVersion(refreshPassword))),
-      user: claims,
-      message: 'تم تسجيل الدخول بنجاح',
-    };
+    return this.buildJwtUser(user.user_id);
   }
 
   async changePassword(
@@ -128,9 +161,6 @@ export class AuthService {
     currentPassword: string,
     newPassword: string,
   ): Promise<{ message: string }> {
-    if (Buffer.byteLength(newPassword, 'utf8') > 72) {
-      throw new BadRequestException('كلمة المرور الجديدة لا يمكن أن تتجاوز 72 بايت');
-    }
     const user = await this.prisma.users.findUnique({ where: { user_id: userId } });
     if (!user || user.approved !== 1) {
       throw new UnauthorizedException(LOGIN_FAILED);
@@ -147,27 +177,8 @@ export class AuthService {
       where: { user_id: user.user_id },
       data: { password: bhash, x_y_z: null, app_pass: null, pass_demo: null, user_pass: null },
     });
+    await this.staffSessions.revokeAllForUser(user.user_id, 'password_changed');
     return { message: 'تم تغيير كلمة المرور بنجاح' };
-  }
-
-  /** Update the authenticated staff member's avatar; no caller-supplied user id is accepted. */
-  async updateProfileImage(userId: number, image: string): Promise<{ image: string }> {
-    const user = await this.prisma.users.findUnique({
-      where: { user_id: userId },
-      select: { user_id: true, emp_code: true, approved: true },
-    });
-    if (!user || user.approved !== 1) throw new UnauthorizedException('انتهت الجلسة');
-
-    const updates: Prisma.PrismaPromise<unknown>[] = [
-      this.prisma.users.update({ where: { user_id: user.user_id }, data: { image } }),
-    ];
-    if (user.emp_code != null) {
-      updates.push(
-        this.prisma.employees.update({ where: { id: user.emp_code }, data: { personal_photo: image } }),
-      );
-    }
-    await this.prisma.$transaction(updates);
-    return { image };
   }
 
   private async verifyStaffPassword(
@@ -209,56 +220,110 @@ export class AuthService {
     return { valid: false, needsRehash: false, plaintext: password };
   }
 
-  async signTokens(claims: JwtUser, refreshSessionVersion: string): Promise<{ accessToken: string; refreshToken: string }> {
-    const accessToken = await this.jwt.signAsync(claims, {
+  async signTokens(
+    claims: JwtUser,
+    context: SessionContext = {},
+  ): Promise<{ accessToken: string; refreshToken: string; sessionId: string }> {
+    const sessionId = randomUUID();
+    const familyId = randomUUID();
+    const accessToken = await this.jwt.signAsync({ ...claims, sessionId }, {
       secret: this.config.get<string>('jwt.accessSecret'),
       expiresIn: this.config.get<JwtSignOptions['expiresIn']>('jwt.accessTtl'),
     });
     const refreshToken = await this.jwt.signAsync(
-      { sub: claims.sub, pver: refreshSessionVersion },
+      { sub: claims.sub, type: 'staff-refresh', sid: sessionId, familyId },
       {
         secret: this.config.get<string>('jwt.refreshSecret'),
         expiresIn: this.config.get<JwtSignOptions['expiresIn']>('jwt.refreshTtl'),
       },
     );
-    return { accessToken, refreshToken };
+    const ttl = parseTtlMilliseconds(
+      this.config.get<string | number>('jwt.refreshTtl'),
+    );
+    await this.staffSessions.create({
+      id: sessionId,
+      familyId,
+      userId: claims.sub,
+      refreshToken,
+      expiresAt: new Date(Date.now() + ttl),
+      ...context,
+    });
+    return { accessToken, refreshToken, sessionId };
   }
 
-  async refresh(refreshToken: string): Promise<{ accessToken: string; user: JwtUser }> {
-    let sub: number;
+  async refresh(
+    refreshToken: string,
+    context: SessionContext = {},
+  ): Promise<{ accessToken: string; refreshToken: string; user: JwtUser }> {
+    let payload: { sub: number; type: string; sid: string; familyId: string };
     try {
-      const payload = await this.jwt.verifyAsync<{ sub: number; type?: string; pver?: string }>(refreshToken, {
+      payload = await this.jwt.verifyAsync<{
+        sub: number;
+        type: string;
+        sid: string;
+        familyId: string;
+      }>(refreshToken, {
         secret: this.config.get<string>('jwt.refreshSecret'),
       });
-      if (payload.type === 'member') throw new UnauthorizedException('انتهت الجلسة');
-      sub = payload.sub;
-      const user = await this.prisma.users.findUnique({ where: { user_id: sub } });
-      if (!user || user.approved !== 1 || !payload.pver || payload.pver !== this.refreshSessionVersion(user.password)) {
+      if (
+        payload.type !== 'staff-refresh' ||
+        !Number.isInteger(payload.sub) ||
+        !payload.sid ||
+        !payload.familyId
+      ) {
         throw new UnauthorizedException('انتهت الجلسة');
       }
     } catch {
       throw new UnauthorizedException('انتهت الجلسة');
     }
-    const user = await this.prisma.users.findUnique({ where: { user_id: sub } });
+    const user = await this.prisma.users.findUnique({ where: { user_id: payload.sub } });
     if (!user || user.approved !== 1) throw new UnauthorizedException('انتهت الجلسة');
 
-    const claims = await this.buildJwtUser(sub);
-    const accessToken = await this.jwt.signAsync(claims, {
+    const claims = await this.buildJwtUser(payload.sub);
+    const successorId = randomUUID();
+    const accessToken = await this.jwt.signAsync({ ...claims, sessionId: successorId }, {
       secret: this.config.get<string>('jwt.accessSecret'),
       expiresIn: this.config.get<JwtSignOptions['expiresIn']>('jwt.accessTtl'),
     });
-    return { accessToken, user: claims };
-  }
-
-  /** Stable per-password HMAC carried by refresh tokens; a password change invalidates old tokens. */
-  private refreshSessionVersion(password: string | null): string {
-    const secret = this.config.get<string>('jwt.refreshSecret') ?? '';
-    return createHmac('sha256', secret).update(password ?? '').digest('base64url');
+    const nextRefreshToken = await this.jwt.signAsync(
+      {
+        sub: claims.sub,
+        type: 'staff-refresh',
+        sid: successorId,
+        familyId: payload.familyId,
+      },
+      {
+        secret: this.config.get<string>('jwt.refreshSecret'),
+        expiresIn: this.config.get<JwtSignOptions['expiresIn']>('jwt.refreshTtl'),
+      },
+    );
+    const ttl = parseTtlMilliseconds(
+      this.config.get<string | number>('jwt.refreshTtl'),
+    );
+    await this.staffSessions.rotate({
+      currentSessionId: payload.sid,
+      familyId: payload.familyId,
+      userId: payload.sub,
+      currentRefreshToken: refreshToken,
+      successor: {
+        id: successorId,
+        refreshToken: nextRefreshToken,
+        expiresAt: new Date(Date.now() + ttl),
+      },
+      ...context,
+    });
+    return { accessToken, refreshToken: nextRefreshToken, user: claims };
   }
 
   /** Fresh session claims (branch/scope from DB — not stale JWT payload). */
-  async getSessionUser(userId: number): Promise<JwtUser> {
-    return this.buildJwtUser(userId);
+  async getSessionUser(userId: number, sessionId?: string): Promise<JwtUser> {
+    if (sessionId) await this.staffSessions.assertAccessSession(userId, sessionId);
+    return { ...(await this.buildJwtUser(userId)), ...(sessionId ? { sessionId } : {}) };
+  }
+
+  async logout(userId: number, sessionId?: string): Promise<void> {
+    if (!sessionId) return;
+    await this.staffSessions.revokeFamily(userId, sessionId, 'logout');
   }
 
   /**
@@ -281,22 +346,32 @@ export class AuthService {
     if (!user || user.approved !== 1) throw new UnauthorizedException('انتهت الجلسة');
 
     let branch = user.branch_id_fk ?? 0;
+    let employeeCode: number | null = null;
     let manWomenType = 0;
     let jobTitle: string | null = null;
     let personalPhoto: string | null = null;
     let trainerId: number | null = null;
+    let branchIds: number[] | undefined;
     if (user.emp_code != null) {
       const emp = await this.prisma.employees.findUnique({
         where: { id: user.emp_code },
         select: {
+          id: true,
+          emp_code: true,
           branch_id_fk: true,
           emp_type: true,
           mosma_wazefy_n: true,
           mosma_wazefy_code: true,
           personal_photo: true,
+          leave_emp: true,
+          employee_type: true,
         },
       });
       if (emp) {
+        if (emp.leave_emp === 1 || emp.employee_type !== 1) {
+          throw new UnauthorizedException('انتهت الجلسة');
+        }
+        employeeCode = emp.emp_code ?? null;
         branch = emp.branch_id_fk ?? branch;
         manWomenType = emp.emp_type ?? 0;
         personalPhoto = emp.personal_photo;
@@ -308,11 +383,13 @@ export class AuthService {
           });
           jobTitle = job?.name?.trim() || null;
         }
-        const trainer = await this.prisma.club_trainers.findUnique({
+        trainerId = (await this.workforce.identityForEmployee(user.emp_code)).providerRecordId;
+        const salesBranches = await this.prisma.club_sales_rep_branches.findMany({
           where: { employee_id: user.emp_code },
-          select: { id: true, is_active: true, is_deleted: true },
+          select: { branch_id: true },
+          orderBy: { branch_id: 'asc' },
         });
-        if (trainer?.is_active && !trainer.is_deleted) trainerId = trainer.id;
+        if (salesBranches.length) branchIds = salesBranches.map((row) => row.branch_id);
       }
     }
 
@@ -328,8 +405,11 @@ export class AuthService {
     return {
       sub: user.user_id,
       level: user.level ?? null,
+      employeeId: user.emp_code ?? null,
+      employeeCode,
       emp_code: user.emp_code ?? null,
       branch,
+      ...(branchIds ? { branchIds } : {}),
       branch_name: branchName,
       man_women_type: manWomenType,
       name: user.name ?? null,

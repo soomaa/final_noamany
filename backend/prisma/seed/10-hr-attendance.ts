@@ -155,20 +155,17 @@ export async function seedHrAttendance(): Promise<void> {
     bump('tbl_hdodr_status');
   }
 
-  // Legacy gym commission settings — one row per type, with the production legacy split.
-  const gymRates: Array<{ ttype: 'target' | 'proten' | 'classes'; forUser: number; forGym: number }> = [
-    { ttype: 'target', forUser: 0, forGym: 0 },
-    { ttype: 'proten', forUser: 7, forGym: 93 },
-    { ttype: 'classes', forUser: 40, forGym: 60 },
-  ];
-  for (const rate of gymRates) {
+  // gym settings (targets / classes) — tbl_gym_setting
+  const gymTypes: Array<'target' | 'proten' | 'classes'> = ['target', 'proten', 'classes'];
+  for (let i = 0; i < 6; i++) {
+    const t = gymTypes[i % gymTypes.length];
     await prisma.tbl_gym_setting.create({
       data: {
-        ttype: rate.ttype,
-        for_user: rate.forUser,
-        for_gym: rate.forGym,
-        date_ar: ymd(BASE),
-        date_s: String(Math.floor(BASE.getTime() / 1000)),
+        ttype: t,
+        for_user: randInt(20, 60),
+        for_gym: randInt(200, 600),
+        date_ar: dmy(addDays(BASE, -randInt(10, 120))),
+        date_s: ymd(addDays(BASE, -randInt(10, 120))),
         publisher: hrUserId,
         publisher_name: hrUserName,
       },
@@ -334,8 +331,8 @@ export async function seedHrAttendance(): Promise<void> {
 
       await prisma.tbl_hdoor_emps.create({
         data: {
-          member_code: e.emp_code ?? 0,
-          member_id: e.id,
+          employee_code: e.emp_code ?? 0,
+          employee_id: e.id,
           action_date: iso,
           action_date_s: iso,
           hdoor_time: hdoorTime,

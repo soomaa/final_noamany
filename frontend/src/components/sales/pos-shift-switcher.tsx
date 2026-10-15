@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { formatMoneyNumber } from '@/lib/formatters';
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeftRight,
@@ -9,6 +10,7 @@ import {
   LockKeyhole,
   ShieldCheck,
   Square,
+  Trash2,
   UserRound,
   WalletCards,
 } from "lucide-react";
@@ -26,7 +28,10 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ShiftWastePanel } from "@/components/sales/shift-waste-panel";
 import { useBranches } from "@/hooks/use-branches";
+import { usePermission } from "@/hooks/use-permission";
 import { useCurrentShiftSession } from "@/hooks/use-shift-session";
 import { api, apiError } from "@/lib/api";
 import { confirmWithPreview } from "@/lib/confirm";
@@ -35,6 +40,7 @@ import { toArabicDigits } from "@/lib/utils";
 import { isDryRunResponse } from "@/lib/validators";
 import { useAuth } from "@/store/auth";
 import { useLocale } from "@/store/locale";
+import type { Paginated, WasteRecord } from "@/pages/cafe/waste-types";
 
 interface Shift {
   id: number;
@@ -59,10 +65,15 @@ interface ScheduleStatus {
   alertActive: boolean;
 }
 
-export function PosShiftSwitcher() {
+export function PosShiftSwitcher({ actions }: { actions?: ReactNode }) {
   const location = useLocation();
   const qc = useQueryClient();
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreateShift = can('gym-sales.sales.shifts:create');
+  const canUpdateShift = can('gym-sales.sales.shifts:update');
+  const canViewWaste = can('club.cafe.waste:view');
+  const canCreateWaste = can('club.cafe.waste:create');
   const user = useAuth((state) => state.user);
   const switchPosUser = useAuth((state) => state.switchPosUser);
   const { data: branches = [] } = useBranches();
@@ -118,6 +129,20 @@ export function PosShiftSwitcher() {
   const [closingDay, setClosingDay] = useState(false);
   const [preparing, setPreparing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [handoverTab, setHandoverTab] = useState<'handover' | 'waste'>('handover');
+
+  const shiftWasteQuery = useQuery({
+    queryKey: ['cafe-waste', 'records', 'shift', current?.id],
+    queryFn: async () => (await api.get<Paginated<WasteRecord>>('/cafe-waste/records', {
+      params: {
+        branchId,
+        shiftSessionId: current?.id,
+        page: 1,
+        pageSize: 100,
+      },
+    })).data,
+    enabled: open && canViewWaste && !!branchId && !!current?.id,
+  });
 
   useEffect(() => {
     const timer = window.setInterval(
@@ -171,6 +196,7 @@ export function PosShiftSwitcher() {
       const refreshed = await refetchCurrent();
       const activeSession = refreshed.data;
       if (!activeSession) {
+        if (!canCreateShift) return;
         const suggestedShift =
           shifts.find((shift) => shift.id === schedule?.current?.id) ??
           shifts[0];
@@ -184,6 +210,7 @@ export function PosShiftSwitcher() {
         setStartOpen(true);
         return;
       }
+      if (!canUpdateShift) return;
       const availableShifts = shifts.filter(
         (shift) =>
           shift.isActive !== false && shift.id !== activeSession.shiftId,
@@ -215,6 +242,7 @@ export function PosShiftSwitcher() {
       setShowPassword(false);
       setNotes("");
       setShortageReason("");
+      setHandoverTab('handover');
       setOpen(true);
     } catch (error) {
       toast.error(apiError(error, ui("تعذر تحميل رصيد الوردية الحالي")));
@@ -224,7 +252,7 @@ export function PosShiftSwitcher() {
   };
 
   const prepareEndDayDialog = async () => {
-    if (preparing) return;
+    if (!canUpdateShift || preparing) return;
     setPreparing(true);
     try {
       const refreshed = await refetchCurrent();
@@ -270,7 +298,7 @@ export function PosShiftSwitcher() {
   ]);
 
   const startShiftFromPos = async () => {
-    if (!startShiftId || !branchId || starting) return;
+    if (!canCreateShift || !startShiftId || !branchId || starting) return;
     setStarting(true);
     try {
       await api.post("/shift-sessions/start", {
@@ -286,7 +314,7 @@ export function PosShiftSwitcher() {
         qc.invalidateQueries({ queryKey: ["shifts", "schedule-status"] }),
       ]);
       toast.success(
-        ui(`تم فتح الوردية باسم ${user?.name ?? "المستخدم الحالي"}`),
+        `${ui('تم فتح الوردية باسم ')}${user?.name ?? "المستخدم الحالي"}`,
       );
     } catch (error) {
       toast.error(apiError(error, ui("تعذر فتح الوردية")));
@@ -348,7 +376,7 @@ export function PosShiftSwitcher() {
   };
 
   const closeDay = async () => {
-    if (!current || closingDay) return;
+    if (!canUpdateShift || !current || closingDay) return;
     const closing = Number(endDayClosingBalance) || 0;
     const drop = Number(endDayCashDropAmount) || 0;
     const retained = Number(endDayRetainedAmount) || 0;
@@ -403,7 +431,7 @@ export function PosShiftSwitcher() {
   };
 
   const submit = async () => {
-    if (!targetShiftId || !username.trim() || !password || saving) return;
+    if (!canUpdateShift || !targetShiftId || !username.trim() || !password || saving) return;
     if (handoverShortage > 0.01 && !shortageReason.trim()) {
       toast.error(ui("اكتب سبب عجز النقدية قبل تسليم الدرج"));
       return;
@@ -421,7 +449,7 @@ export function PosShiftSwitcher() {
         notes: notes.trim() || undefined,
         shortageReason: shortageReason.trim() || undefined,
       });
-      await switchPosUser(data.accessToken, data.user);
+      await switchPosUser(data.user);
       await Promise.all([
         refetchCurrent(),
         qc.invalidateQueries({ queryKey: ["shift-sessions"] }),
@@ -429,9 +457,7 @@ export function PosShiftSwitcher() {
       ]);
       setOpen(false);
       toast.success(
-        ui(
-          `تم تسليم الوردية إلى ${data.user?.name ?? username} مع بقاء الطلب الحالي كما هو`,
-        ),
+        `${ui('تم تسليم الوردية إلى ')}${data.user?.name ?? username}${ui(' مع بقاء الطلب الحالي كما هو')}`,
       );
     } catch (error) {
       toast.error(apiError(error, ui("تعذر تبديل الوردية")));
@@ -506,7 +532,8 @@ export function PosShiftSwitcher() {
                 ) : null}
               </div>
             ) : null}
-            <Button
+            {(current ? canUpdateShift : canCreateShift) ? <Button
+              permissionAction={current ? 'update' : 'create'}
               type="button"
               className="h-11 gap-2 rounded-xl px-5 shadow-lg shadow-primary/15"
               disabled={preparing}
@@ -518,12 +545,17 @@ export function PosShiftSwitcher() {
                 : current
                   ? ui(currentIsLastShift ? "إغلاق اليوم" : "تسليم وتبديل الشيفت")
                   : ui("فتح وردية")}
-            </Button>
+            </Button> : null}
+            {actions ? (
+              <div className="flex items-center gap-2">
+                {actions}
+              </div>
+            ) : null}
           </div>
         </div>
       </section>
 
-      <Dialog open={startOpen} onOpenChange={setStartOpen}>
+      <Dialog open={canCreateShift && startOpen} onOpenChange={setStartOpen}>
         <DialogContent size="md">
           <DialogHeader>
             <DialogTitle>{ui("فتح وردية من نقطة البيع")}</DialogTitle>
@@ -579,14 +611,14 @@ export function PosShiftSwitcher() {
             <Button variant="outline" onClick={() => setStartOpen(false)} disabled={starting}>
               {ui("إلغاء")}
             </Button>
-            <Button onClick={() => void startShiftFromPos()} disabled={starting || !startShiftId}>
+            <Button permissionAction="create" onClick={() => void startShiftFromPos()} disabled={starting || !startShiftId}>
               {starting ? ui("جاري فتح الوردية…") : ui("فتح الوردية")}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={endDayOpen} onOpenChange={setEndDayOpen}>
+      <Dialog open={canUpdateShift && endDayOpen} onOpenChange={setEndDayOpen}>
         <DialogContent size="md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
@@ -601,7 +633,7 @@ export function PosShiftSwitcher() {
             <div className="rounded-xl border bg-muted/20 p-3 text-sm">
               <div className="flex justify-between gap-3">
                 <span className="text-muted-foreground">{ui("الرصيد المتوقع في الدرج")}</span>
-                <b className="nums">{toArabicDigits(Number(current?.expectedClosingBalance ?? 0).toFixed(2))} EGP</b>
+                <b className="nums">{formatMoneyNumber(Number(current?.expectedClosingBalance ?? 0))} EGP</b>
               </div>
             </div>
             <div className="grid gap-2">
@@ -620,7 +652,7 @@ export function PosShiftSwitcher() {
                 <div className="flex items-center justify-between gap-3">
                   <Label className="font-bold text-destructive">{ui("سبب عجز النقدية")}</Label>
                   <b className="nums text-sm text-destructive">
-                    -{toArabicDigits(endDayShortage.toFixed(2))} EGP
+                    -{formatMoneyNumber(endDayShortage)} EGP
                   </b>
                 </div>
                 <Textarea
@@ -662,6 +694,7 @@ export function PosShiftSwitcher() {
               {ui("إلغاء")}
             </Button>
             <Button
+              permissionAction="update"
               onClick={() => void closeDay()}
               disabled={
                 closingDay ||
@@ -674,8 +707,11 @@ export function PosShiftSwitcher() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent size="lg">
+      <Dialog open={canUpdateShift && open} onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setHandoverTab('handover');
+      }}>
+        <DialogContent size="form" className="h-[calc(100dvh-1rem)] max-h-[calc(100dvh-1rem)] gap-4 p-4 sm:h-auto sm:max-h-[92vh] sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-xl">
               <ArrowLeftRight className="size-6 text-primary" />
@@ -688,6 +724,22 @@ export function PosShiftSwitcher() {
             </DialogDescription>
           </DialogHeader>
 
+          <Tabs value={handoverTab} onValueChange={(value) => setHandoverTab(value as 'handover' | 'waste')} dir="rtl" className="min-h-0">
+            <TabsList className="h-auto w-full justify-start gap-1 p-1 sm:w-fit" aria-label={ui('أقسام تسليم الشيفت')}>
+              <TabsTrigger value="handover" className="min-h-10 gap-2 px-4">
+                <ArrowLeftRight className="size-4" />{ui('تسليم الشيفت')}
+              </TabsTrigger>
+              {canViewWaste ? (
+                <TabsTrigger value="waste" className="min-h-10 gap-2 px-4">
+                  <Trash2 className="size-4" />{ui('هالك الشيفت')}
+                  <span className="nums min-w-6 rounded-full bg-rose-100 px-1.5 py-0.5 text-[11px] font-black text-rose-700 dark:bg-rose-500/15 dark:text-rose-200">
+                    {toArabicDigits(shiftWasteQuery.data?.total ?? 0)}
+                  </span>
+                </TabsTrigger>
+              ) : null}
+            </TabsList>
+
+            <TabsContent value="handover" className="mt-4 space-y-6">
           <div className="grid gap-4 lg:grid-cols-2">
             <section className="space-y-4 rounded-2xl border border-primary/15 bg-primary/[0.025] p-4">
               <div className="flex items-center gap-2 font-bold">
@@ -703,9 +755,7 @@ export function PosShiftSwitcher() {
                     {ui("المتوقع في الدرج")}
                   </span>
                   <b className="nums">
-                    {toArabicDigits(
-                      Number(current?.expectedClosingBalance ?? 0).toFixed(2),
-                    )}{" "}
+                    {formatMoneyNumber(Number(current?.expectedClosingBalance ?? 0))}{" "}
                     EGP
                   </b>
                 </div>
@@ -714,7 +764,7 @@ export function PosShiftSwitcher() {
                     {ui("مبيعات نقدية")}
                   </span>
                   <b className="nums">
-                    {toArabicDigits(Number(current?.totalCash ?? 0).toFixed(2))}{" "}
+                    {formatMoneyNumber(Number(current?.totalCash ?? 0))}{" "}
                     EGP
                   </b>
                 </div>
@@ -742,7 +792,7 @@ export function PosShiftSwitcher() {
                   <div className="flex items-center justify-between gap-3">
                     <Label className="font-bold text-destructive">{ui("سبب عجز النقدية")}</Label>
                     <b className="nums text-sm text-destructive">
-                      -{toArabicDigits(handoverShortage.toFixed(2))} EGP
+                      -{formatMoneyNumber(handoverShortage)} EGP
                     </b>
                   </div>
                   <Textarea
@@ -815,9 +865,9 @@ export function PosShiftSwitcher() {
                     {ui("التوزيع متوازن تلقائياً")}
                   </span>
                   <b className="nums">
-                    {toArabicDigits(Number(transferAmount || 0).toFixed(2))} +{" "}
-                    {toArabicDigits(Number(cashDropAmount || 0).toFixed(2))} ={" "}
-                    {toArabicDigits(Number(closingBalance || 0).toFixed(2))} EGP
+                    {formatMoneyNumber(Number(transferAmount || 0))} +{" "}
+                    {formatMoneyNumber(Number(cashDropAmount || 0))} ={" "}
+                    {formatMoneyNumber(Number(closingBalance || 0))} EGP
                   </b>
                 </div>
               </div>
@@ -943,6 +993,7 @@ export function PosShiftSwitcher() {
               {ui("إلغاء")}
             </Button>
             <Button
+              permissionAction="update"
               onClick={() => void submit()}
               disabled={
                 saving ||
@@ -957,6 +1008,24 @@ export function PosShiftSwitcher() {
                 : ui("اعتماد التسليم وتبديل المستخدم")}
             </Button>
           </DialogFooter>
+            </TabsContent>
+
+            {canViewWaste && branchId && current?.id ? (
+              <TabsContent value="waste" className="mt-4">
+                <ShiftWastePanel
+                  branchId={Number(branchId)}
+                  shiftSessionId={current.id}
+                  records={shiftWasteQuery.data?.data ?? []}
+                  isLoading={shiftWasteQuery.isLoading}
+                  isError={shiftWasteQuery.isError}
+                  error={shiftWasteQuery.error}
+                  canCreate={canCreateWaste}
+                  onRetry={() => void shiftWasteQuery.refetch()}
+                  onReturnToHandover={() => setHandoverTab('handover')}
+                />
+              </TabsContent>
+            ) : null}
+          </Tabs>
         </DialogContent>
       </Dialog>
     </>

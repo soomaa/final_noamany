@@ -1,13 +1,4 @@
 import { lazy, type ComponentType, type LazyExoticComponent } from 'react';
-import {
-  CustomerServiceFeedbackPage as CustomerServiceFeedbackPageComponent,
-  CustomerServiceQuestionsPage as CustomerServiceQuestionsPageComponent,
-  CustomerServiceReportsPage as CustomerServiceReportsPageComponent,
-} from '@/pages/customer-service';
-import { EvaluationCategoriesPage as EvaluationCategoriesPageComponent } from '@/pages/evaluation-management/categories';
-import { EvaluationItemsPage as EvaluationItemsPageComponent } from '@/pages/evaluation-management/items';
-import { AddEvaluationPage as AddEvaluationPageComponent } from '@/pages/evaluation-management/add-evaluation';
-import { EvaluationReportPage as EvaluationReportPageComponent } from '@/pages/evaluation-management/report';
 
 /** Lazy-load a page module by named export (keeps route chunks split). */
 function lazyPage(
@@ -23,13 +14,14 @@ function lazyPage(
 
 export const DashboardPage = lazyPage(() => import('@/pages/gym-dashboard'), 'DashboardPage');
 export const TrainerPortalPage = lazyPage(() => import('@/pages/trainer/portal'), 'TrainerPortalPage');
+export const SalesPortalPage = lazyPage(() => import('@/pages/sales-portal'), 'SalesPortalPage');
+export const SalesCallsLogPage = lazyPage(() => import('@/pages/sales-portal/calls-log'), 'SalesCallsLogPage');
+export const ClubLeadsPage = lazyPage(() => import('@/pages/club/leads'), 'ClubLeadsPage');
+export const ClubSalesReportsPage = lazyPage(() => import('@/pages/club/sales-reports'), 'ClubSalesReportsPage');
 export const DepartmentHubPage = lazyPage(() => import('@/pages/hub'), 'DepartmentHubPage');
 export const EmployeesListPage = lazyPage(() => import('@/pages/employees/list'), 'EmployeesListPage');
 export const EmployeeFormPage = lazyPage(() => import('@/pages/employees/form'), 'EmployeeFormPage');
 export const EmployeeProfilePage = lazyPage(() => import('@/pages/employees/profile'), 'EmployeeProfilePage');
-export const EmployeeFinancePage = lazyPage(() => import('@/pages/employees/finance'), 'EmployeeFinancePage');
-export const EmployeeAttendancePage = lazyPage(() => import('@/pages/employees/attendance'), 'EmployeeAttendancePage');
-export const EmployeeWeeklyLeavePage = lazyPage(() => import('@/pages/employees/weekly-leave'), 'EmployeeWeeklyLeavePage');
 export const HrPartnersPage = lazyPage(() => import('@/pages/hr/partners'), 'HrPartnersPage');
 export const ReportsHubPage = lazyPage(() => import('@/pages/reports/hub'), 'ReportsHubPage');
 export const ReportDetailPage = lazyPage(() => import('@/pages/reports/detail'), 'ReportDetailPage');
@@ -56,32 +48,20 @@ export const FinanceCashFlowReportPage = lazyPage(() => import('@/pages/reports/
 export const FinanceTreasuryReportPage = lazyPage(() => import('@/pages/reports/finance/treasury'), 'FinanceTreasuryReportPage');
 export const FinancePaymentMethodsReportPage = lazyPage(() => import('@/pages/reports/finance/payment-methods'), 'FinancePaymentMethodsReportPage');
 export const FinanceOutstandingReportPage = lazyPage(() => import('@/pages/reports/finance/outstanding-payments'), 'FinanceOutstandingReportPage');
-export const DailyClosingReportPage = lazyPage(() => import('@/pages/reports/finance/daily-closing-target'), 'DailyClosingReportPage');
-export const TargetReportPage = lazyPage(() => import('@/pages/reports/finance/daily-closing-target'), 'TargetReportPage');
 export const OrgBranchesPage = lazyPage(() => import('@/pages/org/branches'), 'OrgBranchesPage');
 export const OrgDepartmentsPage = lazyPage(() => import('@/pages/org/departments'), 'OrgDepartmentsPage');
 export const OrgJobTitlesPage = lazyPage(() => import('@/pages/org/job-titles'), 'OrgJobTitlesPage');
 export const PayComponentsPage = lazyPage(() => import('@/pages/settings/pay-components'), 'PayComponentsPage');
-// Settings pages
-export const PaymentMethodsPage = lazyPage(() => import('@/pages/settings/payment-methods'), 'PaymentMethodsPage');
-// These three screens share one module. Keeping them eager avoids a named-export lazy
-// loading race when moving from the customer-service hub through the sidebar.
-export const CustomerServiceQuestionsPage = CustomerServiceQuestionsPageComponent;
-export const CustomerServiceFeedbackPage = CustomerServiceFeedbackPageComponent;
-export const CustomerServiceReportsPage = CustomerServiceReportsPageComponent;
+export const InsuranceSettingsPage = lazyPage(() => import('@/pages/settings/insurance'), 'InsuranceSettingsPage');
 export const AttendanceDevicesPage = lazyPage(() => import('@/pages/attendance/devices'), 'AttendanceDevicesPage');
 export const AttendanceBoardPage = lazyPage(() => import('@/pages/attendance/board'), 'AttendanceBoardPage');
 export const AttendanceSettingsPage = lazyPage(() => import('@/pages/attendance/settings'), 'AttendanceSettingsPage');
 export const AttendanceRulesPage = lazyPage(() => import('@/pages/attendance/rules'), 'AttendanceRulesPage');
-export const AttendanceReportsPage = lazyPage(() => import('@/pages/attendance/reports'), 'AttendanceReportsPage');
-export const AttendanceAdjustmentsPage = lazyPage(() => import('@/pages/attendance/adjustments'), 'AttendanceAdjustmentsPage');
-export const AttendanceImportPage = lazyPage(() => import('@/pages/attendance/import-device-file'), 'AttendanceImportPage');
 export const PayrollSetupPage = lazyPage(() => import('@/pages/payroll/setup'), 'PayrollSetupPage');
 export const PayrollRunsPage = lazyPage(() => import('@/pages/payroll/runs'), 'PayrollRunsPage');
-export const SalaryIncreasesPage = lazyPage(() => import('@/pages/payroll/increases'), 'SalaryIncreasesPage');
-export const SalaryIncreasesReportPage = lazyPage(() => import('@/pages/payroll/increases-report'), 'SalaryIncreasesReportPage');
 export const PayrollRunDetailPage = lazyPage(() => import('@/pages/payroll/run-detail'), 'PayrollRunDetailPage');
 export const PayrollSlipPage = lazyPage(() => import('@/pages/payroll/slip'), 'PayrollSlipPage');
+export const FinalSettlementsPage = lazyPage(() => import('@/pages/payroll/final-settlements'), 'FinalSettlementsPage');
 export const LeavesPage = lazyPage(() => import('@/pages/leaves/index'), 'LeavesPage');
 export const LeaveFormPage = lazyPage(() => import('@/pages/leaves/form'), 'LeaveFormPage');
 export const LeaveTypesPage = lazyPage(() => import('@/pages/leaves/types'), 'LeaveTypesPage');
@@ -101,28 +81,18 @@ export const UsersPage = lazyPage(() => import('@/pages/users/index'), 'UsersPag
 export const UserPermissionsPage = lazyPage(() => import('@/pages/users/permissions'), 'UserPermissionsPage');
 export const CompanyPage = lazyPage(() => import('@/pages/company'), 'CompanyPage');
 export const ProfilePage = lazyPage(() => import('@/pages/profile'), 'ProfilePage');
-export const WorkspacePage = lazyPage(() => import('@/pages/workspace'), 'WorkspacePage');
 export const PermissionsPage = lazyPage(() => import('@/pages/permissions/index'), 'PermissionsPage');
 export const SalaryScalePage = lazyPage(() => import('@/pages/payroll/salary-scale'), 'SalaryScalePage');
 export const WeeklyLeavesPage = lazyPage(() => import('@/pages/employees/weekly-leaves'), 'WeeklyLeavesPage');
 export const SiteVisitsPage = lazyPage(() => import('@/pages/sites/visits'), 'SiteVisitsPage');
 export const HrActionScreenPage = lazyPage(() => import('@/pages/hr/action-screen'), 'HrActionScreenPage');
-export const AdministrativeDecisionsPage = lazyPage(() => import('@/pages/hr/administrative-decisions'), 'AdministrativeDecisionsPage');
-export const AdministrativeDecisionPrintPage = lazyPage(() => import('@/pages/hr/administrative-decision-print'), 'AdministrativeDecisionPrintPage');
 export const GymRatesPage = lazyPage(() => import('@/pages/hr/gym-rates'), 'GymRatesPage');
 export const CircularsPage = lazyPage(() => import('@/pages/hr/circulars'), 'CircularsPage');
 export const WarningsPage = lazyPage(() => import('@/pages/hr/warnings'), 'WarningsPage');
-export const WarningTemplatesPage = lazyPage(() => import('@/pages/hr/warning-templates'), 'WarningTemplatesPage');
 export const FormsSettingsPage = lazyPage(() => import('@/pages/settings/forms'), 'FormsSettingsPage');
 export const ClearancePage = lazyPage(() => import('@/pages/termination/clearance'), 'ClearancePage');
 export const ArchivePage = lazyPage(() => import('@/pages/termination/archive'), 'ArchivePage');
 export const EvaluationsPage = lazyPage(() => import('@/pages/hr/evaluations'), 'EvaluationsPage');
-// These pages share a sidebar section. Loading them eagerly prevents React from
-// retaining the section hub while a lazy route module is still resolving.
-export const EvaluationCategoriesPage = EvaluationCategoriesPageComponent;
-export const EvaluationItemsPage = EvaluationItemsPageComponent;
-export const AddEvaluationPage = AddEvaluationPageComponent;
-export const EvaluationReportPage = EvaluationReportPageComponent;
 export const CustodyPage = lazyPage(() => import('@/pages/hr/custody'), 'CustodyPage');
 export const JobRequestsPage = lazyPage(() => import('@/pages/hr/job-requests'), 'JobRequestsPage');
 export const MenuPlaceholderPage = lazyPage(() => import('@/pages/menu-placeholder'), 'MenuPlaceholderPage');
@@ -135,7 +105,6 @@ export const InitiativesPage = lazyPage(() => import('@/pages/hr/initiatives'), 
 export const ActivitiesPage = lazyPage(() => import('@/pages/hr/activities'), 'ActivitiesPage');
 export const TasksPage = lazyPage(() => import('@/pages/hr/tasks'), 'TasksPage');
 export const LegalFilesPage = lazyPage(() => import('@/pages/hr/legal-files'), 'LegalFilesPage');
-export const HrMobileContentPage = lazyPage(() => import('@/pages/hr/mobile-content'), 'HrMobileContentPage');
 export const AppUsersPage = lazyPage(() => import('@/pages/settings/app-users'), 'AppUsersPage');
 export const UsersManagePage = lazyPage(() => import('@/pages/users/manage'), 'UsersManagePage');
 export const PushBroadcastPage = lazyPage(() => import('@/pages/settings/push'), 'PushBroadcastPage');
@@ -145,28 +114,21 @@ export const RolesPage = lazyPage(() => import('@/pages/admin/roles'), 'RolesPag
 export const UserExceptionsPage = lazyPage(() => import('@/pages/admin/exceptions'), 'UserExceptionsPage');
 export const AuditPage = lazyPage(() => import('@/pages/admin/audit'), 'AuditPage');
 export const ClubMembersManagementPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubMembersManagementPage');
-export const ClubMemberMeasurementsPage = lazyPage(() => import('@/pages/club/fitness/inbody'), 'FitnessInbodyPage');
-export const ClubMemberDetailsPage = lazyPage(() => import('@/pages/club/member-details'), 'ClubMemberDetailsPage');
-export const ClubMemberMembershipDocumentPage = lazyPage(() => import('@/pages/club/member-membership-document'), 'ClubMemberMembershipDocumentPage');
-export const ClubMemberAttachmentsPage = lazyPage(() => import('@/pages/club/member-attachments'), 'ClubMemberAttachmentsPage');
 export const ClubMembersAttendancePage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubMembersAttendancePage');
 export const ClubMemberFinancialPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubMemberFinancialPage');
-export const ClubReceptionPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubReceptionPage');
+export const ClubReceptionPage = lazyPage(() => import('@/pages/club/reception'), 'ClubReceptionPage');
 export const ClubReceptionQuickServicesPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubReceptionQuickServicesPage');
 export const ClubBarcodeManagementPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubBarcodeManagementPage');
-export const ClubBarcodeScanTimesPage = lazyPage(() => import('@/pages/club/barcode-scan-times'), 'ClubBarcodeScanTimesPage');
 export const ClubMemberGroupsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubMemberGroupsPage');
 export const ClubSurveysPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSurveysPage');
 export const ClubSubscriptionsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSubscriptionsListPage');
-export const OnlineSubscriptionsPage = lazyPage(() => import('@/pages/club/online-subscriptions'), 'OnlineSubscriptionsPage');
+export const ClubFreezeRequestsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubFreezeRequestsPage');
 export const ClubSubscriptionsNewPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSubscriptionsNewPage');
-export const ClubSubscriptionsSpecialPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSubscriptionsSpecialPage');
 export const ClubSubscriptionsTransfersPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSubscriptionsTransfersPage');
 export const ClubSubscriptionsRefundsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSubscriptionsRefundsPage');
 export const ClubSubscriptionsReceiptsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSubscriptionsReceiptsPage');
 export const ClubCustomerSourcesPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubCustomerSourcesPage');
 export const ClubPackageSettingsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubPackageSettingsPage');
-export const ClubBranchGroupsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubBranchGroupsPage');
 export const ClubSubscriptionsExpiredPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSubscriptionsExpiredPage');
 export const ClubSubscriptionsOutstandingPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSubscriptionsOutstandingPage');
 export const ClubTreasuryPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubTreasuryPage');
@@ -174,14 +136,11 @@ export const UnifiedTreasuryPage = lazyPage(() => import('@/pages/club/route-pag
 export const ClubMemberTransferPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubMemberTransferPage');
 export const ClubFinancialReportsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubFinancialReportsPage');
 export const ClubDiscountsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubDiscountsPage');
-export const ClubPointsDiscountsManagementPage = lazyPage(() => import('@/pages/club/points-discounts-management'), 'ClubPointsDiscountsManagementPage');
 export const ClubTimeBasedSubscriptionsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubTimeBasedSubscriptionsPage');
 export const ClubMemberFormPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubMemberFormPage');
 export const ClubLockersPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubLockersListPage');
 export const ClubLockersNewPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubLockersNewPage');
 export const ClubLockersSettingsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubLockersSettingsPage');
-export const ClubLockerInventoryPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubLockerInventoryPage');
-export const ClubLockerInventoryReportsPage = lazyPage(() => import('@/pages/club/locker-inventory-reports'), 'ClubLockerInventoryReportsPage');
 export const InventoryIndexPage = lazyPage(() => import('@/pages/inventory'), 'InventoryIndexPage');
 export const InventoryDashboardPage = lazyPage(() => import('@/pages/inventory/dashboard'), 'InventoryDashboardPage');
 export const InventorySettingsPage = lazyPage(() => import('@/pages/inventory/settings'), 'InventorySettingsPage');
@@ -190,7 +149,9 @@ export const InventoryPriceListPage = lazyPage(() => import('@/pages/inventory/p
 export const InventoryOpeningStockPage = lazyPage(() => import('@/pages/inventory/opening-stock'), 'InventoryOpeningStockPage');
 export const InventoryTransactionsPage = lazyPage(() => import('@/pages/inventory/transactions'), 'InventoryTransactionsPage');
 export const InventoryMovementLogPage = lazyPage(() => import('@/pages/inventory/movement-log'), 'InventoryMovementLogPage');
+export const InventoryStockHealthPage = lazyPage(() => import('@/pages/inventory/stock-health'), 'InventoryStockHealthPage');
 export const InventoryStockTakingPage = lazyPage(() => import('@/pages/inventory/stock-taking'), 'InventoryStockTakingPage');
+export const InventoryStockTakingWorkspacePage = lazyPage(() => import('@/pages/inventory/stock-taking-workspace'), 'InventoryStockTakingWorkspacePage');
 export const InventoryPoliciesPage = lazyPage(() => import('@/pages/inventory/policies'), 'InventoryPoliciesPage');
 export const InventoryAnalyticsPage = lazyPage(() => import('@/pages/inventory/analytics'), 'InventoryAnalyticsPage');
 export const InventoryGymIssuePage = lazyPage(() => import('@/pages/inventory/gym-issue'), 'InventoryGymIssuePage');
@@ -235,18 +196,19 @@ export const BalanceSheetPage = lazyPage(() => import('@/pages/accounting'), 'Ba
 export const CashFlowPage = lazyPage(() => import('@/pages/accounting'), 'CashFlowPage');
 export const AccountingSettingsPage = lazyPage(() => import('@/pages/accounting'), 'AccountingSettingsPage');
 export const AboutAppPage = lazyPage(() => import('@/pages/app-management'), 'AboutAppPage');
+export const AppPaymentMethodsPage = lazyPage(() => import('@/pages/app-management'), 'AppPaymentMethodsPage');
+export const AppBranchesPage = lazyPage(() => import('@/pages/app-management'), 'AppBranchesPage');
 export const SentInvitationsPage = lazyPage(() => import('@/pages/app-management'), 'SentInvitationsPage');
 export const AcceptedInvitationsPage = lazyPage(() => import('@/pages/app-management'), 'AcceptedInvitationsPage');
 export const AttendedInvitationsPage = lazyPage(() => import('@/pages/app-management'), 'AttendedInvitationsPage');
 export const RejectedInvitationsPage = lazyPage(() => import('@/pages/app-management'), 'RejectedInvitationsPage');
 export const AppOffersPage = lazyPage(() => import('@/pages/app-management'), 'AppOffersPage');
+export const MemberNotificationsPage = lazyPage(() => import('@/pages/app-management'), 'AppMemberNotificationsPage');
 export const AppTrainersPage = lazyPage(() => import('@/pages/app-management'), 'AppTrainersPage');
 export const ExerciseCategoriesPage = lazyPage(() => import('@/pages/app-management'), 'ExerciseCategoriesPage');
 export const AppExercisesPage = lazyPage(() => import('@/pages/app-management'), 'AppExercisesPage');
 export const AppNewsPage = lazyPage(() => import('@/pages/app-management'), 'AppNewsPage');
-export const AppCommunityPage = lazyPage(() => import('@/pages/app-management/community'), 'AppCommunityPage');
 export const AppAdsPage = lazyPage(() => import('@/pages/app-management'), 'AppAdsPage');
-export const PortalManagementPage = lazyPage(() => import('@/pages/portal-management'), 'PortalManagementPage');
 export const AutomationPage = lazyPage(() => import('@/pages/settings/automation'), 'AutomationPage');
 export const GymPoliciesPage = lazyPage(() => import('@/pages/settings/gym-policies'), 'GymPoliciesPage');
 export const BusinessAuditPage = lazyPage(() => import('@/pages/settings/business-audit'), 'BusinessAuditPage');
@@ -258,38 +220,37 @@ export const FitnessStrengthPage = lazyPage(() => import('@/pages/club/fitness/r
 export const FitnessProgressPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessProgressPage');
 export const FitnessAssessmentsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessAssessmentsPage');
 export const FitnessSchedulingPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessSchedulingPage');
+export const FitnessBookingBoardPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessBookingBoardPage');
 export const FitnessClassesPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessClassesListPage');
 export const FitnessClassBookingPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessClassBookingPage');
 export const FitnessRoomBookingsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessRoomBookingsPage');
 export const FitnessPersonalSessionsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessPersonalSessionsPage');
 export const FitnessTrainersPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainersPage');
+export const FitnessTrainersAdminPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainersAdminPage');
 export const FitnessTrainerPaymentsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerPaymentsPage');
+export const FitnessTrainerPerformancePage = lazyPage(() => import('@/pages/club/fitness/trainers/performance'), 'FitnessTrainerPerformancePage');
+export const FitnessTrainerProfilePage = lazyPage(() => import('@/pages/club/fitness/trainers/profile'), 'FitnessTrainerProfilePage');
 export const FitnessTrainerSearchPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerSearchPage');
 export const FitnessTrainerRatingsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerRatingsPage');
 export const FitnessTrainerSettingsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerSettingsPage');
-export const FitnessTrainerTargetsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerTargetsPage');
-export const FitnessTrainerEvaluationsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerEvaluationsPage');
-export const FitnessTrainerEvaluationCriteriaPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerEvaluationCriteriaPage');
-export const FitnessBranchAnalysisPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessBranchAnalysisPage');
-export const FitnessReceptionAnalysisPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessReceptionAnalysisPage');
-export const FitnessShiftAnalysisPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessShiftAnalysisPage');
 export const FitnessFacilitiesPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessFacilitiesPage');
 export const FitnessEquipmentPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessEquipmentPage');
 export const FitnessMaintenancePage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessMaintenancePage');
 export const FitnessSpaServicesPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessSpaServicesPage');
 export const FitnessSpaBookingsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessSpaBookingsPage');
 export const FitnessSpaInvoicesPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessSpaInvoicesPage');
-export const FitnessBarcodeCheckInPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessBarcodeCheckInPage');
-export const FitnessSpaAttendancePage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessSpaAttendancePage');
-export const FitnessClassAttendancePage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessClassAttendancePage');
-export const FitnessInbodyInvoicesPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessInbodyInvoicesPage');
+export const FitnessInbodyPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessInbodyPage');
 export const FitnessFacilitySettingsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessFacilitySettingsPage');
 export const ClubEventsPage = lazyPage(() => import('@/pages/club/events/route-pages'), 'EventsBoard');
+export const GateAccessPage = lazyPage(() => import('@/pages/club/gate-access'), 'GateAccessPage');
 export const CafeProductsPage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafeProductsPage');
+export const CafeBundlesPage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafeBundlesPage');
 export const CafeCategoriesPage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafeCategoriesPage');
 export const CafePosPage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafePosPage');
 export const CafeRawMaterialsPage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafeRawMaterialsPage');
 export const CafeReportsPage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafeReportsPage');
+export const CafeWastePage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafeWastePage');
+export const CafeCustomersPage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafeCustomersPage');
 export const CafeItemFeedbackReportPage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafeItemFeedbackReportPage');
 export const CafePurchasesPage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafePurchasesPage');
 export const CafeSuppliersPage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafeSuppliersPage');
@@ -304,3 +265,7 @@ export const ClubEventLiveGuestPage = lazyPage(() => import('@/pages/club/events
 export const ClubEventLiveKioskRedirectPage = lazyPage(() => import('@/pages/club/events/route-pages'), 'EventLiveKioskRedirect');
 export const ClubEventLiveProgramPage = lazyPage(() => import('@/pages/club/events/route-pages'), 'EventLiveProgram');
 export const ClubEventLiveSettingsPage = lazyPage(() => import('@/pages/club/events/route-pages'), 'EventLiveSettings');
+
+export const CafeDashboardPage = lazyPage(() => import('@/pages/cafe-dashboard'), 'CafeDashboardPage');
+export const FinancePayrollPreparationPage = lazyPage(() => import('@/pages/finance/payroll/preparation'), 'FinancePayrollPreparationPage');
+export const FinancePayrollApprovalPage = lazyPage(() => import('@/pages/finance/payroll/approval'), 'FinancePayrollApprovalPage');

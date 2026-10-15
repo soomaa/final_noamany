@@ -1,86 +1,119 @@
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { ClubAttendanceStatus, Prisma } from '@prisma/client';
+import { PrismaService } from '../../common/prisma/prisma.service';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { paginated } from '../../common/dto/list-result';
+import { JwtUser } from '../../common/types/jwt-user';
+import { isCloser, pickNearestSlot, slotProximity } from './nearest-class-slot';
+import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
+import { BusinessAuditService } from '../gym-ops/business-audit.service';
+import { EntitlementService } from '../gym-ops/entitlement.service';
+import { AutomationEngineService } from '../gym-ops/automation-engine.service';
+import { WebhookService } from '../webhooks/webhook.service';
+import { localDateString } from './club-member.utils';
 import {
-  BadRequestException,
-  ForbiddenException,
-  Inject,
-  Injectable,
-  NotFoundException,
-} from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import { PrismaService } from "../../common/prisma/prisma.service";
-import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
+  assignLegacyAttendanceToSubscriptions,
+  buildMemberProfileSummary,
+} from './club-member-profile-summary';
+import { CheckInDto, CheckOutDto } from './dto/check-in.dto';
+import { ListClubAttendanceDto } from './dto/list-club-attendance.dto';
+import { SubscriptionUtilizationDto } from './dto/subscription-utilization.dto';
+import { ClubLockersService } from '../club-lockers/club-lockers.service';
+import { ClubMembersService } from './club-members.service';
+import { recordPrivateAttendanceCommission } from '../club-subscriptions/private-attendance.util';
 import {
-  ClubBranchGroupReader,
-  ClubBranchGroupService,
-} from "../../common/branch-groups/club-branch-group.service";
-import { paginated } from "../../common/dto/list-result";
-import { JwtUser } from "../../common/types/jwt-user";
-import { PermissionEngineService } from "../rbac/engine/permission-engine.service";
-import { BusinessAuditService } from "../gym-ops/business-audit.service";
-import { EntitlementService } from "../gym-ops/entitlement.service";
-import { AutomationEngineService } from "../gym-ops/automation-engine.service";
-import { WebhookService } from "../webhooks/webhook.service";
-import { localDateString } from "./club-member.utils";
-import { CheckInDto, CheckOutDto, ServiceCheckInDto } from "./dto/check-in.dto";
-import { ListClubAttendanceDto } from "./dto/list-club-attendance.dto";
-import { BarcodeScanTimesDto } from "./dto/barcode-scan-times.dto";
-import { ClubMembersService } from "./club-members.service";
-import { ClubPointsService } from '../club-points/club-points.service';
-import { recordPrivateAttendanceCommission } from "../club-subscriptions/private-attendance.util";
-import {
-  daysBetween,
-  deriveSessionAwareStatus,
-  deriveSubStatus,
-  toNum,
-} from "../club-subscriptions/club-subscription.utils";
-import { clubMemberIdentityBranchIds, expandClubReportBranchIds, shareClubMemberIdentity } from "./club-branch-groups";
+  ClubSubscriptionLifecycleService,
+  RenewalPromotionResult,
+} from '../club-subscriptions/club-subscription-lifecycle.service';
 
-const EGYPT_TIME_ZONE = "Africa/Cairo";
+const EGYPT_TIME_ZONE = 'Africa/Cairo';
+
+/** Repeat presses of check-in inside this window are treated as the same arrival. */
+const CHECK_IN_COOLDOWN_MS = 2 * 60 * 1000;
+
+/**
+ * A visit nobody closed is capped at this length rather than running until the
+ * hourly sweep notices it, which used to stamp 8–16 hour visits onto the record.
+ */
+const AUTO_CHECKOUT_CAP_MINUTES = 120;
+
+function rateBucket(rate: number): 'high' | 'medium' | 'low' {
+  if (rate >= 75) return 'high';
+  if (rate >= 40) return 'medium';
+  return 'low';
+}
+
+/**
+ * How far from a scheduled class a walk-in still counts as being here for it. Wider than a
+ * class window so arriving early or leaving late still lands on the right class, narrow enough
+ * that a morning visit is never booked into an evening class.
+ */
+const CLASS_MATCH_WINDOW_MINUTES = 120;
+
+/** Everything the reception screen needs to render the class chip. */
+const SPECIAL_CLASS_INCLUDE = {
+  trainer: { select: { id: true, name: true, color: true } },
+  hall: { select: { name: true } },
+  class_type: { select: { id: true, name: true, color: true } },
+} as const;
 
 function cairoDateTime(at = new Date()) {
-  const parts = new Intl.DateTimeFormat("en-GB", {
+  const parts = new Intl.DateTimeFormat('en-GB', {
     timeZone: EGYPT_TIME_ZONE,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
     hour12: false,
   }).formatToParts(at);
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((item) => item.type === type)?.value ?? "";
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find((item) => item.type === type)?.value ?? '';
   return {
-    date: `${part("year")}-${part("month")}-${part("day")}`,
-    time: `${part("hour")}:${part("minute")}:${part("second")}`,
+    date: `${part('year')}-${part('month')}-${part('day')}`,
+    time: `${part('hour')}:${part('minute')}:${part('second')}`,
   };
-}
-
-/** Convert a local Cairo clock minute to UTC, including Egypt's seasonal offset. */
-function cairoMinuteToUtc(date: string, time: string): Date {
-  const [year, month, day] = date.split('-').map(Number);
-  const [hour, minute] = time.split(':').map(Number);
-  const target = Date.UTC(year, month - 1, day, hour, minute);
-  const formatter = new Intl.DateTimeFormat('en-GB', {
-    timeZone: EGYPT_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
-    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
-  });
-  let utc = target - 2 * 60 * 60 * 1000;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const parts = formatter.formatToParts(new Date(utc));
-    const part = (type: Intl.DateTimeFormatPartTypes) => Number(parts.find((item) => item.type === type)?.value);
-    const actual = Date.UTC(part('year'), part('month') - 1, part('day'), part('hour'), part('minute'));
-    utc += target - actual;
-  }
-  return new Date(utc);
-}
-
-function validIsoDay(value: string): boolean {
-  const day = new Date(`${value}T00:00:00Z`);
-  return !Number.isNaN(day.getTime()) && day.toISOString().slice(0, 10) === value;
 }
 
 @Injectable()
 export class ClubAttendanceService {
+  private readonly entryAlertLog = new Logger(ClubAttendanceService.name);
+
+  async reportEntryAlert(input: { memberId: number; branchId: number; message: string; severity: 'block' | 'warn'; source: 'gate' | 'reception' }) {
+    try {
+      // Persist once per member/reason in the repeat-scan window; this keeps reception readable.
+      const recent = await this.prisma.club_entry_alerts.findFirst({
+        where: { member_id: input.memberId, branch_id: input.branchId, message: input.message,
+          created_at: { gte: new Date(Date.now() - 120_000) } }, select: { id: true },
+      });
+      if (!recent) await this.prisma.club_entry_alerts.create({ data: {
+        member_id: input.memberId, branch_id: input.branchId, message: input.message,
+        severity: input.severity, source: input.source,
+      } });
+    } catch (error) {
+      // Notification storage cannot turn a business refusal into a gate/server error.
+      this.entryAlertLog.error('Could not persist reception entry alert', error instanceof Error ? error.stack : undefined);
+    }
+  }
+
+  async listEntryAlerts(user: JwtUser, branchId?: string) {
+    const branches = this.attendanceBranchIds(user, branchId);
+    const rows = await this.prisma.club_entry_alerts.findMany({
+      where: { ...(branches ? { branch_id: { in: branches } } : {}),
+        created_at: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) } },
+      orderBy: { id: 'desc' }, take: 10,
+    });
+    const members = await this.prisma.club_members.findMany({
+      where: { id: { in: [...new Set(rows.map((r) => r.member_id))] }, is_deleted: false },
+      select: { id: true, name: true, member_code: true },
+    });
+    const byId = new Map(members.map((m) => [m.id, m]));
+    return rows.map((row) => ({ id: row.id, memberId: row.member_id,
+      memberName: byId.get(row.member_id)?.name ?? 'عضو محذوف',
+      memberCode: byId.get(row.member_id)?.member_code ?? '—',
+      message: row.message, severity: row.severity, source: row.source, createdAt: row.created_at }));
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly members: ClubMembersService,
@@ -90,33 +123,25 @@ export class ClubAttendanceService {
     private readonly webhooks: WebhookService,
     private readonly permissions: PermissionEngineService,
     private readonly branchScope: BranchScopeService,
-    @Inject(ClubBranchGroupService)
-    private readonly branchGroups: Pick<
-      ClubBranchGroupReader,
-      "siblingBranchIds"
-    > = {
-      siblingBranchIds: async (branchId) => [branchId],
-    },
-    private readonly points?: ClubPointsService,
+    @Optional() private readonly lifecycle?: ClubSubscriptionLifecycleService,
+    @Optional() private readonly lockers?: ClubLockersService,
   ) {}
 
   /**
-   * Attendance reads preserve their legacy report scope. Check-ins are allowed only at the
-   * operator's own branch or a configured active sibling branch in the same club group.
+   * Attendance is a reception operation, so non-admin accounts are intentionally stricter than
+   * generic reporting fan-out: they operate on their own login branch only. System admins may
+   * select one branch or view all branches.
    */
   private attendanceBranchIds(
     user?: JwtUser,
     requested?: string | number | null,
   ): number[] | null {
-    if (!user) return [];
-    if (user.level === 1 || user.is_super_admin)
-      return expandClubReportBranchIds(
-        this.branchScope.resolveListFilter(user, requested ?? null),
-      );
+    if (!user) return null;
+    if (user.level === 1) return this.branchScope.resolveListFilter(user, requested ?? null);
     const ownBranchId = Number(user.branch ?? 0);
     if (!ownBranchId) return [];
     const requestedNumber =
-      requested == null || requested === "" || requested === "all"
+      requested == null || requested === '' || requested === 'all'
         ? null
         : Number(requested);
     if (
@@ -124,286 +149,25 @@ export class ClubAttendanceService {
       Number.isFinite(requestedNumber) &&
       requestedNumber !== ownBranchId
     ) {
-      throw new ForbiddenException("لا تملك صلاحية الوصول لحضور فرع آخر");
+      throw new ForbiddenException('لا تملك صلاحية الوصول لحضور فرع آخر');
     }
-    return expandClubReportBranchIds([ownBranchId]);
-  }
-
-  private async canOperateAttendanceBranch(
-    user: JwtUser | undefined,
-    branchId: number,
-  ): Promise<boolean> {
-    if (!user) return false;
-    if (user.level === 1) return true;
-    const operatorBranchId = Number(user.branch ?? 0);
-    if (!Number.isInteger(operatorBranchId) || operatorBranchId <= 0) return false;
-    const target = Number(branchId);
-    if (operatorBranchId === target) return true;
-    // Bidirectional check: group data is supposed to be symmetric, but if only one
-    // side has a membership row (or the operator row is missing) the single-direction
-    // lookup fails closed even though the branches share a group. Accept either direction.
-    const [operatorSiblings, targetSiblings] = await Promise.all([
-      this.branchGroups.siblingBranchIds(operatorBranchId),
-      this.branchGroups.siblingBranchIds(target),
-    ]);
-    return (
-      (operatorSiblings.includes(operatorBranchId) && operatorSiblings.includes(target)) ||
-      (targetSiblings.includes(target) && targetSiblings.includes(operatorBranchId))
-    );
+    return [ownBranchId];
   }
 
   /**
-   * Expand a verified shared group or the built-in Tanta member identity.
-   * Unrelated singleton/group lists must never be unioned: that would allow
-   * every member's home branch through.
+   * The branch a typed / scanned code is looked up in: the desk's explicit branch, otherwise a
+   * branch employee's own login branch. Only a system admin without a branch searches every
+   * branch (and gets an error, not a guess, when the code matches members in several).
    */
-  private async compatibleAttendanceBranches(
-    firstBranchId: number,
-    secondBranchId: number,
-  ): Promise<number[]> {
-    const [a, b] = await Promise.all([
-      this.branchGroups.siblingBranchIds(firstBranchId),
-      this.branchGroups.siblingBranchIds(secondBranchId),
-    ]);
-    const sharesGroup = firstBranchId === secondBranchId ||
-      (a.includes(firstBranchId) && a.includes(secondBranchId)) ||
-      (b.includes(secondBranchId) && b.includes(firstBranchId));
-    const sharesMemberIdentity = shareClubMemberIdentity(firstBranchId, secondBranchId);
-    if (!sharesGroup && !sharesMemberIdentity) return [firstBranchId];
-    const compatible = sharesGroup ? a.concat(b) : [];
-    if (sharesMemberIdentity) compatible.push(...clubMemberIdentityBranchIds(firstBranchId));
-    return Array.from(new Set(compatible)).sort((x, y) => x - y);
+  private lookupBranchId(user: JwtUser | undefined, requested?: number | null): number | undefined {
+    if (requested != null) return requested;
+    if (!user || user.level === 1) return undefined;
+    return Number(user.branch ?? 0) || undefined;
   }
 
-  /**
-   * Attendance-desk lookup: resolve a member by code/card and return everything the operator
-   * needs to verify before check-in — identity + photo, the latest subscriptions with their
-   * status/freeze, current suspension days, and active locker rentals. Guarded by the same
-   * attendance read permissions as the rest of the controller so reception staff without a
-   * subscription/locker grant can still use the desk.
-   */
-  async memberOverview(code: string, user?: JwtUser, memberId?: string) {
-    const normalized = (code ?? "").trim();
-    const id = memberId === undefined ? null : Number(memberId);
-    if (id !== null && (!Number.isInteger(id) || id <= 0)) throw new BadRequestException("كود العضو غير صالح");
-    if (id === null && !normalized) throw new BadRequestException("أدخل كود العضو");
-
-    const member = await this.prisma.club_members.findFirst({
-      where: {
-        is_deleted: false,
-        ...(id !== null ? { id } : { OR: [{ member_code: normalized }, { card_number: normalized }] }),
-      },
-      include: { membership_type: { select: { id: true, name: true, price: true, duration_days: true } } },
-    });
-    if (!member) throw new NotFoundException("لا يوجد عضو بهذا الكود");
-
-    const deskBranchId = Number(user?.branch ?? 0);
-    const scope =
-      deskBranchId > 0
-        ? await this.compatibleAttendanceBranches(deskBranchId, member.branch_id)
-        : expandClubReportBranchIds(this.branchScope.resolveListFilter(user, null));
-    if (scope !== null && !scope.includes(member.branch_id)) {
-      throw new ForbiddenException("لا تملك صلاحية الوصول لعضو في فرع آخر");
-    }
-    if (!this.branchScope.isMemberGenderAllowed(user, member.gender)) {
-      throw new ForbiddenException("لا تملك صلاحية الوصول لبيانات هذا القسم");
-    }
-
-    const [subs, freezes, lockerSubs, lastAttendance, subscriptionCount, lockerSubscriptionCount, receipts, attendance, points] =
-      await Promise.all([
-        this.prisma.club_subscriptions.findMany({
-          where: { member_id: member.id },
-          orderBy: [{ registration_date: "desc" }, { id: "desc" }],
-          include: {
-            freezes: {
-              where: { is_active: true },
-              orderBy: { id: "desc" },
-              take: 1,
-            },
-            type: {
-              select: { name: true, includes_spa: true, spa_count: true, inbody_count: true },
-            },
-          },
-        }),
-        this.prisma.club_subscription_freezes.findMany({
-          where: { subscription: { member_id: member.id } },
-          orderBy: { id: "desc" },
-          include: {
-            subscription: {
-              select: {
-                id: true,
-                subscription_number: true,
-                subscription_type: true,
-              },
-            },
-          },
-        }),
-        this.prisma.club_locker_subscriptions.findMany({
-          where: { member_id: member.id },
-          orderBy: { id: "desc" },
-          include: { locker: true, type: true },
-        }),
-        this.prisma.club_attendance.findFirst({
-          where: { member_id: member.id },
-          orderBy: { id: "desc" },
-          select: { check_in_time: true, attendance_date: true },
-        }),
-        this.prisma.club_subscriptions.count({ where: { member_id: member.id } }),
-        this.prisma.club_locker_subscriptions.count({ where: { member_id: member.id } }),
-        this.prisma.club_receipts.findMany({
-          where: { OR: [{ member_id: member.id }, { subscription: { member_id: member.id } }, { locker_subscription: { member_id: member.id } }] },
-          orderBy: [{ receipt_date: "desc" }, { id: "desc" }], take: 10,
-          select: { id: true, receipt_number: true, receipt_date: true, amount: true, status: true, description: true },
-        }),
-        this.prisma.club_attendance.findMany({
-          where: { member_id: member.id }, orderBy: [{ check_in_time: "desc" }, { id: "desc" }], take: 10,
-          select: { id: true, check_in_time: true, check_out_time: true, subscription_type: true, attendance_type: true, notes: true },
-        }),
-        this.points ? this.points.history(member.id) : null,
-      ]);
-
-    const activeFreezes = freezes.filter((f) => f.is_active);
-    const suspendedDays = activeFreezes.reduce(
-      (sum, f) => sum + (f.actual_days ?? f.planned_days ?? 0),
-      0,
-    );
-    const todayStr = localDateString();
-
-    return {
-      member: {
-        id: member.id,
-        memberCode: member.member_code,
-        name: member.name,
-        phone: member.phone,
-        email: member.email,
-        gender: member.gender,
-        cardNumber: member.card_number,
-        dateOfBirth: member.date_of_birth,
-        address: member.address,
-        maritalStatus: member.marital_status,
-        jobTitle: member.job_title,
-        profilePicture: member.profile_picture,
-        notes: member.notes,
-        branchId: member.branch_id,
-        membershipTypeId: member.membership_type_id,
-        membershipType: member.membership_type ? {
-          id: member.membership_type.id,
-          name: member.membership_type.name,
-          price: toNum(member.membership_type.price),
-          durationDays: member.membership_type.duration_days,
-        } : null,
-        startDate: member.start_date,
-        endDate: member.end_date,
-        isActive: member.is_active,
-        salesId: member.sales_id,
-        employeeId: member.employee_id,
-        guardianName: member.guardian_name,
-        guardianPhone: member.guardian_phone,
-        isBlocked: member.is_blocked,
-        blockReason: member.block_reason,
-        blockedAt: member.blocked_at,
-        blockedBy: member.blocked_by,
-        createdAt: member.created_at,
-        updatedAt: member.updated_at,
-        lastCheckIn: lastAttendance?.check_in_time ?? null,
-      },
-      subscriptionCount,
-      lockerSubscriptionCount,
-      suspendedDays,
-      frozenCount: activeFreezes.length,
-      points,
-      recentReceipts: receipts.map((r) => ({ id: r.id, receiptNumber: r.receipt_number, date: r.receipt_date, amount: toNum(r.amount), status: r.status, description: r.description })),
-      recentAttendance: attendance.map((a) => ({ id: a.id, checkIn: a.check_in_time, checkOut: a.check_out_time, subscriptionType: a.subscription_type, type: a.attendance_type, notes: a.notes })),
-      freezes: freezes.map((f) => ({
-        subscriptionId: f.subscription_id,
-        subscriptionNumber: f.subscription?.subscription_number ?? null,
-        subscriptionType:
-          f.subscription?.subscription_type ?? null,
-        startDate: f.freeze_start_date,
-        endDate: f.freeze_end_date,
-        plannedDays: f.planned_days,
-        actualDays: f.actual_days,
-        isActive: f.is_active,
-        reason: f.reason,
-      })),
-      subscriptions: subs.map((s) => {
-        const status =
-          s.status === "frozen"
-            ? "frozen"
-            : deriveSessionAwareStatus({
-                startDate: s.subscription_start_date,
-                endDate: s.subscription_end_date,
-                isLinkedToSessions: s.is_linked_to_sessions,
-                sessionsCount: s.sessions_count,
-                sessionsUsed: s.sessions_used,
-              });
-        const freeze = s.freezes[0];
-        const spaUsed = s.spa_used ?? 0;
-        const inbodyUsed = s.inbody_used ?? 0;
-        let daysRemaining: number | null = null;
-        let daysOverdue: number | null = null;
-        let daysUntilStart: number | null = null;
-        if (status === "active") {
-          daysRemaining = Math.max(0, daysBetween(todayStr, s.subscription_end_date));
-        } else if (status === "expired") {
-          daysOverdue = Math.max(0, daysBetween(s.subscription_end_date, todayStr));
-        } else if (status === "upcoming") {
-          daysUntilStart = Math.max(0, daysBetween(todayStr, s.subscription_start_date));
-        }
-        return {
-          id: s.id,
-          subscriptionNumber: s.subscription_number,
-          subscriptionType: s.subscription_type,
-          subscriptionTypeName: s.type?.name ?? s.subscription_type,
-          branchId: s.branch_id,
-          startDate: s.subscription_start_date,
-          endDate: s.subscription_end_date,
-          status,
-          isLinkedToSessions: s.is_linked_to_sessions,
-          sessionsCount: s.sessions_count,
-          sessionsUsed: s.sessions_used,
-          isLinkedToSpa:
-            (s.type?.includes_spa ?? false) ||
-            (s.type?.spa_count ?? 0) > 0 ||
-            spaUsed > 0,
-          spaCount: s.type?.spa_count ?? null,
-          spaUsed,
-          inbodyCount: s.type?.inbody_count ?? null,
-          inbodyUsed,
-          daysRemaining,
-          daysOverdue,
-          daysUntilStart,
-          paidAmount: toNum(s.paid_amount),
-          remainingAmount: toNum(s.remaining_amount),
-          activeFreeze: freeze
-            ? {
-                startDate: freeze.freeze_start_date,
-                plannedEndDate: freeze.freeze_end_date,
-                plannedDays: freeze.planned_days,
-                actualDays: freeze.actual_days,
-                reason: freeze.reason,
-              }
-            : null,
-        };
-      }).sort((a, b) => Number(b.status === 'active') - Number(a.status === 'active')).slice(0, 10),
-      lockerSubscriptions: lockerSubs.map((s) => ({
-        id: s.id,
-        subscriptionNumber: s.subscription_number,
-        branchId: s.sub_branch_id ?? s.locker?.sub_branch_id ?? s.main_branch_id,
-        lockerNumber: s.locker?.locker_number ?? null,
-        subscriptionTypeName: s.type?.name ?? null,
-        startDate: s.subscription_start_date,
-        endDate: s.subscription_end_date,
-        status: deriveSubStatus(s.subscription_start_date, s.subscription_end_date),
-        paidAmount: toNum(s.paid_amount),
-        remainingAmount: Math.max(
-          0,
-          toNum(s.subscription_value) -
-            (s.discount_enabled ? toNum(s.discount_value) : 0) -
-            toNum(s.paid_amount),
-        ),
-      })),
-    };
+  private canOperateAttendanceBranch(user: JwtUser | undefined, branchId: number): boolean {
+    if (!user || user.level === 1) return true;
+    return Number(user.branch ?? 0) === Number(branchId);
   }
 
   private mapRow(row: {
@@ -417,12 +181,12 @@ export class ClubAttendanceService {
     check_in_time: Date;
     check_out_time: Date | null;
     attendance_date: string;
-    attendance_type?: string;
     status: string;
     duration: number | null;
     notes: string | null;
     is_grace_session?: boolean;
     override_reason?: string | null;
+    pending_subscription_choice?: boolean;
     created_by: number | null;
     created_at: Date;
   }) {
@@ -437,11 +201,11 @@ export class ClubAttendanceService {
       checkInTime: row.check_in_time,
       checkOutTime: row.check_out_time,
       attendanceDate: row.attendance_date,
-      attendanceType: row.attendance_type ?? 'normal',
       status: row.status,
       duration: row.duration,
       notes: row.notes,
       isGraceSession: row.is_grace_session ?? false,
+      pendingSubscriptionChoice: row.pending_subscription_choice ?? false,
       overrideReason: row.override_reason ?? null,
       createdBy: row.created_by,
       createdAt: row.created_at,
@@ -449,53 +213,33 @@ export class ClubAttendanceService {
   }
 
   /**
-   * Special subscriptions are configured as weekly trainer slots. Materialize the
-   * current slot on demand so reception attendance does not depend on somebody
-   * manually generating the week from the scheduling screen first.
+   * Special subscriptions are configured as weekly trainer slots. Materialize the slot the
+   * member is here for so reception attendance does not depend on somebody manually
+   * generating the week from the scheduling screen first. A member who arrives early or a
+   * little late still gets the class they came for — the nearest one on the day wins.
    */
-  private async materializeCurrentSpecialClass(
-    classTypeId: number,
-    branchId: number,
-    date: string,
-    time: string,
-  ) {
-    const weekday = new Date(`${date}T12:00:00Z`).getUTCDay();
-    const slot = await this.prisma.club_trainer_schedule_slots.findFirst({
+  private weeklySlotsFor(classTypeId: number, branchId: number, date: string) {
+    return this.prisma.club_trainer_schedule_slots.findMany({
       where: {
         class_type_id: classTypeId,
         branch_id: branchId,
-        weekday,
-        start_time: { lte: time },
-        end_time: { gte: time },
+        weekday: new Date(`${date}T12:00:00Z`).getUTCDay(),
         is_active: true,
+        trainer: { is_active: true, is_deleted: false },
+        class_type: { is_active: true, is_deleted: false },
       },
-      include: {
-        trainer: {
-          select: { id: true, name: true, is_active: true, is_deleted: true },
-        },
-        hall: { select: { name: true } },
-        class_type: {
-          select: {
-            id: true,
-            name: true,
-            single_session_price: true,
-            is_active: true,
-            is_deleted: true,
-          },
-        },
-      },
-      orderBy: [{ start_time: "desc" }, { id: "asc" }],
+      include: { class_type: { select: { name: true, single_session_price: true } } },
+      orderBy: [{ start_time: 'asc' }, { id: 'asc' }],
     });
-    if (
-      !slot ||
-      !slot.trainer.is_active ||
-      slot.trainer.is_deleted ||
-      !slot.class_type.is_active ||
-      slot.class_type.is_deleted
-    ) {
-      return null;
-    }
+  }
 
+  private async materializeSlotClass(
+    slot: Prisma.club_trainer_schedule_slotsGetPayload<{
+      include: { class_type: { select: { name: true; single_session_price: true } } };
+    }>,
+    classTypeId: number,
+    date: string,
+  ) {
     return this.prisma.$transaction(async (tx) => {
       const lockKey = `special_cls_${slot.id}_${date}`;
       await tx.$queryRaw`SELECT GET_LOCK(${lockKey}, 10)`;
@@ -507,11 +251,8 @@ export class ClubAttendanceService {
             class_date: date,
             is_deleted: false,
           },
-          include: {
-            trainer: { select: { id: true, name: true } },
-            hall: { select: { name: true } },
-          },
-          orderBy: { id: "asc" },
+          include: SPECIAL_CLASS_INCLUDE,
+          orderBy: { id: 'asc' },
         });
         if (existing) return existing;
 
@@ -528,12 +269,10 @@ export class ClubAttendanceService {
             end_time: slot.end_time,
             max_capacity: slot.max_capacity,
             price: slot.class_type.single_session_price,
-            status: "scheduled",
+            status: 'scheduled',
+            audience: slot.audience,
           },
-          include: {
-            trainer: { select: { id: true, name: true } },
-            hall: { select: { name: true } },
-          },
+          include: SPECIAL_CLASS_INCLUDE,
         });
       } finally {
         await tx.$queryRaw`SELECT RELEASE_LOCK(${lockKey})`;
@@ -541,153 +280,563 @@ export class ClubAttendanceService {
     });
   }
 
-  async checkInService(dto: ServiceCheckInDto, user: JwtUser) {
-    const required = dto.attendanceType === 'class'
-      ? ['club.fitness:update', 'club.subscriptions.special:update', 'club.members.attendance:create', 'club.reception:create']
-      : ['club.fitness:create', 'club.members.attendance:create', 'club.reception:create'];
-    if (!(await this.permissions.canAny(user.sub, required))) {
-      throw new ForbiddenException('لا تملك صلاحية تسجيل حضور هذه الخدمة');
+  /**
+   * The class a scheduled-class subscription is being used for right now. Candidates are the
+   * day's already-created classes plus the weekly slots nobody has materialized yet; the
+   * nearest of the two wins, so an early or slightly late walk-in still lands on the right one.
+   */
+  private async resolveSpecialClass(classTypeId: number, branchId: number, date: string, time: string) {
+    const [sameDay, slots] = await Promise.all([
+      this.prisma.club_classes.findMany({
+        where: {
+          class_type_id: classTypeId,
+          branch_id: branchId,
+          class_date: date,
+          status: { not: 'cancelled' },
+          is_active: true,
+          is_deleted: false,
+        },
+        include: SPECIAL_CLASS_INCLUDE,
+      }),
+      this.weeklySlotsFor(classTypeId, branchId, date),
+    ]);
+    const nearestClass = pickNearestSlot(
+      sameDay.map((row) => ({ row, startTime: row.start_time, endTime: row.end_time })),
+      time,
+      CLASS_MATCH_WINDOW_MINUTES,
+    );
+    const materialized = new Set(sameDay.map((row) => row.trainer_schedule_slot_id).filter(Boolean));
+    const nearestSlot = pickNearestSlot(
+      slots
+        .filter((row) => !materialized.has(row.id))
+        .map((row) => ({ row, startTime: row.start_time, endTime: row.end_time })),
+      time,
+      CLASS_MATCH_WINDOW_MINUTES,
+    );
+    if (nearestClass && (!nearestSlot || !isCloser(nearestSlot, nearestClass))) return nearestClass.row;
+    if (nearestSlot) return this.materializeSlotClass(nearestSlot.row, classTypeId, date);
+    return null;
+  }
+
+  /**
+   * Reception preview: which scheduled class this member is about to be checked into, who is
+   * taking it, and which captains may take it instead. Materializes the class so the captain
+   * can be swapped before anybody is checked in.
+   */
+  async nextScheduledClass(
+    query: { memberId?: number; memberCode?: string; subscriptionId?: number; branchId?: number },
+    user?: JwtUser,
+    occurredAt?: Date,
+  ) {
+    const member = await this.members.resolveByIdOrCode(
+      query.memberId,
+      query.memberCode,
+      this.lookupBranchId(user, query.branchId),
+    );
+    const branchId = query.branchId ?? member.branch_id;
+    if (!this.canOperateAttendanceBranch(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية عرض حضور هذا الفرع');
     }
-    if (dto.attendanceType === 'class') {
-      const sub = await this.prisma.club_subscriptions.findUnique({ where: { id: dto.subscriptionId } });
-      if (!sub || sub.member_id !== dto.memberId || !sub.is_linked_to_sessions) {
-        throw new BadRequestException('الاشتراك غير مرتبط بحصص لهذا العضو');
-      }
-      return this.checkIn({ ...dto, attendanceType: 'class', consumeSession: true }, user);
+    const entitlement = await this.entitlement.validate({
+      memberId: member.id,
+      branchId,
+      subscriptionId: query.subscriptionId,
+      at: occurredAt,
+    });
+    const classTypeId = entitlement.activeSubscription?.specialClassTypeId ?? null;
+    if (!classTypeId) return { classTypeId: null, class: null, eligibleTrainers: [] };
+
+    const localNow = cairoDateTime(occurredAt ?? new Date());
+    const [specialClass, eligibleTrainers] = await Promise.all([
+      this.resolveSpecialClass(classTypeId, branchId, localNow.date, localNow.time),
+      this.prisma.club_class_type_trainers.findMany({
+        where: { class_type_id: classTypeId, trainer: { is_active: true, is_deleted: false } },
+        select: { trainer: { select: { id: true, name: true, color: true } } },
+        orderBy: { trainer_id: 'asc' },
+      }),
+    ]);
+    return {
+      classTypeId,
+      class: specialClass ? this.mapSpecialClass(specialClass, localNow.time) : null,
+      eligibleTrainers: eligibleTrainers.map((row) => row.trainer),
+    };
+  }
+
+  private mapSpecialClass(
+    row: Prisma.club_classesGetPayload<{ include: typeof SPECIAL_CLASS_INCLUDE }>,
+    now?: string,
+  ) {
+    return {
+      classId: row.id,
+      className: row.class_name,
+      classColor: row.class_type?.color ?? null,
+      trainerId: row.trainer.id,
+      trainerName: row.trainer.name,
+      trainerColor: row.trainer.color ?? null,
+      hallName: row.hall?.name ?? null,
+      startTime: row.start_time,
+      endTime: row.end_time,
+      position: now ? slotProximity({ startTime: row.start_time, endTime: row.end_time }, now).position : null,
+    };
+  }
+
+  /**
+   * Swap the captain on a materialized class — someone covered the shift. The class row owns
+   * the trainer, so this also moves the class commission to whoever actually taught it.
+   */
+  async setScheduledClassTrainer(classId: number, trainerId: number, user?: JwtUser) {
+    const cls = await this.prisma.club_classes.findFirst({
+      where: { id: classId, is_deleted: false },
+      include: SPECIAL_CLASS_INCLUDE,
+    });
+    if (!cls) throw new NotFoundException('الحصة غير موجودة');
+    return this.mapSpecialClass(await this.reassignClassTrainer(cls, trainerId, user));
+  }
+
+  private async reassignClassTrainer(
+    cls: Prisma.club_classesGetPayload<{ include: typeof SPECIAL_CLASS_INCLUDE }>,
+    trainerId: number,
+    user?: JwtUser,
+  ) {
+    if (!this.canOperateAttendanceBranch(user, cls.branch_id)) {
+      throw new ForbiddenException('لا تملك صلاحية تعديل حصة في هذا الفرع');
     }
-    const member = await this.members.resolveByIdOrCode(dto.memberId, undefined);
-    const branchId = Number(user.branch || member.branch_id);
-    if (!(await this.canOperateAttendanceBranch(user, branchId))) {
-      throw new ForbiddenException('لا تملك صلاحية تسجيل حضور في هذا الفرع');
+    if (cls.trainer_id === trainerId) return cls;
+    const trainer = await this.prisma.club_trainers.findFirst({
+      where: { id: trainerId, is_active: true, is_deleted: false },
+      select: { id: true, name: true },
+    });
+    if (!trainer) throw new BadRequestException('المدرب غير موجود أو غير مفعّل');
+
+    const updated = await this.prisma.club_classes.update({
+      where: { id: cls.id },
+      data: { trainer_id: trainerId },
+      include: SPECIAL_CLASS_INCLUDE,
+    });
+    await this.audit.log({
+      entityType: 'club_class',
+      entityId: cls.id,
+      action: 'class_trainer_reassigned',
+      actorUserId: user?.sub,
+      actorName: user?.name ?? undefined,
+      branchId: cls.branch_id,
+      before: { trainerId: cls.trainer_id, trainerName: cls.trainer.name },
+      after: { trainerId: trainer.id, trainerName: trainer.name },
+    });
+    return updated;
+  }
+
+  private async assertNotAttendedTx(tx: Prisma.TransactionClient, classId: number, memberId: number) {
+    const alreadyAttended = await tx.club_class_enrollments.findUnique({
+      where: { class_id_member_id: { class_id: classId, member_id: memberId } },
+    });
+    if (alreadyAttended?.attendance_status === 'attended') {
+      throw new BadRequestException('تم تسجيل حضور العضو في هذه الحصة بالفعل');
     }
-    const branchIds = await this.compatibleAttendanceBranches(branchId, member.branch_id);
-    if (!branchIds.includes(member.branch_id)) {
+  }
+
+  /**
+   * Takes one session atomically — the guarded UPDATE is what stops two concurrent
+   * check-ins from both taking the last one — and activates a queued renewal when the
+   * quota runs out.
+   */
+  private async consumeSessionTx(
+    tx: Prisma.TransactionClient,
+    subscriptionId: number,
+    today: string,
+  ): Promise<RenewalPromotionResult | null> {
+    const consumed = await tx.$executeRaw`
+            UPDATE club_subscriptions
+            SET sessions_used = sessions_used + 1
+            WHERE id = ${subscriptionId}
+              AND is_linked_to_sessions = 1
+              AND sessions_count IS NOT NULL
+              AND sessions_used < sessions_count
+            `;
+    if (consumed !== 1) throw new BadRequestException('لا توجد حصص متبقية');
+    const refreshed = await tx.club_subscriptions.findUnique({
+      where: { id: subscriptionId },
+      select: { sessions_count: true, sessions_used: true },
+    });
+    if (
+      this.lifecycle &&
+      refreshed?.sessions_count != null &&
+      refreshed.sessions_used >= refreshed.sessions_count
+    ) {
+      return this.lifecycle.promoteAfterQuotaExhaustion(subscriptionId, today, tx);
+    }
+    return null;
+  }
+
+  /** Class enrolment and private-trainer commission that follow from a subscription visit. */
+  private async recordSubscriptionUsageTx(
+    tx: Prisma.TransactionClient,
+    input: {
+      attendanceId: number;
+      memberId: number;
+      subscriptionId: number;
+      attendedClassId: number | null;
+      recordPrivateCommission: boolean;
+      date: string;
+      time: string;
+    },
+  ) {
+    if (input.attendedClassId != null) {
+      const usage = {
+        attendance_status: 'attended' as const,
+        attendance_time: input.time,
+        booking_source: 'reception_auto',
+        subscription_id: input.subscriptionId,
+      };
+      await tx.club_class_enrollments.upsert({
+        where: { class_id_member_id: { class_id: input.attendedClassId, member_id: input.memberId } },
+        create: { class_id: input.attendedClassId, member_id: input.memberId, enrollment_date: input.date, ...usage },
+        update: usage,
+      });
+    }
+    if (input.recordPrivateCommission) {
+      await recordPrivateAttendanceCommission(tx, {
+        attendanceId: input.attendanceId,
+        subscriptionId: input.subscriptionId,
+        attendanceDate: input.date,
+      });
+    }
+  }
+
+  /** The visit a repeat scan inside the check-in cooldown belongs to, if any. */
+  async recentCheckIn(memberId: number, at: Date) {
+    return this.prisma.club_attendance.findFirst({
+      where: { member_id: memberId, check_in_time: { gt: new Date(at.getTime() - CHECK_IN_COOLDOWN_MS) } },
+      orderBy: { check_in_time: 'desc' },
+      select: { id: true },
+    });
+  }
+
+  /** Whether a special-class subscription could be used right now (a class starts soon). */
+  async hasClassForSubscriptionAt(classTypeId: number, branchId: number, at: Date) {
+    const local = cairoDateTime(at);
+    return (await this.resolveSpecialClass(classTypeId, branchId, local.date, local.time)) != null;
+  }
+
+  /**
+   * Gate entry of a member with several usable subscriptions. Nobody stands at the gate to
+   * ask which one, so the visit is recorded straight away — the door must not wait — and
+   * flagged; no session is taken until reception picks the subscription.
+   */
+  async recordPendingGateEntry(input: { memberId: number; branchId: number; occurredAt: Date; notes: string }) {
+    const member = await this.prisma.club_members.findFirst({
+      where: { id: input.memberId, is_deleted: false },
+      select: { id: true, member_code: true, name: true, branch_id: true },
+    });
+    if (!member) throw new NotFoundException('العضو غير موجود');
+    if (member.branch_id !== input.branchId) {
       throw new ForbiddenException('لا يمكن تسجيل حضور عضو تابع لفرع آخر');
     }
-    const entitlement = await this.entitlement.validate({ memberId: member.id, branchId, branchIds, subscriptionId: dto.subscriptionId });
-    if (!entitlement.allowed) {
-      throw new BadRequestException({ message: 'لا يمكن تسجيل حضور الخدمة — تحقق من الاشتراك', entitlement });
-    }
-    const now = new Date();
-    const local = cairoDateTime(now);
+    const today = cairoDateTime(input.occurredAt).date;
     const row = await this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${dto.subscriptionId} FOR UPDATE`;
-      const sub = await tx.club_subscriptions.findUnique({ where: { id: dto.subscriptionId }, include: { type: true } });
-      if (!sub || sub.member_id !== member.id || !branchIds.includes(sub.branch_id)
-        || sub.status !== 'active' || sub.subscription_start_date > local.date || sub.subscription_end_date < local.date) {
-        throw new BadRequestException('الاشتراك غير متاح لهذا العضو');
+      const open = await tx.club_attendance.findFirst({
+        where: { member_id: member.id, attendance_date: today, status: 'checked_in' },
+      });
+      if (open) {
+        await tx.club_attendance.update({
+          where: { id: open.id },
+          data: {
+            check_out_time: input.occurredAt,
+            status: 'checked_out',
+            duration: Math.floor((input.occurredAt.getTime() - open.check_in_time.getTime()) / 60000),
+            pending_subscription_choice: false,
+          },
+        });
       }
-      const spa = dto.attendanceType === 'spa';
-      // A positive SPA allowance also marks legacy packages as linked in the overview.
-      const total = spa ? sub.type?.spa_count : sub.type?.inbody_count;
-      const used = spa ? sub.spa_used : sub.inbody_used;
-      if (total == null || used >= total) throw new BadRequestException('لا يوجد رصيد متبقٍ لهذه الخدمة');
-      const duplicate = await tx.club_attendance.findFirst({ where: {
-        member_id: member.id, subscription_id: sub.id, attendance_date: local.date, attendance_type: dto.attendanceType,
-      } });
-      if (duplicate) throw new BadRequestException('تم تسجيل حضور هذه الخدمة بالفعل اليوم');
-      await tx.club_subscriptions.update({ where: { id: sub.id }, data: spa
-        ? { spa_used: { increment: 1 } } : { inbody_used: { increment: 1 } } });
-      if (spa) {
-        await tx.club_spa_attendance.create({ data: {
-          member_id: member.id, member_code: member.member_code, member_name: member.name,
-          branch_id: branchId, subscription_id: sub.id, attendance_date: local.date,
-          check_in_time: local.time, created_by: user.sub,
-        } });
-      }
-      return tx.club_attendance.create({ data: {
-        member_id: member.id, member_code: member.member_code, member_name: member.name,
-        branch_id: branchId, subscription_id: sub.id, subscription_type: sub.subscription_type,
-        attendance_date: local.date, attendance_type: dto.attendanceType,
-        check_in_time: now, check_out_time: now, status: 'checked_out', duration: 0, created_by: user.sub,
-      } });
+      return tx.club_attendance.create({
+        data: {
+          member_id: member.id,
+          member_code: member.member_code,
+          member_name: member.name,
+          branch_id: input.branchId,
+          attendance_date: today,
+          check_in_time: input.occurredAt,
+          status: 'checked_in',
+          notes: input.notes,
+          pending_subscription_choice: true,
+        },
+      });
     });
-    await this.audit.log({ entityType: 'club_attendance', entityId: row.id, action: 'check_in',
-      actorUserId: user.sub, branchId, after: this.mapRow(row) });
+    await this.audit.log({
+      entityType: 'club_attendance',
+      entityId: row.id,
+      action: 'check_in',
+      branchId: input.branchId,
+      after: this.mapRow(row),
+    });
+    void this.automation.emit('member_checked_in', { memberId: member.id, branchId: input.branchId, memberName: member.name });
+    void this.webhooks.dispatch('member_checked_in', {
+      memberId: member.id,
+      memberCode: member.member_code,
+      memberName: member.name,
+      branchId: input.branchId,
+      attendanceId: row.id,
+      checkInTime: row.check_in_time,
+    });
     return { attendance: this.mapRow(row) };
   }
 
-  async checkIn(dto: CheckInDto, user: JwtUser) {
-    const userId = user.sub;
+  /** Gate entries still waiting for reception to pick a subscription, with the choices. */
+  async listPendingGateEntries(user?: JwtUser, branchId?: string) {
+    const branches = this.attendanceBranchIds(user, branchId);
+    if (branches && branches.length === 0) return [];
+    const rows = await this.prisma.club_attendance.findMany({
+      where: {
+        pending_subscription_choice: true,
+        status: 'checked_in',
+        check_in_time: { gt: new Date(Date.now() - 3 * 24 * 60 * 60_000) },
+        ...(branches ? { branch_id: { in: branches } } : {}),
+      },
+      orderBy: { check_in_time: 'desc' },
+      take: 50,
+    });
+    const result: Array<ReturnType<ClubAttendanceService['mapRow']> & { subscriptions: unknown[] }> = [];
+    for (const row of rows) {
+      const options = await this.entitlement.usableSubscriptions({
+        memberId: row.member_id,
+        branchId: row.branch_id,
+        at: row.check_in_time,
+      });
+      result.push({
+        ...this.mapRow(row),
+        subscriptions: options
+          .filter((option) => option.activeSubscription)
+          .map((option) => ({
+            id: option.activeSubscription!.id,
+            type: option.activeSubscription!.subscriptionType,
+            endDate: option.activeSubscription!.endDate,
+            isLinkedToSessions: option.activeSubscription!.isLinkedToSessions,
+            sessionsRemaining: option.activeSubscription!.sessionsRemaining,
+            allowed: option.allowed,
+            reasons: option.reasons.map((reason) => reason.messageAr),
+          })),
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Reception's pick for a pending gate entry. Applies the subscription exactly as a
+   * check-in on it would have at the moment of entry — session, class, trainer commission.
+   * The pending flag is claimed inside the transaction so two receptionists cannot both
+   * take a session for the same visit.
+   */
+  async resolvePendingSubscription(attendanceId: number, subscriptionId: number, user?: JwtUser) {
+    const row = await this.prisma.club_attendance.findUnique({ where: { id: attendanceId } });
+    if (!row) throw new NotFoundException('سجل الحضور غير موجود');
+    if (!row.pending_subscription_choice) throw new BadRequestException('تم تحديد الاشتراك لهذا الدخول بالفعل');
+    if (!this.canOperateAttendanceBranch(user, row.branch_id)) {
+      throw new ForbiddenException('لا تملك صلاحية تسجيل حضور في هذا الفرع');
+    }
+    const subscription = await this.prisma.club_subscriptions.findUnique({
+      where: { id: subscriptionId },
+      select: { member_id: true, branch_id: true },
+    });
+    if (!subscription || subscription.member_id !== row.member_id) {
+      throw new BadRequestException('الاشتراك غير موجود لهذا العضو');
+    }
+    if (subscription.branch_id !== row.branch_id) {
+      throw new ForbiddenException('لا يمكن استخدام اشتراك تابع لفرع آخر');
+    }
+    const entitlement = await this.entitlement.validate({
+      memberId: row.member_id,
+      branchId: row.branch_id,
+      subscriptionId,
+      at: row.check_in_time,
+    });
+    if (!entitlement.allowed || !entitlement.activeSubscription) {
+      throw new BadRequestException({
+        message: entitlement.reasons.map((reason) => reason.messageAr).join('، ') || 'لا يمكن استخدام هذا الاشتراك',
+        entitlement,
+      });
+    }
+    const chosenSub = entitlement.activeSubscription;
+    const local = cairoDateTime(row.check_in_time);
+    const attendedClass = chosenSub.specialClassTypeId
+      ? await this.resolveSpecialClass(chosenSub.specialClassTypeId, row.branch_id, local.date, local.time)
+      : null;
+    if (chosenSub.specialClassTypeId && !attendedClass) {
+      throw new BadRequestException('لا توجد حصة مجدولة لهذا الاشتراك وقت الدخول');
+    }
+    const privatePackage = await this.prisma.club_subscriptions.findUnique({
+      where: { id: chosenSub.id },
+      select: { private_package_id: true },
+    });
+    const isPrivate = privatePackage?.private_package_id != null;
+
+    let renewalPromotion: RenewalPromotionResult | null = null;
+    const updated = await this.prisma.$transaction(
+      async (tx) => {
+        await tx.$queryRaw`SELECT id FROM club_members WHERE id = ${row.member_id} FOR UPDATE`;
+        await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${chosenSub.id} FOR UPDATE`;
+        const live = await tx.club_subscriptions.findUnique({ where: { id: chosenSub.id }, include: { freezes: { where: { is_active: true } } } });
+        if (!live || live.member_id !== row.member_id || live.branch_id !== row.branch_id || live.status === 'frozen' || live.renewal_hold || live.freezes.length) {
+          throw new BadRequestException('حالة الاشتراك اتغيّرت أو تم تجميده؛ حدّث الصفحة وحاول تاني');
+        }
+        const claimed = await tx.club_attendance.updateMany({
+          where: { id: row.id, pending_subscription_choice: true, status: 'checked_in' },
+          data: {
+            pending_subscription_choice: false,
+            subscription_id: chosenSub.id,
+            subscription_type: chosenSub.subscriptionType ?? null,
+          },
+        });
+        if (claimed.count !== 1) throw new BadRequestException('تم تحديد الاشتراك لهذا الدخول بالفعل');
+        if (attendedClass) await this.assertNotAttendedTx(tx, attendedClass.id, row.member_id);
+        // A gate entry is a real visit, so it takes a session like any gate check-in.
+        if (chosenSub.isLinkedToSessions) {
+          renewalPromotion = await this.consumeSessionTx(tx, chosenSub.id, local.date);
+        }
+        await this.recordSubscriptionUsageTx(tx, {
+          attendanceId: row.id,
+          memberId: row.member_id,
+          subscriptionId: chosenSub.id,
+          attendedClassId: attendedClass?.id ?? null,
+          recordPrivateCommission: isPrivate,
+          date: local.date,
+          time: local.time,
+        });
+        return tx.club_attendance.findUniqueOrThrow({ where: { id: row.id } });
+      },
+      { maxWait: 10000, timeout: 15000 },
+    );
+
+    await this.audit.log({
+      entityType: 'club_attendance',
+      entityId: row.id,
+      action: 'check_in.subscription_selected',
+      actorUserId: user?.sub,
+      actorName: user?.name ?? undefined,
+      branchId: row.branch_id,
+      before: this.mapRow(row),
+      after: this.mapRow(updated),
+    });
+    const promotion = renewalPromotion as RenewalPromotionResult | null;
+    if (promotion?.activatedSubscriptionId) {
+      await this.lifecycle?.syncActivatedMember(promotion.activatedSubscriptionId);
+    }
+    return {
+      attendance: this.mapRow(updated),
+      subscription: {
+        id: chosenSub.id,
+        type: chosenSub.subscriptionType,
+        isLinkedToSessions: chosenSub.isLinkedToSessions,
+        sessionsRemaining: chosenSub.isLinkedToSessions ? Math.max(0, (chosenSub.sessionsRemaining ?? 0) - 1) : null,
+        endDate: chosenSub.endDate,
+      },
+    };
+  }
+
+  /** Reception reviewed a gate arrival and intentionally keeps it without a subscription. */
+  async dismissPendingGateEntry(attendanceId: number, user?: JwtUser) {
+    const row = await this.prisma.club_attendance.findUnique({ where: { id: attendanceId } });
+    if (!row) throw new NotFoundException('سجل الحضور غير موجود');
+    if (!this.canOperateAttendanceBranch(user, row.branch_id)) {
+      throw new ForbiddenException('لا تملك صلاحية تسجيل حضور في هذا الفرع');
+    }
+    if (!row.pending_subscription_choice) return { ok: true, alreadyResolved: true };
+
+    const claimed = await this.prisma.club_attendance.updateMany({
+      where: { id: attendanceId, pending_subscription_choice: true, status: 'checked_in' },
+      data: { pending_subscription_choice: false },
+    });
+    if (claimed.count !== 1) return { ok: true, alreadyResolved: true };
+
+    const updated = await this.prisma.club_attendance.findUniqueOrThrow({ where: { id: attendanceId } });
+    await this.audit.log({
+      entityType: 'club_attendance',
+      entityId: row.id,
+      action: 'check_in.pending_dismissed',
+      actorUserId: user?.sub,
+      actorName: user?.name ?? undefined,
+      branchId: row.branch_id,
+      before: this.mapRow(row),
+      after: this.mapRow(updated),
+    });
+    return { ok: true };
+  }
+
+  async checkIn(dto: CheckInDto, user?: JwtUser, occurredAt?: Date) {
+    const userId = user?.sub;
     const member = await this.members.resolveByIdOrCode(
       dto.memberId,
       dto.memberCode,
+      this.lookupBranchId(user, dto.branchId),
     );
-    // Physical location first: an explicit branch, else the operator's own branch,
-    // else the member's home branch (legacy fallback). Recording at the operator
-    // branch keeps cross-branch visits in the correct daily report.
-    const operatorBranchId = Number(user?.branch ?? 0);
-    const branchId =
-      dto.branchId ?? (operatorBranchId > 0 ? operatorBranchId : member.branch_id);
-    if (!(await this.canOperateAttendanceBranch(user, branchId))) {
-      throw new ForbiddenException("لا تملك صلاحية تسجيل حضور في هذا الفرع");
+    const branchId = dto.branchId ?? member.branch_id;
+    if (!this.canOperateAttendanceBranch(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية تسجيل حضور في هذا الفرع');
     }
-    const compatibleBranchIds = await this.compatibleAttendanceBranches(
-      branchId,
-      member.branch_id,
-    );
-    if (!compatibleBranchIds.includes(member.branch_id)) {
-      throw new ForbiddenException("لا يمكن تسجيل حضور عضو تابع لفرع آخر");
+    if (member.branch_id !== branchId) {
+      throw new ForbiddenException('لا يمكن تسجيل حضور عضو تابع لفرع آخر');
     }
 
     if (dto.subscriptionId != null) {
-      const selectedSubscription =
-        await this.prisma.club_subscriptions.findUnique({
-          where: { id: dto.subscriptionId },
-          select: { member_id: true, branch_id: true },
-        });
-      if (
-        !selectedSubscription ||
-        selectedSubscription.member_id !== member.id
-      ) {
-        throw new BadRequestException("الاشتراك غير موجود لهذا العضو");
+      const selectedSubscription = await this.prisma.club_subscriptions.findUnique({
+        where: { id: dto.subscriptionId },
+        select: { member_id: true, branch_id: true },
+      });
+      if (!selectedSubscription || selectedSubscription.member_id !== member.id) {
+        throw new BadRequestException('الاشتراك غير موجود لهذا العضو');
       }
-      if (!compatibleBranchIds.includes(selectedSubscription.branch_id)) {
-        throw new ForbiddenException("لا يمكن استخدام اشتراك تابع لفرع آخر");
+      if (selectedSubscription.branch_id !== branchId) {
+        throw new ForbiddenException('لا يمكن استخدام اشتراك تابع لفرع آخر');
       }
     }
 
     const entitlement = await this.entitlement.validate({
       memberId: member.id,
       branchId,
-      branchIds: compatibleBranchIds,
       subscriptionId: dto.subscriptionId,
+      at: occurredAt,
     });
+
+    const entryMessages = entitlement.allowed ? entitlement.warnings : entitlement.reasons;
+    if (entryMessages.length) await this.reportEntryAlert({ memberId: member.id, branchId,
+      message: entryMessages.map((reason) => reason.messageAr).join('، '),
+      severity: entitlement.allowed ? 'warn' : 'block', source: 'reception' });
+    if (!entitlement.allowed && dto.force && entitlement.reasons.some((reason) =>
+      ['no_active_subscription', 'subscription_not_active', 'outstanding_balance', 'subscription_frozen'].includes(reason.code))) {
+      throw new BadRequestException({ message: entryMessages.map((reason) => reason.messageAr).join('، '), entitlement });
+    }
 
     if (!entitlement.allowed && !dto.force) {
       throw new BadRequestException({
-        message: "لا يمكن تسجيل الدخول — تحقق من الاشتراك",
+        message: entitlement.reasons.map((reason) => reason.messageAr).join('، ') || 'لا يمكن تسجيل الدخول — تحقق من الاشتراك',
         entitlement,
       });
     }
 
     if (!entitlement.allowed && dto.force) {
-      if (
-        entitlement.reasons.some((reason) => reason.code === "member_blocked")
-      ) {
-        throw new ForbiddenException(
-          "العضو محظور ولا يمكن تجاوز الحظر من شاشة الحضور",
-        );
+      if (entitlement.reasons.some((reason) => reason.code === 'member_blocked')) {
+        throw new ForbiddenException('العضو محظور ولا يمكن تجاوز الحظر من شاشة الحضور');
+      }
+      if (entitlement.allowGraceSessions !== true) {
+        throw new ForbiddenException('جلسات السماح غير مفعّلة من سياسات الجيم');
       }
       if (!dto.overrideReason?.trim()) {
-        throw new BadRequestException(
-          "يجب إدخال سبب التجاوز عند تسجيل الدخول بالقوة",
-        );
+        throw new BadRequestException('يجب إدخال سبب التجاوز عند تسجيل الدخول بالقوة');
+      }
+      if (!userId) {
+        throw new ForbiddenException('لا يمكن تنفيذ تجاوز الحضور بدون مستخدم مصرح له');
       }
       // Overriding an expired/outstanding entitlement is an approval, not a normal check-in.
       const mayApprove = await this.permissions.canAny(userId, [
-        "club.reception:approve",
-        "club.members.attendance:approve",
+        'club.reception:approve',
+        'club.members.attendance:approve',
       ]);
       if (!mayApprove) {
-        throw new ForbiddenException(
-          "لا تملك صلاحية السماح بالدخول رغم رفض الاشتراك",
-        );
+        throw new ForbiddenException('لا تملك صلاحية السماح بالدخول رغم رفض الاشتراك');
       }
       await this.audit.log({
-        entityType: "club_member",
+        entityType: 'club_member',
         entityId: member.id,
-        action: "check_in.override",
+        action: 'check_in.override',
         actorUserId: userId,
         branchId,
         reason: dto.overrideReason.trim(),
@@ -695,14 +844,9 @@ export class ClubAttendanceService {
           graceSession: true,
           overrideReason: dto.overrideReason.trim(),
           subscriptionId:
-            dto.subscriptionId ??
-            entitlement.activeSubscription?.id ??
-            entitlement.latestSubscription?.id ??
-            null,
+            dto.subscriptionId ?? entitlement.activeSubscription?.id ?? entitlement.latestSubscription?.id ?? null,
           subscriptionEndDate:
-            entitlement.activeSubscription?.endDate ??
-            entitlement.latestSubscription?.endDate ??
-            null,
+            entitlement.activeSubscription?.endDate ?? entitlement.latestSubscription?.endDate ?? null,
           subscriptionType:
             entitlement.activeSubscription?.subscriptionType ??
             entitlement.latestSubscription?.subscriptionType ??
@@ -712,82 +856,90 @@ export class ClubAttendanceService {
       });
     }
 
+    // Reception staff re-press check-in when they miss the confirmation, and each press
+    // used to close the previous visit at zero minutes and open a fresh one. Real repeat
+    // visits in the same day are never closer than ten minutes apart, so a short window
+    // removes the duplicates without swallowing a genuine second entry.
+    //
+    // This runs after entitlement so a blocked or expired member still hears the real
+    // reason rather than a misleading "already checked in", but before the transaction
+    // so a duplicate press never consumes a session.
+    const recent = await this.prisma.club_attendance.findFirst({
+      where: {
+        member_id: member.id,
+        check_in_time: {
+          gt: new Date((occurredAt ?? new Date()).getTime() - CHECK_IN_COOLDOWN_MS),
+          lte: occurredAt ?? new Date(),
+        },
+      },
+      orderBy: { check_in_time: 'desc' },
+    });
+    if (recent) {
+      const agoMinutes = Math.floor(
+        ((occurredAt ?? new Date()).getTime() - recent.check_in_time.getTime()) / 60000,
+      );
+      throw new BadRequestException(
+        agoMinutes < 1
+          ? 'تم تسجيل دخول العضو بالفعل منذ لحظات'
+          : `تم تسجيل دخول العضو بالفعل منذ ${agoMinutes} دقيقة`,
+      );
+    }
+
     // Prefer the evaluated subscription; on grace with no pick, attach the latest expired one.
     const isGrace = !entitlement.allowed && !!dto.force;
     let chosenSub = entitlement.activeSubscription;
     if (!chosenSub && isGrace && entitlement.latestSubscription) {
       chosenSub = entitlement.latestSubscription;
     }
-    const now = new Date();
+    const now = occurredAt ?? new Date();
     const localNow = cairoDateTime(now);
     const today = localNow.date;
-    let specialClass =
-      dto.attendanceType !== 'normal' && !isGrace && chosenSub?.specialClassTypeId
-        ? await this.prisma.club_classes.findFirst({
-            where: {
-              class_type_id: chosenSub.specialClassTypeId,
-              branch_id: branchId,
-              class_date: today,
-              start_time: { lte: localNow.time },
-              end_time: { gte: localNow.time },
-              status: { in: ["scheduled", "ongoing"] },
-              is_active: true,
-              is_deleted: false,
-            },
-            include: {
-              trainer: { select: { id: true, name: true } },
-              hall: { select: { name: true } },
-            },
-            orderBy: [{ start_time: "desc" }, { id: "asc" }],
-          })
+    const specialClass =
+      !isGrace && chosenSub?.specialClassTypeId
+        ? await this.resolveSpecialClass(chosenSub.specialClassTypeId, branchId, today, localNow.time)
         : null;
 
-    if (dto.attendanceType !== 'normal' && chosenSub?.specialClassTypeId && !specialClass && !isGrace) {
-      specialClass = await this.materializeCurrentSpecialClass(
-        chosenSub.specialClassTypeId,
-        branchId,
-        today,
-        localNow.time,
-      );
-    }
-
-    const privatePackage =
-      chosenSub && !isGrace
-        ? await this.prisma.club_subscriptions.findUnique({
-            where: { id: chosenSub.id },
-            select: { private_package_id: true },
-          })
-        : null;
+    const privatePackage = chosenSub && !isGrace
+      ? await this.prisma.club_subscriptions.findUnique({
+          where: { id: chosenSub.id },
+          select: { private_package_id: true },
+        })
+      : null;
     const isPrivate = privatePackage?.private_package_id != null;
 
-    if (dto.attendanceType !== 'normal' && chosenSub?.specialClassTypeId && !specialClass && !isGrace) {
-      throw new BadRequestException(
-        "لا توجد حصة مجدولة لهذا الاشتراك في الوقت الحالي",
-      );
+    if (chosenSub?.specialClassTypeId && !specialClass && !isGrace) {
+      throw new BadRequestException('لا توجد حصة مجدولة لهذا الاشتراك خلال ساعتين من الآن');
     }
+    // Reception may have picked a stand-in captain on the check-in screen.
+    const attendedClass =
+      specialClass && dto.classTrainerId
+        ? await this.reassignClassTrainer(specialClass, dto.classTrainerId, user)
+        : specialClass;
 
+    const renewalPromotionHolder: { value: RenewalPromotionResult | null } = { value: null };
     const row = await this.prisma.$transaction(
       async (tx) => {
-        const lockKey = specialClass
-          ? `special_att_${specialClass.id}_${member.id}`
-          : null;
+        // Serialize entry with other scans, freezes, renewals, and transfers for this member.
+        await tx.$queryRaw`SELECT id FROM club_members WHERE id = ${member.id} FOR UPDATE`;
+        const duplicate = await tx.club_attendance.findFirst({
+          where: { member_id: member.id, check_in_time: {
+            gt: new Date(now.getTime() - CHECK_IN_COOLDOWN_MS), lte: now,
+          } }, orderBy: { check_in_time: 'desc' },
+        });
+        if (duplicate) throw new BadRequestException('تم تسجيل دخول العضو بالفعل منذ لحظات');
+        if (chosenSub) {
+          await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${chosenSub.id} FOR UPDATE`;
+          const live = await tx.club_subscriptions.findUnique({
+            where: { id: chosenSub.id }, include: { freezes: { where: { is_active: true } } },
+          });
+          if (!live || live.member_id !== member.id || live.status === 'frozen' || live.renewal_hold || live.freezes.length) {
+            throw new BadRequestException('حالة الاشتراك اتغيّرت أو تم تجميده؛ حدّث الصفحة وحاول تاني');
+          }
+        }
+        const lockKey = attendedClass ? `special_att_${attendedClass.id}_${member.id}` : null;
         if (lockKey) await tx.$queryRaw`SELECT GET_LOCK(${lockKey}, 10)`;
         try {
-          if (specialClass) {
-            const alreadyAttended = await tx.club_class_enrollments.findUnique({
-              where: {
-                class_id_member_id: {
-                  class_id: specialClass.id,
-                  member_id: member.id,
-                },
-              },
-            });
-            if (alreadyAttended?.attendance_status === "attended") {
-              throw new BadRequestException(
-                "تم تسجيل حضور العضو في هذه الحصة بالفعل",
-              );
-            }
-          }
+          if (attendedClass) await this.assertNotAttendedTx(tx, attendedClass.id, member.id);
 
           // A member may use a monthly subscription and a class subscription on the same day.
           // Close only the open visit that belongs to the currently selected subscription.
@@ -795,11 +947,8 @@ export class ClubAttendanceService {
             where: {
               member_id: member.id,
               attendance_date: today,
-              status: "checked_in",
-              ...(dto.attendanceType ? { attendance_type: dto.attendanceType } : {}),
-              ...(dto.subscriptionId != null
-                ? { subscription_id: dto.subscriptionId }
-                : {}),
+              status: 'checked_in',
+              ...(dto.subscriptionId != null ? { subscription_id: dto.subscriptionId } : {}),
             },
           });
           if (existing) {
@@ -807,29 +956,36 @@ export class ClubAttendanceService {
               where: { id: existing.id },
               data: {
                 check_out_time: now,
-                status: "checked_out",
-                duration: Math.floor(
-                  (now.getTime() - existing.check_in_time.getTime()) / 60000,
-                ),
+                status: 'checked_out',
+                duration: Math.floor((now.getTime() - existing.check_in_time.getTime()) / 60000),
+                pending_subscription_choice: false,
               },
             });
           }
 
-          if (
-            dto.attendanceType !== 'normal' && (dto.consumeSession || specialClass || isPrivate) &&
-            chosenSub?.isLinkedToSessions &&
-            !isGrace
-          ) {
-            const consumed = await tx.$executeRaw`
-            UPDATE club_subscriptions
-            SET sessions_used = sessions_used + 1
-            WHERE id = ${chosenSub.id}
-              AND is_linked_to_sessions = 1
-              AND sessions_count IS NOT NULL
-              AND sessions_used < sessions_count
-          `;
-            if (consumed !== 1)
-              throw new BadRequestException("لا توجد حصص متبقية");
+          const unresolved = await tx.club_attendance.findMany({
+            where: {
+              member_id: member.id,
+              attendance_date: today,
+              status: 'checked_in',
+              pending_subscription_choice: true,
+            },
+            select: { id: true, check_in_time: true },
+          });
+          for (const visit of unresolved) {
+            await tx.club_attendance.update({
+              where: { id: visit.id },
+              data: {
+                check_out_time: now,
+                status: 'checked_out',
+                duration: Math.floor((now.getTime() - visit.check_in_time.getTime()) / 60000),
+                pending_subscription_choice: false,
+              },
+            });
+          }
+
+          if ((dto.consumeSession || attendedClass || isPrivate) && chosenSub?.isLinkedToSessions && !isGrace) {
+            renewalPromotionHolder.value = await this.consumeSessionTx(tx, chosenSub.id, today);
           }
 
           const attendance = await tx.club_attendance.create({
@@ -841,48 +997,24 @@ export class ClubAttendanceService {
               subscription_type: chosenSub?.subscriptionType ?? null,
               branch_id: branchId,
               attendance_date: today,
-              attendance_type: dto.attendanceType ?? (specialClass || isPrivate || dto.consumeSession ? 'class' : 'normal'),
               check_in_time: now,
-              status: "checked_in",
+              status: 'checked_in',
               notes: dto.notes || null,
               is_grace_session: isGrace,
-              override_reason: isGrace
-                ? dto.overrideReason!.trim().slice(0, 255)
-                : null,
+              override_reason: isGrace ? dto.overrideReason!.trim().slice(0, 255) : null,
               created_by: userId,
             },
           });
 
-          if (specialClass && chosenSub) {
-            await tx.club_class_enrollments.upsert({
-              where: {
-                class_id_member_id: {
-                  class_id: specialClass.id,
-                  member_id: member.id,
-                },
-              },
-              create: {
-                class_id: specialClass.id,
-                member_id: member.id,
-                enrollment_date: today,
-                attendance_status: "attended",
-                attendance_time: localNow.time,
-                booking_source: "reception_auto",
-                subscription_id: chosenSub.id,
-              },
-              update: {
-                attendance_status: "attended",
-                attendance_time: localNow.time,
-                booking_source: "reception_auto",
-                subscription_id: chosenSub.id,
-              },
-            });
-          }
-          if (dto.attendanceType !== 'normal' && isPrivate && chosenSub && !isGrace) {
-            await recordPrivateAttendanceCommission(tx, {
+          if (chosenSub) {
+            await this.recordSubscriptionUsageTx(tx, {
               attendanceId: attendance.id,
+              memberId: member.id,
               subscriptionId: chosenSub.id,
-              attendanceDate: today,
+              attendedClassId: attendedClass?.id ?? null,
+              recordPrivateCommission: isPrivate && !isGrace,
+              date: today,
+              time: localNow.time,
             });
           }
           return attendance;
@@ -894,21 +1026,37 @@ export class ClubAttendanceService {
     );
 
     await this.audit.log({
-      entityType: "club_attendance",
+      entityType: 'club_attendance',
       entityId: row.id,
-      action: "check_in",
+      action: 'check_in',
       actorUserId: userId,
+      actorName: user?.name ?? undefined,
       branchId,
       after: this.mapRow(row),
     });
 
-    void this.automation.emit("member_checked_in", {
+    const renewalPromotion = renewalPromotionHolder.value;
+    if (renewalPromotion?.activatedSubscriptionId) {
+      await this.lifecycle?.syncActivatedMember(renewalPromotion.activatedSubscriptionId);
+      await this.audit.log({
+        entityType: 'club_subscription',
+        entityId: renewalPromotion.activatedSubscriptionId,
+        action: 'subscription_renewal_activated_early',
+        actorUserId: userId,
+        actorName: user?.name ?? undefined,
+        branchId,
+        before: { exhaustedSubscriptionId: chosenSub?.id ?? null },
+        after: renewalPromotion,
+      });
+    }
+
+    void this.automation.emit('member_checked_in', {
       memberId: member.id,
       branchId,
       memberName: member.name,
     });
 
-    void this.webhooks.dispatch("member_checked_in", {
+    void this.webhooks.dispatch('member_checked_in', {
       memberId: member.id,
       memberCode: member.member_code,
       memberName: member.name,
@@ -919,16 +1067,9 @@ export class ClubAttendanceService {
 
     // Detail for the receptionist: which subscription was used and (for session packages)
     // the remaining sessions after this check-in consumed one.
-    const consumedSession = Boolean(
-      dto.attendanceType !== 'normal' && (dto.consumeSession || specialClass || isPrivate) &&
-      chosenSub?.isLinkedToSessions &&
-      !isGrace,
-    );
+    const consumedSession = Boolean((dto.consumeSession || attendedClass || isPrivate) && chosenSub?.isLinkedToSessions && !isGrace);
     const sessionsRemainingAfter = chosenSub?.isLinkedToSessions
-      ? Math.max(
-          0,
-          (chosenSub.sessionsRemaining ?? 0) - (consumedSession ? 1 : 0),
-        )
+      ? Math.max(0, (chosenSub.sessionsRemaining ?? 0) - (consumedSession ? 1 : 0))
       : null;
 
     return {
@@ -940,30 +1081,18 @@ export class ClubAttendanceService {
             type: chosenSub.subscriptionType,
             isLinkedToSessions: chosenSub.isLinkedToSessions,
             sessionsRemaining: sessionsRemainingAfter,
-            daysRemaining: chosenSub.isLinkedToSessions
-              ? null
-              : (chosenSub.daysRemaining ?? null),
+            daysRemaining: chosenSub.isLinkedToSessions ? null : (chosenSub.daysRemaining ?? null),
             endDate: chosenSub.endDate,
             consumedSession,
           }
         : null,
-      classAttendance: specialClass
-        ? {
-            classId: specialClass.id,
-            className: specialClass.class_name,
-            trainerId: specialClass.trainer.id,
-            trainerName: specialClass.trainer.name,
-            hallName: specialClass.hall?.name ?? null,
-            startTime: specialClass.start_time,
-            endTime: specialClass.end_time,
-          }
-        : null,
+      classAttendance: attendedClass ? this.mapSpecialClass(attendedClass, localNow.time) : null,
       overridden: Boolean(dto.force && !entitlement.allowed),
     };
   }
 
-  async checkOut(dto: CheckOutDto, user?: JwtUser) {
-    const today = localDateString();
+  async checkOut(dto: CheckOutDto, user?: JwtUser, occurredAt?: Date) {
+    const today = cairoDateTime(occurredAt ?? new Date()).date;
     let row;
 
     if (dto.attendanceId) {
@@ -974,45 +1103,47 @@ export class ClubAttendanceService {
       const member = await this.members.resolveByIdOrCode(
         dto.memberId,
         dto.memberCode,
+        dto.memberId ? undefined : this.lookupBranchId(user),
       );
       row = await this.prisma.club_attendance.findFirst({
         where: {
           member_id: member.id,
           attendance_date: today,
-          status: "checked_in",
+          status: 'checked_in',
         },
-        orderBy: { check_in_time: "desc" },
+        orderBy: { check_in_time: 'desc' },
       });
     }
 
-    if (!row)
-      throw new NotFoundException("لا يوجد تسجيل دخول مفتوح لهذا العضو اليوم");
-    if (!(await this.canOperateAttendanceBranch(user, row.branch_id))) {
-      throw new ForbiddenException("لا تملك صلاحية تسجيل خروج في هذا الفرع");
+    if (!row) throw new NotFoundException('لا يوجد تسجيل دخول مفتوح لهذا العضو اليوم');
+    if (!this.canOperateAttendanceBranch(user, row.branch_id)) {
+      throw new ForbiddenException('لا تملك صلاحية تسجيل خروج في هذا الفرع');
     }
-    if (row.status === "checked_out")
-      throw new BadRequestException("تم تسجيل الخروج مسبقاً");
+    if (row.status === 'checked_out') throw new BadRequestException('تم تسجيل الخروج مسبقاً');
 
-    const checkOutTime = new Date();
-    const duration = Math.floor(
-      (checkOutTime.getTime() - row.check_in_time.getTime()) / 60000,
-    );
+    const checkOutTime = occurredAt ?? new Date();
+    const duration = Math.floor((checkOutTime.getTime() - row.check_in_time.getTime()) / 60000);
 
     const updated = await this.prisma.club_attendance.update({
       where: { id: row.id },
-      data: { check_out_time: checkOutTime, status: "checked_out", duration },
+      data: { check_out_time: checkOutTime, status: 'checked_out', duration, pending_subscription_choice: false },
     });
+
+    const returnedLocker = this.lockers
+      ? await this.lockers.releaseOpenForMember(updated.member_id, user?.sub)
+      : null;
 
     await this.audit.log({
-      entityType: "club_attendance",
+      entityType: 'club_attendance',
       entityId: updated.id,
-      action: "check_out",
+      action: 'check_out',
       actorUserId: user?.sub,
+      actorName: user?.name ?? undefined,
       branchId: updated.branch_id,
-      after: this.mapRow(updated),
+      after: { ...this.mapRow(updated), returnedLockerNumber: returnedLocker?.lockerNumber ?? null },
     });
 
-    return this.mapRow(updated);
+    return { ...this.mapRow(updated), returnedLockerNumber: returnedLocker?.lockerNumber ?? null };
   }
 
   /** Auto check-out stale open visits (previous days or >8h same day). */
@@ -1021,23 +1152,24 @@ export class ClubAttendanceService {
     const staleCutoff = new Date(Date.now() - 8 * 60 * 60 * 1000);
     const openRows = await this.prisma.club_attendance.findMany({
       where: {
-        status: "checked_in",
-        OR: [
-          { attendance_date: { lt: today } },
-          { check_in_time: { lt: staleCutoff } },
-        ],
+        status: 'checked_in',
+        OR: [{ attendance_date: { lt: today } }, { check_in_time: { lt: staleCutoff } }],
       },
     });
     let count = 0;
     for (const row of openRows) {
-      const checkOutTime = new Date();
-      const duration = Math.floor(
-        (checkOutTime.getTime() - row.check_in_time.getTime()) / 60000,
-      );
+      // Stamping `now` recorded however long the sweep took to notice the open visit,
+      // which is not a fact about the member. Cap it instead, and mark the row so
+      // duration averages can tell an estimate apart from a real scan-out.
+      const capped = new Date(row.check_in_time.getTime() + AUTO_CHECKOUT_CAP_MINUTES * 60000);
+      const now = new Date();
+      const checkOutTime = capped < now ? capped : now;
+      const duration = Math.floor((checkOutTime.getTime() - row.check_in_time.getTime()) / 60000);
       await this.prisma.club_attendance.update({
         where: { id: row.id },
-        data: { check_out_time: checkOutTime, status: "checked_out", duration },
+        data: { check_out_time: checkOutTime, status: 'auto_closed', duration, pending_subscription_choice: false },
       });
+      if (this.lockers) await this.lockers.releaseOpenForMember(row.member_id);
       count++;
     }
     return { checkedOut: count };
@@ -1049,6 +1181,7 @@ export class ClubAttendanceService {
     if (q.memberId) and.push({ member_id: Number(q.memberId) });
     const scope = this.attendanceBranchIds(user, q.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
+    if (q.gender) and.push({ member: { is_deleted: false, gender: q.gender } });
     if (q.startDate && q.endDate) {
       and.push({ attendance_date: { gte: q.startDate, lte: q.endDate } });
     } else if (q.startDate) {
@@ -1056,100 +1189,238 @@ export class ClubAttendanceService {
     } else if (q.endDate) {
       and.push({ attendance_date: { lte: q.endDate } });
     }
-    if (q.status && q.status !== "all")
-      and.push({ status: q.status as "checked_in" | "checked_out" });
+    if (q.status && q.status !== 'all') and.push({ status: q.status as ClubAttendanceStatus });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
-        OR: [
-          { member_name: { contains: s } },
-          { member_code: { contains: s } },
-        ],
+        OR: [{ member_name: { contains: s } }, { member_code: { contains: s } }],
       });
     }
 
-    const where: Prisma.club_attendanceWhereInput = and.length
-      ? { AND: and }
-      : {};
+    const where: Prisma.club_attendanceWhereInput = and.length ? { AND: and } : {};
 
     const [rows, total] = await Promise.all([
       this.prisma.club_attendance.findMany({
         where,
-        orderBy: { check_in_time: "desc" },
+        orderBy: { check_in_time: 'desc' },
         skip: q.skip,
         take: q.take,
       }),
       this.prisma.club_attendance.count({ where }),
     ]);
 
+    const mapped = rows.map((r) => this.mapRow(r));
+    const lockerNumbers = this.lockers
+      ? await this.lockers.openHandoffNumbers(mapped.map((row) => row.memberId))
+      : new Map<number, string>();
     return paginated(
-      rows.map((r) => this.mapRow(r)),
+      mapped.map((row) => ({
+        ...row,
+        lockerNumber: row.status === 'checked_in' ? lockerNumbers.get(row.memberId) ?? null : null,
+      })),
       total,
       q.page,
       q.pageSize,
     );
   }
 
-  /** Barcode pull times, filtered by the local Cairo scan clock. */
-  async barcodeScanTimes(q: BarcodeScanTimesDto, user: JwtUser) {
-    if (!q.startDate || !q.endDate || !validIsoDay(q.startDate) || !validIsoDay(q.endDate)) {
-      throw new BadRequestException('حدد تاريخ بداية ونهاية صحيحين');
-    }
-    const startDay = new Date(`${q.startDate}T00:00:00Z`);
-    const endDay = new Date(`${q.endDate}T00:00:00Z`);
-    const spanDays = Math.round((endDay.getTime() - startDay.getTime()) / 86_400_000);
-    if (spanDays < 0 || spanDays > 366) throw new BadRequestException('الفترة يجب ألا تتجاوز سنة واحدة');
-    if (q.fromTime && q.toTime && q.fromTime > q.toTime) {
-      throw new BadRequestException('وقت البداية يجب أن يسبق وقت النهاية');
-    }
+  async subscriptionUtilization(q: SubscriptionUtilizationDto, user?: JwtUser) {
+    const scope = this.attendanceBranchIds(user, q.branch ?? null);
+    const search = q.search?.trim();
+    const where: Prisma.club_subscriptionsWhereInput = {
+      member_id: { not: null },
+      ...(scope !== null ? { branch_id: { in: scope } } : {}),
+      member: { is: { is_deleted: false } },
+      ...(search
+        ? {
+            OR: [
+              { subscription_number: { contains: search } },
+              { subscription_type: { contains: search } },
+              { customer_name: { contains: search } },
+              {
+                member: {
+                  is: {
+                    OR: [
+                      { name: { contains: search } },
+                      { member_code: { contains: search } },
+                      { phone: { contains: search } },
+                    ],
+                  },
+                },
+              },
+            ],
+          }
+        : {}),
+    };
 
-    const and: Prisma.club_attendanceWhereInput[] = [
-      { attendance_date: { gte: q.startDate, lte: q.endDate } },
-    ];
-    const branches = this.attendanceBranchIds(user, q.branch ?? null);
-    if (branches !== null) and.push({ branch_id: { in: branches } });
-    const audience = this.branchScope.memberGenderFilter(user);
-    if (audience) and.push({ member: { is: { gender: audience } } });
-    if (q.gender && q.gender !== 'all') and.push({ member: { is: { gender: q.gender } } });
-    if (q.memberCode?.trim()) and.push({ member_code: { contains: q.memberCode.trim() } });
-    if (q.search?.trim()) {
-      const search = q.search.trim();
-      and.push({ OR: [{ member_code: { contains: search } }, { member_name: { contains: search } }] });
-    }
-    if (q.fromTime || q.toTime) {
-      const days: Prisma.club_attendanceWhereInput[] = [];
-      for (let offset = 0; offset <= spanDays; offset += 1) {
-        const day = new Date(startDay.getTime() + offset * 86_400_000).toISOString().slice(0, 10);
-        const from = cairoMinuteToUtc(day, q.fromTime ?? '00:00');
-        const to = new Date(cairoMinuteToUtc(day, q.toTime ?? '23:59').getTime() + 60_000);
-        days.push({ attendance_date: day, check_in_time: { gte: from, lt: to } });
-      }
-      and.push({ OR: days });
-    }
-
-    const where: Prisma.club_attendanceWhereInput = { AND: and };
-    const [rows, total] = await Promise.all([
-      this.prisma.club_attendance.findMany({
-        where,
-        select: {
-          id: true, member_code: true, member_name: true, branch_id: true,
-          attendance_date: true, check_in_time: true, is_grace_session: true, attendance_type: true,
+    const subscriptions = await this.prisma.club_subscriptions.findMany({
+      where,
+      select: {
+        id: true,
+        subscription_number: true,
+        subscription_type: true,
+        status: true,
+        subscription_start_date: true,
+        subscription_end_date: true,
+        is_linked_to_sessions: true,
+        sessions_count: true,
+        sessions_used: true,
+        branch_id: true,
+        member: {
+          select: {
+            id: true,
+            member_code: true,
+            name: true,
+            phone: true,
+            profile_picture: true,
+            branch_id: true,
+          },
         },
-        orderBy: [{ check_in_time: 'asc' }, { id: 'asc' }],
-        skip: q.skip,
-        take: q.take,
-      }),
-      this.prisma.club_attendance.count({ where }),
-    ]);
-    return paginated(rows.map((row) => ({
-      id: row.id,
-      memberCode: row.member_code,
-      memberName: row.member_name,
-      branchId: row.branch_id,
-      attendanceDate: row.attendance_date,
-      checkInTime: row.check_in_time,
-      scanType: row.is_grace_session ? 'استثناء' : ({ normal: 'عادي', class: 'حصص', spa: 'سبا', inbody: 'إنبودي' } as Record<string, string>)[row.attendance_type ?? 'normal'] ?? 'عادي',
-    })), total, q.page, q.pageSize);
+      },
+      orderBy: [{ subscription_end_date: 'asc' }, { id: 'desc' }],
+    });
+
+    const subscriptionIds = subscriptions.map((subscription) => subscription.id);
+    const memberIds = [
+      ...new Set(
+        subscriptions.flatMap((subscription) =>
+          subscription.member ? [subscription.member.id] : [],
+        ),
+      ),
+    ];
+    const earliestStartDate = subscriptions.reduce<string | null>(
+      (earliest, subscription) =>
+        !earliest || subscription.subscription_start_date < earliest
+          ? subscription.subscription_start_date
+          : earliest,
+      null,
+    );
+    const latestEndDate = subscriptions.reduce<string | null>(
+      (latest, subscription) =>
+        !latest || subscription.subscription_end_date > latest
+          ? subscription.subscription_end_date
+          : latest,
+      null,
+    );
+    const attendances = subscriptionIds.length
+      ? await this.prisma.club_attendance.findMany({
+          where: {
+            OR: [
+              { subscription_id: { in: subscriptionIds } },
+              {
+                subscription_id: null,
+                member_id: { in: memberIds },
+                ...(scope !== null ? { branch_id: { in: scope } } : {}),
+                ...(earliestStartDate && latestEndDate
+                  ? {
+                      attendance_date: {
+                        gte: earliestStartDate,
+                        lte: latestEndDate,
+                      },
+                    }
+                  : {}),
+              },
+            ],
+          },
+          select: {
+            id: true,
+            member_id: true,
+            subscription_id: true,
+            branch_id: true,
+            attendance_date: true,
+            check_in_time: true,
+            check_out_time: true,
+            duration: true,
+            status: true,
+          },
+          orderBy: { check_in_time: 'desc' },
+        })
+      : [];
+    const subscriptionsByMemberBranch = new Map<string, typeof subscriptions>();
+    for (const subscription of subscriptions) {
+      if (!subscription.member) continue;
+      const key = `${subscription.member.id}:${subscription.branch_id}`;
+      const rows = subscriptionsByMemberBranch.get(key) ?? [];
+      rows.push(subscription);
+      subscriptionsByMemberBranch.set(key, rows);
+    }
+    const attendancesByMemberBranch = new Map<string, typeof attendances>();
+    for (const attendance of attendances) {
+      const key = `${attendance.member_id}:${attendance.branch_id}`;
+      const rows = attendancesByMemberBranch.get(key) ?? [];
+      rows.push(attendance);
+      attendancesByMemberBranch.set(key, rows);
+    }
+    const attendanceBySubscription = new Map<number, typeof attendances>();
+    for (const [key, memberAttendances] of attendancesByMemberBranch) {
+      const memberSubscriptions = subscriptionsByMemberBranch.get(key) ?? [];
+      const resolvedAttendances = assignLegacyAttendanceToSubscriptions({
+        subscriptions: memberSubscriptions,
+        attendances: memberAttendances,
+      });
+      for (const attendance of resolvedAttendances) {
+        if (attendance.subscription_id == null) continue;
+        const rows = attendanceBySubscription.get(attendance.subscription_id) ?? [];
+        rows.push(attendance as (typeof attendances)[number]);
+        attendanceBySubscription.set(attendance.subscription_id, rows);
+      }
+    }
+
+    const today = localDateString();
+    const rows = subscriptions.flatMap((subscription) => {
+      if (!subscription.member) return [];
+      const summary = buildMemberProfileSummary({
+        today,
+        subscriptions: [subscription],
+        attendances: attendanceBySubscription.get(subscription.id) ?? [],
+        renewalSubscriptionIds: new Set<number>(),
+        renewalCount: 0,
+      }).subscriptions[0];
+      if (!summary) return [];
+      return [{
+        subscriptionId: subscription.id,
+        subscriptionNumber: summary.subscriptionNumber,
+        subscriptionType: summary.subscriptionType,
+        status: summary.status,
+        startDate: summary.startDate,
+        endDate: summary.endDate,
+        totalDays: summary.totalDays,
+        remainingDays: summary.remainingDays,
+        isLinkedToSessions: summary.isLinkedToSessions,
+        sessionsCount: summary.sessionsCount,
+        sessionsUsed: summary.sessionsUsed,
+        sessionsRemaining: summary.sessionsRemaining,
+        attendanceDays: summary.attendanceDays,
+        attendanceEntries: summary.attendanceEntries,
+        attendanceRate: summary.attendanceRate,
+        lastAttendanceDate: summary.lastAttendanceDate,
+        branchId: subscription.branch_id,
+        member: {
+          id: subscription.member.id,
+          memberCode: subscription.member.member_code,
+          name: subscription.member.name,
+          phone: subscription.member.phone,
+          profilePicture: subscription.member.profile_picture,
+          branchId: subscription.member.branch_id,
+        },
+      }];
+    });
+    const statusFiltered = q.status === 'all'
+      ? rows
+      : rows.filter((row) => row.status === q.status);
+    const filtered = q.rateBucket && q.rateBucket !== 'all'
+      ? statusFiltered.filter((row) => rateBucket(row.attendanceRate) === q.rateBucket)
+      : statusFiltered;
+    const sorted = q.sort === 'attendanceRate'
+      ? [...filtered].sort((a, b) =>
+          q.order === 'asc'
+            ? a.attendanceRate - b.attendanceRate
+            : b.attendanceRate - a.attendanceRate,
+        )
+      : filtered;
+    const data = sorted.slice(q.skip, q.skip + q.take);
+
+    return paginated(data, filtered.length, q.page, q.pageSize);
   }
 
   /**
@@ -1159,8 +1430,7 @@ export class ClubAttendanceService {
    */
   async dailySummary(q: ListClubAttendanceDto, user?: JwtUser) {
     const conditions: Prisma.Sql[] = [];
-    if (q.memberId)
-      conditions.push(Prisma.sql`member_id = ${Number(q.memberId)}`);
+    if (q.memberId) conditions.push(Prisma.sql`member_id = ${Number(q.memberId)}`);
     const scope = this.attendanceBranchIds(user, q.branch ?? null);
     if (scope !== null) {
       conditions.push(
@@ -1169,20 +1439,19 @@ export class ClubAttendanceService {
           : Prisma.sql`branch_id = -1`,
       );
     }
-    if (q.startDate)
-      conditions.push(Prisma.sql`attendance_date >= ${q.startDate}`);
-    if (q.endDate) conditions.push(Prisma.sql`attendance_date <= ${q.endDate}`);
-    if (q.status && q.status !== "all")
-      conditions.push(Prisma.sql`status = ${q.status}`);
-    if (q.search?.trim()) {
-      const s = `%${q.search.trim()}%`;
+    if (q.gender) {
       conditions.push(
-        Prisma.sql`(member_name LIKE ${s} OR member_code LIKE ${s})`,
+        Prisma.sql`member_id IN (SELECT id FROM club_members WHERE is_deleted = 0 AND gender = ${q.gender})`,
       );
     }
-    const whereSql = conditions.length
-      ? Prisma.sql`WHERE ${Prisma.join(conditions, " AND ")}`
-      : Prisma.empty;
+    if (q.startDate) conditions.push(Prisma.sql`attendance_date >= ${q.startDate}`);
+    if (q.endDate) conditions.push(Prisma.sql`attendance_date <= ${q.endDate}`);
+    if (q.status && q.status !== 'all') conditions.push(Prisma.sql`status = ${q.status}`);
+    if (q.search?.trim()) {
+      const s = `%${q.search.trim()}%`;
+      conditions.push(Prisma.sql`(member_name LIKE ${s} OR member_code LIKE ${s})`);
+    }
+    const whereSql = conditions.length ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
 
     const [rows, countRows] = await Promise.all([
       this.prisma.$queryRaw<
@@ -1193,7 +1462,6 @@ export class ClubAttendanceService {
           member_code: string;
           subscription_id: number | null;
           subscription_type: string | null;
-          attendance_type: string;
           branch_id: number;
           entries: bigint;
           total_duration: bigint | number | null;
@@ -1202,14 +1470,14 @@ export class ClubAttendanceService {
         }[]
       >(Prisma.sql`
         SELECT attendance_date AS date, member_id, member_name, member_code, branch_id,
-               subscription_id, subscription_type, attendance_type,
+               subscription_id, subscription_type,
                COUNT(*) AS entries,
                COALESCE(SUM(duration), 0) AS total_duration,
                MIN(check_in_time) AS first_check_in,
                MAX(check_out_time) AS last_check_out
         FROM club_attendance
         ${whereSql}
-        GROUP BY attendance_date, member_id, member_name, member_code, branch_id, subscription_id, subscription_type, attendance_type
+        GROUP BY attendance_date, member_id, member_name, member_code, branch_id, subscription_id, subscription_type
         ORDER BY attendance_date DESC, member_name ASC
         LIMIT ${q.take} OFFSET ${q.skip}
       `),
@@ -1217,7 +1485,7 @@ export class ClubAttendanceService {
         SELECT COUNT(*) AS cnt FROM (
           SELECT 1 FROM club_attendance
           ${whereSql}
-          GROUP BY attendance_date, member_id, branch_id, subscription_id, attendance_type
+          GROUP BY attendance_date, member_id, branch_id, subscription_id
         ) grp
       `),
     ]);
@@ -1230,7 +1498,6 @@ export class ClubAttendanceService {
       memberCode: r.member_code,
       subscriptionId: r.subscription_id,
       subscriptionType: r.subscription_type,
-      attendanceType: r.attendance_type ?? 'normal',
       branchId: r.branch_id,
       entries: Number(r.entries),
       totalDuration: Number(r.total_duration ?? 0),
@@ -1242,12 +1509,18 @@ export class ClubAttendanceService {
   }
 
   async statistics(
-    query: { branch?: string; startDate?: string; endDate?: string },
+    query: {
+      branch?: string;
+      startDate?: string;
+      endDate?: string;
+      gender?: 'male' | 'female';
+    },
     user?: JwtUser,
   ) {
     const and: Prisma.club_attendanceWhereInput[] = [];
     const scope = this.attendanceBranchIds(user, query.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
+    if (query.gender) and.push({ member: { is_deleted: false, gender: query.gender } });
     if (query.startDate && query.endDate) {
       and.push({
         attendance_date: { gte: query.startDate, lte: query.endDate },
@@ -1257,35 +1530,39 @@ export class ClubAttendanceService {
     } else if (query.endDate) {
       and.push({ attendance_date: { lte: query.endDate } });
     }
-    const where: Prisma.club_attendanceWhereInput = and.length
-      ? { AND: and }
-      : {};
+    const where: Prisma.club_attendanceWhereInput = and.length ? { AND: and } : {};
 
     const today = localDateString();
 
     const historyConditions: Prisma.Sql[] = [
       Prisma.sql`attendance_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
     ];
-    if (scope !== null)
-      historyConditions.push(Prisma.sql`branch_id IN (${Prisma.join(scope)})`);
-    const historyWhere = Prisma.sql`WHERE ${Prisma.join(historyConditions, " AND ")}`;
+    if (scope !== null) {
+      historyConditions.push(
+        scope.length
+          ? Prisma.sql`branch_id IN (${Prisma.join(scope)})`
+          : Prisma.sql`branch_id = -1`,
+      );
+    }
+    if (query.gender) {
+      historyConditions.push(
+        Prisma.sql`member_id IN (SELECT id FROM club_members WHERE is_deleted = 0 AND gender = ${query.gender})`,
+      );
+    }
+    const historyWhere = Prisma.sql`WHERE ${Prisma.join(historyConditions, ' AND ')}`;
 
-    const [
-      totalRecords,
-      todayCheckIns,
-      todayCheckOuts,
-      activeCheckIns,
-      membersByDate,
-    ] = await Promise.all([
+    const [totalRecords, todayCheckIns, todayCheckOuts, activeCheckIns, membersByDate] = await Promise.all([
       this.prisma.club_attendance.count({ where }),
       this.prisma.club_attendance.count({
         where: { ...where, attendance_date: today },
       }),
       this.prisma.club_attendance.count({
-        where: { ...where, attendance_date: today, status: "checked_out" },
+        // "Left today" covers both scan-outs and sweep-closed visits; the member is
+        // gone either way, only our confidence in the timestamp differs.
+        where: { ...where, attendance_date: today, status: { in: ['checked_out', 'auto_closed'] } },
       }),
       this.prisma.club_attendance.count({
-        where: { ...where, status: "checked_in" },
+        where: { ...where, status: 'checked_in' },
       }),
       this.prisma.$queryRaw<{ date: string; count: bigint }[]>`
           SELECT attendance_date AS date, COUNT(DISTINCT member_id) AS count

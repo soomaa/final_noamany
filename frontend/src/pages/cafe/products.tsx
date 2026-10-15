@@ -1,4 +1,7 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { formatMoneyNumber } from '@/lib/formatters';
 import { Plus, Edit2, Trash2, Utensils, Factory, PackageOpen, BadgeDollarSign, ChefHat, ClipboardCheck, CheckCircle2, Archive, PackageCheck } from 'lucide-react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
@@ -25,6 +28,7 @@ import { DataTable, type PaginatedResponse } from '@/components/common/data-tabl
 import { ListPageShell } from '@/components/common/list-page-shell';
 import { RecipeEditor, type RecipeLine } from '@/components/cafe/recipe-editor';
 import { ProductVariantsEditor, type CafeVariantForm } from '@/components/cafe/product-variants-editor';
+import { CategoryMultiSelect } from '@/components/cafe/category-multi-select';
 import { useLocale } from '@/store/locale';
 import { api, apiError } from '@/lib/api';
 import { useListQuery } from '@/lib/use-list-query';
@@ -39,12 +43,13 @@ import { toast } from 'sonner';
 import type { CafeProductListItem, CafeProductDetail, CafeCategory, CafeProductType, RecipeUnit } from '@/types/cafe';
 import type { ProductListItem } from '@/types/inventory';
 import { UploadField } from '@/components/employees/upload-fields';
-import { uploadUrl } from '@/components/employees/use-uploads';
-import { resolveProductImageUrl } from '@/lib/product-image';
+import { DEFAULT_PRODUCT_IMAGE, resolveProductImageUrl } from '@/lib/product-image';
+import { validateProductImageInput } from '@/lib/product-image-input';
 import { CAFE_UNIT_OPTIONS, convertCafeUnit } from '@/lib/cafe-units';
 import { useBranches } from '@/hooks/use-branches';
 import { useAuth } from '@/store/auth';
 import { usePermission } from '@/hooks/use-permission';
+import { mergeCafeRecipeIngredientOptions, savedCafeRecipeRows } from '@/lib/cafe-recipe-options';
 
 interface ProductFormState {
   name: string;
@@ -56,7 +61,7 @@ interface ProductFormState {
   initialCost: number;
   openingBranchId?: number;
   sellPrice: number;
-  categoryId: string;
+  categoryIds: string[];
   imageUrl: string;
   isActive: boolean;
   recipes: RecipeLine[];
@@ -74,7 +79,7 @@ const emptyForm: ProductFormState = {
   initialCost: 0,
   openingBranchId: undefined,
   sellPrice: 0,
-  categoryId: '',
+  categoryIds: [],
   imageUrl: '',
   isActive: true,
   recipes: [],
@@ -82,7 +87,6 @@ const emptyForm: ProductFormState = {
   variants: [],
 };
 
-const NO_CATEGORY = '__none__';
 type ProductFormTab = 'details' | 'pricing' | 'recipe' | 'review';
 const PRODUCT_FORM_TABS: ProductFormTab[] = ['details', 'pricing', 'recipe', 'review'];
 
@@ -92,11 +96,14 @@ export function CafeProductsPage() {
   const qc = useQueryClient();
   const user = useAuth((state) => state.user);
   const { data: branches } = useBranches();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepLinkOpenedRef = useRef<string | null>(null);
   const { params, setParams } = useListQuery({
     pageSize: 25,
     filters: { isActive: 'true' },
   });
   const productsTab = params.filters.isActive === 'false' ? 'archived' : 'active';
+  const [searchDraft, setSearchDraft] = useState(params.search);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [formTab, setFormTab] = useState<ProductFormTab>('details');
@@ -112,6 +119,18 @@ export function CafeProductsPage() {
   const [productionQuantity, setProductionQuantity] = useState(1);
   const [producing, setProducing] = useState(false);
 
+  useEffect(() => {
+    setSearchDraft(params.search);
+  }, [params.search]);
+
+  useEffect(() => {
+    if (searchDraft === params.search) return;
+    const timer = window.setTimeout(() => {
+      setParams({ search: searchDraft, page: 1 });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [params.search, searchDraft, setParams]);
+
   const { data: listData, isLoading, isError, error, refetch } = usePaginatedList<CafeProductListItem>(
     'cafe-products',
     params,
@@ -125,15 +144,19 @@ export function CafeProductsPage() {
   });
 
   const effectiveProductionBranchId = productionBranchId || String(branches?.[0]?.id ?? '');
+  const imageInputValidation = validateProductImageInput(form.imageUrl);
+  const imagePreviewUrl = imageInputValidation.error
+    ? DEFAULT_PRODUCT_IMAGE
+    : resolveProductImageUrl(imageInputValidation.value);
 
-  const detailQuery = useResource<CafeProductDetail>('cafe-products', editingId ?? undefined);
+  const detailQuery = useResource<CafeProductDetail>('cafe-products', editingId ?? undefined, undefined, editingId != null);
 
   const categoryOptions = useMemo(() => {
     const list = categories?.filter((c) => c.isActive) ?? [];
     return list.map((c) => ({ value: String(c.id), label: c.nameAr }));
   }, [categories]);
 
-  const ingredientOptions = useMemo(() => {
+  const listedIngredientOptions = useMemo(() => {
     const byId = new Map([...(ingredientsResp?.data ?? []), ...inlineIngredients].map((item) => [item.id, item]));
     return [...byId.values()].map((p) => ({
       id: p.id,
@@ -146,6 +169,11 @@ export function CafeProductsPage() {
       inventoryKind: p.inventoryKind,
     }));
   }, [ingredientsResp, inlineIngredients]);
+
+  const ingredientOptions = useMemo(() => mergeCafeRecipeIngredientOptions(
+    listedIngredientOptions,
+    detailQuery.data ? savedCafeRecipeRows(detailQuery.data) : [],
+  ), [detailQuery.data, listedIngredientOptions]);
 
   const recipeCost = useMemo(() => {
     let total = 0;
@@ -181,7 +209,9 @@ export function CafeProductsPage() {
   const computedProfit = Math.round((effectiveSellPrice - computedCost) * 100) / 100;
   const computedMargin = effectiveSellPrice > 0 ? Math.round((computedProfit / effectiveSellPrice) * 10000) / 100 : 0;
   const currentFormTabIndex = PRODUCT_FORM_TABS.indexOf(formTab);
-  const selectedCategoryName = categoryOptions.find((category) => category.value === form.categoryId)?.label ?? ui('بدون فئة');
+  const selectedCategoryNames = form.categoryIds
+    .map((id) => categoryOptions.find((category) => category.value === id)?.label)
+    .filter((name): name is string => Boolean(name));
   const productTypeLabel = form.productType === 'ready'
     ? ui('منتج جاهز')
     : form.productType === 'internal'
@@ -252,7 +282,9 @@ export function CafeProductsPage() {
       initialCost: row.cost,
       openingBranchId: user?.branch || branches?.[0]?.id,
       sellPrice: row.sellPrice,
-      categoryId: row.categoryId ? String(row.categoryId) : '',
+      categoryIds: row.categoryIds?.length
+        ? row.categoryIds.map(String)
+        : row.categoryId ? [String(row.categoryId)] : [],
       imageUrl: row.imageUrl ?? '',
       isActive: row.isActive,
       recipes: [],
@@ -263,6 +295,27 @@ export function CafeProductsPage() {
     setDialogOpen(true);
   };
 
+  useEffect(() => {
+    const rawId = searchParams.get('editProductId');
+    if (!rawId || deepLinkOpenedRef.current === rawId) return;
+    const productId = Number(rawId);
+    if (!Number.isInteger(productId) || productId < 1) return;
+    deepLinkOpenedRef.current = rawId;
+    void api.get<CafeProductDetail>(`/cafe-products/${productId}`)
+      .then(({ data }) => {
+        openEdit(data);
+        setFormTab(searchParams.get('formTab') === 'recipe' ? 'recipe' : 'details');
+        const next = new URLSearchParams(searchParams);
+        next.delete('editProductId');
+        next.delete('formTab');
+        setSearchParams(next, { replace: true });
+      })
+      .catch((error) => {
+        deepLinkOpenedRef.current = null;
+        toast.error(apiError(error, ui('تعذر فتح الوصفة')));
+      });
+  }, [searchParams, setSearchParams, ui]);
+
   const detail = detailQuery.data;
   useEffect(() => {
     formContentRef.current?.scrollTo({ top: 0 });
@@ -272,6 +325,9 @@ export function CafeProductsPage() {
     if (!dialogOpen || !editingId || !detail || hydratedDetailId === editingId) return;
     setForm((f) => ({
       ...f,
+      categoryIds: detail.categoryIds?.length
+        ? detail.categoryIds.map(String)
+        : detail.categoryId ? [String(detail.categoryId)] : [],
       readyUnit: (detail.inventoryProduct?.unitOfMeasure as RecipeUnit | undefined) ?? f.readyUnit,
       readyMinStock: detail.inventoryProduct?.minStock ?? f.readyMinStock,
       recipes: detail.recipes.map((r) => ({
@@ -313,7 +369,7 @@ export function CafeProductsPage() {
         sellPrice: vars.body.productType === 'internal' ? 0 : Number(vars.body.variantsEnabled
           ? vars.body.variants.find((variant) => variant.isDefault)?.sellPrice ?? vars.body.sellPrice
           : vars.body.sellPrice),
-        categoryId: vars.body.categoryId ? Number(vars.body.categoryId) : undefined,
+        categoryIds: vars.body.categoryIds.map(Number),
         imageUrl: vars.body.imageUrl || undefined,
         isActive: vars.body.isActive,
         recipes: vars.body.productType !== 'ready' && !vars.body.variantsEnabled ? vars.body.recipes?.map((r) => ({
@@ -396,6 +452,11 @@ export function CafeProductsPage() {
       goToNextFormTab();
       return;
     }
+    if (imageInputValidation.error) {
+      setFormTab('details');
+      toast.error(ui('أدخل رابط صورة آمن يبدأ بـ https://'));
+      return;
+    }
     if (!form.name.trim()) {
       toast.error(ui('اسم المنتج مطلوب'));
       return;
@@ -437,7 +498,10 @@ export function CafeProductsPage() {
     }
     setIsSubmitting(true);
     try {
-      await saveMutation.mutateAsync({ id: editingId ?? undefined, body: form });
+      await saveMutation.mutateAsync({
+        id: editingId ?? undefined,
+        body: { ...form, imageUrl: imageInputValidation.value },
+      });
     } catch (err) {
       toast.error(apiError(err));
     } finally {
@@ -458,7 +522,12 @@ export function CafeProductsPage() {
     () => [
       { header: ui('الكود'), accessorKey: 'productCode' },
       { header: ui('الاسم'), accessorKey: 'name' },
-      { header: ui('الفئة'), accessorKey: 'categoryName' },
+      {
+        header: ui('الفئات'),
+        id: 'categories',
+        cell: ({ row }: { row: { original: CafeProductListItem } }) =>
+          row.original.categories?.map((category) => category.name).join(ui('،')) || row.original.categoryName || ui('بدون فئة'),
+      },
       {
         header: ui('النوع'),
         accessorKey: 'productType',
@@ -477,7 +546,7 @@ export function CafeProductsPage() {
         header: ui('الأحجام والأنواع'),
         accessorKey: 'variantCount',
         cell: ({ row }: { row: { original: CafeProductListItem } }) => row.original.variantCount > 0
-          ? <span className="rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary">{row.original.variantCount} {ui('اختيار')}</span>
+          ? <span className="rounded-full bg-primary/10 px-2 py-1 text-xs font-medium text-primary">{formatDisplayNumber(row.original.variantCount)} {ui('اختيار')}</span>
           : <span className="text-xs text-muted-foreground">{ui('بدون اختيارات')}</span>,
       },
       {
@@ -486,7 +555,7 @@ export function CafeProductsPage() {
         cell: ({ row }: { row: { original: CafeProductListItem } }) => (
           <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
             <Utensils className="size-3.5" />
-            {row.original.recipeCount}
+            {formatDisplayNumber(row.original.recipeCount)}
           </span>
         ),
       },
@@ -551,6 +620,7 @@ export function CafeProductsPage() {
 
   const productsTable = (
     <DataTable
+      exportSource={{ resource: 'cafe-products', params }}
       columns={columns}
       data={listData?.data ?? []}
       total={listData?.total ?? 0}
@@ -562,8 +632,8 @@ export function CafeProductsPage() {
       isError={isError}
       errorMessage={apiError(error)}
       onRetry={refetch}
-      search={params.search}
-      onSearchChange={(search) => setParams({ search, page: 1 })}
+      search={searchDraft}
+      onSearchChange={setSearchDraft}
       searchPlaceholder={ui('بحث بالاسم أو الكود…')}
       enableExport
     />
@@ -625,7 +695,7 @@ export function CafeProductsPage() {
                   ['review', ClipboardCheck, ui('المراجعة والحفظ')],
                 ] as const).map(([value, Icon, label], index) => (
                   <TabsTrigger key={value} value={value} className="group h-12 gap-2 rounded-xl data-[state=active]:shadow-sm">
-                    <span className="grid size-7 shrink-0 place-items-center rounded-full bg-background text-xs font-bold text-muted-foreground shadow-sm group-data-[state=active]:bg-primary group-data-[state=active]:text-primary-foreground">{index + 1}</span>
+                    <span className="grid size-7 shrink-0 place-items-center rounded-full bg-background text-xs font-bold text-muted-foreground shadow-sm group-data-[state=active]:bg-primary group-data-[state=active]:text-primary-foreground">{formatDisplayNumber(index + 1)}</span>
                     <Icon className="hidden size-4 sm:block" />
                     <span className="text-xs sm:text-sm">{label}</span>
                   </TabsTrigger>
@@ -670,15 +740,14 @@ export function CafeProductsPage() {
                             </SelectContent>
                           </Select>
                         </div>
-                        <div className="space-y-2">
-                          <Label>{ui('الفئة')}</Label>
-                          <Select value={form.categoryId || NO_CATEGORY} onValueChange={(value) => setForm({ ...form, categoryId: value === NO_CATEGORY ? '' : value })}>
-                            <SelectTrigger><SelectValue placeholder={ui('اختر فئة')} /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value={NO_CATEGORY}>{ui('بدون فئة')}</SelectItem>
-                              {categoryOptions.map((category) => <SelectItem key={category.value} value={category.value}>{category.label}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
+                      <div className="space-y-2">
+                          <Label>{ui('الفئات')}</Label>
+                          <CategoryMultiSelect
+                            options={categoryOptions}
+                            value={form.categoryIds}
+                            onValueChange={(categoryIds) => setForm({ ...form, categoryIds })}
+                          />
+                          <p className="text-xs text-muted-foreground">{ui('سيظهر المنتج في كل الفئات المختارة داخل نقطة البيع.')}</p>
                         </div>
                       </div>
                       <div className="flex items-center justify-between rounded-xl border bg-card p-4">
@@ -690,8 +759,46 @@ export function CafeProductsPage() {
                       </div>
                     </div>
                     <div className="space-y-3 rounded-2xl border bg-muted/20 p-3">
-                      <img src={uploadUrl(form.imageUrl) ?? resolveProductImageUrl(null)} alt={form.name || ui('صورة المنتج')} className="aspect-square w-full rounded-xl border bg-background object-cover" />
+                      <img
+                        src={imagePreviewUrl}
+                        alt={form.name || ui('صورة المنتج')}
+                        className="aspect-square w-full rounded-xl border bg-background object-cover"
+                        onError={(event) => {
+                          event.currentTarget.onerror = null;
+                          event.currentTarget.src = DEFAULT_PRODUCT_IMAGE;
+                        }}
+                      />
                       <UploadField category="product-image" value={form.imageUrl} onChange={(path) => setForm((current) => ({ ...current, imageUrl: path ?? '' }))} accept="image/*" label={ui('اختيار صورة المنتج')} />
+                      <div className="space-y-1.5 border-t border-border/60 pt-3">
+                        <Label htmlFor="cafe-product-image-url" className="text-xs font-semibold">
+                          {ui('أو الصق رابط الصورة')}
+                        </Label>
+                        <Input
+                          id="cafe-product-image-url"
+                          dir="ltr"
+                          inputMode="url"
+                          autoComplete="url"
+                          value={form.imageUrl}
+                          aria-invalid={imageInputValidation.error === 'invalid'}
+                          aria-describedby="cafe-product-image-url-help"
+                          className={imageInputValidation.error ? 'border-destructive focus-visible:ring-destructive' : ''}
+                          placeholder="https://example.com/product.jpg"
+                          onChange={(event) => setForm((current) => ({ ...current, imageUrl: event.target.value }))}
+                          onBlur={() => {
+                            if (!imageInputValidation.error && imageInputValidation.value !== form.imageUrl) {
+                              setForm((current) => ({ ...current, imageUrl: imageInputValidation.value }));
+                            }
+                          }}
+                        />
+                        <p
+                          id="cafe-product-image-url-help"
+                          className={`text-xs ${imageInputValidation.error ? 'text-destructive' : 'text-muted-foreground'}`}
+                        >
+                          {imageInputValidation.error
+                            ? ui('الرابط غير صالح. استخدم رابطًا يبدأ بـ https://')
+                            : ui('يمكنك لصق رابط مباشر للصورة بدل رفع ملف.')}
+                        </p>
+                      </div>
                       <p className="text-center text-xs text-muted-foreground">{ui('تظهر الصورة في شاشة البيع.')}</p>
                     </div>
                   </div>
@@ -729,7 +836,7 @@ export function CafeProductsPage() {
                       <Label htmlFor="cafeProductSellPrice" className="text-base font-bold">{ui('سعر البيع')}</Label>
                       <div className="relative">
                         <Input id="cafeProductSellPrice" dir="ltr" inputMode="decimal" className="nums h-14 pe-16 text-end text-2xl font-black" type="number" min={0.01} step={0.01} value={effectiveSellPrice} onChange={(event) => setForm((current) => ({ ...current, sellPrice: Number(event.target.value) }))} placeholder={ui('أدخل سعر البيع')} required />
-                        <span className="absolute end-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted-foreground">{ui('ج.م')}</span>
+                        <span className="absolute end-4 top-1/2 -translate-y-1/2 text-sm font-semibold text-muted-foreground">{ui('EGP')}</span>
                       </div>
                       <p className="text-sm text-muted-foreground">{ui('هذا هو السعر الذي سيظهر للكاشير في نقطة البيع.')}</p>
                     </div>
@@ -747,7 +854,7 @@ export function CafeProductsPage() {
                     <div className="grid gap-4 sm:grid-cols-2">
                       {form.productType === 'ready' ? <p className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800 sm:col-span-2 dark:border-emerald-900 dark:bg-emerald-950/20 dark:text-emerald-200">{ui('سيُنشأ تلقائيًا ضمن المنتجات الجاهزة، ويظهر للموردين والمشتريات والمخزون.')}</p> : null}
                       <div className="space-y-2">
-                        <Label>{ui(form.productType === 'internal' ? 'وحدة ناتج التصنيع' : 'وحدة المخزون')}</Label>
+                        <Label>{ui(form.productType === 'internal' ? ui('وحدة ناتج التصنيع') : ui('وحدة المخزون'))}</Label>
                         <Select value={form.readyUnit} onValueChange={(value) => setForm({ ...form, readyUnit: value as RecipeUnit })}>
                           <SelectTrigger><SelectValue /></SelectTrigger>
                           <SelectContent>{CAFE_UNIT_OPTIONS.map((option) => <SelectItem key={option.value} value={option.value}>{ui(option.label)}</SelectItem>)}</SelectContent>
@@ -813,13 +920,21 @@ export function CafeProductsPage() {
                   <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
                     <section className="rounded-2xl border bg-card p-5 shadow-sm">
                       <div className="flex items-center gap-4">
-                        <img src={uploadUrl(form.imageUrl) ?? resolveProductImageUrl(null)} alt="" className="size-24 rounded-2xl border bg-muted object-cover" />
-                        <div className="min-w-0"><p className="text-xs text-muted-foreground nums">{previewProductCode || '—'}</p><h3 className="mt-1 truncate text-xl font-black">{form.name || ui('لم يُكتب اسم المنتج')}</h3><div className="mt-2 flex flex-wrap gap-2"><Badge variant="outline">{productTypeLabel}</Badge><Badge variant="outline">{selectedCategoryName}</Badge><Badge variant={form.isActive ? 'success' : 'secondary'}>{form.isActive ? ui('نشط') : ui('معطل')}</Badge></div></div>
+                        <img
+                          src={imagePreviewUrl}
+                          alt=""
+                          className="size-24 rounded-2xl border bg-muted object-cover"
+                          onError={(event) => {
+                            event.currentTarget.onerror = null;
+                            event.currentTarget.src = DEFAULT_PRODUCT_IMAGE;
+                          }}
+                        />
+                        <div className="min-w-0"><p className="text-xs text-muted-foreground nums">{previewProductCode || '—'}</p><h3 className="mt-1 truncate text-xl font-black">{form.name || ui('لم يُكتب اسم المنتج')}</h3><div className="mt-2 flex flex-wrap gap-2"><Badge variant="outline">{productTypeLabel}</Badge>{selectedCategoryNames.length ? selectedCategoryNames.map((name) => <Badge key={name} variant="outline">{name}</Badge>) : <Badge variant="outline">{ui('بدون فئة')}</Badge>}<Badge variant={form.isActive ? 'success' : 'secondary'}>{form.isActive ? ui('نشط') : ui('معطل')}</Badge></div></div>
                       </div>
                       <dl className="mt-5 grid gap-3 sm:grid-cols-2">
-                        <div className="rounded-xl bg-muted/45 p-3"><dt className="text-xs text-muted-foreground">{ui('طريقة التسعير')}</dt><dd className="mt-1 font-semibold">{form.variantsEnabled ? `${form.variants.filter((variant) => variant.isActive).length} ${ui('أحجام/أنواع بأسعار مستقلة')}` : form.productType === 'internal' ? ui('غير مخصص للبيع') : ui('سعر واحد')}</dd></div>
-                        <div className="rounded-xl bg-muted/45 p-3"><dt className="text-xs text-muted-foreground">{ui('الوصفة')}</dt><dd className="mt-1 font-semibold">{form.productType === 'ready' ? ui('لا توجد — منتج جاهز') : form.variantsEnabled ? `${form.variants.reduce((sum, variant) => sum + variant.recipes.length, 0)} ${ui('مكوّن عبر الاختيارات')}` : `${form.recipes.length} ${ui('مكوّن')}`}</dd></div>
-                        {form.productType !== 'prepared' ? <><div className="rounded-xl bg-muted/45 p-3"><dt className="text-xs text-muted-foreground">{ui('وحدة المخزون')}</dt><dd className="mt-1 font-semibold">{CAFE_UNIT_OPTIONS.find((option) => option.value === form.readyUnit)?.label ?? form.readyUnit}</dd></div><div className="rounded-xl bg-muted/45 p-3"><dt className="text-xs text-muted-foreground">{ui('تنبيه الكمية')}</dt><dd className="nums mt-1 font-semibold">{form.readyMinStock}</dd></div></> : null}
+                        <div className="rounded-xl bg-muted/45 p-3"><dt className="text-xs text-muted-foreground">{ui('طريقة التسعير')}</dt><dd className="mt-1 font-semibold">{form.variantsEnabled ? `${formatDisplayNumber(form.variants.filter((variant) => variant.isActive).length)} ${ui('أحجام/أنواع بأسعار مستقلة')}` : form.productType === 'internal' ? ui('غير مخصص للبيع') : ui('سعر واحد')}</dd></div>
+                        <div className="rounded-xl bg-muted/45 p-3"><dt className="text-xs text-muted-foreground">{ui('الوصفة')}</dt><dd className="mt-1 font-semibold">{form.productType === 'ready' ? ui('لا توجد — منتج جاهز') : form.variantsEnabled ? `${formatDisplayNumber(form.variants.reduce((sum, variant) => sum + variant.recipes.length, 0))} ${ui('مكوّن عبر الاختيارات')}` : `${formatDisplayNumber(form.recipes.length)} ${ui('مكوّن')}`}</dd></div>
+                        {form.productType !== 'prepared' ? <><div className="rounded-xl bg-muted/45 p-3"><dt className="text-xs text-muted-foreground">{ui('وحدة المخزون')}</dt><dd className="mt-1 font-semibold">{ui(CAFE_UNIT_OPTIONS.find((option) => option.value === form.readyUnit)?.label ?? form.readyUnit)}</dd></div><div className="rounded-xl bg-muted/45 p-3"><dt className="text-xs text-muted-foreground">{ui('تنبيه الكمية')}</dt><dd className="nums mt-1 font-semibold">{formatDisplayNumber(form.readyMinStock)}</dd></div></> : null}
                       </dl>
                     </section>
 
@@ -832,7 +947,7 @@ export function CafeProductsPage() {
                           <div className="rounded-xl bg-background p-3"><p className="text-xs text-muted-foreground">{ui('الربح')}</p><p className={`nums mt-1 text-lg font-black ${computedProfit < 0 ? 'text-destructive' : 'text-emerald-600'}`}>{computedProfit.toFixed(2)}</p></div>
                           <div className="rounded-xl bg-background p-3"><p className="text-xs text-muted-foreground">{ui('الهامش')}</p><p className="nums mt-1 text-lg font-black text-primary">{computedMargin.toFixed(2)}%</p></div>
                         </div>
-                        <div className="mt-3 rounded-xl border bg-background p-4 text-center"><p className="text-xs text-muted-foreground">{form.variantsEnabled ? ui('سعر الاختيار الافتراضي') : ui('سعر البيع')}</p><p className="nums mt-1 text-3xl font-black text-primary">{effectiveSellPrice.toFixed(2)} <span className="text-sm">{ui('ج.م')}</span></p></div>
+                        <div className="mt-3 rounded-xl border bg-background p-4 text-center"><p className="text-xs text-muted-foreground">{form.variantsEnabled ? ui('سعر الاختيار الافتراضي') : ui('سعر البيع')}</p><p className="nums mt-1 text-3xl font-black text-primary" dir="ltr">{formatMoneyNumber(effectiveSellPrice)} <span className="text-sm">EGP</span></p></div>
                       </section>
                     ) : null}
                   </div>
@@ -849,7 +964,7 @@ export function CafeProductsPage() {
                           }, 0);
                           const profit = variant.sellPrice - cost;
                           const margin = variant.sellPrice > 0 ? (profit / variant.sellPrice) * 100 : 0;
-                          return <article key={variant.id ?? index} className={`rounded-xl border p-3 ${variant.isDefault ? 'border-primary/50 bg-primary/[0.03]' : ''}`}><div className="flex items-center justify-between gap-2"><p className="font-bold">{variant.name || ui('بدون اسم')}</p>{variant.isDefault ? <Badge>{ui('افتراضي')}</Badge> : null}</div><p className="nums mt-3 text-xl font-black text-primary">{variant.sellPrice.toFixed(2)} <span className="text-xs">{ui('ج.م')}</span></p><div className="mt-2 flex justify-between text-xs text-muted-foreground"><span>{ui('التكلفة')}: <b className="nums text-foreground">{cost.toFixed(2)}</b></span><span>{ui('الربح')}: <b className={`nums ${profit < 0 ? 'text-destructive' : 'text-emerald-600'}`}>{profit.toFixed(2)} ({margin.toFixed(1)}%)</b></span></div></article>;
+                          return <article key={variant.id ?? index} className={`rounded-xl border p-3 ${variant.isDefault ? 'border-primary/50 bg-primary/[0.03]' : ''}`}><div className="flex items-center justify-between gap-2"><p className="font-bold">{variant.name || ui('بدون اسم')}</p>{variant.isDefault ? <Badge>{ui('افتراضي')}</Badge> : null}</div><p className="nums mt-3 text-xl font-black text-primary" dir="ltr">{formatMoneyNumber(variant.sellPrice)} <span className="text-xs">EGP</span></p><div className="mt-2 flex justify-between text-xs text-muted-foreground"><span>{ui('التكلفة')}: <b className="nums text-foreground">{formatMoneyNumber(cost)}</b></span><span>{ui('الربح')}: <b className={`nums ${profit < 0 ? 'text-destructive' : 'text-emerald-600'}`}>{formatMoneyNumber(profit)} ({margin.toFixed(1)}%)</b></span></div></article>;
                         })}
                       </div>
                     </section>

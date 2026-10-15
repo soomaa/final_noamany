@@ -1,11 +1,17 @@
 import type { ColumnDef } from '@tanstack/react-table';
+import { useState } from 'react';
+import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
 import { FilterBar } from '@/components/common/filter-bar';
 import { PageHeader } from '@/components/common/page-header';
 import { NotImplementedState } from '@/components/common/states';
+import { Button } from '@/components/ui/button';
+import { usePermission } from '@/hooks/use-permission';
+import { api } from '@/lib/api';
 import { isNotImplemented, usePaginatedList } from '@/lib/api-hooks';
+import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 interface LeaveBalanceRow {
@@ -20,8 +26,30 @@ interface LeaveBalanceRow {
 
 export function LeaveBalancesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canConfigure = can('leaves.balances:configure');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<LeaveBalanceRow>('leaves/balances', params);
+  const [carrying, setCarrying] = useState(false);
+
+  const handleCarryOver = async () => {
+    if (!canConfigure) return;
+    const year = new Date().getFullYear();
+    const ok = await confirm({
+      title: ui('ترحيل الأرصدة'),
+      description: `${ui('هل تريد ترحيل أرصدة الإجازات لعام ')}${toArabicDigits(year)}${ui('؟')}`,
+      confirmLabel: ui('ترحيل'),
+    });
+    if (!ok) return;
+    setCarrying(true);
+    try {
+      await api.post('/leaves/carry-over', { year });
+      toast.success(ui('تم ترحيل الأرصدة'));
+      await refetch();
+    } finally {
+      setCarrying(false);
+    }
+  };
 
   const columns: ColumnDef<LeaveBalanceRow>[] = [
     {
@@ -32,7 +60,7 @@ export function LeaveBalancesPage() {
     {
       accessorKey: 'empCode',
       header: ui('كود الموظف'),
-      cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string ?? '—')}</span>,
+      cell: ({ getValue }) => <span className="nums">{formatDigits(getValue() as string ?? '—')}</span>,
     },
     { accessorKey: 'employeeName', header: ui('الموظف') },
     { accessorKey: 'leaveType', header: ui('نوع الإجازة') },
@@ -77,9 +105,20 @@ export function LeaveBalancesPage() {
 
   return (
     <div>
-      <PageHeader title={ui('أرصدة الإجازات')} description={ui('عرض أرصدة الإجازات لكل موظف')} />
+      <PageHeader
+        title={ui('أرصدة الإجازات')}
+        description={ui('عرض أرصدة الإجازات لكل موظف')}
+        actions={
+          canConfigure ? (
+            <Button permissionResource="leaves.balances" permissionAction="configure" variant="brand" size="sm" disabled={carrying} onClick={() => void handleCarryOver()}>
+              {ui('ترحيل الأرصدة')}
+            </Button>
+          ) : null
+        }
+      />
       <FilterBar searchPlaceholder={ui('بحث بالاسم أو الكود…')} />
       <DataTable
+        exportSource={{ resource: 'leaves/balances', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}

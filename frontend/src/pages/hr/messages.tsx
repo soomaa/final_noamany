@@ -22,11 +22,12 @@ import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 interface MessageRow {
@@ -58,6 +59,9 @@ const EMPTY_FORM = { title: '', subject: '', body: '', sendAll: false };
 
 export function MessagesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('affairs.messages:create');
+  const canDelete = can('affairs.messages:delete');
   const { params, setParams } = useListQuery();
   const [tab, setTab] = useState<'inbox' | 'sent'>('inbox');
 
@@ -199,7 +203,7 @@ export function MessagesPage() {
             >
               <Eye className="size-4" />
             </Button>
-            {tab === 'sent' && (
+            {tab === 'sent' && canDelete ? (
               <Button
                 variant="ghost"
                 size="icon"
@@ -216,28 +220,30 @@ export function MessagesPage() {
               >
                 <Trash2 className="size-4 text-destructive" />
               </Button>
-            )}
+            ) : null}
           </div>
         ),
       },
     ];
     return cols;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, params.page, params.pageSize]);
+  }, [tab, params.page, params.pageSize, ui, canDelete]);
 
   return (
     <>
       <ListPageShell
         title={ui('الرسائل الداخلية')}
         description={ui('المراسلات والمذكرات الداخلية بين الموظفين')}
+        searchPlaceholder={ui('بحث في الرسائل…')}
         stats={stats}
         statsLoading={active.isLoading}
         isError={active.isError}
         error={active.error}
         actions={
-          <Button variant="brand" size="sm" onClick={openCompose}>
-            <Plus className="size-4" /> {ui('رسالة جديدة')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCompose}>
+              <Plus className="size-4" /> {ui('رسالة جديدة')}
+            </Button>
+          ) : undefined
         }
       >
         <Tabs
@@ -258,6 +264,7 @@ export function MessagesPage() {
 
           <TabsContent value="inbox" className="mt-4">
             <DataTable
+              exportSource={{ resource: 'messages/inbox', params }}
               columns={columns}
               data={inbox.data?.data ?? []}
               total={inbox.data?.total ?? 0}
@@ -276,6 +283,7 @@ export function MessagesPage() {
 
           <TabsContent value="sent" className="mt-4">
             <DataTable
+              exportSource={{ resource: 'messages/sent', params }}
               columns={columns}
               data={sent.data?.data ?? []}
               total={sent.data?.total ?? 0}

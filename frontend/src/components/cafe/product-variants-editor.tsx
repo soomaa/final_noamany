@@ -1,7 +1,17 @@
-import { ChevronDown, Copy, Plus, Star, Trash2 } from 'lucide-react';
+import { formatDisplayNumber } from '@/lib/number-display';
+import { ChefHat, Copy, Plus, Star, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { formatMoneyNumber } from '@/lib/formatters';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
@@ -36,15 +46,17 @@ export function ProductVariantsEditor({
   onIngredientCreated,
 }: Props) {
   const { ui } = useLocale();
-  const [openIndex, setOpenIndex] = useState<number | null>(variants.length ? 0 : null);
+  const [recipeDialogIndex, setRecipeDialogIndex] = useState<number | null>(null);
 
   useEffect(() => {
     if (!variants.length) {
-      setOpenIndex(null);
+      setRecipeDialogIndex(null);
       return;
     }
-    if (openIndex != null && openIndex >= variants.length) setOpenIndex(variants.length - 1);
-  }, [openIndex, variants.length]);
+    if (recipeDialogIndex != null && recipeDialogIndex >= variants.length) {
+      setRecipeDialogIndex(null);
+    }
+  }, [recipeDialogIndex, variants.length]);
 
   const update = (index: number, patch: Partial<CafeVariantForm>) => {
     onChange(variants.map((variant, current) => current === index ? { ...variant, ...patch } : variant));
@@ -67,16 +79,15 @@ export function ProductVariantsEditor({
         recipes: source?.recipes.map((recipe) => ({ ...recipe })) ?? [],
       },
     ]);
-    setOpenIndex(variants.length);
+    setRecipeDialogIndex(variants.length);
   };
 
   const removeVariant = (index: number) => {
     const next = variants.filter((_, current) => current !== index);
     if (variants[index]?.isDefault && next.length) next[0] = { ...next[0], isDefault: true };
     onChange(next);
-    if (!next.length) setOpenIndex(null);
-    else if (openIndex === index) setOpenIndex(Math.min(index, next.length - 1));
-    else if (openIndex != null && openIndex > index) setOpenIndex(openIndex - 1);
+    if (recipeDialogIndex === index) setRecipeDialogIndex(null);
+    else if (recipeDialogIndex != null && recipeDialogIndex > index) setRecipeDialogIndex(recipeDialogIndex - 1);
   };
 
   const recipeCost = (recipes: RecipeLine[]) => recipes.reduce((total, recipe) => {
@@ -85,6 +96,7 @@ export function ProductVariantsEditor({
     const converted = convertCafeUnit(recipe.quantity, recipe.unit, ingredient.unitOfMeasure);
     return total + (converted == null ? 0 : converted * (ingredient.costPrice ?? 0));
   }, 0);
+  const recipeVariant = recipeDialogIndex == null ? null : variants[recipeDialogIndex] ?? null;
 
   return (
     <section className="space-y-4 rounded-2xl border border-primary/20 bg-primary/[0.03] p-4">
@@ -95,7 +107,7 @@ export function ProductVariantsEditor({
             {ui('كل اختيار له سعر ووصفة مستقلة، وسيظهر كاختيار منظم في نقطة البيع.')}
           </p>
         </div>
-        <Button type="button" variant="outline" size="sm" onClick={addVariant} disabled={disabled}>
+        <Button permissionAction={null} type="button" variant="outline" size="sm" onClick={addVariant} disabled={disabled}>
           <Plus className="me-1 size-4" />{ui('إضافة حجم أو نوع')}
         </Button>
       </div>
@@ -111,7 +123,6 @@ export function ProductVariantsEditor({
           const cost = recipeCost(variant.recipes);
           const profit = variant.sellPrice - cost;
           const margin = variant.sellPrice > 0 ? (profit / variant.sellPrice) * 100 : 0;
-          const isOpen = openIndex === index;
           return (
             <article
               key={variant.id ?? `new-${index}`}
@@ -120,7 +131,7 @@ export function ProductVariantsEditor({
               <div className="space-y-4 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
-                    <span className="flex size-8 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">{index + 1}</span>
+                    <span className="flex size-8 items-center justify-center rounded-full bg-primary/10 font-bold text-primary">{formatDisplayNumber(index + 1)}</span>
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <h4 className="font-bold">{variant.name || ui('حجم أو نوع جديد')}</h4>
@@ -168,43 +179,79 @@ export function ProductVariantsEditor({
                   </p>
                 ) : null}
 
-                <div className="flex flex-wrap gap-2">
-                  <Button type="button" size="sm" variant={variant.isDefault ? 'default' : 'outline'} onClick={() => setDefault(index)} disabled={disabled}>
-                    <Star className={`me-1 size-4 ${variant.isDefault ? 'fill-current' : ''}`} />{variant.isDefault ? ui('الاختيار الافتراضي') : ui('تعيين كافتراضي')}
-                  </Button>
-                  {variants.some((row) => row.isDefault && row !== variant) ? (
-                    <Button type="button" size="sm" variant="outline" onClick={() => {
-                      const source = variants.find((row) => row.isDefault);
-                      if (source) update(index, { recipes: source.recipes.map((recipe) => ({ ...recipe })) });
-                    }} disabled={disabled}>
-                      <Copy className="me-1 size-4" />{ui('نسخ وصفة الافتراضي')}
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant={variant.isDefault ? 'default' : 'outline'} onClick={() => setDefault(index)} disabled={disabled}>
+                      <Star className={`me-1 size-4 ${variant.isDefault ? 'fill-current' : ''}`} />{variant.isDefault ? ui('الاختيار الافتراضي') : ui('تعيين كافتراضي')}
                     </Button>
-                  ) : null}
-                  <Button type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => removeVariant(index)} disabled={disabled || variants.length === 1}>
-                    <Trash2 className="me-1 size-4" />{ui('حذف الاختيار')}
+                    {variants.some((row) => row.isDefault && row !== variant) ? (
+                      <Button type="button" size="sm" variant="outline" onClick={() => {
+                        const source = variants.find((row) => row.isDefault);
+                        if (source) update(index, { recipes: source.recipes.map((recipe) => ({ ...recipe })) });
+                      }} disabled={disabled}>
+                        <Copy className="me-1 size-4" />{ui('نسخ وصفة الافتراضي')}
+                      </Button>
+                    ) : null}
+                  </div>
+                  <Button
+                    permissionAction={null}
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="justify-self-center px-5"
+                    onClick={() => setRecipeDialogIndex(index)}
+                    disabled={disabled}
+                  >
+                    <ChefHat className="me-1 size-4" />
+                    {ui('تعديل وصفة الحجم')}
                   </Button>
-                  <Button type="button" size="sm" variant="secondary" className="ms-auto" onClick={() => setOpenIndex(isOpen ? null : index)}>
-                    <ChevronDown className={`me-1 size-4 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
-                    {isOpen ? ui('إخفاء وصفة الحجم') : ui('تعديل وصفة الحجم')}
-                  </Button>
+                  <div className="flex sm:justify-end">
+                    <Button permissionAction={null} type="button" size="sm" variant="ghost" className="text-destructive" onClick={() => removeVariant(index)} disabled={disabled || variants.length === 1}>
+                      <Trash2 className="me-1 size-4" />{ui('حذف الاختيار')}
+                    </Button>
+                  </div>
                 </div>
               </div>
-
-              {isOpen ? (
-                <div className="border-t bg-muted/10 p-4">
-                  <RecipeEditor
-                    recipes={variant.recipes}
-                    onChange={(recipes) => update(index, { recipes })}
-                    ingredientOptions={ingredientOptions}
-                    disabled={disabled}
-                    onIngredientCreated={onIngredientCreated}
-                  />
-                </div>
-              ) : null}
             </article>
           );
         })}
       </div>
+
+      <Dialog open={recipeDialogIndex != null} onOpenChange={(open) => { if (!open) setRecipeDialogIndex(null); }}>
+        <DialogContent size="lg" className="h-[min(86vh,820px)] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>{ui('تعديل وصفة الحجم')}{recipeVariant ? ` — ${recipeVariant.name || ui('حجم أو نوع جديد')}` : ''}</DialogTitle>
+            <DialogDescription>{ui('حدد سعر البيع ثم أضف مقادير هذا الحجم.')}</DialogDescription>
+          </DialogHeader>
+
+          {recipeVariant && recipeDialogIndex != null ? (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-primary/20 bg-primary/[0.04] px-4 py-3">
+                <div>
+                  <p className="text-xs text-muted-foreground">{ui('اسم الحجم أو النوع')}</p>
+                  <p className="mt-1 font-bold">{recipeVariant.name || ui('حجم أو نوع جديد')}</p>
+                </div>
+                <div className="text-end">
+                  <p className="text-xs text-muted-foreground">{ui('التكلفة المحسوبة')}</p>
+                  <p className="nums mt-1 text-lg font-black text-primary" dir="ltr">{formatMoneyNumber(recipeCost(recipeVariant.recipes))} EGP</p>
+                </div>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-1">
+                <RecipeEditor
+                  recipes={recipeVariant.recipes}
+                  onChange={(recipes) => update(recipeDialogIndex, { recipes })}
+                  ingredientOptions={ingredientOptions}
+                  disabled={disabled}
+                  onIngredientCreated={onIngredientCreated}
+                />
+              </div>
+              <DialogFooter>
+                <Button type="button" onClick={() => setRecipeDialogIndex(null)}>{ui('تم')}</Button>
+              </DialogFooter>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

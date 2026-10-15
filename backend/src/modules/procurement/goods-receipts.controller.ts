@@ -24,7 +24,7 @@ import { GoodsReceiptsService } from './goods-receipts.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('goods-receipts')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.cafe_purchases:view')
 export class GoodsReceiptsController {
   constructor(private readonly service: GoodsReceiptsService) {}
 
@@ -39,13 +39,13 @@ export class GoodsReceiptsController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.procurement:create')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:create')
   create(@Body() body: UpsertGoodsReceiptDto, @CurrentUser('sub') userId: number) {
     return this.service.create(body, userId);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertGoodsReceiptDto>,
@@ -54,7 +54,7 @@ export class GoodsReceiptsController {
   }
 
   @Patch(':id/status')
-  @RequiresPermission('gym-sales.procurement:approve')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:approve')
   changeStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: ChangeGoodsReceiptStatusDto,
@@ -65,7 +65,7 @@ export class GoodsReceiptsController {
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.procurement:delete')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }

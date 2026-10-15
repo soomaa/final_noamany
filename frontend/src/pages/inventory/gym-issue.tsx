@@ -17,6 +17,7 @@ import { useAuth } from '@/store/auth';
 import { useLocale } from '@/store/locale';
 import { InventoryPageShell } from './inventory-shell';
 import { useBranches } from '@/hooks/use-branches';
+import { usePermission } from '@/hooks/use-permission';
 import { cafeUnitLabel } from '@/lib/cafe-units';
 import { confirm } from '@/lib/confirm';
 
@@ -40,6 +41,10 @@ function issueReference() {
 
 export function InventoryGymIssuePage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('gym-sales.inventory.gym_issue:create');
+  const canApprove = can('gym-sales.inventory.gym_issue:approve');
+  const canIssue = canCreate && canApprove;
   const user = useAuth((state) => state.user);
   const { data: branches = [] } = useBranches();
   const [txnDate, setTxnDate] = useState(localToday());
@@ -81,6 +86,7 @@ export function InventoryGymIssuePage() {
   }, [products, search]);
 
   const addProduct = (product: ProductListItem) => {
+    if (!canIssue) return;
     setLines((prev) => {
       const existing = prev.find((l) => l.productId === product.id);
       if (existing) {
@@ -104,6 +110,7 @@ export function InventoryGymIssuePage() {
   };
 
   const updateQty = (productId: number, delta: number) => {
+    if (!canIssue) return;
     setLines((prev) =>
       prev
         .map((l) => (l.productId === productId ? { ...l, quantity: Math.min(l.available, Math.round((l.quantity + delta) * 1000) / 1000) } : l))
@@ -112,6 +119,7 @@ export function InventoryGymIssuePage() {
   };
 
   const submit = async () => {
+    if (!canIssue) return;
     if (!effectiveBranchId) {
       toast.error(ui('حساب المستخدم غير مرتبط بفرع'));
       return;
@@ -122,7 +130,7 @@ export function InventoryGymIssuePage() {
     }
     const unavailable = lines.find((line) => line.quantity > line.available);
     if (unavailable) {
-      toast.error(ui(`الكمية المطلوبة من ${unavailable.name} أكبر من الرصيد المتاح`));
+      toast.error(`${ui('الكمية المطلوبة من ')}${unavailable.name}${ui(' أكبر من الرصيد المتاح')}`);
       return;
     }
 
@@ -229,7 +237,7 @@ export function InventoryGymIssuePage() {
                     key={p.id}
                     type="button"
                     onClick={() => addProduct(p)}
-                    disabled={(p.currentStock ?? 0) <= 0}
+                    disabled={!canIssue || (p.currentStock ?? 0) <= 0}
                     className="flex items-center justify-between rounded-lg border px-3 py-2 text-start text-sm transition-colors hover:bg-muted/60 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <span className="min-w-0">
@@ -266,11 +274,11 @@ export function InventoryGymIssuePage() {
                     <p className="text-xs text-muted-foreground">{line.productCode}</p>
                   </div>
                   <div className="flex items-center gap-1">
-                    <Button type="button" variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQty(line.productId, line.unit === 'piece' ? -1 : -0.1)}>
+                    <Button permissionAction={null} type="button" variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQty(line.productId, line.unit === 'piece' ? -1 : -0.1)} disabled={!canIssue}>
                       <Minus className="h-3 w-3" />
                     </Button>
-                    <Input className="nums h-7 w-20 px-1 text-center text-sm" type="number" min={0.001} max={line.available} step={line.unit === 'piece' ? 1 : 0.001} value={line.quantity} onChange={(event) => setLines((current) => current.map((item) => item.productId === line.productId ? { ...item, quantity: Math.min(item.available, Math.max(0, Number(event.target.value))) } : item).filter((item) => item.quantity > 0))} />
-                    <Button type="button" variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQty(line.productId, line.unit === 'piece' ? 1 : 0.1)} disabled={line.quantity >= line.available}>
+                    <Input disabled={!canIssue} className="nums h-7 w-20 px-1 text-center text-sm" type="number" min={0.001} max={line.available} step={line.unit === 'piece' ? 1 : 0.001} value={line.quantity} onChange={(event) => setLines((current) => current.map((item) => item.productId === line.productId ? { ...item, quantity: Math.min(item.available, Math.max(0, Number(event.target.value))) } : item).filter((item) => item.quantity > 0))} />
+                    <Button permissionAction={null} type="button" variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQty(line.productId, line.unit === 'piece' ? 1 : 0.1)} disabled={!canIssue || line.quantity >= line.available}>
                       <Plus className="h-3 w-3" />
                     </Button>
                   </div>
@@ -278,9 +286,9 @@ export function InventoryGymIssuePage() {
                 </div>
               ))
             )}
-            <Button className="w-full" disabled={saving || !lines.length} onClick={() => void submit()}>
+            {canIssue ? <Button permissionAction="approve" className="w-full" disabled={saving || !lines.length} onClick={() => void submit()}>
               {saving ? ui('جاري التنفيذ...') : ui('تنفيذ صرف المخزون')}
-            </Button>
+            </Button> : null}
           </CardContent>
         </Card>
       </div>

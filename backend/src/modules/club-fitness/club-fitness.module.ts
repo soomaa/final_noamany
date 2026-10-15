@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { AccountingModule } from '../accounting/accounting.module';
 import { GymOpsModule } from '../gym-ops/gym-ops.module';
+import { BookingBoardController } from './booking-board.controller';
+import { BookingBoardService } from './booking-board.service';
 import { ClubClassesController } from './club-classes.controller';
 import { ClubClassesService } from './club-classes.service';
 import {
@@ -28,7 +30,7 @@ import {
   ClubInbodyInvoicesController,
   ClubInbodyMeasurementsController,
   ClubInbodyServicesController,
-  ClubSpaAttendanceController,
+  ClubInbodySettingsController,
   ClubSpaBookingsController,
   ClubSpaInvoicesController,
   ClubSpaServicesController,
@@ -39,17 +41,18 @@ import { ClubClassTypesController } from './club-class-types.controller';
 import { ClubClassTypesService } from './club-class-types.service';
 import { TrainerPortalController } from './trainer-portal.controller';
 import { TrainerPortalService } from './trainer-portal.service';
-import { TrainerPerformanceController } from './trainer-performance.controller';
-import { TrainerPerformanceService } from './trainer-performance.service';
+import { ClubSubscriptionsModule } from '../club-subscriptions/club-subscriptions.module';
+import { ClubMembersModule } from '../club-members/club-members.module';
+import { ClubServiceDebtsModule } from '../club-service-debts/club-service-debts.module';
 
 @Module({
-  imports: [GymOpsModule, AccountingModule],
+  imports: [GymOpsModule, AccountingModule, ClubSubscriptionsModule, ClubMembersModule, ClubServiceDebtsModule],
   controllers: [
     ClubTrainersController,
     TrainerPortalController,
     ClubTrainerSalariesController,
-    TrainerPerformanceController,
     ClubClassesController,
+    BookingBoardController,
     ClubClassTypesController,
     ClubHallsController,
     ClubHallBookingsController,
@@ -59,12 +62,12 @@ import { TrainerPerformanceService } from './trainer-performance.service';
     ClubMemberProgressController,
     ClubPhysicalAssessmentsController,
     ClubInbodyMeasurementsController,
+    ClubInbodySettingsController,
     AdminInbodyController,
     ClubInbodyInvoicesController,
     ClubInbodyServicesController,
     ClubSpaServicesController,
     ClubSpaBookingsController,
-    ClubSpaAttendanceController,
     ClubSpaInvoicesController,
     ClubFacilitiesController,
     ClubEquipmentController,
@@ -73,8 +76,8 @@ import { TrainerPerformanceService } from './trainer-performance.service';
   providers: [
     ClubTrainersService,
     TrainerPortalService,
-    TrainerPerformanceService,
     ClubClassesService,
+    BookingBoardService,
     ClubClassTypesService,
     ClubHallsService,
     ClubWorkoutsService,

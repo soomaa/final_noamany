@@ -2,6 +2,7 @@ import { Transform, Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsNumber,
@@ -15,6 +16,9 @@ import {
   ClubPaymentMethodValue,
   ClubReceiptPaymentDto,
 } from './club-receipts.dto';
+
+export const RENEWAL_START_MODES = ['extend', 'today'] as const;
+export type RenewalStartMode = (typeof RENEWAL_START_MODES)[number];
 
 /** Body of `PATCH /club-subscriptions/:id/payment` — collect part or all of the balance (تحصيل). */
 export class ProcessClubPaymentDto {
@@ -36,13 +40,36 @@ export class ProcessClubPaymentDto {
   payments?: ClubReceiptPaymentDto[];
 }
 
-/** Body of `PATCH /club-subscriptions/:id/renew`. */
-export class RenewClubSubscriptionDto {
+/** Editable financial inputs for a server-authoritative renewal quote. */
+export class QuoteClubSubscriptionRenewalDto {
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  privateTrainerId?: number;
+
+  /** Optional live promotion for a compatible package available at the source branch. */
   @IsOptional()
   @Transform(({ value }) => (value != null ? Number(value) : undefined))
   @IsInt()
   @Min(1)
-  renewalDays?: number;
+  promotionTypeId?: number;
+
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
+  discountEnabled?: boolean;
+
+  @IsOptional()
+  @Transform(({ value }) => (value != null && value !== '' ? Number(value) : null))
+  @IsInt()
+  @Min(1)
+  discountCodeId?: number | null;
+
+  @IsOptional()
+  @Transform(({ value }) => (value != null ? Number(value) : undefined))
+  @IsNumber()
+  @Min(0)
+  discountValue?: number;
 
   @IsOptional()
   @Transform(({ value }) => (value != null ? Number(value) : undefined))
@@ -61,26 +88,19 @@ export class RenewClubSubscriptionDto {
   @ValidateNested({ each: true })
   @Type(() => ClubReceiptPaymentDto)
   payments?: ClubReceiptPaymentDto[];
+
+  /**
+   * `extend` (default) queues the renewal after the current period so remaining days are kept (مد اشتراك).
+   * `today` starts the renewal today and closes the still-running current period.
+   */
+  @IsOptional()
+  @IsIn(RENEWAL_START_MODES)
+  startMode?: RenewalStartMode;
 }
 
-/** Body of `POST/PATCH /club-subscriptions/:id/freeze`. */
-export class FreezeClubSubscriptionDto {
+/** Body of `PATCH /club-subscriptions/:id/renew`. Dates and target package are server-owned. */
+export class RenewClubSubscriptionDto extends QuoteClubSubscriptionRenewalDto {
   @IsOptional()
   @IsString()
-  freezeStartDate?: string;
-
-  @IsOptional()
-  @IsString()
-  freezeEndDate?: string;
-
-  /** Kept for callers using the previous duration-based endpoint. */
-  @IsOptional()
-  @Transform(({ value }) => (value != null ? Number(value) : undefined))
-  @IsInt()
-  @Min(1)
-  days?: number;
-
-  @IsOptional()
-  @IsString()
-  reason?: string;
+  quoteVersion?: string;
 }

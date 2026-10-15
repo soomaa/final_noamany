@@ -18,11 +18,12 @@ export class ListClubAttendanceDto extends PaginationDto {
   @IsString()
   endDate?: string;
 
-  @IsOptional()
-  @IsIn(['checked_in', 'checked_out', 'all'])
-  status?: string;
-
+  /** Restrict attendance rows to members of the selected reception section. */
   @IsOptional()
   @IsIn(['male', 'female'])
-  gender?: string;
+  gender?: 'male' | 'female';
+
+  @IsOptional()
+  @IsIn(['checked_in', 'checked_out', 'auto_closed', 'all'])
+  status?: string;
 }

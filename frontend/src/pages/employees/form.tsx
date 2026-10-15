@@ -1,15 +1,17 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useQuery } from '@tanstack/react-query';
-import { ArrowRight, Loader2, Save, User } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Loader2, Save, User } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { type FieldErrors, useForm } from 'react-hook-form';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
 import { PageHeader } from '@/components/common/page-header';
 import {
   DualDateField,
@@ -18,29 +20,36 @@ import {
   RHFRadio,
   RHFTextarea,
 } from '@/components/common/form-fields';
+import { FinanceRowsEditor, type FinanceRow } from '@/components/common/finance-rows';
+import { DwamScheduleGrid, defaultDwamSchedule, type DwamDay } from '@/components/common/dwam-schedule-grid';
 import {
+  BankAccountForm,
   EmployeeDocumentsEditor,
   type EmployeeDocumentRow,
+  useBankState,
 } from '@/components/employees/employee-documents-editor';
 import { UploadField } from '@/components/employees/upload-fields';
 import { useFileUpload } from '@/components/employees/use-uploads';
-import { ErrorState, NotImplementedState } from '@/components/common/states';
-import { Skeleton } from '@/components/ui/skeleton';
+import { NotImplementedState } from '@/components/common/states';
 import { api, apiError } from '@/lib/api';
 import { useLookups, useResource, isNotImplemented } from '@/lib/api-hooks';
 import { useBranches } from '@/hooks/use-branches';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
-import type { EmployeeDocumentFile } from '@/types/employees';
-import type { DeptNode, JobTitle } from '@/types/org';
+import type { DwamData, FinanceData, EmployeeBankRow, EmployeeDocumentFile } from '@/types/employees';
+import type { JobTitle } from '@/types/org';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
 import { cn } from '@/lib/utils';
+import { usePermission } from '@/hooks/use-permission';
+import { resolveEmployeeLookupState } from './employee-form-lookup-state';
 
-const FORM_SECTIONS = [
+const STEPS = [
   { id: 'personal', title: uiStatic('البيانات الشخصية') },
   { id: 'work', title: uiStatic('بيانات العمل') },
+  { id: 'finance', title: uiStatic('المالية والبنوك') },
   { id: 'insurance', title: uiStatic('التأمينات') },
   { id: 'documents', title: uiStatic('المستندات') },
+  { id: 'review', title: uiStatic('المراجعة') },
 ] as const;
 
 const schema = z.object({
@@ -49,12 +58,12 @@ const schema = z.object({
   direct_manager_fk: z.string().optional(),
   branch_id_fk: z.string().min(1, uiStatic('الفرع مطلوب')),
   emp_type: z.string().min(1, uiStatic('النوع مطلوب')),
-  edara_id_fk: z.string().min(1, uiStatic('الإدارة مطلوبة')),
-  qsm_id_fk: z.string().min(1, uiStatic('القسم مطلوب')),
   job_title_id_fk: z.string().min(1, uiStatic('المسمى الوظيفي مطلوب')),
-  monthly_target: z.string().optional(),
-  class_commission_percentage: z.string().optional(),
+  employment_type: z.string().min(1, uiStatic('نوع العقد مطلوب')),
   addToSystem: z.boolean().optional(),
+  is_sales: z.boolean().optional(),
+  systemUsername: z.string().optional(),
+  systemPassword: z.string().optional(),
   birth_date: z.string().optional(),
   age: z.string().optional(),
   gender: z.string().optional(),
@@ -65,9 +74,8 @@ const schema = z.object({
   card_esdar_date: z.string().optional(),
   card_enhaa_date: z.string().optional(),
   address: z.string().optional(),
-  emp_sign: z.string().min(1, uiStatic('مكان البصمة مطلوب')),
+  emp_sign: z.string().optional(),
   personal_photo: z.string().optional(),
-  emp_code_gym: z.string().optional(),
   birth_img: z.string().optional(),
   qualification_img: z.string().optional(),
   phesh_genai: z.string().optional(),
@@ -101,6 +109,13 @@ const schema = z.object({
   end_contract_date_m: z.string().optional(),
   end_test_date_m: z.string().optional(),
   employee_type: z.string().optional(),
+  shift_type: z.string().optional(),
+  basic_salary: z
+    .string()
+    .trim()
+    .min(1, uiStatic('الراتب الأساسي مطلوب'))
+    .refine((value) => Number.isFinite(Number(value)) && Number(value) > 0, uiStatic('الراتب الأساسي يجب أن يكون أكبر من صفر')),
+  show_in_mosayer: z.string().optional(),
   type_tamin: z.string().optional(),
   tamin_rkm: z.string().optional(),
   tamin_mosama_wazefy: z.string().optional(),
@@ -114,27 +129,28 @@ const schema = z.object({
   tamin_medicine_num: z.string().optional(),
   polica_num: z.string().optional(),
   tamin_type: z.string().optional(),
+}).superRefine((data, ctx) => {
+  if (data.addToSystem) {
+    if (!data.systemUsername?.trim()) {
+      ctx.addIssue({ code: 'custom', message: uiStatic('اسم المستخدم مطلوب'), path: ['systemUsername'] });
+    }
+  }
 });
 
 type FormValues = z.infer<typeof schema>;
-type EmployeeFormResponse = FormValues & {
-  branch_name?: string;
-  edara_name?: string;
-  qsm_name?: string;
-  job_title_name?: string;
+
+const STEP_FIELD_KEYS: Record<(typeof STEPS)[number]['id'], (keyof FormValues)[]> = {
+  personal: ['emp_code', 'emp_name', 'branch_id_fk', 'emp_type', 'job_title_id_fk', 'employment_type', 'jwal'],
+  work: ['systemUsername', 'systemPassword'],
+  finance: ['basic_salary', 'show_in_mosayer'],
+  insurance: [],
+  documents: [],
+  review: [],
 };
 
-type SelectOption = { value: string; label: string };
-
-function includeCurrentOption(
-  options: SelectOption[],
-  value: string | undefined,
-  label: string | undefined,
-  fallbackLabel: string,
-): SelectOption[] {
-  const current = String(value ?? '').trim();
-  if (!current || options.some((option) => option.value === current)) return options;
-  return [{ value: current, label: label?.trim() || `${fallbackLabel} (${current})` }, ...options];
+function stepIndexForField(field: keyof FormValues): number {
+  const idx = STEPS.findIndex((s) => STEP_FIELD_KEYS[s.id].includes(field));
+  return idx >= 0 ? idx : 0;
 }
 
 function firstValidationError(errors: FieldErrors<FormValues>): string | undefined {
@@ -173,17 +189,48 @@ function FormSection({
 export function EmployeeFormPage() {
   const { ui } = useLocale();
   const { id } = useParams<{ id: string }>();
-  const isEdit = !!id;
+  // `/employees/new` has no :id; also guard against a mistaken `/employees/new` param match.
+  const isEdit = !!id && id !== 'new';
+  const { can } = usePermission();
+  const canSave = isEdit
+    ? can('employees.list:update')
+    : can('employees.new:create') || can('employees.list:create');
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const recruitmentApplicationId = !isEdit
+    ? Number(searchParams.get('recruitmentApplicationId') ?? 0) || null
+    : null;
+  const [step, setStep] = useState(0);
+  const [financeRows, setFinanceRows] = useState<FinanceRow[]>([]);
+  const [dwamSchedule, setDwamSchedule] = useState<DwamDay[]>(defaultDwamSchedule());
   const [documents, setDocuments] = useState<EmployeeDocumentRow[]>([]);
+  const [bank, setBank] = useBankState();
   const { upload } = useFileUpload();
 
-  const { data: existing, isLoading, isError, error, refetch } = useResource<EmployeeFormResponse>('employees', id);
-  const { data: docsData } = useResource<EmployeeDocumentFile[]>('employees', id, 'documents');
+  // Only load existing employee on edit — create must not GET /employees or /employees/new (400 ParseIntPipe).
+  const { data: existing, isError, error } = useResource<FormValues>('employees', id, undefined, isEdit);
+  const { data: recruitmentDraft } = useQuery({
+    queryKey: ['recruitment-onboarding', recruitmentApplicationId],
+    queryFn: async () => {
+      const { data } = await api.get<Partial<FormValues>>(
+        `/hr/job-requests/applications/${recruitmentApplicationId}/onboarding-draft`,
+      );
+      return data;
+    },
+    enabled: recruitmentApplicationId != null,
+    retry: false,
+  });
+  const { data: financeData } = useResource<FinanceData>('employees', id, 'finance', isEdit);
+  const { data: dwamData } = useResource<DwamData>('employees', id, 'dwam', isEdit);
+  const { data: banksData } = useResource<EmployeeBankRow[]>('employees', id, 'banks', isEdit);
+  const { data: docsData } = useResource<EmployeeDocumentFile[]>('employees', id, 'documents', isEdit);
   const { data: genders } = useLookups('gender');
   const { data: nationalities } = useLookups('nationality');
   const { data: religions } = useLookups('religion');
   const { data: socialStatus } = useLookups('social_status');
+  const { data: allowanceTypes } = useLookups('allowance');
+  const { data: deductionTypes } = useLookups('deduction');
+  const { data: banks } = useLookups('banks');
   const { data: employeeOptions = [] } = useEmployeeOptions();
   const managerOptions = useMemo(
     () =>
@@ -200,7 +247,13 @@ export function EmployeeFormPage() {
     [employeeOptions],
   );
 
-  const { data: jobTitles } = useQuery({
+  const {
+    data: jobTitles,
+    isLoading: jobTitlesLoading,
+    isError: jobTitlesFailed,
+    error: jobTitlesError,
+    refetch: refetchJobTitles,
+  } = useQuery({
     queryKey: ['departments', 'job-titles'],
     queryFn: async () => {
       const { data } = await api.get<JobTitle[]>('/departments/job-titles');
@@ -209,12 +262,19 @@ export function EmployeeFormPage() {
     retry: false,
   });
 
-  const { data: departmentTree } = useQuery({
-    queryKey: ['departments', 'tree'],
+  const {
+    data: nextCodeData,
+    isLoading: nextCodeLoading,
+    isError: nextCodeFailed,
+    error: nextCodeError,
+    refetch: refetchNextCode,
+  } = useQuery({
+    queryKey: ['employees', 'next-code'],
     queryFn: async () => {
-      const { data } = await api.get<DeptNode[]>('/departments/tree');
+      const { data } = await api.get<{ nextCode: number }>('/employees/next-code');
       return data;
     },
+    enabled: !isEdit,
     retry: false,
   });
 
@@ -225,49 +285,89 @@ export function EmployeeFormPage() {
     shouldUnregister: false,
     defaultValues: {
       emp_type: '1',
+      employment_type: 'full_time',
       military_service: '1',
       birth_img: 'no',
       qualification_img: 'no',
       phesh_genai: 'no',
       shahadt_jaish: 'no',
       employee_type: '1',
-      emp_sign: '',
+      show_in_mosayer: 'yes',
+      shift_type: 'fixed',
       addToSystem: false,
+      is_sales: false,
       personal_photo: '',
-      monthly_target: '0',
-      class_commission_percentage: '0',
     },
   });
 
-  const { register, control, handleSubmit, watch, setValue, formState: { errors, isSubmitting } } = form;
+  const { register, control, handleSubmit, watch, setValue, trigger, formState: { errors, isSubmitting } } = form;
   const addToSystem = watch('addToSystem');
-  const selectedDepartmentId = watch('edara_id_fk');
-  const departmentOptions = useMemo(
-    () => (departmentTree ?? []).map((department) => ({ value: String(department.id), label: department.title ?? '—' })),
-    [departmentTree],
-  );
-  const sectionOptions = useMemo(() => {
-    const selected = (departmentTree ?? []).find((department) => String(department.id) === selectedDepartmentId);
-    return (selected?.children ?? []).map((section) => ({ value: String(section.id), label: section.title ?? '—' }));
-  }, [departmentTree, selectedDepartmentId]);
-  const filteredJobTitles = useMemo(
-    () => (jobTitles ?? []).filter((job) => !selectedDepartmentId || job.edaraId == null || String(job.edaraId) === selectedDepartmentId),
-    [jobTitles, selectedDepartmentId],
-  );
   const selectedJobTitle = jobTitles?.find((job) => String(job.id) === watch('job_title_id_fk'));
-  const isTrainerEmployee =
-    !!selectedJobTitle?.isTrainer ||
-    ['مدرب', 'مدرب لياقة', 'مدربة لياقة'].includes(selectedJobTitle?.name?.trim() ?? '');
 
   useEffect(() => {
     if (existing) {
       const rawAdd = (existing as Record<string, unknown>).addToSystem;
+      const rawIsSales = (existing as Record<string, unknown>).is_sales;
+      const existingForm = existing as FormValues;
       form.reset({
-        ...(existing as FormValues),
+        ...existingForm,
         addToSystem: rawAdd === true || rawAdd === 'true',
+        is_sales: rawIsSales === true || rawIsSales === 'true' || rawIsSales === 1 || rawIsSales === '1',
+        show_in_mosayer: existingForm.show_in_mosayer === 'no' ? 'no' : 'yes',
       });
     }
   }, [existing, form]);
+
+  useEffect(() => {
+    if (!recruitmentDraft || isEdit) return;
+    form.reset({
+      ...form.getValues(),
+      ...recruitmentDraft,
+      emp_type: recruitmentDraft.emp_type ?? '1',
+      employment_type: recruitmentDraft.employment_type ?? 'full_time',
+      employee_type: recruitmentDraft.employee_type ?? '1',
+      show_in_mosayer: 'yes',
+    });
+    toast.success(ui('تم تحميل بيانات المتقدم وعرض العمل في نموذج التعيين'));
+  }, [form, isEdit, recruitmentDraft, ui]);
+
+  useEffect(() => {
+    if (financeData) {
+      setFinanceRows(
+        financeData.rows.map((r) => ({
+          ...r,
+          insurance_affect: r.insurance_affect ?? false,
+        })),
+      );
+      if (financeData.basic_salary) setValue('basic_salary', financeData.basic_salary);
+    }
+  }, [financeData, setValue]);
+
+  useEffect(() => {
+    if (dwamData) {
+      const defaults = defaultDwamSchedule();
+      const merged = defaults.map((d) => {
+        const fromApi = dwamData.schedule.find((s) => s.day === d.day);
+        return fromApi ? { ...d, ...fromApi, dayName: d.dayName } : d;
+      });
+      setDwamSchedule(merged);
+      if (dwamData.shift_type) setValue('shift_type', dwamData.shift_type);
+    }
+  }, [dwamData, setValue]);
+
+  useEffect(() => {
+    const primary = banksData?.[0];
+    if (primary) {
+      setBank({
+        bankId: String(primary.bank_id_fk || ''),
+        accountNum: primary.bank_account_num ?? '',
+        bankName: primary.emp_bank_name ?? '',
+        ibanFile: null,
+        imagePath: primary.bank_id_fk_image && primary.bank_id_fk_image !== '0' ? primary.bank_id_fk_image : '',
+        approvedForSarf: primary.approved_for_sarf === 1,
+      });
+    }
+  }, [banksData, setBank]);
 
   useEffect(() => {
     if (docsData?.length) {
@@ -288,15 +388,10 @@ export function EmployeeFormPage() {
   }, [docsData]);
 
   useEffect(() => {
-    if (!isEdit) {
-      api.get<{ nextCode: number }>('/employees/next-code')
-        .then(({ data }) => setValue('emp_code', String(data.nextCode)))
-        .catch(() => {
-          setValue('emp_code', '');
-          toast.error(ui('تعذّر جلب كود الموظف — أعد تحميل الصفحة'));
-        });
+    if (!isEdit && nextCodeData?.nextCode != null) {
+      setValue('emp_code', String(nextCodeData.nextCode));
     }
-  }, [isEdit, setValue, ui]);
+  }, [isEdit, nextCodeData, setValue]);
 
   const birthDate = watch('birth_date');
   useEffect(() => {
@@ -310,13 +405,61 @@ export function EmployeeFormPage() {
   }, [birthDate, setValue]);
 
   const onFormInvalid = (formErrors: FieldErrors<FormValues>) => {
+    const firstKey = Object.keys(formErrors)[0] as keyof FormValues | undefined;
     const message = firstValidationError(formErrors) ?? ui('يرجى إكمال الحقول المطلوبة');
     toast.error(message);
+    if (firstKey) setStep(stepIndexForField(firstKey));
+  };
+
+  const goNext = async () => {
+    const stepId = STEPS[step].id;
+    if (stepId === 'work') {
+      if (addToSystem && !watch('systemUsername')?.trim()) {
+        toast.error(ui('اسم المستخدم مطلوب'));
+        return;
+      }
+      setStep((s) => s + 1);
+      return;
+    }
+    const fields = [...STEP_FIELD_KEYS[stepId]];
+    if (fields.length > 0) {
+      const ok = await trigger(fields);
+      if (!ok) {
+        toast.error(ui('يرجى إكمال الحقول المطلوبة في هذه الخطوة'));
+        return;
+      }
+    }
+    setStep((s) => s + 1);
   };
 
   const onSubmit = async (values: FormValues) => {
+    if (!canSave) return;
+    if (!isEdit && values.addToSystem && !values.systemPassword?.trim()) {
+      toast.error(ui('كلمة المرور مطلوبة عند إضافة الموظف للنظام'));
+      return;
+    }
     try {
-      // Upload each new document binary → its stored path (emp_file).
+      // 1) Upload the IBAN / bank certificate scan (if a new file was picked).
+      let bankImage = bank.imagePath ?? '';
+      if (bank.ibanFile) {
+        const p = await upload('emp-bank', bank.ibanFile);
+        if (p) bankImage = p;
+      }
+
+      const bankRows =
+        bank.bankId && bank.accountNum
+          ? [
+              {
+                bank_id_fk: Number(bank.bankId),
+                bank_account_num: bank.accountNum,
+                emp_bank_name: bank.bankName ?? undefined,
+                approved_for_sarf: bank.approvedForSarf ? 1 : 0,
+                bank_id_fk_image: bankImage || undefined,
+              },
+            ]
+          : [];
+
+      // 2) Upload each new document binary → its stored path (emp_file).
       const docRows: Array<Record<string, unknown>> = [];
       for (const d of documents) {
         if (!d.title.trim()) continue;
@@ -337,13 +480,20 @@ export function EmployeeFormPage() {
       if (isEdit) {
         const empId = Number(id);
         await api.put(`/employees/${empId}`, { ...values, addToSystem: !!values.addToSystem });
+        await api.put(`/employees/${empId}/finance`, { rows: financeRows, basic_salary: values.basic_salary });
+        await api.put(`/employees/${empId}/dwam`, { schedule: dwamSchedule, shift_type: values.shift_type });
+        await api.put(`/employees/${empId}/banks`, { rows: bankRows });
         await api.put(`/employees/${empId}/documents`, { rows: docRows });
         toast.success(ui('تم تحديث بيانات الموظف'));
       } else {
         const { data: created } = await api.post<{ id: number; emp_code: number }>('/employees', {
           ...values,
           addToSystem: !!values.addToSystem,
+          recruitmentApplicationId: recruitmentApplicationId ?? undefined,
         });
+        await api.put(`/employees/${created.id}/finance`, { rows: financeRows, basic_salary: values.basic_salary });
+        await api.put(`/employees/${created.id}/dwam`, { schedule: dwamSchedule, shift_type: values.shift_type });
+        if (bankRows.length) await api.put(`/employees/${created.id}/banks`, { rows: bankRows });
         if (docRows.length) await api.put(`/employees/${created.id}/documents`, { rows: docRows });
         toast.success(ui('تم إضافة الموظف'));
       }
@@ -356,34 +506,18 @@ export function EmployeeFormPage() {
   const lookupOptions = (items?: { id: number; title: string }[]) =>
     items?.map((i) => ({ value: String(i.id), label: i.title })) ?? [];
 
-  const branchOptions = includeCurrentOption(
-    branches?.map((b) => ({ value: String(b.id), label: b.name ?? '—' })) ?? [],
-    existing?.branch_id_fk,
-    existing?.branch_name,
-    ui('الفرع الحالي'),
-  );
-  const departmentSelectOptions = includeCurrentOption(
-    departmentOptions,
-    existing?.edara_id_fk,
-    existing?.edara_name,
-    ui('الإدارة الحالية'),
-  );
-  const sectionSelectOptions = includeCurrentOption(
-    sectionOptions,
-    existing?.qsm_id_fk,
-    existing?.qsm_name,
-    ui('القسم الحالي'),
-  );
-  const jobTitleSelectOptions = includeCurrentOption(
-    filteredJobTitles.map((job) => ({ value: String(job.id), label: job.name ?? '—' })),
-    existing?.job_title_id_fk,
-    existing?.job_title_name,
-    ui('المسمى الحالي'),
-  );
-  const fingerprintBranchOptions = [
-    { value: 'all', label: ui('إدارة (كل الفروع)') },
-    ...branchOptions,
-  ];
+  const branchOptions = branches?.map((b) => ({ value: String(b.id), label: b.name ?? '—' })) ?? [];
+  const jobTitleOptions = (jobTitles ?? []).map((j) => ({ value: String(j.id), label: j.name ?? '—' }));
+  const jobTitleLookupState = resolveEmployeeLookupState({
+    isLoading: jobTitlesLoading,
+    isError: jobTitlesFailed,
+    hasData: jobTitleOptions.length > 0,
+  });
+  const nextCodeLookupState = resolveEmployeeLookupState({
+    isLoading: !isEdit && nextCodeLoading,
+    isError: !isEdit && nextCodeFailed,
+    hasData: isEdit || nextCodeData?.nextCode != null,
+  });
 
   if (isEdit && isError && isNotImplemented(error)) {
     return (
@@ -394,21 +528,8 @@ export function EmployeeFormPage() {
     );
   }
 
-  if (isEdit && isError) {
-    return <ErrorState onRetry={() => void refetch()} />;
-  }
-
-  if (isEdit && isLoading) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-10 w-48" />
-        <Skeleton className="h-72 w-full" />
-      </div>
-    );
-  }
-
-  const renderSection = (sectionId: (typeof FORM_SECTIONS)[number]['id']) => {
-    switch (sectionId) {
+  const renderStep = () => {
+    switch (STEPS[step].id) {
       case 'personal':
         return (
           <div className="space-y-6">
@@ -431,27 +552,35 @@ export function EmployeeFormPage() {
 
               <FormSection title={ui('البيانات الأساسية')} description={ui('الفرع والمسمى الوظيفي وبيانات التعريف')}>
                 <FieldWrapper label={ui('كود الموظف')} error={errors.emp_code?.message} required>
-                  <Input {...register('emp_code')} readOnly className="bg-muted nums" />
+                  <Input
+                    {...register('emp_code')}
+                    readOnly
+                    aria-busy={nextCodeLookupState.status === 'loading'}
+                    className="bg-muted nums"
+                  />
+                  {nextCodeLookupState.status === 'loading' ? (
+                    <p className="flex items-center gap-2 text-xs text-muted-foreground" role="status">
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                      {ui('جاري تحميل كود الموظف…')}
+                    </p>
+                  ) : null}
+                  {nextCodeLookupState.status === 'error' || nextCodeLookupState.status === 'empty' ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2" role="alert">
+                      <p className="text-xs text-destructive">
+                        {nextCodeLookupState.status === 'error'
+                          ? apiError(nextCodeError)
+                          : ui('تعذّر جلب كود الموظف — أعد تحميل الصفحة')}
+                      </p>
+                      <Button permissionAction={null} type="button" variant="outline" size="sm" onClick={() => void refetchNextCode()}>
+                        {ui('إعادة المحاولة')}
+                      </Button>
+                    </div>
+                  ) : null}
                 </FieldWrapper>
                 <FieldWrapper label={ui('اسم الموظف')} error={errors.emp_name?.message} required>
                   <Input {...register('emp_name')} />
                 </FieldWrapper>
-                <FieldWrapper label={ui('رقم الهاتف')} error={errors.jwal?.message} required>
-                  <Input {...register('jwal')} type="tel" className="nums" />
-                </FieldWrapper>
                 <RHFSelect control={control} name="branch_id_fk" label={ui('الفرع')} required options={branchOptions} />
-                <div className="space-y-1">
-                  <RHFSelect
-                    control={control}
-                    name="emp_sign"
-                    label={ui('مكان البصمة')}
-                    required
-                    options={fingerprintBranchOptions}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {ui('اختيار «إدارة» يسمح للموظف بالبصمة في كل الفروع.')}
-                  </p>
-                </div>
                 <RHFRadio
                   control={control}
                   name="emp_type"
@@ -460,29 +589,55 @@ export function EmployeeFormPage() {
                   options={[
                     { value: '1', label: ui('رجالى') },
                     { value: '2', label: ui('حريمى') },
-                    { value: '3', label: ui('الكل') },
                   ]}
                 />
-                <RHFSelect control={control} name="edara_id_fk" label={ui('الإدارة')} required options={departmentSelectOptions} />
-                <RHFSelect control={control} name="qsm_id_fk" label={ui('القسم')} required options={sectionSelectOptions} />
-                <RHFSelect control={control} name="job_title_id_fk" label={ui('المسمى الوظيفي')} required options={jobTitleSelectOptions} />
-                {isTrainerEmployee ? (
-                  <>
-                    <FieldWrapper label={ui('التارجت الشهري')} hint={ui('الهدف الشهري للمدرب.')}>
-                      <Input type="number" min={0} step="0.01" className="nums" {...register('monthly_target')} />
-                    </FieldWrapper>
-                    <FieldWrapper label={ui('العمولة (%)')} hint={ui('تُستخدم لحساب مستحقات المدرب من الحصص المنفذة.')}>
-                      <Input
-                        type="number"
-                        min={0}
-                        max={100}
-                        step="0.01"
-                        className="nums"
-                        {...register('class_commission_percentage')}
-                      />
-                    </FieldWrapper>
-                  </>
-                ) : null}
+                <div className="space-y-2">
+                  <RHFSelect
+                    control={control}
+                    name="job_title_id_fk"
+                    label={ui('المسمى الوظيفي')}
+                    required
+                    options={jobTitleOptions}
+                    disabled={jobTitleLookupState.disabled}
+                    placeholder={
+                      jobTitleLookupState.status === 'empty'
+                        ? ui('لا توجد مسميات وظيفية')
+                        : ui('المسمى الوظيفي')
+                    }
+                  />
+                  {jobTitleLookupState.status === 'loading' ? (
+                    <p className="flex items-center gap-2 px-1 text-xs text-muted-foreground" role="status">
+                      <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
+                      {ui('جاري تحميل المسميات الوظيفية…')}
+                    </p>
+                  ) : null}
+                  {jobTitleLookupState.status === 'error' ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-2.5" role="alert">
+                      <p className="text-xs text-destructive">{apiError(jobTitlesError)}</p>
+                      <Button permissionAction={null} type="button" variant="outline" size="sm" onClick={() => void refetchJobTitles()}>
+                        {ui('إعادة المحاولة')}
+                      </Button>
+                    </div>
+                  ) : null}
+                  {jobTitleLookupState.status === 'empty' ? (
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 p-2.5" role="status">
+                      <p className="text-xs text-muted-foreground">{ui('لا توجد مسميات وظيفية')}</p>
+                      <Button permissionAction={null} type="button" variant="outline" size="sm" onClick={() => void refetchJobTitles()}>
+                        {ui('إعادة المحاولة')}
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                <RHFSelect
+                  control={control}
+                  name="employment_type"
+                  label={ui('نوع العقد')}
+                  required
+                  options={[
+                    { value: 'full_time', label: ui('Full-time') },
+                    { value: 'part_time', label: ui('Part-time') },
+                  ]}
+                />
               </FormSection>
             </div>
 
@@ -503,30 +658,23 @@ export function EmployeeFormPage() {
               <RHFRadio control={control} name="military_service" label={ui('الخدمة العسكرية')} options={MILITARY} />
             </FormSection>
 
-          </div>
-        );
-      case 'work':
-        return (
-          <div className="space-y-6">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              <RHFSelect control={control} name="direct_manager_fk" label={ui('المدير المباشر')} options={managerOptions} />
-              <DualDateField label={ui('تاريخ التعيين')} gregorianValue={watch('start_work_date_m')} onGregorianChange={(v) => setValue('start_work_date_m', v)} showHijri={false} showGregorianLabel={false} />
-              <RHFRadio control={control} name="employee_type" label={ui('حالة الموظف')} options={[{ value: '1', label: ui('نشط') }, { value: '2', label: ui('موقوف') }]} />
-            </div>
-            <div className="border-t border-border pt-6">
-              <h3 className="mb-1 font-semibold">{ui('حساب الموظف')}</h3>
-              <p className="mb-4 text-sm text-muted-foreground">
-                {ui('يُنشأ تلقائياً حساب واحد لتطبيق البصمة باسم المستخدم رقم الجوال وكلمة المرور الابتدائية 102030.')}
-              </p>
-              <div className="mb-4 flex items-center gap-2">
-                <Checkbox
-                  id="add-to-system"
-                  checked={!!addToSystem}
-                  onCheckedChange={(v) => setValue('addToSystem', v === true)}
-                />
-                <label htmlFor="add-to-system" className="text-sm font-medium">{ui('منح صلاحيات لوحة النظام لهذا الحساب')}</label>
+            <FormSection title={ui('بيانات التواصل')}>
+              <FieldWrapper label={ui('رقم الجوال')} error={errors.jwal?.message} required>
+                <Input {...register('jwal')} type="tel" className="nums" />
+              </FieldWrapper>
+              <FieldWrapper label={ui('جوال آخر')}>
+                <Input {...register('other_jwal')} className="nums" />
+              </FieldWrapper>
+              <FieldWrapper label={ui('البريد الإلكتروني')}>
+                <Input type="email" {...register('email')} />
+              </FieldWrapper>
+              <div className="md:col-span-2 lg:col-span-3">
+                <FieldWrapper label={ui('العنوان')}>
+                  <Input {...register('address')} />
+                </FieldWrapper>
               </div>
-            </div>
+            </FormSection>
+
             <section className="rounded-xl border border-border/60 bg-muted/20 p-5">
               <div className="mb-4 border-b border-border/50 pb-3">
                 <h3 className="text-base font-semibold text-foreground">{ui('المؤهل والخبرات')}</h3>
@@ -544,14 +692,112 @@ export function EmployeeFormPage() {
             </section>
           </div>
         );
+      case 'work':
+        return (
+          <div className="space-y-6">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <RHFSelect control={control} name="direct_manager_fk" label={ui('المدير المباشر')} options={managerOptions} />
+              <DualDateField label={ui('تاريخ التعيين')} gregorianValue={watch('start_work_date_m')} onGregorianChange={(v) => setValue('start_work_date_m', v)} />
+              <DualDateField label={ui('تاريخ انتهاء العقد')} gregorianValue={watch('end_contract_date_m')} onGregorianChange={(v) => setValue('end_contract_date_m', v)} />
+              <FieldWrapper label={ui('فترة التجربة (شهور)')}><Input {...register('test_num_month')} className="nums" /></FieldWrapper>
+              <DualDateField label={ui('نهاية التجربة')} gregorianValue={watch('end_test_date_m')} onGregorianChange={(v) => setValue('end_test_date_m', v)} />
+              <RHFRadio control={control} name="employee_type" label={ui('حالة الموظف')} options={[{ value: '1', label: ui('نشط') }, { value: '2', label: ui('موقوف') }]} />
+            </div>
+            <div className="border-t border-border pt-6">
+              <div className="mb-6 flex flex-col gap-4 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <label htmlFor="employee-is-sales" className="font-semibold text-foreground">
+                    {ui('يُعتبر من فريق المبيعات')}
+                  </label>
+                  <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+                    {ui('يمنح بوابة المبيعات الشخصية بجانب صلاحيات المسمى الوظيفي الحالي، دون منحه صلاحيات إدارة الفريق.')}
+                  </p>
+                  {watch('is_sales') && !addToSystem ? (
+                    <p className="mt-2 text-sm font-medium text-primary" role="status">
+                      {ui('سيُحفظ التصنيف الآن، وتُفعّل البوابة عند إنشاء حساب دخول للموظف.')}
+                    </p>
+                  ) : null}
+                </div>
+                <Switch
+                  id="employee-is-sales"
+                  checked={!!watch('is_sales')}
+                  onCheckedChange={(checked) => setValue('is_sales', checked, { shouldDirty: true })}
+                  aria-label={ui('يُعتبر من فريق المبيعات')}
+                />
+              </div>
+              <h3 className="mb-1 font-semibold">{ui('إضافة إلى النظام')}</h3>
+              <p className="mb-4 text-sm text-muted-foreground">
+                {ui('عند التفعيل يتم إنشاء حساب دخول للموظف، وتُربط صلاحياته تلقائياً بالمسمى الوظيفي المحدد.')}
+              </p>
+              <div className="mb-4 flex items-center gap-2">
+                <Checkbox
+                  id="add-to-system"
+                  checked={!!addToSystem}
+                  onCheckedChange={(v) => setValue('addToSystem', v === true)}
+                />
+                <label htmlFor="add-to-system" className="text-sm font-medium">{ui('إضافة إلى النظام')}</label>
+              </div>
+              {addToSystem && (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <FieldWrapper label={ui('اسم المستخدم')} error={errors.systemUsername?.message} required>
+                    <Input {...register('systemUsername')} />
+                  </FieldWrapper>
+                  <FieldWrapper label={ui('كلمة المرور')} error={errors.systemPassword?.message} required>
+                    <Input type="password" {...register('systemPassword')} />
+                  </FieldWrapper>
+                </div>
+              )}
+            </div>
+            <div className="border-t border-border pt-6">
+              <h3 className="mb-4 font-semibold">{ui('ربط الموظف بالدوام')}</h3>
+              <DwamScheduleGrid
+                schedule={dwamSchedule}
+                onChange={setDwamSchedule}
+                shiftType={watch('shift_type')}
+                onShiftTypeChange={(v) => setValue('shift_type', v)}
+              />
+            </div>
+          </div>
+        );
+      case 'finance':
+        return (
+          <div className="space-y-8">
+            <label className="flex items-start gap-3 rounded-lg border border-border/60 bg-background p-4 text-sm">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={watch('show_in_mosayer') !== 'no'}
+                onChange={(event) => setValue('show_in_mosayer', event.target.checked ? 'yes' : 'no')}
+              />
+              <span>
+                <span className="font-medium">{ui('يظهر في مسيرة الرواتب')}</span>
+                <span className="mt-1 block text-muted-foreground">
+                  {ui('إذا أُلغي الاختيار يُستبعد الموظف من الاحتساب حتى لو كان راتبه مكتملاً.')}
+                </span>
+              </span>
+            </label>
+            <FinanceRowsEditor
+              rows={financeRows}
+              onChange={setFinanceRows}
+              allowanceTypes={allowanceTypes}
+              deductionTypes={deductionTypes}
+              basicSalary={watch('basic_salary')}
+              onBasicSalaryChange={(v) => setValue('basic_salary', v)}
+            />
+            <div className="border-t border-border pt-6">
+              <h3 className="mb-4 font-semibold">{ui('بيانات الحساب البنكي')}</h3>
+              <BankAccountForm {...bank} onChange={setBank} banks={banks} />
+            </div>
+          </div>
+        );
       case 'insurance':
         return (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             <FieldWrapper label={ui('نوع التأمين الاجتماعي')}><Input {...register('type_tamin')} /></FieldWrapper>
             <FieldWrapper label={ui('رقم التأمين')}><Input {...register('tamin_rkm')} className="nums" /></FieldWrapper>
             <FieldWrapper label={ui('المسمى التأميني')}><Input {...register('tamin_mosama_wazefy')} /></FieldWrapper>
-            <DualDateField label={ui('تاريخ بدء التأمين')} gregorianValue={watch('start_tamin_date_m')} onGregorianChange={(v) => setValue('start_tamin_date_m', v)} showHijri={false} />
-            <DualDateField label={ui('تاريخ التأمين')} gregorianValue={watch('tamin_date_m')} onGregorianChange={(v) => setValue('tamin_date_m', v)} showHijri={false} />
+            <DualDateField label={ui('تاريخ بدء التأمين')} gregorianValue={watch('start_tamin_date_m')} onGregorianChange={(v) => setValue('start_tamin_date_m', v)} />
+            <DualDateField label={ui('تاريخ التأمين')} gregorianValue={watch('tamin_date_m')} onGregorianChange={(v) => setValue('tamin_date_m', v)} />
             <FieldWrapper label={ui('الأجر التأميني')}><Input {...register('tamin_rateb')} className="nums" /></FieldWrapper>
             <FieldWrapper label={ui('حصة الموظف')}><Input {...register('tamin_hesa_emp')} className="nums" /></FieldWrapper>
             <FieldWrapper label={ui('حصة صاحب العمل')}><Input {...register('tamin_hesa_oner')} className="nums" /></FieldWrapper>
@@ -563,6 +809,23 @@ export function EmployeeFormPage() {
         );
       case 'documents':
         return <EmployeeDocumentsEditor documents={documents} onChange={setDocuments} />;
+      case 'review':
+        return (
+          <div className="space-y-4">
+            {Object.keys(errors).length > 0 && (
+              <Card className="border-destructive/40 bg-destructive/5 p-4 text-destructive">
+                <p className="font-medium">{ui('يوجد حقول مطلوبة غير مكتملة')}</p>
+                <p className="mt-1 text-sm">{firstValidationError(errors) ?? ui('يرجى مراجعة الخطوات السابقة وإكمال البيانات المطلوبة')}</p>
+              </Card>
+            )}
+            <Card className="p-4">
+              <h3 className="text-lg font-semibold">{watch('emp_name') || '—'}</h3>
+              <p className="text-sm text-muted-foreground">{ui('كود:')} {watch('emp_code')} · {watch('jwal')}</p>
+              <p className="mt-2 text-sm">{watch('mosma_wazefy_n')} — {watch('employee_qualification')}</p>
+              <p className="text-sm text-muted-foreground">{ui('استحقاقات:')} {formatDisplayNumber(financeRows.filter((r) => r.badl_type === '1').length)} · {ui('استقطاعات:')} {formatDisplayNumber(financeRows.filter((r) => r.badl_type === '2').length)}</p>
+            </Card>
+          </div>
+        );
       default:
         return null;
     }
@@ -574,22 +837,50 @@ export function EmployeeFormPage() {
         title={isEdit ? ui('تعديل موظف') : ui('موظف جديد')}
         actions={<Button variant="outline" asChild><Link to="/employees"><ArrowRight className="size-4" />{ui('العودة')}</Link></Button>}
       />
-      <form onSubmit={handleSubmit(onSubmit, onFormInvalid)}>
-        <div className="mx-auto w-full max-w-5xl space-y-6">
-          {FORM_SECTIONS.map((section) => (
-            <Card key={section.id} className="rounded-2xl border border-border/60 bg-card p-6 shadow-md">
-              <div className="mb-6 border-b border-border/60 pb-3">
-                <h2 className="text-lg font-bold">{ui(section.title)}</h2>
-              </div>
-              {renderSection(section.id)}
-            </Card>
+      <div className="mb-8">
+        <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-muted">
+          <div
+            className="h-full rounded-full bg-primary transition-all duration-300"
+            style={{ width: `${((step + 1) / STEPS.length) * 100}%` }}
+          />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {STEPS.map((s, i) => (
+            <button
+              key={s.id}
+              type="button"
+              onClick={() => setStep(i)}
+              className={cn(
+                'flex items-center gap-2 rounded-full border px-4 py-2 text-sm transition-colors',
+                i === step && 'border-primary bg-primary text-primary-foreground shadow-sm',
+                i < step && 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+                i > step && 'border-border bg-card text-muted-foreground hover:border-primary/40',
+              )}
+            >
+              {i < step ? <Check className="size-4" /> : <span className="nums font-medium">{formatDisplayNumber(i + 1)}</span>}
+              {ui(s.title)}
+            </button>
           ))}
         </div>
-        <div className="mx-auto mt-6 flex w-full max-w-5xl justify-end">
-          <Button type="submit" variant="brand" disabled={isSubmitting}>
-            {isSubmitting && <Loader2 className="size-4 animate-spin" />}
-            <Save className="size-4" /> {isEdit ? ui('حفظ بيانات الموظف') : ui('إنشاء الموظف')}
-          </Button>
+      </div>
+      <form onSubmit={handleSubmit(onSubmit, onFormInvalid)}>
+        <div className="mx-auto w-full max-w-5xl">
+          <Card className="rounded-2xl border border-border/60 bg-card p-6 shadow-md">
+            {renderStep()}
+          </Card>
+        </div>
+        <div className="mx-auto mt-6 flex w-full max-w-5xl justify-between">
+          <Button type="button" variant="outline" disabled={step === 0} onClick={() => setStep((s) => s - 1)}><ArrowRight className="size-4" />{ui('السابق')}</Button>
+          <div className="flex gap-2">
+            {step < STEPS.length - 1 ? (
+              <Button type="button" onClick={() => void goNext()}>{ui('التالي')}<ArrowLeft className="size-4" /></Button>
+            ) : canSave ? (
+              <Button type="submit" variant="brand" disabled={isSubmitting}>
+                {isSubmitting && <Loader2 className="size-4 animate-spin" />}
+                <Save className="size-4" /> {isEdit ? ui('حفظ') : ui('إنشاء')}
+              </Button>
+            ) : null}
+          </div>
         </div>
       </form>
     </div>

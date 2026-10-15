@@ -7,6 +7,7 @@ import { Combobox } from '@/components/common/combobox';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { FileDropzone } from '@/components/common/file-dropzone';
+import { uploadUrl } from './use-uploads';
 import { DualDateField } from '@/components/common/form-fields';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
@@ -112,8 +113,8 @@ export function EmployeeDocumentsEditor({ documents, onChange }: EmployeeDocumen
             </div>
             {doc.have_date && (
               <div className="grid gap-3 sm:grid-cols-2">
-                <DualDateField label={ui('من')} gregorianValue={doc.from_date} onGregorianChange={(v) => update(doc.id, { from_date: v })} showHijri={false} />
-                <DualDateField label={ui('إلى')} gregorianValue={doc.to_date} onGregorianChange={(v) => update(doc.id, { to_date: v })} showHijri={false} />
+                <DualDateField label={ui('من')} gregorianValue={doc.from_date} onGregorianChange={(v) => update(doc.id, { from_date: v })} />
+                <DualDateField label={ui('إلى')} gregorianValue={doc.to_date} onGregorianChange={(v) => update(doc.id, { to_date: v })} />
               </div>
             )}
             {doc.tanbih && (
@@ -133,9 +134,9 @@ export function EmployeeDocumentsEditor({ documents, onChange }: EmployeeDocumen
                 </Select>
               </div>
             )}
-            {doc.filePath && !doc.file && (
+            {uploadUrl(doc.filePath) && !doc.file && (
               <a
-                href={`/uploads/${doc.filePath}`}
+                href={uploadUrl(doc.filePath)!}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-block text-sm text-primary hover:underline"
@@ -195,9 +196,9 @@ export function BankAccountForm({ bankId, accountNum, bankName, ibanFile, imageP
         <div className="mt-1.5">
           <FileDropzone value={ibanFile} onChange={(f) => onChange({ ibanFile: f })} accept="image/*,.pdf" />
         </div>
-        {imagePath && imagePath !== '0' && !ibanFile && (
+        {uploadUrl(imagePath) && !ibanFile && (
           <a
-            href={`/uploads/${imagePath}`}
+            href={uploadUrl(imagePath)!}
             target="_blank"
             rel="noopener noreferrer"
             className="mt-2 inline-block text-sm text-primary hover:underline"

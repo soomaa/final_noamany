@@ -4,8 +4,8 @@
  *
  * Stages, driven by `actions_sends` + per-stage enum('yes','no') flags:
  *   send_to_direct_manager -> approve_direct_manager (suspend 1)
- *                          -> approve_moder_edara    (suspend 4)
- *                          -> approve_hr             (suspend 4)
+ *                          -> approve_moder_edara    (suspend 1)
+ *                          -> approve_hr             (suspend 1)
  *                          -> approve_moder_3am      (suspend 4, sets close_talab)
  *
  * Reject at any stage sets the stage flag 'no' and suspend 2 (direct manager) or 5 (later).
@@ -29,8 +29,8 @@ export const NEXT_STAGE_BY_CURRENT: Record<string, ChainStage> = {
 /** suspend value written on accept for each stage (legacy update_filed_action). */
 export const ACCEPT_SUSPEND: Record<ChainStage, number> = {
   approve_direct_manager: 1,
-  approve_moder_edara: 4,
-  approve_hr: 4,
+  approve_moder_edara: 1,
+  approve_hr: 1,
   approve_moder_3am: 4,
 };
 

@@ -17,7 +17,7 @@ import { QuotationsService } from './quotations.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('quotations')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.cafe_purchases:view')
 export class QuotationsController {
   constructor(private readonly service: QuotationsService) {}
 
@@ -32,25 +32,25 @@ export class QuotationsController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.procurement:create')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:create')
   create(@Body() body: UpsertQuotationDto) {
     return this.service.create(body);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertQuotationDto>) {
     return this.service.update(id, body);
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.procurement:delete')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.remove(id);
   }
 
   @Post(':id/accept')
-  @RequiresPermission('gym-sales.procurement:approve')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:approve')
   accept(@Param('id', ParseIntPipe) id: number) {
     return this.service.accept(id);
   }

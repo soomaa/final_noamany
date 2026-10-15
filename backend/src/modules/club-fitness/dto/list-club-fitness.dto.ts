@@ -13,12 +13,4 @@ export class ListClubFitnessDto extends PaginationDto {
   @IsOptional()
   @IsString()
   search?: string;
-
-  @IsOptional()
-  @IsString()
-  dateFrom?: string;
-
-  @IsOptional()
-  @IsString()
-  dateTo?: string;
 }

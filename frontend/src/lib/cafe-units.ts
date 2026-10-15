@@ -1,4 +1,5 @@
 import type { RecipeUnit } from '@/types/cafe';
+import { uiStatic } from '@/lib/ui-static';
 
 export const CAFE_UNIT_OPTIONS: Array<{ value: RecipeUnit; label: string }> = [
   { value: 'g', label: 'جرام (g)' },
@@ -12,7 +13,7 @@ export const CAFE_UNIT_OPTIONS: Array<{ value: RecipeUnit; label: string }> = [
 
 export function cafeUnitLabel(unit: string): string {
   const normalized = normalizeCafeUnit(unit);
-  return CAFE_UNIT_OPTIONS.find((option) => option.value === normalized)?.label ?? unit;
+  return uiStatic(CAFE_UNIT_OPTIONS.find((option) => option.value === normalized)?.label ?? unit);
 }
 
 const WEIGHT_UNITS = ['g', 'kg'];

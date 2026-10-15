@@ -16,7 +16,7 @@ import { ApprovalsService } from './approvals.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('approvals')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.cafe_purchases:view')
 export class ApprovalsController {
   constructor(private readonly service: ApprovalsService) {}
 
@@ -26,7 +26,7 @@ export class ApprovalsController {
   }
 
   @Post(':id')
-  @RequiresPermission('gym-sales.procurement:approve')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:approve')
   action(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: ApprovalActionDto,

@@ -19,11 +19,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
 
@@ -58,6 +59,12 @@ const emptyForm = {
 
 export function DailyReportsPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('affairs.daily_reports:create');
+  const canUpdate = can('affairs.daily_reports:update');
+  const canDelete = can('affairs.daily_reports:delete');
+  const canApprove = can('affairs.daily_reports:approve');
+  const canReject = can('affairs.daily_reports:reject');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<DailyReportRow>(
     'hr/daily-reports',
@@ -185,7 +192,7 @@ export function DailyReportsPage() {
       header: ui('الإجراءات'),
       cell: ({ row }) => (
         <div className="flex gap-1">
-          <Button
+          {canApprove ? <Button
             variant="ghost"
             size="icon"
             aria-label={ui('اعتماد')}
@@ -199,39 +206,43 @@ export function DailyReportsPage() {
             }}
           >
             <Check className="size-4 text-success" />
-          </Button>
-          <Button
+          </Button> : null}
+          {canReject ? <Button
             variant="ghost"
             size="icon"
             aria-label={ui('رفض')}
             onClick={() => openReject(row.original.id)}
           >
             <X className="size-4 text-destructive" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={ui('تعديل')}
-            onClick={() => openEdit(row.original)}
-          >
-            <Pencil className="size-4" />
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={ui('حذف')}
-            onClick={async () => {
-              const ok = await confirm({
-                title: ui('حذف التقرير'),
-                description: ui('هل تريد حذف هذا التقرير؟'),
-                confirmLabel: ui('حذف'),
-                variant: 'destructive',
-              });
-              if (ok) deleteMutation.mutate(row.original.id);
-            }}
-          >
-            <Trash2 className="size-4 text-destructive" />
-          </Button>
+          </Button> : null}
+          {canUpdate ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={ui('تعديل')}
+              onClick={() => openEdit(row.original)}
+            >
+              <Pencil className="size-4" />
+            </Button>
+          ) : null}
+          {canDelete ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label={ui('حذف')}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: ui('حذف التقرير'),
+                  description: ui('هل تريد حذف هذا التقرير؟'),
+                  confirmLabel: ui('حذف'),
+                  variant: 'destructive',
+                });
+                if (ok) deleteMutation.mutate(row.original.id);
+              }}
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          ) : null}
         </div>
       ),
     },
@@ -248,12 +259,15 @@ export function DailyReportsPage() {
         isError={isError}
         error={error}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('تقرير جديد')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCreate}>
+              <Plus className="size-4" /> {ui('تقرير جديد')}
+            </Button>
+          ) : undefined
         }
       >
         <DataTable
+          exportSource={{ resource: 'hr/daily-reports', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -345,7 +359,7 @@ export function DailyReportsPage() {
             <Button variant="outline" onClick={() => setFormOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()}>{ui('حفظ')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()}>{ui('حفظ')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { apiError } from '@/lib/api';
 import { clubEventsApi } from '@/lib/api/club-events';
+import { usePermission } from '@/hooks/use-permission';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
 
@@ -36,7 +37,7 @@ interface Category {
   isActive: boolean;
 }
 
-function GeneralSettingsForm() {
+function GeneralSettingsForm({ canConfigure }: { canConfigure: boolean }) {
   const { ui } = useLocale();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({
@@ -58,13 +59,15 @@ function GeneralSettingsForm() {
   }, [data]);
 
   const mutation = useMutation({
-    mutationFn: () =>
-      clubEventsApi.updateEventSettings({
+    mutationFn: () => {
+      if (!canConfigure) throw new Error(ui('لا تملك صلاحية تعديل الإعدادات'));
+      return clubEventsApi.updateEventSettings({
         refundWindowDays: refundWindowDays !== '' ? Number(refundWindowDays) : undefined,
         waitlistHoldHours: waitlistHoldHours !== '' ? Number(waitlistHoldHours) : undefined,
         approvalBudgetThreshold: approvalBudgetThreshold !== '' ? Number(approvalBudgetThreshold) : undefined,
         reminderHoursBefore: reminderHoursBefore !== '' ? Number(reminderHoursBefore) : undefined,
-      }),
+      });
+    },
     onSuccess: () => {
       toast.success(ui('تم حفظ الإعدادات بنجاح'));
       void qc.invalidateQueries({ queryKey: ['club-event-settings'] });
@@ -81,26 +84,28 @@ function GeneralSettingsForm() {
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1.5">
           <Label>{ui('مدة نافذة الاسترداد (أيام)')}</Label>
-          <Input type="number" min={0} value={refundWindowDays} onChange={e => setRefundWindowDays(e.target.value)} />
+          <Input disabled={!canConfigure} type="number" min={0} value={refundWindowDays} onChange={e => setRefundWindowDays(e.target.value)} />
         </div>
         <div className="space-y-1.5">
           <Label>{ui('مدة حجز قائمة الانتظار (ساعات)')}</Label>
-          <Input type="number" min={0} value={waitlistHoldHours} onChange={e => setWaitlistHoldHours(e.target.value)} />
+          <Input disabled={!canConfigure} type="number" min={0} value={waitlistHoldHours} onChange={e => setWaitlistHoldHours(e.target.value)} />
         </div>
       </div>
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-1.5">
           <Label>{ui('حد الموافقة على الميزانية')}</Label>
-          <Input type="number" min={0} value={approvalBudgetThreshold} onChange={e => setApprovalBudgetThreshold(e.target.value)} />
+          <Input disabled={!canConfigure} type="number" min={0} value={approvalBudgetThreshold} onChange={e => setApprovalBudgetThreshold(e.target.value)} />
         </div>
         <div className="space-y-1.5">
           <Label>{ui('التذكير قبل الفعالية (ساعات)')}</Label>
-          <Input type="number" min={0} value={reminderHoursBefore} onChange={e => setReminderHoursBefore(e.target.value)} />
+          <Input disabled={!canConfigure} type="number" min={0} value={reminderHoursBefore} onChange={e => setReminderHoursBefore(e.target.value)} />
         </div>
       </div>
-      <Button disabled={mutation.isPending} onClick={() => mutation.mutate()}>
-        {mutation.isPending ? ui('جاري الحفظ...') : ui('حفظ التغييرات')}
-      </Button>
+      {canConfigure && (
+        <Button permissionAction="configure" disabled={mutation.isPending} onClick={() => mutation.mutate()}>
+          {mutation.isPending ? ui('جاري الحفظ...') : ui('حفظ التغييرات')}
+        </Button>
+      )}
     </div>
   );
 }
@@ -109,10 +114,14 @@ function CategoryDialog({
   open,
   onOpenChange,
   category,
+  canCreate,
+  canUpdate,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   category: Category | null;
+  canCreate: boolean;
+  canUpdate: boolean;
 }) {
   const { ui, dir } = useLocale();
   const qc = useQueryClient();
@@ -143,6 +152,7 @@ function CategoryDialog({
 
   const mutation = useMutation({
     mutationFn: () => {
+      if (category ? !canUpdate : !canCreate) throw new Error(ui('لا تملك صلاحية الحفظ'));
       const body = { nameAr, nameEn: nameEn || undefined, kind, color, requiresApproval, isActive };
       return category ? clubEventsApi.updateCategory(category.id, body) : clubEventsApi.createCategory(body);
     },
@@ -195,16 +205,18 @@ function CategoryDialog({
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{ui('إلغاء')}</Button>
-          <Button disabled={!nameAr.trim() || mutation.isPending} onClick={() => mutation.mutate()}>
-            {mutation.isPending ? ui('جاري الحفظ...') : ui('حفظ')}
-          </Button>
+          {(category ? canUpdate : canCreate) && (
+            <Button permissionAction={category ? 'update' : 'create'} disabled={!nameAr.trim() || mutation.isPending} onClick={() => mutation.mutate()}>
+              {mutation.isPending ? ui('جاري الحفظ...') : ui('حفظ')}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-function CategoriesTable() {
+function CategoriesTable({ canCreate, canUpdate, canDelete }: { canCreate: boolean; canUpdate: boolean; canDelete: boolean }) {
   const { ui } = useLocale();
   const qc = useQueryClient();
   const { data, isLoading } = useQuery({
@@ -216,7 +228,10 @@ function CategoriesTable() {
   const [editing, setEditing] = useState<Category | null>(null);
 
   const deleteMutation = useMutation({
-    mutationFn: (id: number) => clubEventsApi.deleteCategory(id),
+    mutationFn: (id: number) => {
+      if (!canDelete) throw new Error(ui('لا تملك صلاحية الحذف'));
+      return clubEventsApi.deleteCategory(id);
+    },
     onSuccess: () => {
       toast.success(ui('تم الحذف بنجاح'));
       void qc.invalidateQueries({ queryKey: ['club-event-categories'] });
@@ -230,9 +245,11 @@ function CategoriesTable() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium">{ui('تصنيفات الفعاليات')}</h3>
-        <Button size="sm" onClick={() => { setEditing(null); setDialogOpen(true); }}>
-          <Plus className="h-4 w-4 ms-1" /> {ui('تصنيف جديد')}
-        </Button>
+        {canCreate && (
+          <Button size="sm" onClick={() => { setEditing(null); setDialogOpen(true); }}>
+            <Plus className="h-4 w-4 ms-1" /> {ui('تصنيف جديد')}
+          </Button>
+        )}
       </div>
 
       {isLoading ? (
@@ -263,15 +280,19 @@ function CategoriesTable() {
                   <td className="px-4 py-3 text-muted-foreground">{cat.requiresApproval ? ui('نعم') : ui('لا')}</td>
                   <td className="px-4 py-3 text-muted-foreground">{cat.isActive ? ui('نعم') : ui('لا')}</td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      <Button variant="ghost" size="sm" onClick={() => { setEditing(cat); setDialogOpen(true); }}>{ui('تعديل')}</Button>
-                      <button
-                        onClick={() => deleteMutation.mutate(cat.id)}
-                        className="text-muted-foreground hover:text-destructive"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
+                    {(canUpdate || canDelete) && (
+                      <div className="flex items-center gap-2">
+                        {canUpdate && <Button variant="ghost" size="sm" onClick={() => { setEditing(cat); setDialogOpen(true); }}>{ui('تعديل')}</Button>}
+                        {canDelete && (
+                          <button
+                            onClick={() => deleteMutation.mutate(cat.id)}
+                            className="text-muted-foreground hover:text-destructive"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -280,13 +301,18 @@ function CategoriesTable() {
         </div>
       )}
 
-      <CategoryDialog open={dialogOpen} onOpenChange={setDialogOpen} category={editing} />
+      <CategoryDialog open={dialogOpen} onOpenChange={setDialogOpen} category={editing} canCreate={canCreate} canUpdate={canUpdate} />
     </div>
   );
 }
 
 export function EventSettingsPage() {
   const { ui, dir } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('club.events.settings:create');
+  const canUpdate = can('club.events.settings:update');
+  const canDelete = can('club.events.settings:delete');
+  const canConfigure = can('club.events.settings:configure');
   const [tab, setTab] = useState<'general' | 'categories'>('general');
 
   return (
@@ -313,7 +339,11 @@ export function EventSettingsPage() {
         ))}
       </div>
 
-      {tab === 'general' ? <GeneralSettingsForm /> : <CategoriesTable />}
+      {tab === 'general' ? (
+        <GeneralSettingsForm canConfigure={canConfigure} />
+      ) : (
+        <CategoriesTable canCreate={canCreate} canUpdate={canUpdate} canDelete={canDelete} />
+      )}
     </div>
   );
 }

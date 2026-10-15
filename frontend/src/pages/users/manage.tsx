@@ -1,8 +1,8 @@
+import { AddAdminButton } from '@/components/users/add-admin-button';
 import { useQuery } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { KeyRound, Loader2, Pencil, Plus, Save, Trash2, Users } from 'lucide-react';
+import { KeyRound, Loader2, Pencil, Save, Trash2, Users } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Combobox } from '@/components/common/combobox';
 import { DataTable } from '@/components/common/data-table';
@@ -20,16 +20,17 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useBranches } from '@/hooks/use-branches';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { clientPaginate, useArrayResource, useMutationWithToast } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import type { EmployeeListItem } from '@/types/employees';
 import { useLocale } from '@/store/locale';
+import { useAuth } from '@/store/auth';
 import { uiStatic } from '@/lib/ui-static';
 import { fetchAllReportRows } from '@/lib/report-fetch';
 
@@ -82,6 +83,11 @@ interface UserPermissions {
 
 export function UsersManagePage() {
   const { ui } = useLocale();
+  const currentUser = useAuth((state) => state.user);
+  const isSystemAdmin = currentUser?.level === 1;
+  const { can } = usePermission();
+  const canUpdate = can('admin.users:update');
+  const canDelete = can('admin.users:delete');
   const { params, setParams } = useListQuery();
   const { data: users = [], isLoading, isError, error, refetch } = useArrayResource<UserRow>('users');
   const { data: branches = [] } = useBranches();
@@ -92,7 +98,7 @@ export function UsersManagePage() {
     () =>
       rawEmployees.map((e) => ({
         value: String(e.emp_code),
-        label: `${e.employee ?? '—'} (${toArabicDigits(e.emp_code ?? '')})`,
+        label: `${e.employee ?? '—'} (${formatDigits(e.emp_code ?? '')})`,
       })),
     [rawEmployees],
   );
@@ -100,23 +106,15 @@ export function UsersManagePage() {
   const branchName = (id: number | null) =>
     id != null ? (branches.find((b) => b.id === id)?.name ?? '—') : '—';
 
-  const filteredUsers = useMemo(
-    () => users.filter((user) => {
-      const status = params.filters.status;
-      return !status || (status === 'active' ? user.approved === 1 : user.approved !== 1);
-    }),
-    [users, params.filters.status],
-  );
-
   const pageData = useMemo(
     () =>
-      clientPaginate(filteredUsers, params, {
+      clientPaginate(users, params, {
         search: (u, q) =>
           (u.username ?? '').toLowerCase().includes(q) ||
           (u.name ?? '').toLowerCase().includes(q) ||
           (u.email ?? '').toLowerCase().includes(q),
       }),
-    [filteredUsers, params],
+    [users, params],
   );
 
   const [formOpen, setFormOpen] = useState(false);
@@ -137,16 +135,11 @@ export function UsersManagePage() {
   const stats = useMemo(
     () => [
       { title: ui('المستخدمون'), value: toArabicDigits(users.length), icon: <Users className="size-5" /> },
-      { title: ui('نشطون'), value: toArabicDigits(users.filter((user) => user.approved === 1).length) },
-      { title: ui('غير نشطين'), value: toArabicDigits(users.filter((user) => user.approved !== 1).length) },
     ],
     [users],
   );
 
   const openEdit = (row: UserRow) => {
-    // users.emp_code stores employees.id (legacy convention), while the edit API
-    // expects the employee business code selected by the form.
-    const linkedEmployee = rawEmployees.find((employee) => employee.id === row.emp_code);
     setEditId(row.user_id);
     setForm({
       username: row.username ?? '',
@@ -154,18 +147,16 @@ export function UsersManagePage() {
       email: row.email ?? '',
       password: '',
       level: row.level != null ? String(row.level) : '1',
-      empCode: linkedEmployee?.emp_code != null ? String(linkedEmployee.emp_code) : '',
+      // Preserve the existing employee link so editing a level 2/3 user no longer forces
+      // re-selecting the employee (and no longer fails the "اختر الموظف" guard on save).
+      empCode: row.emp_code != null ? String(row.emp_code) : '',
     });
     setFormOpen(true);
   };
 
-  const openCreate = () => {
-    setEditId(null);
-    setForm(emptyForm);
-    setFormOpen(true);
-  };
-
   const save = async () => {
+    if (!canUpdate) return;
+    if (Number(form.level) === 1 && !isSystemAdmin) return;
     const level = parseInt(form.level, 10);
     if (form.username.trim().length < 5) {
       toast.error(ui('اسم المستخدم مطلوب (٥ أحرف على الأقل)'));
@@ -200,13 +191,9 @@ export function UsersManagePage() {
 
     setSaving(true);
     try {
-      if (editId) {
-        await api.patch(`/users/${editId}`, payload);
-        toast.success(ui('تم حفظ المستخدم'));
-      } else {
-        await api.post('/users', payload);
-        toast.success(ui('تم إضافة المستخدم'));
-      }
+      if (!editId) return;
+      await api.patch(`/users/${editId}`, payload);
+      toast.success(ui('تم حفظ المستخدم'));
       setFormOpen(false);
       void refetch();
     } catch (e) {
@@ -217,6 +204,7 @@ export function UsersManagePage() {
   };
 
   const toggleStatus = async (row: UserRow) => {
+    if (!canUpdate) return;
     const next = row.approved === 1 ? 0 : 1;
     const ok = await confirm({
       title: next === 1 ? ui('تفعيل المستخدم') : ui('إيقاف المستخدم'),
@@ -229,6 +217,8 @@ export function UsersManagePage() {
     });
     if (ok) statusMutation.mutate(row.user_id);
   };
+
+  const [permUser, setPermUser] = useState<UserRow | null>(null);
 
   const columns: ColumnDef<UserRow>[] = [
     {
@@ -258,7 +248,7 @@ export function UsersManagePage() {
       accessorKey: 'approved',
       header: ui('الحالة'),
       cell: ({ row }) => (
-        <button type="button" onClick={() => void toggleStatus(row.original)} aria-label={ui('تغيير الحالة')}>
+        <button type="button" disabled={!canUpdate || (row.original.level === 1 && !isSystemAdmin)} onClick={canUpdate && (row.original.level !== 1 || isSystemAdmin) ? () => void toggleStatus(row.original) : undefined} aria-label={ui('تغيير الحالة')}>
           <StatusBadge
             status={row.original.approved === 1 ? 'active' : 'suspended'}
             label={row.original.approved === 1 ? ui('مُفعّل') : ui('موقوف')}
@@ -269,20 +259,21 @@ export function UsersManagePage() {
     },
     {
       id: 'actions',
-      header: ui('إجراء'),
-      cell: ({ row }) => (
-        <div className="flex items-center gap-2 whitespace-nowrap">
-          <Button variant="outline" size="sm" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
-            <Pencil className="size-4" />
-            {ui('تعديل')}
-          </Button>
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/admin/roles" aria-label={ui('إدارة الأدوار والصلاحيات')}>
+      header: ui('الإجراءات'),
+      cell: ({ row }) => (canUpdate || canDelete) ? (
+        <div className="flex gap-1">
+          {canUpdate && (row.original.level !== 1 || isSystemAdmin) && <Button
+            variant="ghost"
+            size="icon"
+            aria-label={ui('الصلاحيات')}
+            onClick={() => setPermUser(row.original)}
+          >
             <KeyRound className="size-4" />
-            {ui('الأدوار والصلاحيات')}
-            </Link>
-          </Button>
-          <Button
+          </Button>}
+          {canUpdate && (row.original.level !== 1 || isSystemAdmin) && <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+            <Pencil className="size-4" />
+          </Button>}
+          {canDelete && row.original.user_id !== currentUser?.sub && (row.original.level !== 1 || isSystemAdmin) && <Button
             variant="ghost"
             size="icon"
             aria-label={ui('حذف')}
@@ -297,9 +288,9 @@ export function UsersManagePage() {
             }}
           >
             <Trash2 className="size-4 text-destructive" />
-          </Button>
+          </Button>}
         </div>
-      ),
+      ) : null,
     },
   ];
 
@@ -309,8 +300,9 @@ export function UsersManagePage() {
     <>
       <ListPageShell
         title={ui('إدارة المستخدمين')}
-        description={ui('عرض وتعديل مستخدمي النظام — يُنشأ الحساب الجديد من قسم الموارد البشرية عند تفعيل «إضافة إلى النظام» في نموذج الموظف')}
-        actions={<Button onClick={openCreate}><Plus className="size-4" />{ui('إضافة مستخدم جديد')}</Button>}
+        description={ui('عرض وتعديل حسابات الدخول وصلاحياتها')}
+        actions={<AddAdminButton />}
+        searchPlaceholder={ui('بحث بالاسم أو اسم المستخدم…')}
         stats={stats}
         statsLoading={isLoading}
         isError={isError}
@@ -329,21 +321,6 @@ export function UsersManagePage() {
           onRetry={() => void refetch()}
           search={params.search}
           onSearchChange={(s) => setParams({ search: s, page: 1 })}
-          toolbar={
-            <Select
-              value={params.filters.status || 'all'}
-              onValueChange={(status) => setParams({ filters: { status: status === 'all' ? '' : status }, page: 1 })}
-            >
-              <SelectTrigger className="h-9 w-[150px] text-sm">
-                <SelectValue placeholder={ui('الحالة')} />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">{ui('كل الحالات')}</SelectItem>
-                <SelectItem value="active">{ui('نشط')}</SelectItem>
-                <SelectItem value="inactive">{ui('غير نشط')}</SelectItem>
-              </SelectContent>
-            </Select>
-          }
           emptyTitle={ui('لا يوجد مستخدمون')}
         />
       </ListPageShell>
@@ -351,7 +328,7 @@ export function UsersManagePage() {
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
         <DialogContent aria-describedby={undefined}>
           <DialogHeader>
-            <DialogTitle>{editId ? ui('تعديل مستخدم') : ui('إضافة مستخدم جديد')}</DialogTitle>
+            <DialogTitle>{ui('تعديل مستخدم')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -364,19 +341,14 @@ export function UsersManagePage() {
               />
             </div>
             <div>
-              <Label>{ui('المستوى')}</Label>
+              <Label>{ui('الصلاحية')}</Label>
               <div className="mt-1.5">
-                <Select
+                <Combobox
                   value={form.level}
-                  onValueChange={(level) => setForm((f) => ({ ...f, level, empCode: level === '1' ? '' : f.empCode }))}
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">{ui('مدير على النظام')}</SelectItem>
-                    <SelectItem value="3">{ui('مدير فرع')}</SelectItem>
-                    <SelectItem value="2">{ui('موظف')}</SelectItem>
-                  </SelectContent>
-                </Select>
+                  onValueChange={(v) => setForm((f) => ({ ...f, level: v }))}
+                  options={isSystemAdmin && users.find((user) => user.user_id === editId)?.level === 1 ? LEVEL_OPTIONS : LEVEL_OPTIONS.filter((option) => option.value !== '1')}
+                  placeholder={ui('الصلاحية…')}
+                />
               </div>
             </div>
             {level === 1 ? (
@@ -431,13 +403,14 @@ export function UsersManagePage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
-            <Button onClick={() => void save()} disabled={saving}>
+            {canUpdate && <Button onClick={() => void save()} disabled={saving}>
               {saving ? ui('جارٍ الحفظ…') : ui('حفظ')}
-            </Button>
+            </Button>}
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
+      <PermissionsDialog user={permUser} onClose={() => setPermUser(null)} canUpdate={canUpdate} />
     </>
   );
 }
@@ -447,7 +420,7 @@ function useEmployeeOptionsFull() {
   return useQuery({
     queryKey: ['employees', 'user-options'],
     queryFn: async () => {
-      return fetchAllReportRows<EmployeeListItem>('/employees', { status: 1 }, 200);
+      return fetchAllReportRows<EmployeeListItem>('/employees', { status: '1' }, 200);
     },
     staleTime: 60_000,
   });
@@ -462,7 +435,7 @@ function flattenIds(nodes: MenuNodeApi[]): string[] {
   return out;
 }
 
-function PermissionsDialog({ user, onClose }: { user: UserRow | null; onClose: () => void }) {
+function PermissionsDialog({ user, onClose, canUpdate }: { user: UserRow | null; onClose: () => void; canUpdate: boolean }) {
   const { ui } = useLocale();
   const userId = user?.user_id;
   const { data, isLoading, isError, refetch } = useResourcePermissions(userId);
@@ -497,6 +470,7 @@ function PermissionsDialog({ user, onClose }: { user: UserRow | null; onClose: (
   };
 
   const save = async () => {
+    if (!canUpdate) return;
     if (!userId) return;
     setSaving(true);
     try {
@@ -547,10 +521,10 @@ function PermissionsDialog({ user, onClose }: { user: UserRow | null; onClose: (
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{ui('إلغاء')}</Button>
-          <Button onClick={() => void save()} disabled={saving || isLoading}>
+          {canUpdate && <Button onClick={() => void save()} disabled={saving || isLoading}>
             {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
             {ui('حفظ الصلاحيات')}
-          </Button>
+          </Button>}
         </DialogFooter>
       </DialogContent>
     </Dialog>

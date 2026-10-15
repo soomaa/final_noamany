@@ -1,9 +1,18 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { cairoDateString } from '../utils/cairo-date';
 
 export type DateInput = Date | string | null | undefined;
 
+/** Reject rollover dates (for example February 30), not just invalid Date objects. */
+export function isCalendarDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}
+
 function toDate(value: DateInput): Date | null {
   if (value == null || value === '') return null;
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value) && !isCalendarDate(value)) return null;
   const d = value instanceof Date ? value : new Date(value);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -31,6 +40,11 @@ export function assertNotPastDate(
   value: DateInput,
   message = 'لا يمكن اختيار تاريخ في الماضي',
 ): void {
+  if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    if (!isCalendarDate(value)) throw new BadRequestException('التاريخ غير صالح');
+    if (value < cairoDateString()) throw new BadRequestException(message);
+    return;
+  }
   const d = toDate(value);
   if (!d) throw new BadRequestException('التاريخ غير صالح');
   const today = new Date();

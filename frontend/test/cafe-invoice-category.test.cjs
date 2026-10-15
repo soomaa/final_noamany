@@ -13,14 +13,14 @@ const cafePosSource = fs.readFileSync(
 );
 
 test('new receipt requires and sends invoice category and gender', () => {
-  assert.match(receiptSource, /if \(!categoryId\) return toast\.error/);
-  assert.match(receiptSource, /if \(!gender\) return toast\.error/);
+  assert.match(receiptSource, /if \(!categoryId\).*toast\.error/);
+  assert.match(receiptSource, /if \(!gender\).*toast\.error/);
   assert.match(receiptSource, /gender,/);
   assert.match(receiptSource, /cafeCategoryId: Number\(categoryId\)/);
 });
 
 test('cafe POS prevents mixed categories and sends header classification', () => {
-  assert.match(cafePosSource, /product\.categoryId !== Number\(activeCategory\)/);
+  assert.match(cafePosSource, /cafeInvoiceLineMatchesCategory\(item\.product, activeCategory\)/);
   assert.match(cafePosSource, /gender,/);
   assert.match(cafePosSource, /cafeCategoryId: Number\(activeCategory\)/);
 });

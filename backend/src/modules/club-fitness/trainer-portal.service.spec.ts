@@ -12,6 +12,8 @@ describe('TrainerPortalService', () => {
   const user: JwtUser = {
     sub: 1,
     level: 2,
+    employeeId: 2,
+    employeeCode: 1002,
     emp_code: 2,
     branch: 1,
     branch_name: 'فرع A1',
@@ -193,11 +195,9 @@ describe('TrainerPortalService', () => {
       club_trainer_salaries: {
         findFirst: jest.fn().mockResolvedValue({ class_commission_percentage: 15 }),
       },
+      club_private_attendance_commissions: { findMany: jest.fn().mockResolvedValue([]) },
       club_trainer_earning_payments: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: null } }),
-        findMany: jest.fn().mockResolvedValue([]),
-      },
-      club_private_attendance_commissions: {
         findMany: jest.fn().mockResolvedValue([]),
       },
     };
@@ -244,11 +244,9 @@ describe('TrainerPortalService', () => {
         ]),
       },
       club_trainer_salaries: { findFirst: jest.fn() },
+      club_private_attendance_commissions: { findMany: jest.fn().mockResolvedValue([]) },
       club_trainer_earning_payments: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: null } }),
-        findMany: jest.fn().mockResolvedValue([]),
-      },
-      club_private_attendance_commissions: {
         findMany: jest.fn().mockResolvedValue([]),
       },
     };
@@ -260,5 +258,54 @@ describe('TrainerPortalService', () => {
     expect(result.earnings.total).toBe(0);
     expect(result.earnings.items).toEqual([]);
     expect(prisma.club_trainer_salaries.findFirst).not.toHaveBeenCalled();
+  });
+  it('includes private attendance commission and member details in the trainer balance', async () => {
+    const prisma = {
+      club_trainers: { findFirst: jest.fn().mockResolvedValue(trainer) },
+      club_classes: { findMany: jest.fn().mockResolvedValue([]) },
+      club_trainer_salaries: { findFirst: jest.fn() },
+      club_private_attendance_commissions: {
+        findMany: jest.fn().mockResolvedValue([
+          {
+            id: 71,
+            attendance_id: 501,
+            subscription_id: 91,
+            commission_sequence: 2,
+            attendance_date: '2026-07-12',
+            revenue_base: 250,
+            commission_percentage: 20,
+            commission_amount: 50,
+            attendance: { member_id: 12, member_name: 'عضو برايفت' },
+            subscription: { subscription_number: 'SUB-91', subscription_type: 'Private 10' },
+          },
+        ]),
+      },
+      club_trainer_earning_payments: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: 20 } }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+    };
+    const service = new TrainerPortalService(prisma as unknown as PrismaService);
+
+    const result = await service.dashboard(user, {
+      dateFrom: '2026-07-01',
+      dateTo: '2026-07-31',
+    });
+
+    expect(prisma.club_private_attendance_commissions.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { trainer_id: 16, attendance_date: { gte: '2026-07-01', lte: '2026-07-31' } },
+    }));
+    expect(result.statistics).toMatchObject({ privateSessions: 1, totalEarnings: 50 });
+    expect(result.earnings).toMatchObject({ total: 50, paid: 20, remaining: 30 });
+    expect(result.earnings.privateItems).toEqual([
+      expect.objectContaining({
+        id: 71,
+        memberId: 12,
+        memberName: 'عضو برايفت',
+        subscriptionNumber: 'SUB-91',
+        revenue: 250,
+        amount: 50,
+      }),
+    ]);
   });
 });

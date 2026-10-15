@@ -8,346 +8,277 @@ import {
   SuspendStatus,
   suspendToListStatus,
 } from '../../common/utils/suspend-status.util';
+import { cairoDateString, dateOnlyParts } from '../../common/utils/cairo-date';
 import { CreateRewardDto, UpdateRewardDto } from './dto/reward.dto';
 import { ListRewardsDto } from './dto/list-rewards.dto';
+import { HrDataScopeService } from '../../common/hr-scope/hr-data-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @Injectable()
 export class RewardsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly scope: HrDataScopeService) {}
 
-  /** The legacy page lists one row per reward request (hr_mokafat), not one per employee. */
-  async list(q: ListRewardsDto) {
-    const and: Prisma.hr_mokafatWhereInput[] = [];
+  async list(q: ListRewardsDto, user: JwtUser) {
+    const and: Prisma.hr_mokafat_detailsWhereInput[] = [];
+    const identities = await this.scope.employeeIdentities(user, 'finance.rewards');
+    if (identities) {
+      const visibleCodes = [...new Set([...identities.ids, ...identities.codes])];
+      and.push(visibleCodes.length ? { emp_code: { in: visibleCodes } } : { id: -1 });
+    }
     const statusWhere = buildSuspendWhere(q.status);
     if (statusWhere?.suspend) and.push({ suspend: statusWhere.suspend });
     if (q.search?.trim()) {
-      const search = q.search.trim();
-      const rewardNumber = Number(search);
+      const s = q.search.trim();
       and.push({
         OR: [
-          { about: { contains: search } },
-          { mokafa_date_ar: { contains: search } },
-          ...(Number.isInteger(rewardNumber) ? [{ mokafa_rkm: rewardNumber }] : []),
+          { bank_responsible_name: { contains: s } },
+          { mosma_wazefy_n: { contains: s } },
+          { edara_n: { contains: s } },
         ],
       });
     }
 
-    const where: Prisma.hr_mokafatWhereInput = and.length ? { AND: and } : {};
-    const [headers, total] = await Promise.all([
-      this.prisma.hr_mokafat.findMany({
+    const where: Prisma.hr_mokafat_detailsWhereInput = and.length ? { AND: and } : {};
+    const [rows, total] = await Promise.all([
+      this.prisma.hr_mokafat_details.findMany({
         where,
         orderBy: { id: 'desc' },
         skip: q.skip,
         take: q.take,
       }),
-      this.prisma.hr_mokafat.count({ where }),
+      this.prisma.hr_mokafat_details.count({ where }),
     ]);
 
-    const rewardNumbers = headers.map((header) => header.mokafa_rkm);
-    const details = rewardNumbers.length
-      ? await this.prisma.hr_mokafat_details.findMany({
-          where: { mokafa_rkm_fk: { in: rewardNumbers } },
-          orderBy: { id: 'asc' },
-        })
+    const rkmIds = [...new Set(rows.map((r) => r.mokafa_rkm_fk).filter((v): v is number => v != null))];
+    const headers = rkmIds.length
+      ? await this.prisma.hr_mokafat.findMany({ where: { mokafa_rkm: { in: rkmIds } } })
       : [];
-    const employeeCodes = [
-      ...new Set(details.map((detail) => detail.emp_code).filter((code): code is number => code != null)),
-    ];
-    const employees = employeeCodes.length
-      ? await this.prisma.employees.findMany({
-          where: { emp_code: { in: employeeCodes } },
-          select: { id: true, emp_code: true, employee: true },
-        })
-      : [];
-    const employeeByCode = new Map(employees.map((employee) => [employee.emp_code, employee]));
-    const detailsByReward = new Map<number, typeof details>();
-    for (const detail of details) {
-      if (detail.mokafa_rkm_fk == null) continue;
-      const bucket = detailsByReward.get(detail.mokafa_rkm_fk) ?? [];
-      bucket.push(detail);
-      detailsByReward.set(detail.mokafa_rkm_fk, bucket);
-    }
+    const headerMap = new Map(headers.map((h) => [h.mokafa_rkm, h]));
 
-    const data = headers.map((header) => {
-      const rewardDetails = detailsByReward.get(header.mokafa_rkm) ?? [];
-      const first = rewardDetails[0];
-      const detailRows = rewardDetails.map((detail) => {
-        const employee = detail.emp_code != null ? employeeByCode.get(detail.emp_code) : undefined;
-        return {
-          id: detail.id,
-          employeeId: employee?.id ?? null,
-          empCode: detail.emp_code,
-          employeeName: employee?.employee ?? detail.bank_responsible_name ?? null,
-          jobTitle: detail.mosma_wazefy_n,
-          department: detail.qsm_n,
-          administration: detail.edara_n,
-          value: detail.value != null ? Number(detail.value) : 0,
-          option: detail.mokafa_option,
-        };
-      });
+    const data = rows.map((row) => {
+      const header = row.mokafa_rkm_fk != null ? headerMap.get(row.mokafa_rkm_fk) : undefined;
       return {
-        id: header.mokafa_rkm,
-        mokafaRkm: header.mokafa_rkm,
-        date: header.mokafa_date_ar,
-        month: Number(header.mon_melady) || header.month,
-        recipientType: header.mokafa_type,
-        totalValue: header.total_value != null ? Number(header.total_value) : 0,
-        employeeCount: rewardDetails.length,
-        title: header.about,
-        value: first?.value != null ? Number(first.value) : 0,
-        option: first?.mokafa_option ?? null,
-        employeeIds: detailRows
-          .map((detail) => detail.employeeId)
-          .filter((employeeId): employeeId is number => employeeId != null),
-        details: detailRows,
-        status: suspendToListStatus(header.suspend),
+        id: row.id,
+        employeeName: row.bank_responsible_name ?? row.mosma_wazefy_n,
+        title: header?.about ?? null,
+        amount: row.value != null ? Number(row.value) : null,
+        date: header?.mokafa_date_ar ?? null,
+        status: suspendToListStatus(header?.suspend ?? row.suspend),
       };
     });
 
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async nextNumber() {
-    const max = await this.prisma.hr_mokafat.aggregate({ _max: { mokafa_rkm: true } });
-    return { value: (max._max.mokafa_rkm ?? 0) + 1 };
-  }
+  async create(dto: CreateRewardDto, user: JwtUser, publisherId?: number) {
+    if (!dto.details?.length) throw new BadRequestException('يجب إضافة موظف واحد على الأقل');
+    for (const detail of dto.details) {
+      const employee = await this.prisma.employees.findFirst({
+        where: { OR: [{ id: detail.empCode }, { emp_code: detail.empCode }] },
+        select: { id: true },
+      });
+      if (!employee) throw new NotFoundException('الموظف غير موجود');
+      await this.scope.assertEmployeeInScope(user, employee.id, 'finance.rewards');
+    }
 
-  async create(dto: CreateRewardDto, publisherId?: number) {
-    const selection = await this.resolveSelection(dto);
-    const date = this.parseDate(dto.date);
-    const rewardNumber = (await this.nextNumber()).value;
-    const recipientType = this.recipientType(dto.recipientType ?? dto.mokafaType);
-    const calendarMonth = date.getMonth() + 1;
-    const calendarYear = date.getFullYear();
-    const displayMonth = dto.month ?? calendarMonth;
-    const option = dto.option ?? 'rateb';
-    const total = selection.reduce((sum, item) => sum + item.value, 0);
+    const maxRkm = await this.prisma.hr_mokafat.aggregate({ _max: { mokafa_rkm: true } });
+    const mokafaRkm = (maxRkm._max.mokafa_rkm ?? 0) + 1;
+    const dateStr = dto.date ?? cairoDateString();
+    const total = dto.details.reduce((s, d) => s + (d.value ?? 0), 0);
+    // month/year drive the engine window-mapping (anchor date-25). Populate them at create so an
+    // approved reward maps into the correct payroll run (mirrors how penalties map by month/year).
+    const { month, year } = dateOnlyParts(dateStr);
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.hr_mokafat.create({
+    await this.prisma.hr_mokafat.create({
+      data: {
+        mokafa_rkm: mokafaRkm,
+        mokafa_date: Math.floor(Date.now() / 1000),
+        month,
+        year,
+        mokafa_date_ar: dateStr,
+        mokafa_value_type: 1,
+        mokafa_type: dto.mokafaType ?? 1,
+        total_value: String(total),
+        publisher: publisherId ?? 0,
+        about: dto.title,
+        // Newly created reward is PENDING (suspend=0) and NOT yet salary-borne
+        // (mokafa_option left null) — it pays nothing until it is approved.
+        suspend: SuspendStatus.INCOMING,
+      },
+    });
+
+    for (const detail of dto.details) {
+      const emp = await this.prisma.employees.findFirst({
+        where: { OR: [{ id: detail.empCode }, { emp_code: detail.empCode }] },
+      });
+      await this.prisma.hr_mokafat_details.create({
         data: {
-          mokafa_rkm: rewardNumber,
-          mokafa_date: Math.floor(date.getTime() / 1000),
-          month: calendarMonth,
-          year: calendarYear,
-          mon_melady: String(displayMonth),
-          mokafa_date_ar: this.dateString(date, dto.date),
-          mokafa_value_type: 0,
-          mokafa_type: recipientType,
-          total_value: String(total),
-          presence_number: selection.length,
-          publisher: publisherId ?? 0,
-          about: dto.title.trim(),
+          mokafa_rkm_fk: mokafaRkm,
+          emp_code: emp?.emp_code ?? detail.empCode,
+          month,
+          year,
+          value: detail.value ?? 0,
+          bank_responsible_name: emp?.employee,
+          mosma_wazefy_n: emp?.mosma_wazefy_n,
+          edara_n: emp?.edara_n,
+          qsm_n: emp?.qsm_n,
+          mokafa_types: dto.mokafaType ?? 1,
           suspend: SuspendStatus.INCOMING,
         },
       });
-      await tx.hr_mokafat_details.createMany({
-        data: selection.map(({ employee, value }) => ({
-          mokafa_rkm_fk: rewardNumber,
-          emp_code: employee.emp_code,
-          month: calendarMonth,
-          year: calendarYear,
-          day: date.getDate(),
-          value,
-          bank_responsible_name: employee.employee,
-          mosma_wazefy_n: employee.mosma_wazefy_n,
-          edara_n: employee.edara_n,
-          qsm_n: employee.qsm_n,
-          mokafa_types: recipientType,
-          mokafa_option: option,
-          suspend: SuspendStatus.INCOMING,
-        })),
-      });
-    });
+    }
 
-    return { id: rewardNumber, mokafaRkm: rewardNumber };
+    return { mokafaRkm };
   }
 
-  async update(rewardNumber: number, dto: UpdateRewardDto) {
-    const header = await this.findHeaderOrThrow(rewardNumber);
-    if (SUSPEND_APPROVED.includes(header.suspend)) {
+  async update(id: number, dto: UpdateRewardDto, user: JwtUser) {
+    const detail = await this.prisma.hr_mokafat_details.findUnique({ where: { id } });
+    if (!detail) throw new NotFoundException('المكافأة غير موجودة');
+    await this.assertDetailInScope(detail.emp_code, user);
+    if (detail.mokafa_rkm_fk == null) throw new BadRequestException('رقم المكافأة غير موجود');
+
+    const header = await this.prisma.hr_mokafat.findFirst({
+      where: { mokafa_rkm: detail.mokafa_rkm_fk },
+    });
+    if (!header) throw new NotFoundException('سجل المكافأة غير موجود');
+
+    // Once approved (suspend ∈ {1,4}) the reward's amount / month / year are locked — editing the
+    // date would re-map it into a different payroll run and re-open the double-pay window.
+    if (isApproved(header.suspend)) {
       throw new BadRequestException('لا يمكن تعديل مكافأة معتمدة');
     }
 
-    const currentDetails = await this.prisma.hr_mokafat_details.findMany({
-      where: { mokafa_rkm_fk: rewardNumber },
-      orderBy: { id: 'asc' },
-    });
-    const currentEmployeeIds = await this.employeeIdsForCodes(
-      currentDetails.map((detail) => detail.emp_code).filter((code): code is number => code != null),
-    );
-    const selection = await this.resolveSelection(
-      {
-        ...dto,
-        title: dto.title ?? header.about,
-        recipientType: dto.recipientType ?? header.mokafa_type,
-        employeeIds: dto.employeeIds ?? currentEmployeeIds,
-        value: dto.value ?? Number(currentDetails[0]?.value ?? 0),
-      },
-      currentDetails,
-    );
-    const date = this.parseDate(dto.date ?? header.mokafa_date_ar);
-    const dateString = this.dateString(date, dto.date ?? header.mokafa_date_ar);
-    const recipientType = this.recipientType(dto.recipientType ?? dto.mokafaType ?? header.mokafa_type);
-    const option = dto.option ?? currentDetails[0]?.mokafa_option ?? 'rateb';
-    const calendarMonth = date.getMonth() + 1;
-    const calendarYear = date.getFullYear();
-    const total = selection.reduce((sum, item) => sum + item.value, 0);
+    // Keep header month/year in sync if the date is edited (still-pending reward only).
+    const dateChange =
+      dto.date != null
+        ? (() => {
+            const { month, year } = dateOnlyParts(dto.date!);
+            return { month, year };
+          })()
+        : null;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.hr_mokafat.update({
         where: { id: header.id },
         data: {
-          mokafa_date: Math.floor(date.getTime() / 1000),
-          mokafa_date_ar: dateString,
-          month: calendarMonth,
-          year: calendarYear,
-          mon_melady: String(dto.month ?? (Number(header.mon_melady) || calendarMonth)),
-          mokafa_type: recipientType,
-          total_value: String(total),
-          presence_number: selection.length,
-          about: (dto.title ?? header.about).trim(),
+          about: dto.title,
+          mokafa_date_ar: dto.date,
+          mokafa_type: dto.mokafaType,
+          ...(dateChange ?? {}),
         },
       });
-      await tx.hr_mokafat_details.deleteMany({ where: { mokafa_rkm_fk: rewardNumber } });
-      await tx.hr_mokafat_details.createMany({
-        data: selection.map(({ employee, value }) => ({
-          mokafa_rkm_fk: rewardNumber,
-          emp_code: employee.emp_code,
-          month: calendarMonth,
-          year: calendarYear,
-          day: date.getDate(),
-          value,
-          bank_responsible_name: employee.employee,
-          mosma_wazefy_n: employee.mosma_wazefy_n,
-          edara_n: employee.edara_n,
-          qsm_n: employee.qsm_n,
-          mokafa_types: recipientType,
-          mokafa_option: option,
-          suspend: header.suspend,
-        })),
+      if (dateChange) {
+        await tx.hr_mokafat_details.updateMany({
+          where: { mokafa_rkm_fk: header.mokafa_rkm },
+          data: dateChange,
+        });
+      }
+    });
+    return { id };
+  }
+
+  /**
+   * Approve a reward so it actually pays. The engine bonus query (getMokafaaByDate) requires
+   * BOTH suspend=4 (fully approved) AND mokafa_option='rateb' (salary-borne). create() writes
+   * neither, so before this endpoint an "approved-looking" reward paid ZERO. Here we stamp the
+   * header + every detail line: suspend=4 and mokafa_option='rateb' so the reward flows into the
+   * correct month's run exactly once. Idempotent — re-approving an already-approved reward is a
+   * no-op on the values.
+   */
+  async approve(id: number, user: JwtUser) {
+    const detail = await this.prisma.hr_mokafat_details.findUnique({ where: { id } });
+    if (!detail) throw new NotFoundException('المكافأة غير موجودة');
+    await this.assertDetailInScope(detail.emp_code, user);
+    if (detail.mokafa_rkm_fk == null) throw new BadRequestException('رقم المكافأة غير موجود');
+    const header = await this.prisma.hr_mokafat.findFirst({
+      where: { mokafa_rkm: detail.mokafa_rkm_fk },
+    });
+    if (!header) throw new NotFoundException('سجل المكافأة غير موجود');
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.hr_mokafat.update({
+        where: { id: header.id },
+        data: { suspend: SuspendStatus.APPROVED },
+      });
+      await tx.hr_mokafat_details.updateMany({
+        where: { mokafa_rkm_fk: header.mokafa_rkm },
+        // 'rateb' = salary-borne: the sentinel the engine (getMokafaaByDate) filters on so the
+        // bonus is added to the employee's payroll net exactly once in the mapped month's run.
+        data: { suspend: SuspendStatus.APPROVED, mokafa_option: 'rateb' },
       });
     });
-    return { id: rewardNumber };
+    return { id, status: 'approved' };
   }
 
-  async approve(rewardNumber: number) {
-    const header = await this.findHeaderOrThrow(rewardNumber);
-    const detailCount = await this.prisma.hr_mokafat_details.count({
-      where: { mokafa_rkm_fk: rewardNumber },
+  async reject(id: number, user: JwtUser) {
+    const detail = await this.prisma.hr_mokafat_details.findUnique({ where: { id } });
+    if (!detail) throw new NotFoundException('المكافأة غير موجودة');
+    await this.assertDetailInScope(detail.emp_code, user);
+    if (detail.mokafa_rkm_fk == null) throw new BadRequestException('رقم المكافأة غير موجود');
+    const header = await this.prisma.hr_mokafat.findFirst({
+      where: { mokafa_rkm: detail.mokafa_rkm_fk },
     });
-    if (detailCount === 0) throw new BadRequestException('لا يوجد موظفون في طلب المكافأة');
-    await this.prisma.$transaction([
-      this.prisma.hr_mokafat.update({
-        where: { id: header.id },
-        data: { suspend: SuspendStatus.APPROVED },
-      }),
-      this.prisma.hr_mokafat_details.updateMany({
-        where: { mokafa_rkm_fk: rewardNumber },
-        // Preserve rateb/alone exactly as selected in the legacy form.
-        data: { suspend: SuspendStatus.APPROVED },
-      }),
-    ]);
-    return { id: rewardNumber, status: 'approved' };
-  }
+    if (!header) throw new NotFoundException('سجل المكافأة غير موجود');
 
-  async reject(rewardNumber: number) {
-    const header = await this.findHeaderOrThrow(rewardNumber);
-    await this.prisma.$transaction([
-      this.prisma.hr_mokafat.update({
+    await this.prisma.$transaction(async (tx) => {
+      await tx.hr_mokafat.update({
         where: { id: header.id },
         data: { suspend: SuspendStatus.REJECTED },
-      }),
-      this.prisma.hr_mokafat_details.updateMany({
-        where: { mokafa_rkm_fk: rewardNumber },
-        data: { suspend: SuspendStatus.REJECTED },
-      }),
-    ]);
-    return { id: rewardNumber, status: 'rejected' };
+      });
+      await tx.hr_mokafat_details.updateMany({
+        where: { mokafa_rkm_fk: header.mokafa_rkm },
+        // Clear the salary-borne sentinel so a rejected reward can never be picked up by the engine.
+        data: { suspend: SuspendStatus.REJECTED, mokafa_option: null },
+      });
+    });
+    return { id, status: 'rejected' };
   }
 
-  async remove(rewardNumber: number) {
-    const header = await this.findHeaderOrThrow(rewardNumber);
-    if (header.suspend !== SuspendStatus.INCOMING) {
-      throw new BadRequestException('لا يمكن حذف مكافأة تم اتخاذ إجراء عليها');
+  async remove(id: number, user: JwtUser) {
+    const detail = await this.prisma.hr_mokafat_details.findUnique({ where: { id } });
+    if (!detail) throw new NotFoundException('المكافأة غير موجودة');
+    await this.assertDetailInScope(detail.emp_code, user);
+
+    // Don't delete an approved (possibly already-consumed) reward line — it may have been paid
+    // into a posted run and stamped with mosayer_rkm_fk.
+    if (detail.mokafa_rkm_fk != null) {
+      const header = await this.prisma.hr_mokafat.findFirst({
+        where: { mokafa_rkm: detail.mokafa_rkm_fk },
+      });
+      if (isApproved(header?.suspend) || isApproved(detail.suspend)) {
+        throw new BadRequestException('لا يمكن حذف مكافأة معتمدة');
+      }
     }
-    const consumed = await this.prisma.hr_mokafat_details.count({
-      where: { mokafa_rkm_fk: rewardNumber, mosayer_rkm_fk: { not: null } },
-    });
-    if (consumed) throw new BadRequestException('لا يمكن حذف مكافأة تم ترحيلها لمسير الرواتب');
-    await this.prisma.$transaction([
-      this.prisma.hr_mokafat_details.deleteMany({ where: { mokafa_rkm_fk: rewardNumber } }),
-      this.prisma.hr_mokafat.delete({ where: { id: header.id } }),
-    ]);
-    return { id: rewardNumber };
+
+    await this.prisma.hr_mokafat_details.delete({ where: { id } });
+
+    if (detail.mokafa_rkm_fk != null) {
+      const remaining = await this.prisma.hr_mokafat_details.count({
+        where: { mokafa_rkm_fk: detail.mokafa_rkm_fk },
+      });
+      if (remaining === 0) {
+        const header = await this.prisma.hr_mokafat.findFirst({
+          where: { mokafa_rkm: detail.mokafa_rkm_fk },
+        });
+        if (header) await this.prisma.hr_mokafat.delete({ where: { id: header.id } });
+      }
+    }
+
+    return { id };
   }
 
-  private async findHeaderOrThrow(rewardNumber: number) {
-    const header = await this.prisma.hr_mokafat.findFirst({ where: { mokafa_rkm: rewardNumber } });
-    if (!header) throw new NotFoundException('المكافأة غير موجودة');
-    return header;
-  }
-
-  private recipientType(value?: number) {
-    return value === 3 ? 3 : 2;
-  }
-
-  private parseDate(value?: string) {
-    const dateString = value ?? new Date().toISOString().slice(0, 10);
-    const date = new Date(`${dateString}T00:00:00`);
-    if (Number.isNaN(date.getTime())) throw new BadRequestException('تاريخ المكافأة غير صحيح');
-    return date;
-  }
-
-  private dateString(date: Date, supplied?: string) {
-    return supplied?.slice(0, 10) ?? date.toISOString().slice(0, 10);
-  }
-
-  private async employeeIdsForCodes(codes: number[]) {
-    if (!codes.length) return [];
-    const employees = await this.prisma.employees.findMany({
-      where: { emp_code: { in: codes } },
+  private async assertDetailInScope(empCode: number | null, user: JwtUser): Promise<void> {
+    if (empCode == null) throw new NotFoundException('المكافأة غير موجودة');
+    const employee = await this.prisma.employees.findFirst({
+      where: { OR: [{ id: empCode }, { emp_code: empCode }] },
       select: { id: true },
     });
-    return employees.map((employee) => employee.id);
+    if (!employee) throw new NotFoundException('المكافأة غير موجودة');
+    await this.scope.assertEmployeeInScope(user, employee.id, 'finance.rewards');
   }
+}
 
-  private async resolveSelection(
-    dto: CreateRewardDto,
-    currentDetails: Array<{ emp_code: number | null; value: Prisma.Decimal | null }> = [],
-  ) {
-    const recipientType = this.recipientType(dto.recipientType ?? dto.mokafaType);
-    let employees;
-    if (recipientType === 3) {
-      employees = await this.prisma.employees.findMany({
-        where: { employee_type: 1 },
-        orderBy: { employee: 'asc' },
-      });
-    } else if (dto.employeeIds?.length) {
-      employees = await this.prisma.employees.findMany({
-        where: { id: { in: dto.employeeIds }, employee_type: 1 },
-      });
-      if (employees.length !== new Set(dto.employeeIds).size) {
-        throw new BadRequestException('بعض الموظفين المختارين غير موجودين أو غير نشطين');
-      }
-    } else if (dto.details?.length) {
-      const codes = [...new Set(dto.details.map((detail) => detail.empCode))];
-      employees = await this.prisma.employees.findMany({ where: { emp_code: { in: codes } } });
-      if (employees.length !== codes.length) throw new BadRequestException('بعض الموظفين غير موجودين');
-    } else {
-      throw new BadRequestException('يجب اختيار موظف واحد على الأقل');
-    }
-    if (!employees.length) throw new BadRequestException('لا يوجد موظفون لإضافة المكافأة');
-
-    const explicitByCode = new Map(dto.details?.map((detail) => [detail.empCode, detail.value ?? 0]) ?? []);
-    const currentByCode = new Map(
-      currentDetails
-        .filter((detail): detail is { emp_code: number; value: Prisma.Decimal | null } => detail.emp_code != null)
-        .map((detail) => [detail.emp_code, Number(detail.value ?? 0)]),
-    );
-    return employees.map((employee) => ({
-      employee,
-      value: dto.value ?? explicitByCode.get(employee.emp_code) ?? currentByCode.get(employee.emp_code) ?? 0,
-    }));
-  }
+/** A reward header is locked (approved path) when suspend ∈ {1, 4}. */
+function isApproved(suspend: number | null | undefined): boolean {
+  return suspend != null && SUSPEND_APPROVED.includes(suspend);
 }

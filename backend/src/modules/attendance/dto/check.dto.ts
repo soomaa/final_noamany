@@ -9,11 +9,6 @@ export class CheckPunchDto {
   @IsString()
   empCode!: string;
 
-  /** Branch selected by an administrator; scoped employee accounts are locked to their branch. */
-  @IsOptional()
-  @IsString()
-  branchId?: string;
-
   /** explicit time override "h:i A" or "HH:mm"; defaults to server now */
   @IsOptional()
   @IsString()

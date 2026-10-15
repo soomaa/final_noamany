@@ -34,11 +34,13 @@ export class ArchiveController {
   }
 
   @Post()
+  @RequiresPermission('termination.archive:create')
   create(@Body() dto: CreateArchiveDto, @CurrentUser() user: JwtUser) {
     return this.archive.create(dto, user.sub);
   }
 
   @Patch(':id')
+  @RequiresPermission('termination.archive:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateArchiveDto,
@@ -48,6 +50,7 @@ export class ArchiveController {
   }
 
   @Delete(':id')
+  @RequiresPermission('termination.archive:delete')
   remove(@Param('id', ParseIntPipe) id: number) {
     return this.archive.remove(id);
   }

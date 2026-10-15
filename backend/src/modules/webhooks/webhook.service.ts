@@ -113,7 +113,7 @@ export class WebhookService {
         endpoint_id: id,
         event_type: 'ping',
         payload: {
-          message: 'Noamany webhook test',
+          message: 'ONE80 webhook test',
           timestamp: new Date().toISOString(),
         },
         status: 'pending',

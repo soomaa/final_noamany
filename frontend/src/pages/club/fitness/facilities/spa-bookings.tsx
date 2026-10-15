@@ -13,6 +13,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
 import { useFitnessT } from '@/hooks/use-fitness-t';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { formatTime, localToday } from '@/lib/formatters';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
@@ -31,6 +32,10 @@ const BOOKING_STATUS_MAP = {
 
 export function FitnessSpaBookingsPage() {
   const ft = useFitnessT();
+  const { can } = usePermission();
+  const canCreate = can('club.fitness.spa_bookings:create');
+  const canUpdate = can('club.fitness.spa_bookings:update');
+  const canDelete = can('club.fitness.spa_bookings:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<ClubSpaBookingRow>(
     'club-spa-bookings',
@@ -64,6 +69,7 @@ export function FitnessSpaBookingsPage() {
   );
 
   const openCreate = () => {
+    if (!canCreate) return;
     setEditId(null);
     const svc = services?.[0];
     setForm({
@@ -80,6 +86,7 @@ export function FitnessSpaBookingsPage() {
   };
 
   const openEdit = (row: ClubSpaBookingRow) => {
+    if (!canUpdate) return;
     setEditId(row.id);
     setForm({
       memberId: row.memberId != null ? String(row.memberId) : '',
@@ -95,6 +102,7 @@ export function FitnessSpaBookingsPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.serviceId || !form.branchId || !form.bookingDate || !form.bookingTime) {
       toast.error(ft('spaBookings.title'));
       return;
@@ -149,7 +157,7 @@ export function FitnessSpaBookingsPage() {
       {
         accessorKey: 'status',
         header: ft('common.status'),
-        cell: ({ row }) => (
+        cell: ({ row }) => !canUpdate && !canDelete ? null : (
           <StatusBadge status={BOOKING_STATUS_MAP[row.original.status as keyof typeof BOOKING_STATUS_MAP] ?? 'pending'} />
         ),
       },
@@ -160,31 +168,32 @@ export function FitnessSpaBookingsPage() {
           <RowActions
             editLabel={ft('common.edit')}
             deleteLabel={ft('common.delete')}
-            onEdit={() => openEdit(row.original)}
-            onDelete={() =>
+            onEdit={canUpdate ? () => openEdit(row.original) : undefined}
+            onDelete={canDelete ? () =>
               void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
-                if (ok) deleteMutation.mutate(row.original.id);
+                if (ok && canDelete) deleteMutation.mutate(row.original.id);
               })
-            }
+            : undefined}
           />
         ),
       },
     ],
-    [ft],
+    [ft, canUpdate, canDelete, deleteMutation],
   );
 
   return (
     <div className="space-y-6">
       <PageHeader
         title={ft('spaBookings.title')}
-        actions={
+        actions={canCreate ? (
           <Button variant="brand" onClick={openCreate}>
             <Plus className="size-4" /> {ft('common.add')}
           </Button>
-        }
+        ) : undefined}
       />
       <FilterBar fields={filters} />
       <DataTable
+        exportSource={{ resource: 'club-spa-bookings', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -197,7 +206,7 @@ export function FitnessSpaBookingsPage() {
         onRetry={() => void refetch()}
         emptyTitle={ft('common.noData')}
       />
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open && (editId ? canUpdate : canCreate)} onOpenChange={setOpen}>
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editId ? ft('common.edit') : ft('common.add')}</DialogTitle>
@@ -248,7 +257,7 @@ export function FitnessSpaBookingsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
+            <Button variant="brand" permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

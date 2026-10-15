@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -11,6 +12,7 @@ import { api, apiError } from '@/lib/api';
 import { clubEventsApi } from '@/lib/api/club-events';
 import { useLocale } from '@/store/locale';
 import type { ClubMemberListItem } from '@/types/club';
+import { usePermission } from '@/hooks/use-permission';
 
 interface EventTier {
   id: number;
@@ -38,6 +40,8 @@ interface RegisterDialogProps {
 export function RegisterDialog({ open, onOpenChange, event }: RegisterDialogProps) {
   const { ui, dir } = useLocale();
   const qc = useQueryClient();
+  const { can } = usePermission();
+  const canCreate = can('club.events.registrations:create');
   const [mode, setMode] = useState<'member' | 'guest'>('member');
 
   // Member lookup
@@ -80,6 +84,7 @@ export function RegisterDialog({ open, onOpenChange, event }: RegisterDialogProp
 
   const registerMutation = useMutation({
     mutationFn: () => {
+      if (!canCreate) throw new Error(ui('غير مصرح'));
       const body: Record<string, unknown> = {
         eventId: event.id,
         tierId: tierId ? Number(tierId) : undefined,
@@ -129,7 +134,7 @@ export function RegisterDialog({ open, onOpenChange, event }: RegisterDialogProp
     (!event.requiresGuardianConsent || consentSigned);
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
+    <Dialog open={open && canCreate} onOpenChange={(v) => { if (!v) reset(); onOpenChange(v); }}>
       <DialogContent size="lg" className="max-h-[90vh] overflow-y-auto" aria-describedby={undefined} dir={dir}>
         <DialogHeader>
           <DialogTitle>{ui('تسجيل مشارك')} — {event.title}</DialogTitle>
@@ -213,7 +218,7 @@ export function RegisterDialog({ open, onOpenChange, event }: RegisterDialogProp
                 <SelectContent>
                   {tiers.map(t => (
                     <SelectItem key={t.id} value={String(t.id)}>
-                      {t.name} — {t.price} {ui('ج.م')}
+                      {t.name} — {formatDisplayNumber(t.price)} {ui('EGP')}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -248,7 +253,7 @@ export function RegisterDialog({ open, onOpenChange, event }: RegisterDialogProp
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>{ui('إلغاء')}</Button>
-          <Button disabled={!canSubmit || registerMutation.isPending} onClick={() => registerMutation.mutate()}>
+          <Button permissionResource="club.events.registrations" permissionAction="create" disabled={!canSubmit || registerMutation.isPending} onClick={() => registerMutation.mutate()}>
             {registerMutation.isPending ? ui('جاري التسجيل...') : ui('تسجيل')}
           </Button>
         </DialogFooter>

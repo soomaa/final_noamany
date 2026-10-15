@@ -73,6 +73,7 @@ export class ClubCalendarService {
       maxCapacity: r.max_capacity,
       enrollmentCount: r.enrollments.length,
       status: r.status,
+      audience: r.audience,
       cancelledReason: r.cancelled_reason,
       price: Number(r.price),
     }));
@@ -185,9 +186,16 @@ export class ClubCalendarService {
     id: number,
     body: { classDate?: string; startTime?: string; endTime?: string; hallId?: number | null },
     user?: JwtUser,
+    expectedKind?: 'personal' | 'special',
   ) {
     const existing = await this.prisma.club_classes.findFirst({ where: { id, is_deleted: false } });
     if (!existing) throw new NotFoundException('الحصة غير موجودة');
+    if (expectedKind === 'special' && existing.class_type_id == null) {
+      throw new ForbiddenException('هذه ليست حصة اشتراك خاص');
+    }
+    if (expectedKind === 'personal' && existing.class_type_id != null) {
+      throw new ForbiddenException('هذه الحصة تتبع الاشتراكات الخاصة');
+    }
     this.assertBranchAccess(user, existing.branch_id);
 
     const classDate = body.classDate ?? existing.class_date;
@@ -299,13 +307,11 @@ export class ClubCalendarService {
   async exportMembersCsv(branchId?: number, user?: JwtUser): Promise<string> {
     if (branchId) this.assertBranchAccess(user, branchId);
     const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
-    const audience = this.branchScope.memberGenderFilter(user);
     const rows = await this.prisma.club_members.findMany({
       where: {
         is_deleted: false,
         ...(branchId ? { branch_id: branchId } : {}),
         ...(scope !== null ? { branch_id: { in: scope } } : {}),
-        ...(audience ? { gender: audience } : {}),
       },
       orderBy: { id: 'asc' },
       select: {
@@ -341,12 +347,10 @@ export class ClubCalendarService {
   async exportSubscriptionsCsv(branchId?: number, user?: JwtUser): Promise<string> {
     if (branchId) this.assertBranchAccess(user, branchId);
     const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
-    const audience = this.branchScope.memberGenderFilter(user);
     const rows = await this.prisma.club_subscriptions.findMany({
       where: {
         ...(branchId ? { branch_id: branchId } : {}),
         ...(scope !== null ? { branch_id: { in: scope } } : {}),
-        ...(audience ? { gender: audience } : {}),
       },
       orderBy: { id: 'desc' },
       take: 10_000,
@@ -381,29 +385,5 @@ export class ClubCalendarService {
       ].join(','),
     );
     return [header, ...lines].join('\n');
-  }
-
-  async exportAttendanceCsv(branchId?: number, user?: JwtUser): Promise<string> {
-    if (branchId) this.assertBranchAccess(user, branchId);
-    const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
-    const audience = this.branchScope.memberGenderFilter(user);
-    const rows = await this.prisma.club_attendance.findMany({
-      where: { ...(branchId ? { branch_id: branchId } : {}), ...(scope !== null ? { branch_id: { in: scope } } : {}), ...(audience ? { member: { gender: audience } } : {}) },
-      orderBy: { id: 'desc' }, take: 10_000,
-      select: { member_code: true, member_name: true, branch_id: true, attendance_date: true, check_in_time: true, check_out_time: true, status: true },
-    });
-    return ['member_code,member_name,branch_id,attendance_date,check_in,check_out,status', ...rows.map((r) => [r.member_code, `"${r.member_name.replace(/"/g, '""')}"`, r.branch_id, r.attendance_date, r.check_in_time.toISOString(), r.check_out_time?.toISOString() ?? '', r.status].join(','))].join('\n');
-  }
-
-  async exportReceiptsCsv(branchId?: number, user?: JwtUser): Promise<string> {
-    if (branchId) this.assertBranchAccess(user, branchId);
-    const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
-    const audience = this.branchScope.memberGenderFilter(user);
-    const rows = await this.prisma.club_receipts.findMany({
-      where: { ...(branchId ? { branch_id: branchId } : {}), ...(scope !== null ? { branch_id: { in: scope } } : {}), ...(audience ? { member: { gender: audience } } : {}) },
-      orderBy: { id: 'desc' }, take: 10_000,
-      select: { receipt_number: true, member_name: true, branch_id: true, amount: true, payment_method: true, receipt_date: true, status: true },
-    });
-    return ['receipt_number,member_name,branch_id,amount,payment_method,receipt_date,status', ...rows.map((r) => [r.receipt_number, `"${r.member_name.replace(/"/g, '""')}"`, r.branch_id ?? '', Number(r.amount), r.payment_method ?? '', r.receipt_date, r.status].join(','))].join('\n');
   }
 }

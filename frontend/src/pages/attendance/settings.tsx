@@ -1,13 +1,14 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Pencil, Plus, Power, Trash2 } from 'lucide-react';
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
 import { Time12Input } from '@/components/common/time-12-input';
 import { FilterBar } from '@/components/common/filter-bar';
 import { PageHeader } from '@/components/common/page-header';
+import { NotImplementedState } from '@/components/common/states';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
   DialogContent,
@@ -17,14 +18,17 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
 import { api, apiError } from '@/lib/api';
 import { formatTime } from '@/lib/formatters';
-import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
+import { getAttendanceChannels } from '@/lib/i18n-constants';
+import { isNotImplemented, useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { usePermission } from '@/hooks/use-permission';
 
 interface ShiftRow {
   id: number;
@@ -80,24 +84,54 @@ const TIME_FIELDS: { key: keyof Omit<ShiftForm, 'title'>; label: string }[] = [
 ];
 
 export function AttendanceSettingsPage() {
-  const { ui } = useLocale();
+  const { t, ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('attendance.settings:create');
+  const canUpdate = can('attendance.settings:update');
+  const canDelete = can('attendance.settings:delete');
+  const canConfigure = can('attendance.settings:configure');
+  const attendanceChannels = useMemo(() => getAttendanceChannels(t), [t]);
   const { params, setParams } = useListQuery();
-  const { data, isLoading, isError, refetch } = usePaginatedList<ShiftRow>('attendance/shifts', params);
+  const { data, isLoading, isError, error, refetch } = usePaginatedList<ShiftRow>('attendance/shifts', params);
+  const [channels, setChannels] = useState<Record<string, boolean>>({
+    device: true,
+    app: true,
+    gps: true,
+    qr: false,
+    nfc: false,
+    face: false,
+  });
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState<ShiftForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
-  const [activatingWeeklySchedule, setActivatingWeeklySchedule] = useState(false);
-  const { data: weeklyScheduleRollout, refetch: refetchWeeklyScheduleRollout } = useQuery({
-    queryKey: ['attendance', 'weekly-schedule-rollout'],
-    queryFn: async () => (await api.get<{ enabled: boolean }>('/attendance/weekly-schedule-rollout')).data,
-  });
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const { data: s } = await api.get<{ channels?: Record<string, boolean> }>('/attendance/settings');
+        if (s?.channels) setChannels((c) => ({ ...c, ...s.channels }));
+      } catch {
+        /* keep defaults */
+      }
+    })();
+  }, []);
 
   const deleteMutation = useMutationWithToast(
     (id: number) => api.delete(`/attendance/shifts/${id}`),
     { success: ui('تم حذف الوردية'), invalidate: ['attendance/shifts'] },
   );
+
+  const saveChannels = async () => {
+    if (!canConfigure) return;
+    try {
+      await api.patch('/attendance/settings', { channels });
+      toast.success(ui('تم حفظ قنوات التسجيل'));
+    } catch (e) {
+      toast.error(apiError(e));
+    }
+  };
 
   const openCreate = () => {
     setEditId(null);
@@ -120,6 +154,7 @@ export function AttendanceSettingsPage() {
   };
 
   const saveShift = async () => {
+    if (editId != null ? !canUpdate : !canCreate) return;
     const missing = TIME_FIELDS.find((f) => !form[f.key]);
     if (missing) {
       toast.error(`${missing.label} ${ui('حقل مطلوب')}`);
@@ -153,6 +188,7 @@ export function AttendanceSettingsPage() {
   };
 
   const handleDelete = async (row: ShiftRow) => {
+    if (!canDelete) return;
     const ok = await confirm({
       title: ui('حذف الوردية؟'),
       description: row.title ? `${ui('هل تريد حذف «')}${row.title}${ui('»؟')}` : undefined,
@@ -160,25 +196,6 @@ export function AttendanceSettingsPage() {
       confirmLabel: ui('حذف'),
     });
     if (ok) deleteMutation.mutate(row.id);
-  };
-
-  const activateWeeklySchedule = async () => {
-    const ok = await confirm({
-      title: ui('تفعيل جدول الدوام الأسبوعي؟'),
-      description: ui('لن تعتمد البصمة بعد التفعيل إلا جدول الأسبوع المحدد لكل موظف. لا يمكن التفعيل قبل اكتمال جداول كل الموظفين.'),
-      confirmLabel: ui('تفعيل'),
-    });
-    if (!ok) return;
-    setActivatingWeeklySchedule(true);
-    try {
-      await api.post('/attendance/weekly-schedule-rollout/activate');
-      toast.success(ui('تم تفعيل جدول الدوام الأسبوعي'));
-      void refetchWeeklyScheduleRollout();
-    } catch (error) {
-      toast.error(apiError(error));
-    } finally {
-      setActivatingWeeklySchedule(false);
-    }
   };
 
   const timeCell = (v?: string) => <span className="nums">{v ? formatTime(v) : '—'}</span>;
@@ -195,42 +212,58 @@ export function AttendanceSettingsPage() {
     {
       id: 'actions',
       header: ui('الإجراءات'),
-      cell: ({ row }) => (
+      cell: ({ row }) => !canUpdate && !canDelete ? null : (
         <div className="flex gap-1">
-          <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+          {canUpdate ? <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
             <Pencil className="size-4" />
-          </Button>
-          <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
+          </Button> : null}
+          {canDelete ? <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
             <Trash2 className="size-4 text-destructive" />
-          </Button>
+          </Button> : null}
         </div>
       ),
     },
   ];
 
+  if (isError && isNotImplemented(error)) {
+    return (
+      <div>
+        <PageHeader title={ui('إعدادات الدوام')} />
+        <NotImplementedState />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
         title={ui('إعدادات الدوام')}
-        description={ui('الورديات')}
-        actions={<div className="flex flex-wrap gap-2">
-          {!weeklyScheduleRollout?.enabled && <Button variant="outline" size="sm" onClick={() => void activateWeeklySchedule()} disabled={activatingWeeklySchedule}>
-            <Power className="size-4" /> {activatingWeeklySchedule ? ui('جارٍ التفعيل…') : ui('تفعيل جدول الأسبوع')}
-          </Button>}
+        description={ui('الورديات وقنوات تسجيل الحضور')}
+        actions={canCreate ? (
           <Button variant="brand" size="sm" onClick={openCreate}>
             <Plus className="size-4" /> {ui('وردية جديدة')}
           </Button>
-        </div>}
+        ) : undefined}
       />
 
-      <div className={`rounded-lg border px-4 py-3 text-sm ${weeklyScheduleRollout?.enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200'}`}>
-        {weeklyScheduleRollout?.enabled
-          ? ui('جدول الدوام الأسبوعي مفعل: البصمة تعتمد جدول كل موظف، بينما التبديل والشيفت الإضافي يظلان استثناءات حسب التاريخ.')
-          : ui('جدول الدوام الأسبوعي غير مفعل بعد. أكمل جدول الأيام السبعة لكل موظف أولاً، ثم فعّله من الزر أعلاه.')}
-      </div>
+      <Card>
+        <CardHeader><CardTitle className="text-base">{ui('قنوات التسجيل')}</CardTitle></CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {attendanceChannels.map((ch) => (
+            <div key={ch.key} className="flex items-center justify-between rounded-lg border border-border p-3">
+              <Label htmlFor={`ch-${ch.key}`}>{ch.label}</Label>
+              <Switch id={`ch-${ch.key}`} disabled={!canConfigure} checked={channels[ch.key]} onCheckedChange={(v) => setChannels((c) => ({ ...c, [ch.key]: v }))} />
+            </div>
+          ))}
+        </CardContent>
+        {canConfigure ? <div className="border-t border-border p-4">
+          <Button permissionResource="attendance.settings" permissionAction="configure" size="sm" onClick={() => void saveChannels()}>{ui('حفظ القنوات')}</Button>
+        </div> : null}
+      </Card>
 
       <FilterBar searchPlaceholder={ui('بحث في الورديات…')} />
       <DataTable
+        exportSource={{ resource: 'attendance/shifts', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -276,9 +309,9 @@ export function AttendanceSettingsPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)} disabled={saving}>
               {ui('إلغاء')}
             </Button>
-            <Button variant="brand" onClick={() => void saveShift()} disabled={saving}>
+            {(editId != null ? canUpdate : canCreate) ? <Button permissionAction={editId != null ? 'update' : 'create'} variant="brand" onClick={() => void saveShift()} disabled={saving}>
               {saving ? ui('جارٍ الحفظ…') : ui('حفظ')}
-            </Button>
+            </Button> : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

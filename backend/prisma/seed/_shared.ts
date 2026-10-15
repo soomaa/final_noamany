@@ -105,7 +105,7 @@ export function phone(): string {
   return `05${randInt(0, 9)}${randInt(1000000, 9999999)}`;
 }
 export function email(seed: number): string {
-  return `demo.user${seed}@noamanycenter.test`;
+  return `demo.user${seed}@one80gym.test`;
 }
 
 // ---------------------------------------------------------------------------

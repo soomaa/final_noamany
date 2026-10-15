@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import type { ReactNode } from 'react';
 import { Activity, Clock, Sparkles, TrendingUp, UserCheck, Users, UserX } from 'lucide-react';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -6,6 +7,7 @@ import { formatNum } from '@/lib/formatters';
 import { formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { getBrandProfile } from '@/ports/brand-registry';
 
 export interface WelcomeBannerStat {
   label: string;
@@ -60,7 +62,7 @@ function BannerTodayPanel({ snapshot, loading }: { snapshot?: BannerTodaySnapsho
           <UserCheck className="size-4 shrink-0 text-emerald-200" />
           <span className="text-sm font-medium text-white/80">{uiStatic('معدل حضور اليوم')}</span>
         </div>
-        <span className="nums text-lg font-bold text-white">{formatDigits(`${Math.round(pct)}%`, locale)}</span>
+        <span className="nums text-lg font-bold text-white">{formatDigits(`${formatDisplayNumber(Math.round(pct))}%`, locale)}</span>
       </div>
       <div className="mt-3 h-2 overflow-hidden rounded-full bg-white/15">
         <div
@@ -84,7 +86,7 @@ function BannerTodayPanel({ snapshot, loading }: { snapshot?: BannerTodaySnapsho
           <Clock className="mx-auto size-4 text-amber-200" />
           <p className="nums mt-1 text-lg font-bold text-white">
             {snapshot.avgLateMinutes
-              ? formatDigits(`${Math.round(snapshot.avgLateMinutes)}`, locale)
+              ? formatDigits(`${formatDisplayNumber(Math.round(snapshot.avgLateMinutes))}`, locale)
               : '—'}
           </p>
           <p className="text-[11px] font-medium text-white/65">{uiStatic('د تأخير')}</p>
@@ -133,7 +135,7 @@ export function WelcomeBanner({
             <div className="flex flex-wrap items-center gap-2">
               <div className="banner-glass inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-medium text-white/90">
                 <Sparkles className="size-3.5 shrink-0 animate-pulse" />
-                <span>{instituteName ?? 'Noamany Fitness Center'}</span>
+                <span>{instituteName ?? getBrandProfile().name}</span>
               </div>
               <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/30 bg-emerald-400/15 px-2.5 py-1 text-xs font-medium text-emerald-100">
                 <Activity className="size-3 shrink-0" />

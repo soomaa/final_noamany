@@ -7,6 +7,7 @@ interface PosCategoryGridProps {
   categories: CafeCategory[];
   activeCategoryId: string;
   onSelect: (categoryId: string) => void;
+  includeAll?: boolean;
 }
 
 interface CategoryChoice {
@@ -15,23 +16,23 @@ interface CategoryChoice {
   emoji: string;
 }
 
-export function PosCategoryGrid({ categories, activeCategoryId, onSelect }: PosCategoryGridProps) {
+export function PosCategoryGrid({ categories, activeCategoryId, onSelect, includeAll = true }: PosCategoryGridProps) {
   const { ui, locale } = useLocale();
   const choices = useMemo<CategoryChoice[]>(
     () => [
-      { id: 'all', name: ui('الكل'), emoji: 'icon:utensils' },
+      ...(includeAll ? [{ id: 'all', name: ui('الكل'), emoji: 'icon:utensils' }] : []),
       ...categories.map((category) => ({
         id: String(category.id),
         name: locale === 'en' ? category.nameEn?.trim() || category.nameAr : category.nameAr,
         emoji: category.emoji || 'icon:utensils',
       })),
     ],
-    [categories, locale, ui],
+    [categories, locale, ui, includeAll],
   );
 
   return (
-    <aside className="md:sticky md:top-4 md:w-[190px]">
-      <div className="grid grid-cols-2 gap-2 md:flex md:flex-col md:gap-2.5">
+    <aside className="min-w-0">
+      <div className="grid grid-cols-2 gap-2 xl:flex xl:flex-col xl:gap-2.5">
         {choices.map((choice) => {
           const selected = choice.id === activeCategoryId;
           return (
@@ -53,7 +54,7 @@ export function PosCategoryGrid({ categories, activeCategoryId, onSelect }: PosC
                 }`}
               />
               <span
-                className={`min-w-0 truncate text-sm font-black ${
+                className={`min-w-0 break-words text-sm font-black ${
                   selected ? '!text-white' : 'text-foreground'
                 }`}
               >

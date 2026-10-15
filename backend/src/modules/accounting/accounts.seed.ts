@@ -29,6 +29,7 @@ export const DEFAULT_CHART: SeedAccountDef[] = [
   { code: '2.01.001', name: 'الدائنون / الموردون', accountType: 'liability', parentCode: '2.01', defaultKey: 'accounts_payable' },
   { code: '2.01.002', name: 'ضريبة القيمة المضافة - مخرجات', accountType: 'liability', parentCode: '2.01', defaultKey: 'vat_output' },
   { code: '2.01.003', name: 'رواتب مستحقة', accountType: 'liability', parentCode: '2.01', defaultKey: 'salaries_payable' },
+  { code: '2.01.005', name: 'ضريبة دخل موظفين مستحقة', accountType: 'liability', parentCode: '2.01', defaultKey: 'payroll_income_tax_payable' },
   { code: '2.01.006', name: 'تأمينات اجتماعية مستحقة', accountType: 'liability', parentCode: '2.01', defaultKey: 'social_insurance_payable' },
   { code: '2.01.007', name: 'تسويات الشركاء المستحقة', accountType: 'liability', parentCode: '2.01', defaultKey: 'partner_payable' },
   { code: '3', name: 'حقوق الملكية', accountType: 'equity', isPostable: false },
@@ -48,6 +49,7 @@ export const DEFAULT_CHART: SeedAccountDef[] = [
   { code: '5.01.004', name: 'صيانة أجهزة الجيم', accountType: 'expense', parentCode: '5.01', defaultKey: 'maintenance_expense' },
   { code: '5.01.011', name: 'مصروف الرواتب والأجور', accountType: 'expense', parentCode: '5.01', defaultKey: 'salary_expense' },
   { code: '5.01.012', name: 'عمولات وأتعاب المدربين', accountType: 'expense', parentCode: '5.01', defaultKey: 'trainer_commission_expense' },
+  { code: '5.01.013', name: 'ضيافة المكان', accountType: 'expense', parentCode: '5.01', defaultKey: 'hospitality_expense' },
   { code: '5.08', name: 'تكلفة البضاعة المباعة', accountType: 'expense', parentCode: '5', defaultKey: 'cost_of_goods_sold' },
 ];
 

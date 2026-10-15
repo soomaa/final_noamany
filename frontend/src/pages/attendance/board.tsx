@@ -1,15 +1,7 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { useQuery } from '@tanstack/react-query';
-import { MapPin, Plus } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { Clock, MapPin, Plus, Smartphone } from 'lucide-react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import { DataTable } from '@/components/common/data-table';
-import { Combobox } from '@/components/common/combobox';
-import { FilterBar } from '@/components/common/filter-bar';
-import { MapModal } from '@/components/common/map-modal';
-import { PageHeader } from '@/components/common/page-header';
-import { Time12Input } from '@/components/common/time-12-input';
-import { uploadUrl } from '@/components/employees/use-uploads';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -20,271 +12,290 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useBranches } from '@/hooks/use-branches';
+import { DataTable } from '@/components/common/data-table';
+import { Time12Input } from '@/components/common/time-12-input';
+import { FilterBar } from '@/components/common/filter-bar';
+import { MapModal } from '@/components/common/map-modal';
+import { PageHeader } from '@/components/common/page-header';
+import { StatusBadge } from '@/components/common/status-badge';
+import { NotImplementedState } from '@/components/common/states';
 import { api, apiError } from '@/lib/api';
-import { usePaginatedList } from '@/lib/api-hooks';
+import { isNotImplemented, usePaginatedList } from '@/lib/api-hooks';
+import { getSourceLabel } from '@/lib/i18n-constants';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits, toWesternDigits } from '@/lib/utils';
+import { toArabicDigits, toWesternDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
-import { useAuth } from '@/store/auth';
+import { usePermission } from '@/hooks/use-permission';
 
 interface AttendanceRow {
   id: number;
   empCode?: string;
   employeeName?: string;
   department?: string;
-  jobTitle?: string;
-  branchName?: string;
-  weekday?: string;
-  actionDate?: string;
+  scheduledIn?: string;
+  scheduledOut?: string;
   checkIn?: string;
   checkOut?: string;
   secondCheckIn?: string;
   secondCheckOut?: string;
   lateMin?: number;
+  earlyLeaveMin?: number;
+  overtimeMin?: number;
+  status?: string;
+  source?: string;
   checkInLat?: number;
   checkInLng?: number;
-  checkOutLat?: number;
-  checkOutLng?: number;
-  secondCheckInLat?: number;
-  secondCheckInLng?: number;
-  secondCheckOutLat?: number;
-  secondCheckOutLng?: number;
   checkInPhoto?: string;
-  checkOutPhoto?: string;
   secondCheckInPhoto?: string;
-  secondCheckOutPhoto?: string;
-  workingSeconds?: number;
-  isWorking?: boolean;
-}
-
-interface ManualEmployee {
-  id: number;
-  empCode: number | null;
-  name: string | null;
-  branchId: number | null;
-  department: string | null;
-  section: string | null;
-}
-
-interface ManualOptions {
-  branchId: number | null;
-  branchLocked: boolean;
-  employees: ManualEmployee[];
-}
-
-const today = () => new Date().toISOString().slice(0, 10);
-
-function durationText(seconds: number) {
-  const safe = Math.max(0, Math.floor(seconds));
-  const hours = Math.floor(safe / 3600);
-  const minutes = Math.floor((safe % 3600) / 60);
-  const secs = safe % 60;
-  return [hours, minutes, secs].map((value) => String(value).padStart(2, '0')).join(':');
-}
-
-function PunchPhoto({ path, label }: { path?: string; label: string }) {
-  const src = uploadUrl(path);
-  if (!src) return <span className="text-muted-foreground">—</span>;
-  return (
-    <a href={src} target="_blank" rel="noreferrer" title={label}>
-      <img
-        src={src}
-        alt={label}
-        className="mx-auto size-[72px] rounded-xl border object-cover shadow-sm transition-transform hover:scale-105"
-        loading="lazy"
-      />
-    </a>
-  );
 }
 
 export function AttendanceBoardPage() {
-  const { ui } = useLocale();
-  const user = useAuth((state) => state.user);
-  const { params, setParams } = useListQuery({ filters: { date: today() } });
-  const { data, isLoading, isError, refetch, dataUpdatedAt } = usePaginatedList<AttendanceRow>('attendance', params);
-  const { data: branches = [] } = useBranches();
-  const [now, setNow] = useState(Date.now());
+  const { t, ui } = useLocale();
+  const { can } = usePermission();
+  const canUpdate = can('attendance.board:update');
+  const sourceKeys = useMemo(() => ['device', 'app', 'gps', 'qr', 'nfc', 'face'] as const, []);
+  const sourceOptions = useMemo(
+    () => sourceKeys.map((key) => ({ value: key, label: getSourceLabel(t, key) })),
+    [sourceKeys, t],
+  );
+  const { params, setParams } = useListQuery();
+  const { data, isLoading, isError, error, refetch } = usePaginatedList<AttendanceRow>('attendance', params);
   const [mapTarget, setMapTarget] = useState<{ lat: number; lng: number; name?: string } | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
-  const [manualForm, setManualForm] = useState({ branchId: '', empCode: '', checkIn: '', checkOut: '', type: 'in' as 'in' | 'out' });
-  const manualOptions = useQuery({
-    queryKey: ['attendance', 'manual-options', manualForm.branchId, user?.sub],
-    queryFn: async () => {
-      const { data: response } = await api.get<ManualOptions>('/attendance/manual-options', {
-        params: manualForm.branchId ? { branchId: manualForm.branchId } : {},
-      });
-      return response;
-    },
-    enabled: manualOpen,
-    staleTime: 30_000,
-  });
-
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-
-  const branchOptions = useMemo(
-    () => branches.map((branch) => ({ value: String(branch.id), label: branch.name ?? `#${branch.id}` })),
-    [branches],
-  );
-  const availableBranches = manualOptions.data?.branchLocked && manualOptions.data.branchId
-    ? branchOptions.filter((branch) => branch.value === String(manualOptions.data?.branchId))
-    : branchOptions;
-  const employeeOptions = (manualOptions.data?.employees ?? [])
-    .filter((employee) => employee.empCode != null)
-    .map((employee) => ({
-      value: String(employee.empCode),
-      label: `${employee.name ?? '—'} (${employee.empCode})`,
-      description: [employee.department, employee.section].filter(Boolean).join(' — '),
-      searchText: `${employee.name ?? ''} ${employee.empCode ?? ''}`,
-    }));
-
-  useEffect(() => {
-    if (!manualOpen || !manualOptions.data?.branchId || manualForm.branchId) return;
-    setManualForm((form) => ({ ...form, branchId: String(manualOptions.data?.branchId) }));
-  }, [manualForm.branchId, manualOpen, manualOptions.data?.branchId]);
+  const [manualForm, setManualForm] = useState({ empCode: '', checkIn: '', checkOut: '', type: 'in' as 'in' | 'out' });
 
   const submitManual = async () => {
+    if (!canUpdate) return;
     const empCode = toWesternDigits(manualForm.empCode);
-    if (!manualForm.branchId) return toast.error(ui('اختر الفرع'));
-    if (!empCode) return toast.error(ui('اختر الموظف'));
+    if (!empCode) {
+      toast.error(ui('كود الموظف مطلوب'));
+      return;
+    }
     try {
       await api.post('/attendance/check', { ...manualForm, empCode, channel: 'app' });
-      toast.success(ui('تم تسجيل البصمة يدويًا'));
+      toast.success(ui('تم تسجيل الحضور يدوياً'));
       setManualOpen(false);
       void refetch();
-    } catch (error) {
-      toast.error(apiError(error));
+    } catch (e) {
+      toast.error(apiError(e));
     }
   };
 
-  const timeCell = (
-    value: string | undefined,
-    lat: number | undefined,
-    lng: number | undefined,
-    employeeName: string | undefined,
-  ) => value ? (
-    <button
-      type="button"
-      className="nums font-medium text-success hover:underline disabled:cursor-default"
-      disabled={lat == null || lng == null}
-      onClick={() => lat != null && lng != null && setMapTarget({ lat, lng, name: employeeName })}
-    >
-      {toArabicDigits(value)}
-    </button>
-  ) : <span className="text-muted-foreground">—</span>;
-
-  const columns = useMemo<ColumnDef<AttendanceRow>[]>(() => [
+  const columns: ColumnDef<AttendanceRow>[] = [
     {
-      id: 'sequence',
-      header: '#',
-      cell: ({ row }) => <span className="nums">{toArabicDigits((params.page - 1) * params.pageSize + row.index + 1)}</span>,
+      accessorKey: 'id',
+      header: ui('م'),
+      cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1),
     },
-    { accessorKey: 'empCode', header: ui('كود الموظف'), cell: ({ getValue }) => <span className="nums text-primary">{toArabicDigits(String(getValue() ?? '—'))}</span> },
-    { accessorKey: 'employeeName', header: ui('الاسم'), cell: ({ getValue }) => <span className="font-medium text-primary">{String(getValue() ?? '—')}</span> },
+    { accessorKey: 'empCode', header: ui('كود'), cell: ({ getValue }) => <span className="nums">{formatDigits(getValue() as string ?? '—')}</span> },
+    { accessorKey: 'employeeName', header: ui('الاسم') },
     { accessorKey: 'department', header: ui('الإدارة') },
-    { accessorKey: 'jobTitle', header: ui('الوظيفة') },
-    { accessorKey: 'branchName', header: ui('الفرع'), cell: ({ getValue }) => <span className="font-medium text-primary">{String(getValue() ?? '—')}</span> },
-    { accessorKey: 'weekday', header: ui('اليوم') },
-    { accessorKey: 'actionDate', header: ui('تاريخ البصمة'), cell: ({ getValue }) => <span className="nums">{toArabicDigits(String(getValue() ?? '—'))}</span> },
     {
-      id: 'checkInPhoto',
-      header: ui('صورة الحضور'),
-      cell: ({ row }) => <div className="space-y-2"><PunchPhoto path={row.original.checkInPhoto} label={ui('صورة الحضور')} />{row.original.secondCheckInPhoto && <PunchPhoto path={row.original.secondCheckInPhoto} label={ui('صورة الحضور للوردية الثانية')} />}</div>,
-    },
-    {
-      id: 'checkIn',
-      header: ui('وقت الحضور'),
-      cell: ({ row }) => <div className="flex min-h-[72px] flex-col items-center justify-center gap-12">{timeCell(row.original.checkIn, row.original.checkInLat, row.original.checkInLng, row.original.employeeName)}{row.original.secondCheckIn && timeCell(row.original.secondCheckIn, row.original.secondCheckInLat, row.original.secondCheckInLng, row.original.employeeName)}</div>,
-    },
-    {
-      id: 'checkOutPhoto',
-      header: ui('صورة الانصراف'),
-      cell: ({ row }) => <div className="space-y-2"><PunchPhoto path={row.original.checkOutPhoto} label={ui('صورة الانصراف')} />{row.original.secondCheckOutPhoto && <PunchPhoto path={row.original.secondCheckOutPhoto} label={ui('صورة الانصراف للوردية الثانية')} />}</div>,
-    },
-    {
-      id: 'checkOut',
-      header: ui('وقت الانصراف'),
-      cell: ({ row }) => <div className="flex min-h-[72px] flex-col items-center justify-center gap-12">{timeCell(row.original.checkOut, row.original.checkOutLat, row.original.checkOutLng, row.original.employeeName)}{row.original.secondCheckOut && timeCell(row.original.secondCheckOut, row.original.secondCheckOutLat, row.original.secondCheckOutLng, row.original.employeeName)}</div>,
-    },
-    { accessorKey: 'lateMin', header: ui('التأخير (د)'), cell: ({ getValue }) => <span className="nums text-destructive underline">{toArabicDigits(String(Math.max(0, Number(getValue() ?? 0))))}</span> },
-    {
-      id: 'workingHours',
-      header: ui('ساعات العمل'),
-      cell: ({ row }) => {
-        const elapsedSinceFetch = row.original.isWorking ? Math.max(0, Math.floor((now - dataUpdatedAt) / 1000)) : 0;
-        return <span className={`nums inline-flex rounded-md border px-3 py-2 font-semibold ${row.original.isWorking ? 'border-info/30 bg-info/10 text-info' : 'bg-muted text-muted-foreground'}`}>{row.original.isWorking && <span className="me-2 size-2 animate-pulse rounded-full bg-success" />}{toArabicDigits(durationText((row.original.workingSeconds ?? 0) + elapsedSinceFetch))}</span>;
+      accessorKey: 'scheduledIn',
+      header: ui('المقرر دخول'),
+      cell: ({ getValue }) => {
+        const v = getValue() as string | undefined;
+        return v ? <span className="nums text-muted-foreground">{toArabicDigits(v)}</span> : '—';
       },
     },
-  ], [dataUpdatedAt, now, params.page, params.pageSize, ui]);
-
-  return <div className="space-y-4">
-    <PageHeader
-      title={`${ui('متابعة البصمة اليوم')} ${toArabicDigits(params.filters.date ?? today())}`}
-      description={ui('عرض صور وأوقات الحضور والانصراف وساعات العمل اليومية')}
-      actions={<Button onClick={() => setManualOpen(true)}><Plus className="size-4" />{ui('تسجيل يدوي')}</Button>}
-    />
-    <FilterBar
-      searchPlaceholder={ui('بحث بالاسم أو كود الموظف…')}
-      fields={[{ key: 'branchId', label: ui('فلترة حسب الفرع'), type: 'select', options: branchOptions, placeholder: ui('عرض جميع الفروع') }]}
-    />
-    <DataTable
-      columns={columns}
-      data={data?.data ?? []}
-      total={data?.total ?? 0}
-      page={params.page}
-      pageSize={params.pageSize}
-      onPageChange={(page) => setParams({ page })}
-      onPageSizeChange={(pageSize) => setParams({ pageSize, page: 1 })}
-      isLoading={isLoading}
-      isError={isError}
-      onRetry={() => void refetch()}
-      emptyTitle={ui('لا يوجد حضور مسجل اليوم')}
-      enableExport
-    />
-
-    <MapModal open={!!mapTarget} onOpenChange={(open) => !open && setMapTarget(null)} lat={mapTarget?.lat} lng={mapTarget?.lng} employeeName={mapTarget?.name} />
-
-    <Dialog open={manualOpen} onOpenChange={(open) => {
-      setManualOpen(open);
-      if (!open) setManualForm({ branchId: '', empCode: '', checkIn: '', checkOut: '', type: 'in' });
-    }}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>{ui('تسجيل حضور / انصراف يدوي')}</DialogTitle></DialogHeader>
-        <div className="space-y-4">
-          <div>
-            <Label>{ui('الفرع')}</Label>
-            <Combobox
-              className="mt-1.5"
-              value={manualForm.branchId}
-              options={availableBranches}
-              placeholder={ui('اختر الفرع')}
-              searchPlaceholder={ui('بحث في الفروع…')}
-              disabled={manualOptions.data?.branchLocked || manualOptions.isLoading}
-              onValueChange={(branchId) => setManualForm((form) => ({ ...form, branchId, empCode: '' }))}
-            />
+    {
+      accessorKey: 'checkIn',
+      header: ui('الحضور'),
+      cell: ({ row }) => {
+        const v = row.original.checkIn;
+        if (!v) return '—';
+        return (
+          <div className="space-y-1">
+            <button
+              type="button"
+              className="nums text-primary hover:underline"
+              onClick={() =>
+                row.original.checkInLat != null &&
+                setMapTarget({ lat: row.original.checkInLat!, lng: row.original.checkInLng!, name: row.original.employeeName })
+              }
+            >
+              {toArabicDigits(v)}
+            </button>
+            {row.original.checkInPhoto && (
+              <img src={row.original.checkInPhoto} alt="" className="size-8 rounded object-cover" />
+            )}
           </div>
-          <div>
-            <Label>{ui('الموظف')}</Label>
-            <Combobox
-              className="mt-1.5"
-              value={manualForm.empCode}
-              options={employeeOptions}
-              placeholder={manualForm.branchId ? ui('اختر الموظف') : ui('اختر الفرع أولًا')}
-              searchPlaceholder={ui('بحث باسم الموظف أو الكود…')}
-              emptyText={ui('لا يوجد موظفون تابعون لهذا الفرع')}
-              disabled={!manualForm.branchId || manualOptions.isLoading}
-              onValueChange={(empCode) => setManualForm((form) => ({ ...form, empCode }))}
-            />
+        );
+      },
+    },
+    {
+      accessorKey: 'checkOut',
+      header: ui('الانصراف'),
+      cell: ({ getValue }) => {
+        const v = getValue() as string | undefined;
+        return v ? <span className="nums">{toArabicDigits(v)}</span> : '—';
+      },
+    },
+    {
+      accessorKey: 'secondCheckIn',
+      header: ui('الشفت الثاني'),
+      cell: ({ row }) => {
+        if (!row.original.secondCheckIn) return '—';
+        return (
+          <div className="space-y-1 text-xs">
+            <span className="nums">{toArabicDigits(row.original.secondCheckIn)}</span>
+            {row.original.secondCheckOut && <span className="nums text-muted-foreground"> — {toArabicDigits(row.original.secondCheckOut)}</span>}
+            {row.original.secondCheckInPhoto && <img src={row.original.secondCheckInPhoto} alt="" className="size-8 rounded object-cover" />}
           </div>
-          <div><Label>{ui('نوع التسجيل')}</Label><select className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={manualForm.type} onChange={(event) => setManualForm((form) => ({ ...form, type: event.target.value as 'in' | 'out' }))}><option value="in">{ui('حضور')}</option><option value="out">{ui('انصراف')}</option></select></div>
-          <div><Label>{ui('وقت الحضور')}</Label><Time12Input className="mt-1.5" value={manualForm.checkIn} onValueChange={(value) => setManualForm((form) => ({ ...form, checkIn: value }))} /></div>
-          <div><Label>{ui('وقت الانصراف')}</Label><Time12Input className="mt-1.5" value={manualForm.checkOut} onValueChange={(value) => setManualForm((form) => ({ ...form, checkOut: value }))} /></div>
-        </div>
-        <DialogFooter><Button variant="outline" onClick={() => setManualOpen(false)}>{ui('إلغاء')}</Button><Button onClick={() => void submitManual()}><MapPin className="size-4" />{ui('حفظ')}</Button></DialogFooter>
-      </DialogContent>
-    </Dialog>
-  </div>;
+        );
+      },
+    },
+    {
+      accessorKey: 'lateMin',
+      header: ui('تأخير'),
+      cell: ({ getValue }) => {
+        const v = getValue() as number | undefined;
+        return v != null && v > 0 ? <span className="nums text-warning">{toArabicDigits(v)} {ui('د')}</span> : '—';
+      },
+    },
+    {
+      accessorKey: 'overtimeMin',
+      header: ui('إضافي'),
+      cell: ({ getValue }) => {
+        const v = getValue() as number | undefined;
+        return v != null && v > 0 ? <span className="nums text-success">{toArabicDigits(v)} {ui('د')}</span> : '—';
+      },
+    },
+    {
+      accessorKey: 'source',
+      header: ui('المصدر'),
+      cell: ({ getValue }) => {
+        const s = getValue() as string | undefined;
+        return (
+          <span className="inline-flex items-center gap-1 text-xs">
+            {s === 'app' || s === 'gps' ? <Smartphone className="size-3" /> : <Clock className="size-3" />}
+            {getSourceLabel(t, s ?? 'device') || s || ui('بصمة')}
+          </span>
+        );
+      },
+    },
+    {
+      accessorKey: 'status',
+      header: ui('الحالة'),
+      cell: ({ getValue }) => {
+        const s = getValue() as string | undefined;
+        const key = s === 'late' ? 'late' : s === 'leave' ? 'leave' : s === 'absent' ? 'absent' : 'present';
+        return <StatusBadge status={key} />;
+      },
+    },
+  ];
+
+  if (isError && isNotImplemented(error)) {
+    return (
+      <div>
+        <PageHeader title={ui('لوحة الحضور اليومي')} />
+        <NotImplementedState title={ui('لوحة الحضور قيد الإعداد على الخادم')} />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <PageHeader
+        title={ui('لوحة الحضور اليومي')}
+        description={ui('حضور وانصراف — بصمة، تطبيق، GPS، QR، NFC، Face')}
+        actions={canUpdate ? (
+          <Button onClick={() => setManualOpen(true)}>
+            <Plus className="size-4" /> {ui('تسجيل يدوي')}
+          </Button>
+        ) : undefined}
+      />
+      <FilterBar
+        searchPlaceholder={ui('بحث بالاسم أو الكود…')}
+        fields={[
+          { key: 'date', label: ui('التاريخ'), type: 'text', placeholder: 'YYYY-MM-DD' },
+          {
+            key: 'source',
+            label: ui('المصدر'),
+            type: 'select',
+            options: sourceOptions,
+          },
+          {
+            key: 'status',
+            label: ui('الحالة'),
+            type: 'select',
+            options: [
+              { value: 'present', label: ui('حاضر') },
+              { value: 'late', label: ui('متأخر') },
+              { value: 'absent', label: ui('غائب') },
+              { value: 'leave', label: ui('إجازة') },
+            ],
+          },
+        ]}
+      />
+      <DataTable
+        exportSource={{ resource: 'attendance', params }}
+        columns={columns}
+        data={data?.data ?? []}
+        total={data?.total ?? 0}
+        page={params.page}
+        pageSize={params.pageSize}
+        onPageChange={(p) => setParams({ page: p })}
+        onPageSizeChange={(s) => setParams({ pageSize: s, page: 1 })}
+        isLoading={isLoading}
+        isError={isError}
+        onRetry={() => void refetch()}
+        search={params.search}
+        onSearchChange={(s) => setParams({ search: s, page: 1 })}
+        emptyTitle={ui('لا يوجد حضور مسجّل')}
+        enableExport
+      />
+
+      <MapModal
+        open={!!mapTarget}
+        onOpenChange={(o) => !o && setMapTarget(null)}
+        lat={mapTarget?.lat}
+        lng={mapTarget?.lng}
+        employeeName={mapTarget?.name}
+      />
+
+      <Dialog open={canUpdate && manualOpen} onOpenChange={setManualOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{ui('تسجيل حضور / انصراف يدوي')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label>{ui('كود الموظف')}</Label>
+              <Input
+                className="mt-1.5 nums"
+                inputMode="numeric"
+                placeholder={ui('رقم الكود من قائمة الموظفين')}
+                value={manualForm.empCode}
+                onChange={(e) => setManualForm((f) => ({ ...f, empCode: e.target.value }))}
+              />
+            </div>
+            <div>
+              <Label>{ui('نوع التسجيل')}</Label>
+              <select
+                className="mt-1.5 flex h-10 w-full rounded-md border border-input px-3 text-sm"
+                value={manualForm.type}
+                onChange={(e) => setManualForm((f) => ({ ...f, type: e.target.value as 'in' | 'out' }))}
+              >
+                <option value="in">{ui('حضور')}</option>
+                <option value="out">{ui('انصراف')}</option>
+              </select>
+            </div>
+            <div>
+              <Label>{ui('وقت الحضور')}</Label>
+              <Time12Input className="mt-1.5" value={manualForm.checkIn} onValueChange={(value) => setManualForm((f) => ({ ...f, checkIn: value }))} />
+            </div>
+            <div>
+              <Label>{ui('وقت الانصراف')}</Label>
+              <Time12Input className="mt-1.5" value={manualForm.checkOut} onValueChange={(value) => setManualForm((f) => ({ ...f, checkOut: value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setManualOpen(false)}>{ui('إلغاء')}</Button>
+            <Button permissionAction="update" onClick={() => void submitManual()}><MapPin className="size-4" />{ui('حفظ')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
 }

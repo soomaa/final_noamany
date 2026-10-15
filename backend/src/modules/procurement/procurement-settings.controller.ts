@@ -6,7 +6,7 @@ import { ProcurementSettingsService } from './procurement-settings.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('procurement-settings')
-@RequiresPermission('gym-sales.procurement:view')
+@RequiresPermission('gym-sales.procurement.suppliers:view')
 export class ProcurementSettingsController {
   constructor(private readonly service: ProcurementSettingsService) {}
 
@@ -16,7 +16,7 @@ export class ProcurementSettingsController {
   }
 
   @Put()
-  @RequiresPermission('gym-sales.procurement:update')
+  @RequiresPermission('gym-sales.procurement.suppliers:update')
   update(@Body() body: UpdateProcurementSettingsDto) {
     return this.service.update(body);
   }

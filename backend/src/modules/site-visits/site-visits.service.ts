@@ -3,10 +3,13 @@ import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { cairoDateString } from '../../common/utils/cairo-date';
+import { HrDataScopeService } from '../../common/hr-scope/hr-data-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @Injectable()
 export class SiteVisitsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly scope: HrDataScopeService) {}
 
   async list(q: PaginationDto) {
     const where: Prisma.tbl_sitesWhereInput = {};
@@ -30,10 +33,14 @@ export class SiteVisitsService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async listRecords(siteId: number) {
+  async listRecords(siteId: number, user: JwtUser) {
     await this.findOrThrow(siteId);
+    const identities = await this.scope.employeeIdentities(user, 'affairs.site_visits');
     return this.prisma.tbl_mohmat_3mal.findMany({
-      where: { site_id: siteId },
+      where: {
+        site_id: siteId,
+        ...(identities ? (identities.ids.length ? { emp_id_fk: { in: identities.ids } } : { id: -1 }) : {}),
+      },
       orderBy: { id: 'desc' },
     });
   }
@@ -46,7 +53,7 @@ export class SiteVisitsService {
         s_long: body.long,
         radius: body.radius ?? 100,
         site_name: body.siteName ?? null,
-        date_ar: new Date().toISOString().slice(0, 10),
+        date_ar: cairoDateString(),
         publisher: publisherId ?? 0,
       },
     });
@@ -67,7 +74,7 @@ export class SiteVisitsService {
         ...(body.long != null ? { s_long: body.long } : {}),
         ...(body.radius != null ? { radius: body.radius } : {}),
         ...(body.siteName != null ? { site_name: body.siteName } : {}),
-        date_ar: new Date().toISOString().slice(0, 10),
+        date_ar: cairoDateString(),
         ...(publisherId != null ? { publisher: publisherId } : {}),
       },
     });

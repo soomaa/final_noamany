@@ -2,6 +2,8 @@ import { Download } from 'lucide-react';
 import { ReactNode } from 'react';
 import { PageHeader } from '@/components/common/page-header';
 import { Button } from '@/components/ui/button';
+import { useLocation } from 'react-router-dom';
+import { usePermission } from '@/hooks/use-permission';
 
 export interface ReportStat {
   label: string;
@@ -35,6 +37,16 @@ export function ReportShell({
   children,
   extraActions,
 }: ReportShellProps) {
+  const location = useLocation();
+  const { can, routeMap } = usePermission();
+  const resourceKey = Object.entries(routeMap).reduce<{ key: string; length: number } | null>(
+    (best, [route, key]) =>
+      (location.pathname === route || location.pathname.startsWith(`${route}/`)) && route.length > (best?.length ?? -1)
+        ? { key, length: route.length }
+        : best,
+    null,
+  )?.key;
+  const canExport = Boolean(onExport && resourceKey && can(`${resourceKey}:export`));
   return (
     <div className="space-y-6">
       <PageHeader
@@ -43,7 +55,7 @@ export function ReportShell({
         actions={
           <div className="flex gap-2">
             {extraActions}
-            {onExport && (
+            {canExport && (
               <Button variant="outline" onClick={onExport}>
                 <Download className="size-4" />
                 CSV

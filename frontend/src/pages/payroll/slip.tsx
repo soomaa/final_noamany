@@ -1,8 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowRight, Loader2, Printer } from 'lucide-react';
-import { useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { toast } from 'sonner';
 import { Money } from '@/components/common/formatters';
 import { PageHeader } from '@/components/common/page-header';
 import { PrintView } from '@/components/common/print-view';
@@ -11,12 +9,11 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { api, apiError } from '@/lib/api';
+import { api } from '@/lib/api';
 import { isNotImplemented } from '@/lib/api-hooks';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 import { uiStatic } from '@/lib/ui-static';
 
 interface SlipPayload {
@@ -26,7 +23,6 @@ interface SlipPayload {
   deductions?: Record<string, number | undefined>;
   netSalary?: number;
   bank?: { account?: string; nameInBank?: string; code?: string };
-  manualAdjustments?: { privateBonus?: number; taqeemValue?: number; targetValue?: number };
 }
 
 const EARNING_LABELS: Record<string, string> = {
@@ -73,10 +69,10 @@ function LineRows({ labels, data }: { labels: Record<string, string>; data?: Rec
 }
 
 export function PayrollSlipPage() {
+  const { can } = usePermission();
+  const canPrint = can('payroll.runs:print');
   const { ui } = useLocale();
   const { id, empId } = useParams<{ id: string; empId: string }>();
-  const [manual, setManual] = useState({ privateBonus: '0', taqeemValue: '0', targetValue: '0' });
-  const [saving, setSaving] = useState(false);
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ['payroll', 'slip', id, empId],
     queryFn: async () => {
@@ -86,32 +82,6 @@ export function PayrollSlipPage() {
     enabled: !!id && !!empId,
     retry: false,
   });
-
-  useEffect(() => {
-    if (!data?.manualAdjustments) return;
-    setManual({
-      privateBonus: String(data.manualAdjustments.privateBonus ?? 0),
-      taqeemValue: String(data.manualAdjustments.taqeemValue ?? 0),
-      targetValue: String(data.manualAdjustments.targetValue ?? 0),
-    });
-  }, [data?.manualAdjustments]);
-
-  const saveManualAdjustments = async () => {
-    setSaving(true);
-    try {
-      await api.patch(`/payroll/runs/${id}/slip/${empId}/overrides`, {
-        privateBonus: Number(manual.privateBonus || 0),
-        taqeemValue: Number(manual.taqeemValue || 0),
-        targetValue: Number(manual.targetValue || 0),
-      });
-      toast.success(ui('تم حفظ مكافأة البرايفت والتقييم ونسبة التارجت'));
-      void refetch();
-    } catch (error) {
-      toast.error(apiError(error));
-    } finally {
-      setSaving(false);
-    }
-  };
 
   if (isError && isNotImplemented(error)) {
     return (
@@ -127,7 +97,7 @@ export function PayrollSlipPage() {
   return (
     <PrintView title={ui('كشف راتب موظف')} className="mx-auto max-w-3xl space-y-6">
       <PageHeader
-        eyebrow={ui('مسيرة الرواتب')}
+        eyebrow={ui('المرتبات الشهرية')}
         title={ui('كشف راتب موظف')}
         description={
           isLoading
@@ -136,12 +106,12 @@ export function PayrollSlipPage() {
         }
         actions={
           <div className="flex gap-2 no-print">
-            <Button variant="outline" size="sm" onClick={() => window.print()}>
+            {canPrint ? <Button variant="outline" size="sm" onClick={() => window.print()}>
               <Printer className="size-4" /> {ui('طباعة')}
-            </Button>
+            </Button> : null}
             <Button variant="outline" size="sm" asChild>
               <Link to={`/payroll/runs/${id}`}>
-                <ArrowRight className="size-4" /> {ui('العودة للمسيرة')}
+                <ArrowRight className="size-4" /> {ui('العودة للمرتبات شهر')}
               </Link>
             </Button>
           </div>
@@ -155,15 +125,6 @@ export function PayrollSlipPage() {
         </div>
       ) : (
         <>
-          <Card className="no-print">
-            <CardHeader><CardTitle className="text-base">{ui('الإضافات اليدوية كما في مسير الرواتب القديم')}</CardTitle></CardHeader>
-            <CardContent className="grid gap-4 md:grid-cols-4 md:items-end">
-              <div className="space-y-2"><Label htmlFor="private-bonus">{ui('مكافأة البرايفت')}</Label><Input id="private-bonus" type="number" min="0" step="0.01" value={manual.privateBonus} onChange={(event) => setManual((current) => ({ ...current, privateBonus: event.target.value }))} /></div>
-              <div className="space-y-2"><Label htmlFor="evaluation-value">{ui('التقييم')}</Label><Input id="evaluation-value" type="number" min="0" step="0.01" value={manual.taqeemValue} onChange={(event) => setManual((current) => ({ ...current, taqeemValue: event.target.value }))} /></div>
-              <div className="space-y-2"><Label htmlFor="target-value">{ui('نسبة التارجت')}</Label><Input id="target-value" type="number" min="0" step="0.01" value={manual.targetValue} onChange={(event) => setManual((current) => ({ ...current, targetValue: event.target.value }))} /></div>
-              <Button variant="brand" onClick={() => void saveManualAdjustments()} disabled={saving}>{saving && <Loader2 className="size-4 animate-spin" />}{ui('حفظ وإعادة الحساب')}</Button>
-            </CardContent>
-          </Card>
           <Card className="overflow-hidden border-primary/10 shadow-md">
             <div className="h-1.5 bg-brand-gradient" />
             <CardHeader className="pb-3">

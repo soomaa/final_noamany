@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { uiStatic } from '@/lib/ui-static';
 
 interface PosEmployee {
   id: number;
@@ -7,38 +8,10 @@ interface PosEmployee {
   emp_code: number | null;
 }
 
-interface PosUserFallback {
-  id: number;
-  name?: string | null;
-  username?: string | null;
-  employee?: string | null;
-  emp_code?: number | null;
-}
-
 async function fetchPosEmployeeOptions(): Promise<PosEmployee[]> {
-  try {
-    const { data } = await api.get<PosEmployee[]>('/employees/pos-options');
-    if (Array.isArray(data)) return data;
-  } catch {
-    /* cafe deploy has no EmployeesModule — try compat alias then users */
-  }
-  try {
-    const { data } = await api.get<PosEmployee[]>('/pos/employee-options');
-    if (Array.isArray(data)) return data;
-  } catch {
-    /* fall through */
-  }
-  try {
-    const { data } = await api.get<PosUserFallback[]>('/users');
-    if (!Array.isArray(data)) return [];
-    return data.map((u) => ({
-      id: u.id,
-      employee: u.employee ?? u.name ?? u.username ?? null,
-      emp_code: u.emp_code ?? null,
-    }));
-  } catch {
-    return [];
-  }
+  // Benefits are keyed by employee ID; user IDs must never substitute for them.
+  const { data } = await api.get<PosEmployee[]>('/pos/employee-options');
+  return Array.isArray(data) ? data : [];
 }
 
 export function usePosEmployeeOptions(enabled = true) {
@@ -49,7 +22,7 @@ export function usePosEmployeeOptions(enabled = true) {
       return data.map((employee) => ({
         value: String(employee.id),
         label: employee.employee?.trim() || '—',
-        description: `كود الموظف: ${employee.emp_code ?? '—'}`,
+        description: `${uiStatic('كود الموظف: ')}${employee.emp_code ?? '—'}`,
         searchText: `${employee.employee ?? ''} ${employee.emp_code ?? ''}`,
       }));
     },

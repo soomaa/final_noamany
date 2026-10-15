@@ -81,3 +81,9 @@ export class UpdateUserStatusDto {
   @IsIn([0, 1])
   approved!: number;
 }
+
+export class RevokeUserSessionsDto {
+  @IsString()
+  @MinLength(3)
+  reason!: string;
+}

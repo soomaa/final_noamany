@@ -1,5 +1,5 @@
 import { ExternalLink, Loader2, Upload, X } from 'lucide-react';
-import { useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { useFileUpload, uploadUrl, type UploadCategory } from './use-uploads';
@@ -10,6 +10,7 @@ interface UploadFieldProps {
   /** Current stored path (e.g. employees.personal_photo). */
   value?: string | null;
   onChange: (path: string | null) => void;
+  onUploadingChange?: (uploading: boolean) => void;
   accept?: string;
   className?: string;
   /** Render an image preview (emp-photo / signature / iban scans). */
@@ -26,6 +27,7 @@ export function UploadField({
   category,
   value,
   onChange,
+  onUploadingChange,
   accept,
   className,
   preview = true,
@@ -37,14 +39,24 @@ export function UploadField({
   const inputId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [drag, setDrag] = useState(false);
+  const inFlight = useRef(false);
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [fileName, setFileName] = useState<string | null>(null);
   const url = uploadUrl(value);
 
   const handleFile = async (file: File | null) => {
-    if (!file) return;
+    if (!file || inFlight.current) return;
+    inFlight.current = true;
+    onUploadingChange?.(true);
     setFileName(file.name);
-    const path = await upload(category, file);
-    if (path) onChange(path);
+    try {
+      const path = await upload(category, file);
+      if (path && alive.current) onChange(path);
+    } finally {
+      inFlight.current = false;
+      if (alive.current) onUploadingChange?.(false);
+    }
   };
 
   const isImage = preview && url && !/\.pdf($|\?)/i.test(url);
@@ -91,6 +103,7 @@ export function UploadField({
           type="file"
           className="hidden"
           accept={accept}
+          disabled={uploading}
           onChange={(e) => {
             void handleFile(e.target.files?.[0] ?? null);
             e.target.value = '';
@@ -107,7 +120,7 @@ export function UploadField({
           >
             {fileName ?? ui('الملف الحالي')} <ExternalLink className="size-3.5 shrink-0" />
           </a>
-          <Button
+          <Button permissionAction={null}
             type="button"
             variant="ghost"
             size="icon"

@@ -20,9 +20,12 @@ import { confirm } from '@/lib/confirm';
 import { diffDraft, draftFromCells } from '@/lib/rbac-resolve';
 import type { TriState } from '@/types/rbac';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 export function RolesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canManage = can('admin.roles:manage');
   const localizedDigits = ui('٠١٢٣٤٥٦٧٨٩');
   const formatNumber = (value: number) =>
     String(value).replace(/\d/g, (digit) => localizedDigits[Number(digit)] ?? digit);
@@ -61,10 +64,23 @@ export function RolesPage() {
   }, [matrixQ.data]);
 
   const onSave = () => {
-    if (roleId == null || !dirty) return;
+    if (roleId == null || !dirty || !canManage) return;
     save.mutate(changes);
   };
   const onRevert = () => setDraft(new Map(serverExplicit));
+  const onRoleChange = async (nextRoleId: number) => {
+    if (nextRoleId === roleId) return;
+    if (dirty) {
+      const ok = await confirm({
+        title: ui('تغييرات غير محفوظة'),
+        description: ui('تغيير المسمى الآن سيلغي التعديلات غير المحفوظة.'),
+        confirmLabel: ui('تجاهل التغييرات'),
+        variant: 'destructive',
+      });
+      if (!ok) return;
+    }
+    setRoleId(nextRoleId);
+  };
 
   return (
     <div className="space-y-6">
@@ -84,7 +100,7 @@ export function RolesPage() {
         <CardContent className="flex flex-wrap items-center gap-2 p-3">
           <select
             value={roleId ?? ''}
-            onChange={(e) => setRoleId(Number(e.target.value))}
+            onChange={(e) => void onRoleChange(Number(e.target.value))}
             className="h-9 min-w-56 rounded-md border border-input bg-card px-3 text-sm"
           >
             {roles.map((r) => (
@@ -163,17 +179,17 @@ export function RolesPage() {
               <p className="text-xs text-muted-foreground">
                 {ui('انقر الخانة لتبديل الوصول مباشرة: الأخضر سماح، الأحمر رفض، والمتقطع موروث.')} {dirty && <span className="font-semibold text-primary">({formatNumber(changes.length)} {ui('تغيير غير محفوظ')})</span>}
               </p>
-              <div className="flex gap-2">
+              {canManage ? <div className="flex gap-2">
                 <Button size="sm" variant="outline" disabled={!dirty || save.isPending} onClick={onRevert}>
                   <RotateCcw className="size-4" /> {ui('تراجع')}
                 </Button>
                 <Button size="sm" variant="brand" disabled={!dirty || save.isPending} onClick={onSave}>
                   <Save className="size-4" /> {ui('حفظ التغييرات')}
                 </Button>
-              </div>
+              </div> : null}
             </div>
             {catalog.data && (
-              <PermissionMatrix catalog={catalog.data} mode="role" draft={draft} onChange={setDraft} editable />
+              <PermissionMatrix catalog={catalog.data} mode="role" draft={draft} onChange={setDraft} editable={canManage} />
             )}
           </Card>
         </>

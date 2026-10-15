@@ -6,12 +6,14 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  ValidateIf,
+  Min,
 } from "class-validator";
 import { PaginationDto } from "../../../common/dto/pagination.dto";
 
 export class BillingPreviewQueryDto {
-  @IsIn(["employee", "partner"]) accountType!: "employee" | "partner";
-  @Type(() => Number) @IsInt() accountId!: number;
+  @IsIn(["employee", "partner", "hospitality"]) accountType!: "employee" | "partner" | "hospitality";
+  @ValidateIf((o) => o.accountType !== "hospitality") @Type(() => Number) @IsInt() @Min(1) accountId!: number;
   @IsDateString() periodStart!: string;
   @IsDateString() periodEnd!: string;
   @IsOptional() @Type(() => Number) @IsInt() branchId?: number;
@@ -25,17 +27,18 @@ export class CreateBillingStatementDto extends BillingPreviewQueryDto {
 }
 
 export class SettleBillingStatementDto {
-  @IsIn(["direct_payment", "payroll_deduction", "profit_share_deduction"])
+  @IsIn(["direct_payment", "payroll_deduction", "profit_share_deduction", "partner_account"])
   settlementMethod!:
-    "direct_payment" | "payroll_deduction" | "profit_share_deduction";
+    "direct_payment" | "payroll_deduction" | "profit_share_deduction" | "partner_account";
+  @ValidateIf((o) => o.settlementMethod === "partner_account") @Type(() => Number) @IsInt() @Min(1) partnerId?: number;
   @IsOptional() @IsIn(["cash", "card", "wallet", "transfer"]) paymentMethod?:
     "cash" | "card" | "wallet" | "transfer";
   @IsOptional() @IsString() notes?: string;
 }
 
 export class ListBillingStatementsDto extends PaginationDto {
-  @IsOptional() @IsIn(["employee", "partner"]) accountType?:
-    "employee" | "partner";
+  @IsOptional() @IsIn(["employee", "partner", "hospitality"]) accountType?:
+    "employee" | "partner" | "hospitality";
   @IsOptional() @Type(() => Number) @IsInt() accountId?: number;
   @IsOptional()
   @IsIn(["issued", "settled", "cancelled", "all"])

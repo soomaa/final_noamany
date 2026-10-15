@@ -3,6 +3,7 @@ import { api, apiError } from '@/lib/api';
 import { listQueryToApiParams, type ListQueryParams } from '@/lib/use-list-query';
 import type { PaginatedResponse } from '@/components/common/data-table';
 import { toast } from 'sonner';
+import { stockListQueryOptions } from '@/lib/live-stock-query';
 
 /** Client-side pagination for endpoints that return a plain array. */
 export function clientPaginate<T>(
@@ -43,6 +44,7 @@ export function useArrayResource<T>(resource: string, enabled = true) {
 
 export function usePaginatedList<T>(resource: string, params: ListQueryParams, enabled = true) {
   return useQuery({
+    ...stockListQueryOptions(resource),
     queryKey: [resource, params],
     queryFn: async ({ signal }) => {
       const { data } = await api.get<PaginatedResponse<T>>(`/${resource}`, {
@@ -57,7 +59,7 @@ export function usePaginatedList<T>(resource: string, params: ListQueryParams, e
   });
 }
 
-export function useResource<T>(resource: string, id?: string | number, sub?: string) {
+export function useResource<T>(resource: string, id?: string | number, sub?: string, enabled?: boolean) {
   const path = sub ? `/${resource}/${id}/${sub}` : id ? `/${resource}/${id}` : `/${resource}`;
   return useQuery({
     queryKey: [resource, id, sub],
@@ -65,7 +67,9 @@ export function useResource<T>(resource: string, id?: string | number, sub?: str
       const { data } = await api.get<T>(path, { signal });
       return data;
     },
-    enabled: id != null || !sub,
+    // Default: fetch bare collection when no id/sub; never fetch `/resource/undefined/...`.
+    // Callers pass `enabled` for create forms (e.g. employees/new) so we do not hit ParseIntPipe on `:id`.
+    enabled: enabled ?? (id != null || !sub),
   });
 }
 

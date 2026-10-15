@@ -1,11 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable, Inject, NotFoundException } from '@nestjs/common';
-import { ClubBranchGroupService, ClubBranchGroupReader } from '../../common/branch-groups/club-branch-group.service';
-import { assertClubOperationBranch, clubOperationBranchIds } from '../../common/branch-groups/club-operation-scope';
-import { club_subscriptions, Prisma } from '@prisma/client';
+import { captureBenefits } from './purchased-benefits';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
-import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import { assertDateOrder } from '../../common/validators';
 import { localDateString } from '../club-members/club-member.utils';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
@@ -15,7 +13,9 @@ import {
   nextFinDocNumber,
   REVENUE_PAID,
 } from '../finance/finance.utils';
+import { ClubDiscountCodesService } from './club-discount-codes.service';
 import { ClubReceiptsService } from './club-receipts.service';
+import { loadBranchPricesForType } from './club-subscription-branch-prices.loader';
 import { ClubSubscriptionAccountingService } from './club-subscription-accounting.service';
 import {
   addDays,
@@ -23,15 +23,16 @@ import {
   deriveSessionAwareStatus,
   resolveSessionMatrixPrice,
   resolveSubscriptionEndDate,
+  resolveTypePriceForBranch,
   roundMoney,
+  scaleSessionMatrixForPackagePrice,
   primaryClubPaymentMethod,
   resolveClubPayments,
   toClubPaymentMethod,
   toNum,
 } from './club-subscription.utils';
 import { TransferSubscriptionToMemberDto } from './dto/transfer-subscription-to-member.dto';
-import { UpdateMemberSubscriptionTransferDto } from './dto/update-member-subscription-transfer.dto';
-import { TransferSubscriptionPlanDto } from './dto/transfer-subscription-plan.dto';
+import { TransferStartFrom, TransferSubscriptionPlanDto } from './dto/transfer-subscription-plan.dto';
 import { isSubscriptionTypeAvailableAtBranch } from './subscription-type-branch-scope';
 
 const PLAN_TRANSFER_REFUND_CATEGORY = 'مردودات اشتراكات الجيم';
@@ -44,12 +45,25 @@ export interface PlanTransferPreview {
   targetType: string;
   targetKind: 'subscription' | 'sessions';
   transferDate: string;
+  pricingMode: 'price_difference' | 'unused_credit';
+  /** Time plan → time plan only: keep the original start date, or start the new plan today. */
+  canChooseStart: boolean;
+  startFrom: TransferStartFrom;
   consumedValue: number;
+  /** Sessions already attended on the old plan; they are charged at the package price list. */
+  consumedSessions: number | null;
   transferableCredit: number;
   creditApplied: number;
   targetValue: number;
   targetSessionsCount: number | null;
   targetUnitPrice: number | null;
+  discountEnabled: boolean;
+  discountCodeId: number | null;
+  discountPercentage: number | null;
+  /** Discount actually applied (capped to the difference due). */
+  discountValue: number;
+  /** Discount the operator asked for before capping. */
+  requestedDiscountValue: number;
   refundAmount: number;
   additionalDue: number;
   toStartDate: string;
@@ -64,8 +78,33 @@ export class ClubSubscriptionTransfersService {
     private readonly accounting: ClubSubscriptionAccountingService,
     private readonly audit: BusinessAuditService,
     private readonly branchScope: BranchScopeService,
-    @Inject(ClubBranchGroupService) private readonly branchGroups: Pick<ClubBranchGroupReader, 'siblingBranchIds'> = { siblingBranchIds: async (id) => [id] },
+    private readonly discountCodes: ClubDiscountCodesService,
   ) {}
+
+  /** Branch price + per-session price list of a package, exactly as a new sale would charge it. */
+  private async loadPackagePricing(
+    client: PrismaService | Prisma.TransactionClient,
+    type: { id: number; price: Prisma.Decimal | number | string },
+    branchId: number | null,
+  ) {
+    const defaultPrice = toNum(type.price);
+    const packagePrice = resolveTypePriceForBranch(
+      defaultPrice,
+      branchId,
+      await loadBranchPricesForType(client as PrismaService, type.id),
+    );
+    const matrixRows = await client.club_subscription_type_session_prices.findMany({
+      where: { subscription_type_id: type.id },
+      select: { sessions_count: true, price: true },
+      orderBy: { sessions_count: 'asc' },
+    });
+    const matrix = scaleSessionMatrixForPackagePrice(
+      matrixRows.map((row) => ({ sessionsCount: row.sessions_count, price: toNum(row.price) })),
+      defaultPrice,
+      packagePrice,
+    );
+    return { packagePrice, matrix };
+  }
 
   private assertBranchAccess(user: JwtUser | undefined, branchId: number | null | undefined) {
     if (branchId == null || !this.branchScope.isBranchAllowed(user, branchId)) {
@@ -75,12 +114,7 @@ export class ClubSubscriptionTransfersService {
 
   private branchWhere(user?: JwtUser): Prisma.club_subscription_transfersWhereInput {
     const allowed = this.branchScope.allowedBranchIds(user);
-    return { ...(allowed === null ? {} : { branch_id: { in: allowed } }), ...(user?.level === 2 && !isSystemAdmin(user) ? { transfer_date: localDateString() } : {}) };
-  }
-
-  private async assertMemberOperationBranch(user: JwtUser | undefined, branchId: number | null | undefined) {
-    if (branchId != null && this.branchScope.isBranchAllowed(user, branchId)) return;
-    await assertClubOperationBranch(this.branchScope, this.branchGroups, user, branchId);
+    return allowed === null ? {} : { branch_id: { in: allowed } };
   }
 
   /**
@@ -107,10 +141,12 @@ export class ClubSubscriptionTransfersService {
         include: { member: true, type: { include: { branches: true } } },
       });
       if (!source) throw new NotFoundException('الاشتراك المصدر غير موجود');
+      const successor = await tx.club_subscriptions.findUnique({ where: { renewed_from_subscription_id: source.id } });
+      if (successor?.renewed_from_subscription_id === source.id) throw new BadRequestException('سوِّ التجديدات اللاحقة قبل نقل الاشتراك');
       if (!source.member_id || !source.member) {
         throw new BadRequestException('لا يمكن تحويل اشتراك غير مرتبط بعضو');
       }
-      await this.assertMemberOperationBranch(user, source.branch_id);
+      this.assertBranchAccess(user, source.branch_id);
       if (source.member_id === body.destinationMemberId) {
         throw new BadRequestException('يجب اختيار عضو آخر لاستلام الاشتراك');
       }
@@ -146,7 +182,10 @@ export class ClubSubscriptionTransfersService {
       if (!destination.is_active) {
         throw new BadRequestException('لا يمكن التحويل إلى عضو غير نشط');
       }
-      await this.assertMemberOperationBranch(user, destination.branch_id);
+      this.assertBranchAccess(user, destination.branch_id);
+      if (destination.branch_id !== source.branch_id) {
+        throw new BadRequestException('التحويل بين الأعضاء مسموح داخل نفس الفرع فقط');
+      }
       const sourceGender = source.gender ?? source.member.gender;
       if (sourceGender !== destination.gender) {
         throw new BadRequestException('نوع العضوية (رجالي/حريمي) للعضوين غير متطابق');
@@ -227,6 +266,7 @@ export class ClubSubscriptionTransfersService {
           member_id: destination.id,
           customer_name: destination.name,
           subscription_type_id: source.subscription_type_id,
+          purchased_benefits: source.purchased_benefits ?? await captureBenefits(tx, source.subscription_type_id),
           special_class_type_id: source.special_class_type_id,
           subscription_type: source.subscription_type,
           subscription_start_date: effectiveDate,
@@ -332,209 +372,17 @@ export class ClubSubscriptionTransfersService {
   }
 
   async listMemberTransfers(user?: JwtUser) {
-    const allowed = await clubOperationBranchIds(this.branchScope, this.branchGroups, user);
-    const rows = await this.prisma.club_member_subscription_transfers.findMany({
-      where: {
-        ...(allowed === null ? {} : { OR: [{ source_branch_id: { in: allowed } }, { destination_branch_id: { in: allowed } }] }),
-        ...(user?.level === 2 && !isSystemAdmin(user) ? { effective_date: localDateString() } : {}),
-      },
+    const allowed = this.branchScope.allowedBranchIds(user);
+    return this.prisma.club_member_subscription_transfers.findMany({
+      where: allowed === null
+        ? {}
+        : { OR: [{ source_branch_id: { in: allowed } }, { destination_branch_id: { in: allowed } }] },
       include: {
         source_member: { select: { id: true, member_code: true, name: true } },
         destination_member: { select: { id: true, member_code: true, name: true } },
-        source_subscription: { select: { subscription_number: true, subscription_type: true, subscription_start_date: true, subscription_end_date: true, subscription_value: true } },
-        destination_subscription: { select: { subscription_number: true, subscription_start_date: true, subscription_end_date: true, subscription_value: true } },
       },
       orderBy: { id: 'desc' },
     });
-    const userIds = [...new Set(rows.map((row) => row.created_by))];
-    const users = userIds.length
-      ? await this.prisma.users.findMany({ where: { user_id: { in: userIds } }, select: { user_id: true, name: true, username: true } })
-      : [];
-    const userNameById = new Map(users.map((item) => [item.user_id, item.name ?? item.username ?? '—']));
-    return rows.map((row) => ({ ...row, created_by_name: userNameById.get(row.created_by) ?? '—' }));
-  }
-
-  /** Recipient changes and reversal are only safe before the transferred entitlement is used. */
-  private async assertMemberTransferUnused(tx: Prisma.TransactionClient, transfer: {
-    destination_subscription_id: number;
-    destination_member_id: number;
-    destination_branch_id: number;
-    effective_date: string;
-    transferred_value: Prisma.Decimal;
-    after_json: Prisma.JsonValue;
-  }, destination: club_subscriptions) {
-    const after = transfer.after_json as Record<string, unknown> | null;
-    if (destination.member_id !== transfer.destination_member_id ||
-        destination.branch_id !== transfer.destination_branch_id ||
-        destination.subscription_start_date !== transfer.effective_date ||
-        destination.subscription_end_date !== after?.endDate ||
-        Math.abs(toNum(destination.subscription_value) - toNum(transfer.transferred_value)) > 0.009 ||
-        Math.abs(toNum(destination.transferred_credit_amount) - toNum(transfer.transferred_value)) > 0.009 ||
-        toNum(destination.paid_amount) > 0.009 ||
-        toNum(destination.waived_amount) > 0.009 ||
-        toNum(destination.remaining_amount) > 0.009 ||
-        toNum(destination.transferred_out_amount) > 0.009 ||
-        destination.sessions_used > 0) {
-      throw new BadRequestException('لا يمكن تغيير أو حذف التحويل بعد تعديل أو استخدام الاشتراك المستلم');
-    }
-    const id = destination.id;
-    const counts = await Promise.all([
-      tx.club_attendance.count({ where: { subscription_id: id } }),
-      tx.club_receipts.count({ where: { subscription_id: id } }),
-      tx.club_subscription_refunds.count({ where: { subscription_id: id, status: { not: 'cancelled' } } }),
-      tx.club_subscription_freezes.count({ where: { subscription_id: id } }),
-      tx.club_subscription_waivers.count({ where: { subscription_id: id } }),
-      tx.club_subscription_transfers.count({ where: { OR: [{ subscription_id: id }, { destination_subscription_id: id }] } }),
-      tx.club_member_subscription_transfers.count({ where: { source_subscription_id: id } }),
-      tx.club_subscriptions.count({ where: { renewed_from_subscription_id: id } }),
-      tx.club_inbody_invoices.count({ where: { subscription_id: id } }),
-      tx.club_spa_invoices.count({ where: { subscription_id: id } }),
-      tx.club_spa_attendance.count({ where: { subscription_id: id } }),
-      tx.club_class_enrollments.count({ where: { subscription_id: id } }),
-      tx.club_member_point_transactions.count({ where: { OR: [{ subscription_id: id }, { source_subscription_id: id }] } }),
-      tx.cs_feedbacks.count({ where: { subscription_id: id } }),
-      tx.staff_tasks.count({ where: { subscription_id: id } }),
-      tx.club_customer_service_interactions.count({ where: { subscription_id: id } }),
-    ]);
-    if (counts.some((count) => count > 0)) {
-      throw new BadRequestException('لا يمكن تغيير أو حذف التحويل بعد استخدام الاشتراك أو تسجيل عملية مرتبطة به');
-    }
-  }
-
-  async updateMemberTransfer(id: number, body: UpdateMemberSubscriptionTransferDto, user: JwtUser) {
-    const reason = body.reason?.trim();
-    if (!reason || reason.length < 3) throw new BadRequestException('سبب التحويل مطلوب (3 أحرف على الأقل)');
-    return this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM club_member_subscription_transfers WHERE id = ${id} FOR UPDATE`;
-      const transfer = await tx.club_member_subscription_transfers.findUnique({
-        where: { id },
-        include: { source_subscription: true, destination_subscription: true, source_member: true },
-      });
-      if (!transfer) throw new NotFoundException('التحويل غير موجود');
-      await this.assertMemberOperationBranch(user, transfer.source_branch_id);
-      await this.assertMemberOperationBranch(user, transfer.destination_branch_id);
-      await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id IN (${transfer.source_subscription_id}, ${transfer.destination_subscription_id}) FOR UPDATE`;
-      const nextMemberId = body.destinationMemberId ?? transfer.destination_member_id;
-      if (nextMemberId === transfer.destination_member_id) {
-        const updated = await tx.club_member_subscription_transfers.update({ where: { id }, data: { reason } });
-        await tx.business_audit_log.create({ data: {
-          entity_type: 'club_member_subscription_transfer', entity_id: String(id),
-          action: 'member_entitlement_transfer_update', actor_user_id: user.sub,
-          branch_id: transfer.source_branch_id,
-          before_json: { reason: transfer.reason }, after_json: { reason },
-          changed_fields: ['reason'], reason,
-        } });
-        return updated;
-      }
-      await this.assertMemberTransferUnused(tx, transfer, transfer.destination_subscription);
-      const nextMember = await tx.club_members.findUnique({ where: { id: nextMemberId } });
-      if (!nextMember || nextMember.is_deleted) throw new NotFoundException('العضو المستلم غير موجود');
-      if (!nextMember.is_active) throw new BadRequestException('لا يمكن التحويل إلى عضو غير نشط');
-      await this.assertMemberOperationBranch(user, nextMember.branch_id);
-      if (nextMember.id === transfer.source_member_id) throw new BadRequestException('يجب اختيار عضو آخر لاستلام الاشتراك');
-      if ((transfer.source_subscription.gender ?? transfer.source_member.gender) !== nextMember.gender) {
-        throw new BadRequestException('نوع العضوية (رجالي/حريمي) للعضوين غير متطابق');
-      }
-      const source = transfer.source_subscription;
-      const entitlementIdentity: Prisma.club_subscriptionsWhereInput | null = source.subscription_type_id != null
-        ? { subscription_type_id: source.subscription_type_id }
-        : source.subscription_type?.trim() ? { subscription_type: source.subscription_type.trim() } : null;
-      if (entitlementIdentity) {
-        const existing = await tx.club_subscriptions.findMany({
-          where: { member_id: nextMember.id, ...entitlementIdentity },
-          select: { status: true, subscription_start_date: true, subscription_end_date: true, is_linked_to_sessions: true, sessions_count: true, sessions_used: true },
-        });
-        if (existing.some((item) => item.status === 'frozen' || deriveSessionAwareStatus({
-          startDate: item.subscription_start_date,
-          endDate: item.subscription_end_date,
-          isLinkedToSessions: item.is_linked_to_sessions,
-          sessionsCount: item.sessions_count,
-          sessionsUsed: item.sessions_used,
-        }) !== 'expired')) {
-          throw new BadRequestException('العضو المستلم لديه بالفعل نفس الاشتراك بحالة نشطة أو موقوفة');
-        }
-      }
-      await tx.club_subscriptions.update({
-        where: { id: transfer.destination_subscription_id },
-        data: {
-          subscription_number: `MT${transfer.source_subscription_id}D${nextMember.id}`,
-          member_id: nextMember.id,
-          branch_id: nextMember.branch_id,
-          customer_name: nextMember.name,
-          gender: nextMember.gender,
-          guardian_name: nextMember.guardian_name,
-          guardian_phone: nextMember.guardian_phone,
-        },
-      });
-      const after = transfer.after_json as Record<string, unknown>;
-      const updated = await tx.club_member_subscription_transfers.update({
-        where: { id },
-        data: {
-          destination_member_id: nextMember.id,
-          destination_branch_id: nextMember.branch_id,
-          reason,
-          after_json: { ...after, memberId: nextMember.id },
-        },
-      });
-      await tx.business_audit_log.create({ data: {
-        entity_type: 'club_member_subscription_transfer', entity_id: String(id),
-        action: 'member_entitlement_transfer_update', actor_user_id: user.sub,
-        branch_id: transfer.source_branch_id,
-        before_json: { destinationMemberId: transfer.destination_member_id, destinationBranchId: transfer.destination_branch_id, reason: transfer.reason },
-        after_json: { destinationMemberId: nextMember.id, destinationBranchId: nextMember.branch_id, reason },
-        changed_fields: ['destinationMemberId', 'destinationBranchId', 'reason'], reason,
-      } });
-      return updated;
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
-  }
-
-  async deleteMemberTransfer(id: number, user: JwtUser) {
-    return this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM club_member_subscription_transfers WHERE id = ${id} FOR UPDATE`;
-      const transfer = await tx.club_member_subscription_transfers.findUnique({
-        where: { id }, include: { source_subscription: true, destination_subscription: true },
-      });
-      if (!transfer) throw new NotFoundException('التحويل غير موجود');
-      await this.assertMemberOperationBranch(user, transfer.source_branch_id);
-      await this.assertMemberOperationBranch(user, transfer.destination_branch_id);
-      await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id IN (${transfer.source_subscription_id}, ${transfer.destination_subscription_id}) FOR UPDATE`;
-      await this.assertMemberTransferUnused(tx, transfer, transfer.destination_subscription);
-      const source = transfer.source_subscription;
-      const before = transfer.before_json as Record<string, unknown> | null;
-      const oldEndDate = before?.endDate;
-      const oldSessionsUsed = before?.sessionsUsed;
-      if (typeof oldEndDate !== 'string' || typeof oldSessionsUsed !== 'number' ||
-          source.subscription_end_date !== addDays(transfer.effective_date, -1) ||
-          (source.is_linked_to_sessions && source.sessions_used !== source.sessions_count) ||
-          toNum(source.transferred_out_amount) + 0.009 < toNum(transfer.transferred_value)) {
-        throw new BadRequestException('لا يمكن إلغاء التحويل بعد تغيير الاشتراك الأصلي');
-      }
-      const restoredStatus = deriveSessionAwareStatus({
-        startDate: source.subscription_start_date,
-        endDate: oldEndDate,
-        isLinkedToSessions: source.is_linked_to_sessions,
-        sessionsCount: source.sessions_count,
-        sessionsUsed: oldSessionsUsed,
-      });
-      await tx.club_member_subscription_transfers.delete({ where: { id } });
-      await tx.club_subscriptions.delete({ where: { id: transfer.destination_subscription_id } });
-      await tx.club_subscriptions.update({ where: { id: transfer.source_subscription_id }, data: {
-        subscription_end_date: oldEndDate,
-        sessions_used: oldSessionsUsed,
-        transferred_out_amount: roundMoney(Math.max(0, toNum(source.transferred_out_amount) - toNum(transfer.transferred_value))),
-        status: restoredStatus,
-      } });
-      await tx.business_audit_log.create({ data: {
-        entity_type: 'club_member_subscription_transfer', entity_id: String(id),
-        action: 'member_entitlement_transfer_delete', actor_user_id: user.sub,
-        branch_id: transfer.source_branch_id,
-        before_json: { sourceSubscriptionId: transfer.source_subscription_id, destinationSubscriptionId: transfer.destination_subscription_id, destinationMemberId: transfer.destination_member_id, reason: transfer.reason },
-        after_json: { restoredSubscriptionId: transfer.source_subscription_id, restoredEndDate: oldEndDate, restoredSessionsUsed: oldSessionsUsed },
-        changed_fields: ['transferDeleted', 'sourceSubscriptionRestored'],
-        reason: 'إلغاء تحويل الاشتراك بين الأعضاء',
-      } });
-      return { success: true };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   }
 
   private async computePlanTransferPreview(
@@ -550,10 +398,23 @@ export class ClubSubscriptionTransfersService {
       }),
     ]);
     if (!sub) throw new NotFoundException('الاشتراك غير موجود');
+    const successor = await client.club_subscriptions.findUnique({ where: { renewed_from_subscription_id: sub.id } });
+    if (successor?.renewed_from_subscription_id === sub.id) throw new BadRequestException('سوِّ التجديدات اللاحقة قبل تغيير الباقة');
     if (!target || !target.is_active) throw new BadRequestException('نوع الاشتراك الجديد غير موجود أو غير نشط');
     this.assertBranchAccess(user, sub.branch_id);
     if (!isSubscriptionTypeAvailableAtBranch(target, sub.branch_id)) {
       throw new ForbiddenException('الخطة المختارة غير متاحة في فرع الاشتراك الحالي');
+    }
+    const branchCopies = await client.club_subscription_types.findMany({
+      where: { source_subscription_type_id: target.id, is_active: true },
+      select: {
+        branch_id: true,
+        apply_to_all_branches: true,
+        branches: { select: { branch_id: true } },
+      },
+    });
+    if (branchCopies.some((row) => isSubscriptionTypeAvailableAtBranch(row, sub.branch_id))) {
+      throw new BadRequestException('هذه الباقة لها نسخة خاصة بفرع العضو. اختر باقة الفرع');
     }
     if (sub.status === 'frozen') {
       throw new BadRequestException('لا يمكن تحويل خطة اشتراك مجمّد — ألغِ التجميد أولاً');
@@ -587,14 +448,40 @@ export class ClubSubscriptionTransfersService {
     });
     const refundablePaid = Math.max(0, paidEquivalent - toNum(priorRefunds._sum.refund_amount));
 
+    // Time plan → time plan may either keep the original start (the new plan replaces the old
+    // one for the same period; only the price difference moves) or start today (the unused
+    // days are credited and the new plan runs its full length from today).
+    const canChooseStart = !sub.is_linked_to_sessions && !target.is_linked_to_sessions;
+    const startFrom: TransferStartFrom = canChooseStart ? (body.startFrom ?? 'original') : 'today';
+    const preserveSessions = body.preservePeriod === true && sub.is_linked_to_sessions && target.is_linked_to_sessions;
+    const isPriceDifference = canChooseStart && startFrom === 'original' || preserveSessions;
     let consumedValue = 0;
+    let consumedSessions: number | null = null;
     let unusedValue = 0;
-    if (sub.is_linked_to_sessions && sub.sessions_count && sub.sessions_count > 0) {
-      const sessionRate = roundMoney(net / sub.sessions_count);
-      consumedValue = roundMoney(Math.max(0, sub.sessions_used) * sessionRate);
-      unusedValue = roundMoney(
-        Math.max(0, sub.sessions_count - sub.sessions_used) * sessionRate,
-      );
+    if (isPriceDifference) {
+      if (preserveSessions) consumedSessions = sub.sessions_used;
+      unusedValue = refundablePaid;
+    } else if (sub.is_linked_to_sessions && sub.sessions_count && sub.sessions_count > 0) {
+      const used = Math.max(0, sub.sessions_used);
+      consumedSessions = used;
+      const sourceType = sub.subscription_type_id != null
+        ? await client.club_subscription_types.findUnique({ where: { id: sub.subscription_type_id } })
+        : null;
+      const sourceMax = Number(sourceType?.sessions_count);
+      if (used > 0 && sourceType?.is_linked_to_sessions && Number.isInteger(sourceMax) && sourceMax > 0) {
+        // Attended sessions lose the bulk-package rate: they cost what that number of sessions
+        // costs on the package price list (e.g. 100 per single session, not 20 = package / 10).
+        const pricing = await this.loadPackagePricing(client, sourceType, sub.branch_id);
+        consumedValue = roundMoney(Math.min(net, resolveSessionMatrixPrice({
+          packagePrice: pricing.packagePrice,
+          maxSessions: sourceMax,
+          selectedSessions: used,
+          matrix: pricing.matrix,
+        })));
+      } else {
+        consumedValue = roundMoney(Math.min(net, used * (net / sub.sessions_count)));
+      }
+      unusedValue = roundMoney(Math.max(0, net - consumedValue));
     } else {
       const totalDays = Math.max(
         1,
@@ -611,11 +498,13 @@ export class ClubSubscriptionTransfersService {
     const transferableCredit = roundMoney(
       Math.max(0, Math.min(unusedValue, Math.max(0, refundablePaid - consumedValue))),
     );
-    if (transferableCredit <= 0) {
+    // Time → time with nothing left to credit simply charges the new plan in full.
+    if (!canChooseStart && transferableCredit <= 0) {
       throw new BadRequestException('لا يوجد رصيد مدفوع غير مستهلك قابل للتحويل');
     }
 
-    let targetValue = toNum(target.price);
+    const targetPricing = await this.loadPackagePricing(client, target, sub.branch_id);
+    let targetValue = targetPricing.packagePrice;
     let targetSessionsCount: number | null = null;
     let targetUnitPrice: number | null = null;
     if (target.is_linked_to_sessions) {
@@ -623,15 +512,7 @@ export class ClubSubscriptionTransfersService {
       if (!Number.isInteger(maxSessions) || maxSessions < 1) {
         throw new BadRequestException('عدد حصص الخطة الجديدة غير مضبوط');
       }
-      const matrixRows = await client.club_subscription_type_session_prices.findMany({
-        where: { subscription_type_id: target.id },
-        select: { sessions_count: true, price: true },
-        orderBy: { sessions_count: 'asc' },
-      });
-      const matrix = matrixRows.map((row) => ({
-        sessionsCount: row.sessions_count,
-        price: toNum(row.price),
-      }));
+      const matrix = targetPricing.matrix;
       // Afford as many sessions as credit allows, using matrix prices (fallback proportional).
       const MAX_MATRIX_SCAN = 365;
       if (maxSessions > MAX_MATRIX_SCAN) {
@@ -641,7 +522,7 @@ export class ClubSubscriptionTransfersService {
       let bestValue = 0;
       for (let n = 1; n <= maxSessions; n += 1) {
         const priceN = resolveSessionMatrixPrice({
-          packagePrice: toNum(target.price),
+          packagePrice: targetPricing.packagePrice,
           maxSessions,
           selectedSessions: n,
           matrix,
@@ -651,28 +532,53 @@ export class ClubSubscriptionTransfersService {
           bestValue = priceN;
         }
       }
+      if (body.targetSessionsCount !== undefined) {
+        if (!Number.isInteger(body.targetSessionsCount) || body.targetSessionsCount < 1 || body.targetSessionsCount > maxSessions) {
+          throw new BadRequestException('عدد الحصص المطلوب أكبر من حصص الباقة أو غير صحيح');
+        }
+        bestCount = body.targetSessionsCount;
+        bestValue = resolveSessionMatrixPrice({ packagePrice: targetPricing.packagePrice, maxSessions, selectedSessions: bestCount, matrix });
+      }
+      if (preserveSessions && bestCount < sub.sessions_used) throw new BadRequestException('حصص الباقة الجديدة أقل من الحصص المستخدمة');
       if (bestCount < 1) {
         throw new BadRequestException('الرصيد القابل للتحويل أقل من سعر حصة واحدة');
       }
       targetSessionsCount = bestCount;
       targetValue = bestValue;
       targetUnitPrice = resolveSessionMatrixPrice({
-        packagePrice: toNum(target.price),
+        packagePrice: targetPricing.packagePrice,
         maxSessions,
         selectedSessions: 1,
         matrix,
       });
     }
 
+    const discount = await this.discountCodes.resolveDiscount(
+      {
+        subscriptionValue: targetValue,
+        discountCodeId: body.discountCodeId,
+        discountEnabled: body.discountEnabled,
+        discountValue: body.discountValue,
+      },
+      client,
+    );
     const creditApplied = roundMoney(Math.min(transferableCredit, targetValue));
     const refundAmount = roundMoney(Math.max(0, transferableCredit - targetValue));
-    const additionalDue = roundMoney(Math.max(0, targetValue - transferableCredit));
+    const differenceDue = roundMoney(Math.max(0, targetValue - transferableCredit));
+    // The discount only lowers what is still to be collected; it never turns into cash back.
+    const discountValue = roundMoney(Math.min(discount.discountValue, differenceDue));
+    const additionalDue = roundMoney(differenceDue - discountValue);
+    const toStartDate = isPriceDifference ? sub.subscription_start_date : body.toStartDate;
     const toEndDate = resolveSubscriptionEndDate(
-      body.toStartDate,
+      toStartDate,
       target.days,
       target.is_linked_to_sessions,
+      target.sessions_count,
     );
-    assertDateOrder(body.toStartDate, toEndDate);
+    assertDateOrder(toStartDate, toEndDate);
+    if (isPriceDifference && toEndDate < transferDate) {
+      throw new BadRequestException('مدة الباقة الجديدة انتهت بالفعل من بداية الاشتراك الأصلي؛ اختر باقة أطول أو استخدم التجديد');
+    }
 
     return {
       subscriptionId: sub.id,
@@ -682,15 +588,24 @@ export class ClubSubscriptionTransfersService {
       targetType: target.name,
       targetKind: target.is_linked_to_sessions ? 'sessions' : 'subscription',
       transferDate,
+      pricingMode: isPriceDifference ? 'price_difference' : 'unused_credit',
+      canChooseStart,
+      startFrom,
       consumedValue,
+      consumedSessions,
       transferableCredit,
       creditApplied,
       targetValue,
       targetSessionsCount,
       targetUnitPrice,
+      discountEnabled: discountValue > 0,
+      discountCodeId: discountValue > 0 ? discount.discountCodeId : null,
+      discountPercentage: discountValue > 0 ? discount.discountPercentage : null,
+      discountValue,
+      requestedDiscountValue: discount.discountValue,
       refundAmount,
       additionalDue,
-      toStartDate: body.toStartDate,
+      toStartDate,
       toEndDate,
     };
   }
@@ -766,14 +681,15 @@ export class ClubSubscriptionTransfersService {
           member_id: source.member_id,
           customer_name: source.customer_name,
           subscription_type_id: target.id,
+          purchased_benefits: await captureBenefits(tx, target.id),
           subscription_type: target.name,
           subscription_start_date: preview.toStartDate,
           subscription_end_date: preview.toEndDate,
           subscription_value: preview.targetValue,
-          discount_enabled: false,
-          discount_code_id: null,
-          discount_percentage: null,
-          discount_value: 0,
+          discount_enabled: preview.discountEnabled,
+          discount_code_id: preview.discountCodeId,
+          discount_percentage: preview.discountPercentage,
+          discount_value: preview.discountValue,
           paid_amount: additionalPaidAmount,
           waived_amount: 0,
           transferred_credit_amount: preview.creditApplied,
@@ -791,12 +707,12 @@ export class ClubSubscriptionTransfersService {
             endDate: preview.toEndDate,
             isLinkedToSessions: target.is_linked_to_sessions,
             sessionsCount: preview.targetSessionsCount,
-            sessionsUsed: 0,
+            sessionsUsed: preview.pricingMode === 'price_difference' && source.is_linked_to_sessions ? source.sessions_used : 0,
           }),
           is_special: false,
           is_linked_to_sessions: target.is_linked_to_sessions,
           sessions_count: target.is_linked_to_sessions ? preview.targetSessionsCount : null,
-          sessions_used: 0,
+          sessions_used: preview.pricingMode === 'price_difference' && source.is_linked_to_sessions ? source.sessions_used : 0,
           allow_multiple_daily_entries: target.allow_multiple_daily_entries,
           is_time_based: false,
           time_from: null,
@@ -871,8 +787,8 @@ export class ClubSubscriptionTransfersService {
           sourceDocId: receipt?.receipt_number ?? destination.subscription_number,
           paidAmount: additionalPaidAmount,
           subscriptionValue: preview.targetValue,
-          discountValue: 0,
-          discountEnabled: false,
+          discountValue: preview.discountValue,
+          discountEnabled: preview.discountEnabled,
           paymentMethod: body.paymentMethod,
           payments: paymentSplits,
           branchId: source.branch_id,
@@ -964,6 +880,7 @@ export class ClubSubscriptionTransfersService {
         destinationSubscriptionId: result.destination.id,
         subscriptionType: result.preview.targetType,
         value: result.preview.targetValue,
+        discountValue: result.preview.discountValue,
         sessionsCount: result.preview.targetSessionsCount,
         refundAmount: result.preview.refundAmount,
         additionalPaidAmount,

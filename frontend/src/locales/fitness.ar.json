@@ -51,20 +51,7 @@
     "uploadReport": "رفع التقرير",
     "uploading": "جارٍ الرفع…",
     "viewReport": "عرض التقرير",
-    "reportHint": "يظهر التقرير للعضو في التطبيق",
-    "memberMeasurementsTitle": "قياسات الأعضاء",
-    "memberMeasurementsDescription": "إضافة وحفظ ملفات قياسات InBody للأعضاء.",
-    "addMemberMeasurement": "إضافة قياس الأعضاء",
-    "editMemberMeasurement": "تعديل قياس الأعضاء",
-    "fileNumber": "رقم الملف",
-    "file": "الملف",
-    "details": "التفاصيل",
-    "viewFile": "عرض الملف",
-    "fileLabel": "الملف",
-    "selectMemberFirst": "اختر العضو أولاً",
-    "uploadFileFirst": "ارفع ملف القياس أولاً",
-    "measurementDateRequired": "تاريخ القياس مطلوب",
-    "determiningFileNumber": "جارٍ تحديد الرقم…"
+    "reportHint": "يظهر التقرير للعضو في التطبيق"
   },
   "assessments": { "title": "التقييمات البدنية", "assessor": "المقيّم", "scores": "الدرجات" },
   "scheduling": {
@@ -79,7 +66,7 @@
     "addOnDay": "إضافة",
     "clickToAdd": "اضغط على أي خانة فارغة لإضافة حصة"
   },
-  "classes": { "title": "إدارة الحصص", "className": "اسم الحصة", "startTime": "وقت البداية", "endTime": "وقت النهاية", "maxCapacity": "الحد الأقصى", "newClass": "حصة جديدة", "statsTotal": "إجمالي الحصص", "statsScheduled": "المجدولة", "statsEnrollments": "التسجيلات", "statsAttendanceRate": "نسبة الحضور", "roster": "قائمة الحضور", "markPresent": "حضور", "markAbsent": "غياب", "unenroll": "إلغاء التسجيل", "unenrollConfirm": "إلغاء تسجيل العضو من الحصة؟", "waitlistPrompt": "الحصة ممتلئة. إضافة العضو لقائمة الانتظار؟", "full": "ممتلئة", "statusScheduled": "مجدولة", "statusOngoing": "جارية", "statusCompleted": "منتهية", "statusCancelled": "ملغاة" },
+  "classes": { "title": "إدارة الحصص", "className": "اسم الحصة", "startTime": "وقت البداية", "endTime": "وقت النهاية", "maxCapacity": "العدد المتوقع", "newClass": "حصة جديدة", "statsTotal": "إجمالي الحصص", "statsScheduled": "المجدولة", "statsEnrollments": "التسجيلات", "statsAttendanceRate": "نسبة الحضور", "roster": "قائمة الحضور", "markPresent": "حضور", "markAbsent": "غياب", "unenroll": "إلغاء التسجيل", "unenrollConfirm": "إلغاء تسجيل العضو من الحصة؟", "statusScheduled": "مجدولة", "statusOngoing": "جارية", "statusCompleted": "منتهية", "statusCancelled": "ملغاة" },
   "classBooking": { "title": "حجز الحصص", "selectClass": "اختر الحصة", "noUpcoming": "لا توجد حصص مجدولة قادمة" },
   "roomBookings": { "title": "حجوزات القاعات", "halls": "القاعات", "bookings": "الحجوزات", "hallNumber": "رقم القاعة", "people": "عدد الأشخاص" },
   "personalSessions": { "title": "المواعيد الشخصية", "newSession": "موعد شخصي جديد" },

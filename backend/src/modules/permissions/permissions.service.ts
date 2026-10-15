@@ -1,25 +1,14 @@
-import {
-  BadRequestException,
-  Injectable,
-  NotFoundException,
-} from "@nestjs/common";
-import { Prisma } from "@prisma/client";
-import { paginated } from "../../common/dto/list-result";
-import { PrismaService } from "../../common/prisma/prisma.service";
-import { EMPLOYEE_WORKFLOW_SELECT } from "../../common/prisma/employee-workflow.select";
-import {
-  SUSPEND_APPROVED,
-  SUSPEND_REJECTED,
-  SuspendStatus,
-  suspendToListStatus,
-} from "../../common/utils/suspend-status.util";
-import { todayIso } from "../../common/utils/legacy-date.util";
-import { insertLegacyNotification } from "../../common/utils/legacy-notification.util";
-import { retryOnUniqueViolation } from "../../common/retry-unique";
-import { CreatePermissionDto } from "./dto/create-permission.dto";
-import { ActionPermissionDto } from "./dto/action-permission.dto";
-import { ListPermissionsDto } from "./dto/list-permissions.dto";
-import { UpdatePermissionDto } from "./dto/update-permission.dto";
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { paginated } from '../../common/dto/list-result';
+import { PrismaService } from '../../common/prisma/prisma.service';
+import { SUSPEND_APPROVED, SUSPEND_REJECTED, SuspendStatus, suspendToListStatus } from '../../common/utils/suspend-status.util';
+import { todayIso } from '../../common/utils/legacy-date.util';
+import { cairoDateParts, dateOnlyParts } from '../../common/utils/cairo-date';
+import { retryOnUniqueViolation } from '../../common/retry-unique';
+import { CreatePermissionDto } from './dto/create-permission.dto';
+import { ActionPermissionDto } from './dto/action-permission.dto';
+import { ListPermissionsDto } from './dto/list-permissions.dto';
 import {
   ACCEPT_SUSPEND,
   ChainStage,
@@ -28,7 +17,7 @@ import {
   REJECT_SUSPEND,
   STAGE_DATE_FIELD,
   nextRecipientMosama,
-} from "./approval-chain.util";
+} from './approval-chain.util';
 
 /**
  * Legacy ezn caps. The legacy `ezn_setting()` reads hr_egraat_sysat (title='ozonat')
@@ -61,35 +50,31 @@ export class PermissionsService {
 
   /** round(|to-from|/60, 2) in legacy seconds → here we already have minutes; keep 2-decimals. */
   private permitMinutes(fromHour: string, toHour: string): number {
-    const diff = Math.abs(
-      this.timeToMinutes(toHour) - this.timeToMinutes(fromHour),
-    );
+    const diff = Math.abs(this.timeToMinutes(toHour) - this.timeToMinutes(fromHour));
     return Math.round(diff * 100) / 100;
   }
 
   async list(q: ListPermissionsDto, userId?: number) {
-    const and: Prisma.hr_all_ozonat_ordersWhereInput[] = [
-      { OR: [{ cancel: { not: "yes" } }, { cancel: null }] },
-    ];
+    const and: Prisma.hr_all_ozonat_ordersWhereInput[] = [];
 
     // legacy tabs (get_datatables_ozonat)
     switch (q.mode) {
-      case "wared":
+      case 'wared':
         // inbox: rows addressed to me (current_to_user_id == me)
         and.push({ current_to_user_id: userId ?? -1 });
-        and.push({ actions_sends: { not: "close_talab" } });
+        and.push({ actions_sends: { not: 'close_talab' } });
         break;
-      case "accept":
+      case 'accept':
         and.push({ suspend: { in: SUSPEND_APPROVED } });
         if (userId) and.push({ publisher: userId });
         break;
-      case "reject":
+      case 'reject':
         and.push({ suspend: { in: SUSPEND_REJECTED } });
         if (userId) and.push({ publisher: userId });
         break;
-      case "sader":
+      case 'sader':
       default:
-        if (q.mode === "sader" && userId) and.push({ publisher: userId });
+        if (q.mode === 'sader' && userId) and.push({ publisher: userId });
         break;
     }
 
@@ -109,16 +94,14 @@ export class PermissionsService {
     const [rows, total] = await Promise.all([
       this.prisma.hr_all_ozonat_orders.findMany({
         where,
-        orderBy: { id: "desc" },
+        orderBy: { id: 'desc' },
         skip: q.skip,
         take: q.take,
       }),
       this.prisma.hr_all_ozonat_orders.count({ where }),
     ]);
 
-    const empIds = [
-      ...new Set(rows.map((r) => r.emp_id_fk).filter(Boolean)),
-    ] as number[];
+    const empIds = [...new Set(rows.map((r) => r.emp_id_fk).filter(Boolean))] as number[];
     const emps = await this.prisma.employees.findMany({
       where: { id: { in: empIds } },
       select: { id: true, employee: true },
@@ -129,36 +112,22 @@ export class PermissionsService {
       id: r.id,
       eznRkm: r.ezn_rkm,
       no3Ezn: r.no3_ezn,
-      no3EznTitle:
-        r.no3_ezn === 1
-          ? "استئذان شخصي"
-          : r.no3_ezn === 2
-            ? "استئذان للعمل"
-            : "اخرى",
+      no3EznTitle: r.no3_ezn === 1 ? 'استئذان شخصي' : r.no3_ezn === 2 ? 'استئذان للعمل' : 'اخرى',
       employeeName: r.emp_name ?? empMap.get(r.emp_id_fk ?? 0) ?? undefined,
-      employeeId: r.emp_id_fk ?? undefined,
       date: r.ezn_date_ar ?? r.date_ar ?? undefined,
       fromTime: r.from_hour ?? undefined,
       toTime: r.to_hour ?? undefined,
       minutes: r.total_hours ?? undefined,
-      reason: r.reason ?? undefined,
-      fatraFk: r.fatra_fk ?? undefined,
       currentTo: r.current_to_user_name ?? undefined,
       actionsSends: r.actions_sends ?? undefined,
       status: suspendToListStatus(r.suspend),
-      canAction:
-        userId != null &&
-        r.current_to_user_id === userId &&
-        r.actions_sends !== "close_talab" &&
-        NEXT_STAGE_BY_CURRENT[r.actions_sends ?? ""] != null,
-      canModify: r.suspend === SuspendStatus.INCOMING && r.cancel !== "yes",
     }));
 
     return paginated(data, total, q.page, q.pageSize);
   }
 
   /** Remaining monthly minutes + permit-count for a personal permit (no3_ezn=1). */
-  async available(empId: number, eznDate: string, excludeId?: number) {
+  async available(empId: number, eznDate: string) {
     const { month, year } = this.monthYearOf(eznDate);
     const agg = await this.prisma.hr_all_ozonat_orders.aggregate({
       where: {
@@ -167,7 +136,6 @@ export class PermissionsService {
         ezn_month: month,
         ezn_year: year,
         suspend: { notIn: [2, 5] },
-        ...(excludeId != null ? { id: { not: excludeId } } : {}),
       },
       _sum: { total_hours: true },
       _count: { id: true },
@@ -182,171 +150,61 @@ export class PermissionsService {
     };
   }
 
-  /** Full data for the read-only details dialog. */
-  async details(id: number) {
-    const row = await this.prisma.hr_all_ozonat_orders.findUnique({ where: { id } });
-    if (!row || row.cancel === "yes") throw new NotFoundException("طلب الإذن غير موجود");
-    return {
-      id: row.id,
-      eznRkm: row.ezn_rkm,
-      employeeName: row.emp_name ?? undefined,
-      employeeId: row.emp_id_fk ?? undefined,
-      no3Ezn: row.no3_ezn ?? undefined,
-      no3EznTitle: row.no3_ezn === 1 ? "استئذان شخصي" : row.no3_ezn === 2 ? "استئذان للعمل" : "اخرى",
-      date: row.ezn_date_ar ?? row.date_ar ?? undefined,
-      fromTime: row.from_hour ?? undefined,
-      toTime: row.to_hour ?? undefined,
-      minutes: row.total_hours ?? undefined,
-      reason: row.reason ?? undefined,
-      fatraFk: row.fatra_fk ?? undefined,
-      currentTo: row.current_to_user_name ?? undefined,
-      workflowStage: row.actions_sends ?? undefined,
-      status: suspendToListStatus(row.suspend),
-      canModify: row.suspend === SuspendStatus.INCOMING,
-    };
-  }
-
-  /** Update an unreviewed request while preserving its employee and workflow owner. */
-  async update(id: number, body: UpdatePermissionDto) {
-    const row = await this.prisma.hr_all_ozonat_orders.findUnique({ where: { id } });
-    const employeeId = row?.emp_id_fk;
-    this.assertEditable(row, "تعديل");
-    const minutes = this.permitMinutes(body.fromHour, body.toHour);
-    if (minutes <= 0) throw new BadRequestException("مدة الإذن غير صحيحة");
-    if (minutes > DEFAULT_NUMS_IN_ONE_TIME) {
-      throw new BadRequestException("مدة الإذن تتجاوز الحد المسموح للمرة الواحدة");
-    }
-    if (body.no3Ezn === 1 && employeeId != null) {
-      const avail = await this.available(employeeId, body.eznDate, id);
-      if (avail.usedCount >= DEFAULT_NUMS_IN_MONTH || avail.remainNum <= 0) {
-        throw new BadRequestException("تم استنفاد عدد الأذونات المسموح بها هذا الشهر");
-      }
-      if (minutes > avail.remainMinutes) {
-        throw new BadRequestException("مدة الإذن تتجاوز الرصيد المتبقي لهذا الشهر");
-      }
-    }
-    const { month, year } = this.monthYearOf(body.eznDate);
-    const fatraN = body.fatraFk === 1 ? "فترة صباحية" : body.fatraFk === 2 ? "فترة مسائية" : null;
-    await this.prisma.hr_all_ozonat_orders.update({
-      where: { id },
-      data: {
-        no3_ezn: body.no3Ezn,
-        ezn_date: body.eznDate,
-        ezn_date_ar: body.eznDate,
-        ezn_month: month,
-        ezn_year: year,
-        from_hour: body.fromHour,
-        to_hour: body.toHour,
-        total_hours: minutes,
-        reason: body.reason.trim(),
-        fatra_fk: body.fatraFk ?? null,
-        fatra_n: fatraN,
-      },
-    });
-    return { id, minutes };
-  }
-
-  /** Preserve the workflow audit trail while removing a pending request from the list. */
-  async remove(id: number) {
-    const row = await this.prisma.hr_all_ozonat_orders.findUnique({ where: { id } });
-    this.assertEditable(row, "حذف");
-    await this.prisma.hr_all_ozonat_orders.update({
-      where: { id },
-      data: { cancel: "yes", suspend: SuspendStatus.CANCELLED, reason_action: "حذف الطلب" },
-    });
-    return { id };
-  }
-
-  private assertEditable(
-    row: { id: number; suspend: number | null; cancel: string | null } | null,
-    action: "تعديل" | "حذف",
-  ): asserts row is { id: number; suspend: number | null; cancel: string | null } {
-    if (!row || row.cancel === "yes") throw new NotFoundException("طلب الإذن غير موجود");
-    if (row.suspend !== SuspendStatus.INCOMING) {
-      throw new BadRequestException(`لا يمكن ${action} الإذن بعد بدء الاعتماد`);
-    }
-  }
-
   private monthYearOf(eznDate: string): { month: number; year: number } {
-    const d = new Date(eznDate + "T12:00:00");
-    if (Number.isNaN(d.getTime())) {
-      const now = new Date();
-      return { month: now.getMonth() + 1, year: now.getFullYear() };
+    try {
+      const { month, year } = dateOnlyParts(eznDate.slice(0, 10));
+      return { month, year };
+    } catch {
+      const { month, year } = cairoDateParts();
+      return { month, year };
     }
-    return { month: d.getMonth() + 1, year: d.getFullYear() };
   }
 
   /** Faithful port of Add_Ezn (Ezn_order_model::add_ezn) + check_setting/check_setting_time guards. */
-  async create(
-    body: CreatePermissionDto,
-    currentUserId?: number,
-    currentUserName?: string,
-  ) {
-    const emp = await this.resolveEmployee(body.empId, currentUserId);
-    if (!emp) throw new NotFoundException("الموظف غير موجود");
-    const empId = emp.id;
+  async create(body: CreatePermissionDto, currentUserId?: number, currentUserName?: string) {
+    const empId = body.empId;
+    if (!empId) throw new BadRequestException('إسم الموظف مطلوب');
+
+    const emp = await this.prisma.employees.findUnique({ where: { id: empId } });
+    if (!emp) throw new NotFoundException('الموظف غير موجود');
 
     const minutes = this.permitMinutes(body.fromHour, body.toHour);
-    if (minutes <= 0) throw new BadRequestException("مدة الإذن غير صحيحة");
+    if (minutes <= 0) throw new BadRequestException('مدة الإذن غير صحيحة');
 
     // per-request cap (nums_in_one_time) — legacy check_setting_time
     if (minutes > DEFAULT_NUMS_IN_ONE_TIME) {
-      throw new BadRequestException(
-        "مدة الإذن تتجاوز الحد المسموح للمرة الواحدة",
-      );
+      throw new BadRequestException('مدة الإذن تتجاوز الحد المسموح للمرة الواحدة');
     }
 
     // monthly caps + remaining balance — legacy check_setting / get_available (personal only)
     if (body.no3Ezn === 1) {
       const avail = await this.available(empId, body.eznDate);
       if (avail.usedCount >= DEFAULT_NUMS_IN_MONTH || avail.remainNum <= 0) {
-        throw new BadRequestException(
-          "تم استنفاد عدد الأذونات المسموح بها هذا الشهر",
-        );
+        throw new BadRequestException('تم استنفاد عدد الأذونات المسموح بها هذا الشهر');
       }
       if (minutes > avail.remainMinutes) {
-        throw new BadRequestException(
-          "مدة الإذن تتجاوز الرصيد المتبقي لهذا الشهر",
-        );
+        throw new BadRequestException('مدة الإذن تتجاوز الرصيد المتبقي لهذا الشهر');
       }
     }
 
     const { month, year } = this.monthYearOf(body.eznDate);
-    const maxRkm = await this.prisma.hr_all_ozonat_orders.aggregate({
-      _max: { ezn_rkm: true },
-    });
+    const maxRkm = await this.prisma.hr_all_ozonat_orders.aggregate({ _max: { ezn_rkm: true } });
     const eznRkm = (maxRkm._max.ezn_rkm ?? 0) + 1;
 
-    // Legacy employees.manger stores employees.id. Some later imports store emp_code,
-    // therefore resolve the legacy id first and retain an emp_code fallback.
-    const managerRef = emp.manger ? parseInt(emp.manger, 10) : null;
-    const managerEmp = managerRef
-      ? await this.prisma.employees.findFirst({
-          where: { OR: [{ id: managerRef }, { emp_code: managerRef }] },
-          select: { id: true, emp_code: true, employee: true },
-        })
+    // direct-manager routing (legacy: employees.manger holds an emp_code → users.user_id)
+    const managerEmpCode = emp.manger ? parseInt(emp.manger, 10) : null;
+    const managerEmp = managerEmpCode
+      ? await this.prisma.employees.findFirst({ where: { emp_code: managerEmpCode } })
       : null;
-    let managerUser =
-      managerEmp != null
-        ? await this.prisma.users.findFirst({
-            where: { emp_code: managerEmp.id, approved: 1 },
-          })
+    const managerUser =
+      managerEmpCode != null
+        ? await this.prisma.users.findFirst({ where: { emp_code: managerEmpCode } })
         : null;
-    if (!managerUser && managerEmp?.emp_code != null) {
-      managerUser = await this.prisma.users.findFirst({
-        where: { emp_code: managerEmp.emp_code, approved: 1 },
-      });
-    }
-    const empUser = await this.prisma.users.findFirst({
-      where: { OR: [{ emp_code: emp.id }, { emp_code: emp.emp_code ?? -1 }] },
-    });
+    const empUser = emp.emp_code != null
+      ? await this.prisma.users.findFirst({ where: { emp_code: emp.emp_code } })
+      : null;
 
-    const fatraN =
-      body.fatraFk === 1
-        ? "فترة صباحية"
-        : body.fatraFk === 2
-          ? "فترة مسائية"
-          : null;
+    const fatraN = body.fatraFk === 1 ? 'فترة صباحية' : body.fatraFk === 2 ? 'فترة مسائية' : null;
 
     const row = await this.prisma.hr_all_ozonat_orders.create({
       data: {
@@ -368,11 +226,10 @@ export class PermissionsService {
         emp_name: emp.employee,
         edara_n: emp.edara_n,
         edara_id_fk: emp.edara_id ?? null,
-        qsm_n: emp.qsm_n,
-        qsm_id_fk: emp.qsm_id,
-        job_title: emp.mosma_wazefy_n,
-        direct_manager_id_fk: managerEmp?.id ?? managerRef ?? null,
-        direct_manager_code_fk: managerEmp?.emp_code ?? managerRef ?? null,
+        qsm_n: '',
+        qsm_id_fk: 0,
+        direct_manager_id_fk: managerEmp?.id ?? managerEmpCode ?? null,
+        direct_manager_code_fk: managerEmpCode ?? null,
         direct_manager_n: managerEmp?.employee ?? null,
         date: todayIso(),
         date_ar: todayIso(),
@@ -386,8 +243,8 @@ export class PermissionsService {
         current_to_user_name: managerEmp?.employee ?? null,
         current_to_emp_id: managerEmp?.id ?? null,
         current_to_user_id: managerUser?.user_id ?? null,
-        send_to_direct_manager: "yes",
-        actions_sends: "send_to_direct_manager",
+        send_to_direct_manager: 'yes',
+        actions_sends: 'send_to_direct_manager',
       },
     });
 
@@ -398,18 +255,11 @@ export class PermissionsService {
       fromUserName: currentUserName,
       toUserId: managerUser?.user_id,
       toUserName: managerEmp?.employee ?? undefined,
-      msg: "تحويل للمدير المباشر",
-      reason: "send_to_direct_manager",
-      suspend: "0",
+      msg: 'تحويل للمدير المباشر',
+      reason: 'send_to_direct_manager',
+      suspend: '0',
       processCode: PROCESS_CODE.ACCEPT,
     });
-    await insertLegacyNotification(
-      this.prisma,
-      row.id,
-      102,
-      currentUserId,
-      managerUser?.user_id,
-    );
 
     return { id: row.id, eznRkm, minutes };
   }
@@ -418,55 +268,33 @@ export class PermissionsService {
    * Multi-stage approval action by a `wared` recipient (faithful process_ta7welat_procedures).
    * The stage acted on is derived from the order's current `actions_sends`.
    */
-  async action(
-    id: number,
-    body: ActionPermissionDto,
-    userId?: number,
-    userName?: string,
-  ) {
-    const row = await this.prisma.hr_all_ozonat_orders.findUnique({
-      where: { id },
-    });
-    if (!row) throw new NotFoundException("طلب الإذن غير موجود");
+  async action(id: number, body: ActionPermissionDto, userId?: number, userName?: string) {
+    const row = await this.prisma.hr_all_ozonat_orders.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException('طلب الإذن غير موجود');
 
     // only the addressed recipient may act
-    if (
-      row.current_to_user_id != null &&
-      userId != null &&
-      row.current_to_user_id !== userId
-    ) {
-      throw new BadRequestException("هذا الطلب غير محول إليك");
+    if (row.current_to_user_id != null && userId != null && row.current_to_user_id !== userId) {
+      throw new BadRequestException('هذا الطلب غير محول إليك');
     }
 
-    const workflowState = row.actions_sends ?? "";
-    // Demo/legacy rows use start/progress and never entered the current approval chain.
-    // They are intentionally not converted or actioned by the modern mobile endpoint.
-    if (workflowState === "start" || workflowState === "progress") {
-      throw new BadRequestException("هذا الإذن ليس ضمن مسار الاعتماد الجديد");
-    }
-
-    const stage = NEXT_STAGE_BY_CURRENT[workflowState];
-    if (!stage)
-      throw new BadRequestException("لا يوجد إجراء متاح على هذا الطلب");
+    const stage = NEXT_STAGE_BY_CURRENT[row.actions_sends ?? ''];
+    if (!stage) throw new BadRequestException('لا يوجد إجراء متاح على هذا الطلب');
 
     const emp = row.emp_id_fk
-      ? await this.prisma.employees.findUnique({
-          where: { id: row.emp_id_fk },
-          select: EMPLOYEE_WORKFLOW_SELECT,
-        })
+      ? await this.prisma.employees.findUnique({ where: { id: row.emp_id_fk } })
       : null;
 
     const reason = body.reason ?? null;
     let toUserId: number | null;
     let toUserName: string | null = null;
     let suspend: number;
-    let stageFlag: "yes" | "no";
+    let stageFlag: 'yes' | 'no';
     let processCode: number;
 
-    if (body.action === "accept") {
-      stageFlag = "yes";
+    if (body.action === 'accept') {
+      stageFlag = 'yes';
       suspend = ACCEPT_SUSPEND[stage];
-      if (stage === "approve_moder_3am") {
+      if (stage === 'approve_moder_3am') {
         // final: route back to publisher
         toUserId = row.publisher ?? null;
         processCode = PROCESS_CODE.ACCEPT_LATER;
@@ -475,33 +303,25 @@ export class PermissionsService {
           empType: emp?.emp_type ?? null,
           edaraId: emp?.edara_id ?? null,
         });
-        const recipient =
-          mosama != null ? await this.resolveByMosama(mosama) : null;
+        const recipient = mosama != null ? await this.resolveByMosama(mosama) : null;
         toUserId = recipient?.userId ?? row.publisher ?? null;
         toUserName = recipient?.name ?? null;
         processCode =
-          stage === "approve_direct_manager"
-            ? PROCESS_CODE.ACCEPT
-            : PROCESS_CODE.ACCEPT_LATER;
+          stage === 'approve_direct_manager' ? PROCESS_CODE.ACCEPT : PROCESS_CODE.ACCEPT_LATER;
       }
     } else {
-      stageFlag = "no";
+      stageFlag = 'no';
       suspend = REJECT_SUSPEND[stage];
       toUserId = row.publisher ?? null;
       processCode =
-        stage === "approve_direct_manager"
-          ? PROCESS_CODE.REJECT_DIRECT
-          : PROCESS_CODE.REJECT_LATER;
+        stage === 'approve_direct_manager' ? PROCESS_CODE.REJECT_DIRECT : PROCESS_CODE.REJECT_LATER;
     }
 
     const toUser = toUserId
       ? await this.prisma.users.findUnique({ where: { user_id: toUserId } })
       : null;
     if (!toUserName && toUser?.emp_code != null) {
-      const recEmp = await this.prisma.employees.findFirst({
-        where: { emp_code: toUser.emp_code },
-        select: { employee: true },
-      });
+      const recEmp = await this.prisma.employees.findFirst({ where: { emp_code: toUser.emp_code } });
       toUserName = recEmp?.employee ?? null;
     }
 
@@ -517,8 +337,8 @@ export class PermissionsService {
       current_to_user_name: toUserName,
     } as Prisma.hr_all_ozonat_ordersUpdateInput;
 
-    if (stage === "approve_moder_3am" && body.action === "accept") {
-      (data as Record<string, unknown>).close_talab = "yes";
+    if (stage === 'approve_moder_3am' && body.action === 'accept') {
+      (data as Record<string, unknown>).close_talab = 'yes';
     }
 
     await this.prisma.hr_all_ozonat_orders.update({ where: { id }, data });
@@ -530,13 +350,13 @@ export class PermissionsService {
       fromUserName: userName,
       toUserId: toUserId ?? undefined,
       toUserName: toUserName ?? undefined,
-      msg: body.action === "accept" ? "اعتماد" : "رفض",
+      msg: body.action === 'accept' ? 'اعتماد' : 'رفض',
       reason: stage,
       suspend: String(suspend),
       processCode,
     });
 
-    if (stage === "approve_moder_3am" && body.action === "accept") {
+    if (stage === 'approve_moder_3am' && body.action === 'accept') {
       await this.insertHistory({
         eznRkm: row.ezn_rkm,
         eznId: id,
@@ -544,42 +364,11 @@ export class PermissionsService {
         fromUserName: userName,
         toUserId: toUserId ?? undefined,
         toUserName: toUserName ?? undefined,
-        msg: "إغلاق الطلب",
-        reason: "close_talab",
+        msg: 'إغلاق الطلب',
+        reason: 'close_talab',
         suspend: String(suspend),
         processCode: PROCESS_CODE.CLOSE,
       });
-    }
-
-    const notificationCode =
-      stage === "approve_direct_manager"
-        ? 115
-        : stage === "approve_moder_edara"
-          ? 116
-          : stage === "approve_hr"
-            ? 117
-            : body.action === "accept"
-              ? 119
-              : 120;
-    await insertLegacyNotification(
-      this.prisma,
-      id,
-      notificationCode,
-      userId,
-      toUserId,
-    );
-    if (
-      row.publisher != null &&
-      row.publisher !== toUserId &&
-      row.publisher !== userId
-    ) {
-      await insertLegacyNotification(
-        this.prisma,
-        id,
-        notificationCode,
-        userId,
-        row.publisher,
-      );
     }
 
     return { id, stage, suspend, status: suspendToListStatus(suspend) };
@@ -602,37 +391,11 @@ export class PermissionsService {
 
   /** Kept for backward-compatible single-step approve route (delegates to chain action). */
   async approve(id: number, userId?: number, userName?: string) {
-    return this.action(id, { action: "accept" }, userId, userName);
+    return this.action(id, { action: 'accept' }, userId, userName);
   }
 
   async reject(id: number, userId?: number, userName?: string) {
-    return this.action(id, { action: "reject" }, userId, userName);
-  }
-
-  /** Resolve both legacy linkage conventions: users.emp_code may hold employees.id or employees.emp_code. */
-  private async resolveEmployee(empId?: number, userId?: number) {
-    if (empId) {
-      return this.prisma.employees.findUnique({
-        where: { id: empId },
-        select: EMPLOYEE_WORKFLOW_SELECT,
-      });
-    }
-    if (!userId) throw new BadRequestException("إسم الموظف مطلوب");
-
-    const account = await this.prisma.users.findUnique({
-      where: { user_id: userId },
-      select: { emp_code: true },
-    });
-    if (account?.emp_code == null) {
-      throw new BadRequestException("الحساب غير مرتبط بموظف");
-    }
-
-    return this.prisma.employees.findFirst({
-      where: {
-        OR: [{ id: account.emp_code }, { emp_code: account.emp_code }],
-      },
-      select: EMPLOYEE_WORKFLOW_SELECT,
-    });
+    return this.action(id, { action: 'reject' }, userId, userName);
   }
 
   private async insertHistory(opts: {
@@ -650,25 +413,23 @@ export class PermissionsService {
     // Legacy table with a hand-assigned PK — recompute+retry on collision so two concurrent
     // history writes can't crash on a duplicate id.
     await retryOnUniqueViolation(async () => {
-      const max = await this.prisma.hr_all_ozonat_history.aggregate({
-        _max: { id: true },
-      });
+      const max = await this.prisma.hr_all_ozonat_history.aggregate({ _max: { id: true } });
       const nextId = (max._max.id ?? 0) + 1;
       return this.prisma.hr_all_ozonat_history.create({
         data: {
           id: nextId,
-          ezn_rkm_fk: opts.eznRkm ?? 0,
-          ezn_rkm_id: opts.eznId,
-          from_user_id: opts.fromUserId ?? 0,
-          from_user_name: opts.fromUserName ?? "النظام",
-          to_user_id: opts.toUserId ?? 0,
-          to_user_name: opts.toUserName ?? null,
-          talab_in_fk: opts.processCode ?? null,
-          talab_msg: opts.msg,
-          reason_action: opts.reason,
-          date: todayIso(),
-          date_ar: todayIso(),
-          suspend: opts.suspend,
+        ezn_rkm_fk: opts.eznRkm ?? 0,
+        ezn_rkm_id: opts.eznId,
+        from_user_id: opts.fromUserId ?? 0,
+        from_user_name: opts.fromUserName ?? 'النظام',
+        to_user_id: opts.toUserId ?? 0,
+        to_user_name: opts.toUserName ?? null,
+        talab_in_fk: opts.processCode ?? null,
+        talab_msg: opts.msg,
+        reason_action: opts.reason,
+        date: todayIso(),
+        date_ar: todayIso(),
+        suspend: opts.suspend,
         },
       });
     });

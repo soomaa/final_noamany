@@ -18,6 +18,7 @@ import { ClubEventsService } from './club-events.service';
 import { ListClubEventsDto } from './dto/list-club-events.dto';
 import { UpsertClubEventDto } from './dto/upsert-club-event.dto';
 import { ChangeEventStatusDto } from './dto/change-event-status.dto';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-events')
@@ -29,24 +30,27 @@ export class ClubEventsController {
   ) {}
 
   @Get()
-  list(@Query() query: ListClubEventsDto) {
-    return this.service.list(query);
+  @RequiresPermission('club.events.list:view', 'club.events.checkin:view')
+  async list(@Query() query: ListClubEventsDto, @CurrentUser() user: JwtUser) {
+    const canManageList = await this.permissionEngine.can(user.sub, 'club.events.list', 'view');
+    if (!canManageList) query.status = 'published';
+    return this.service.list(query, user);
   }
 
   @Get('statistics')
-  statistics() {
-    return this.service.statistics();
+  statistics(@CurrentUser() user: JwtUser) {
+    return this.service.statistics(user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user);
   }
 
   @Post()
   @RequiresPermission('club.events.list:create')
-  create(@Body() body: UpsertClubEventDto, @CurrentUser('sub') userId: number) {
-    return this.service.create(body, userId);
+  create(@Body() body: UpsertClubEventDto, @CurrentUser() user: JwtUser) {
+    return this.service.create(body, user);
   }
 
   @Patch(':id')
@@ -54,31 +58,36 @@ export class ClubEventsController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertClubEventDto>,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.update(id, body, userId);
+    return this.service.update(id, body, user);
   }
 
   @Post(':id/status')
-  @RequiresPermission('club.events.list:update')
+  @RequiresPermission('club.events.list:update', 'club.events.list:approve', 'club.events.list:reject')
   async changeStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: ChangeEventStatusDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    const canApprove = await this.permissionEngine.can(userId, 'club.events.list', 'approve');
-    return this.service.changeStatus(id, body, userId, canApprove);
+    const action = body.status === 'approved' || body.status === 'closed'
+      ? 'approve'
+      : body.status === 'rejected'
+        ? 'reject'
+        : 'update';
+    const canTransition = await this.permissionEngine.can(user.sub, 'club.events.list', action);
+    return this.service.changeStatus(id, body, user, canTransition);
   }
 
   @Post(':id/duplicate')
   @RequiresPermission('club.events.list:create')
-  duplicate(@Param('id', ParseIntPipe) id: number, @CurrentUser('sub') userId: number) {
-    return this.service.duplicate(id, userId);
+  duplicate(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.duplicate(id, user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.events.list:delete')
-  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser('sub') userId: number) {
-    return this.service.remove(id, userId);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.remove(id, user);
   }
 }

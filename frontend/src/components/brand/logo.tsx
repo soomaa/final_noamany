@@ -1,8 +1,5 @@
 import { cn } from '@/lib/utils';
-
-/** Primary Noamany Fitness Center brand mark. */
-const LOGO_SRC = '/noamany-logo.png';
-const LOGO_SRC_OPAQUE = '/noamany-logo.png';
+import { getBrandProfile } from '@/ports/brand-registry';
 
 interface BrandLogoProps {
   size?: 'sm' | 'md' | 'lg' | 'xl';
@@ -13,10 +10,10 @@ interface BrandLogoProps {
 }
 
 const SIZES = {
-  sm: 'h-14 w-auto max-w-[13rem]',
-  md: 'h-20 w-auto max-w-[17rem]',
-  lg: 'h-28 w-auto max-w-[22rem]',
-  xl: 'h-36 w-auto max-w-[28rem]',
+  sm: 'h-9 w-auto max-w-[7.5rem]',
+  md: 'h-11 w-auto max-w-[9rem]',
+  lg: 'h-16 w-auto max-w-[12rem]',
+  xl: 'h-24 w-auto max-w-[16rem]',
 };
 
 export function BrandLogo({
@@ -26,14 +23,16 @@ export function BrandLogo({
   imageClassName,
   variant = 'default',
 }: BrandLogoProps) {
+  const brand = getBrandProfile();
+  const source = variant === 'on-dark' ? brand.logoSrc : (brand.opaqueLogoSrc ?? brand.logoSrc);
   if (variant === 'sidebar') {
     return (
-      <div className={cn('relative w-full max-w-[18rem] overflow-hidden rounded-2xl bg-gradient-to-br from-white via-[#FFF5F5] to-brand-100 p-3', className)}>
-        <img
-          src={LOGO_SRC}
-          alt="Noamany Fitness Center"
-          className={cn('relative mx-auto h-28 w-full object-contain', imageClassName)}
-        />
+      <div className={cn('flex items-center justify-center', className)}>
+        {brand.logoSrc ? (
+          <img src={brand.logoSrc} alt={brand.name} className={cn('h-12 w-auto max-w-[11rem] object-contain', imageClassName)} />
+        ) : (
+          <span className="flex size-12 items-center justify-center rounded-xl bg-primary font-bold text-primary-foreground">{brand.mark}</span>
+        )}
       </div>
     );
   }
@@ -42,24 +41,15 @@ export function BrandLogo({
 
   return (
     <div className={cn('flex items-center gap-3', className)}>
-      <div
-        className={cn(
-          'overflow-hidden rounded-2xl p-2',
-          onDark
-            ? 'bg-gradient-to-br from-white via-[#FFF5F5] to-brand-100 shadow-[0_12px_32px_-10px_rgba(237,28,36,0.45)]'
-            : 'bg-white shadow-md ring-1 ring-primary/15',
-        )}
-      >
-        <img
-          src={onDark ? LOGO_SRC : LOGO_SRC_OPAQUE}
-          alt="Noamany Fitness Center"
-          className={cn('object-contain', SIZES[size], imageClassName)}
-        />
-      </div>
+      {source ? (
+        <img src={source} alt={brand.name} className={cn('rounded-xl object-contain', onDark ? '' : 'bg-neutral-950 p-1 shadow-md ring-1 ring-primary/20', SIZES[size], imageClassName)} />
+      ) : (
+        <span className={cn('flex items-center justify-center rounded-xl bg-primary font-bold text-primary-foreground', SIZES[size])}>{brand.mark}</span>
+      )}
       {showText && (
         <div className="leading-tight">
           <div className={cn('text-lg font-bold tracking-wide', onDark ? 'text-white' : 'text-foreground')}>
-            NOAMANY
+            {brand.name}
           </div>
           <div
             className={cn(
@@ -67,7 +57,7 @@ export function BrandLogo({
               onDark ? 'text-white/70' : 'text-muted-foreground',
             )}
           >
-            FITNESS CENTER
+            {brand.tagline}
           </div>
         </div>
       )}
@@ -75,4 +65,3 @@ export function BrandLogo({
   );
 }
 
-export { LOGO_SRC, LOGO_SRC_OPAQUE };

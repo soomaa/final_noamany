@@ -1,0 +1,13 @@
+{
+  "apiBaseUrl": "https://YOUR-ONE80-DOMAIN/api",
+  "controllerId": 1,
+  "agentToken": "COPY-ONCE-FROM-ONE80-WEB",
+  "controllerIp": "192.168.1.201",
+  "controllerPort": 4370,
+  "communicationPassword": "",
+  "sdkPath": "%ProgramFiles%\\ONE80 Gate Agent\\sdk",
+  "runtimePath": "%ProgramData%\\ONE80\\GateAgent",
+  "syncIntervalSeconds": 60,
+  "pollIntervalMs": 250,
+  "controllerModel": "INBIO160-PRO"
+}

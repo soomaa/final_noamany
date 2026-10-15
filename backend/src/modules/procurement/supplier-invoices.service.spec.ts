@@ -17,4 +17,22 @@ describe('SupplierInvoicesService branch scope', () => {
         .requireUserBranch({ branch: 0 }),
     ).toThrow(BadRequestException);
   });
+
+  it('converts a selected package count to the material base unit', () => {
+    const baseQuantity = (service as unknown as {
+      toBasePurchaseQuantity: (
+        quantity: number,
+        unit: string,
+        product: { name_ar: string; unit_of_measure: string; is_packaged: boolean },
+        productPackage: { product_id: number; package_base_quantity: number },
+      ) => number;
+    }).toBasePurchaseQuantity(
+      3,
+      'package',
+      { name_ar: 'سيرب', unit_of_measure: 'ml', is_packaged: true },
+      { product_id: 4, package_base_quantity: 700 },
+    );
+
+    expect(baseQuantity).toBe(2100);
+  });
 });

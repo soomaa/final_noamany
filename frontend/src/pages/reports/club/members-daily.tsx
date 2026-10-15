@@ -7,7 +7,7 @@ import { ReportShell, downloadCsv } from '@/components/reports/report-shell';
 import { DateRangeFilter, firstOfMonth, todayLocal } from '@/components/reports/date-range-filter';
 import { BranchFilter, normalizeBranchParam } from '@/components/reports/branch-filter';
 import { fetchAllReportRows } from '@/lib/report-fetch';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 interface MemberRow {
@@ -54,7 +54,7 @@ export function ClubMembersReportPage() {
     () => [
       { accessorKey: 'memberCode', header: ui('كود العضو') },
       { accessorKey: 'name', header: ui('الاسم') },
-      { accessorKey: 'phone', header: ui('الجوال'), cell: ({ getValue }) => toArabicDigits((getValue() as string) ?? '—') },
+      { accessorKey: 'phone', header: ui('الجوال'), cell: ({ getValue }) => formatDigits((getValue() as string) ?? '—') },
       {
         accessorKey: 'gender',
         header: ui('الجنس'),

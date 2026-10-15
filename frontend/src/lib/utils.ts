@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from './number-display';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import type { Locale } from '@/store/locale';
@@ -15,17 +16,9 @@ export function withAlpha(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/** Convert Western digits to Arabic-Indic for Arabic locale display. */
-const arabicDigits = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
-const LOCALE_KEY = 'one80_locale';
-
+/** @deprecated Digits are never transliterated — use the value directly. Kept as a no-op for call-site compatibility. */
 export function toArabicDigits(value: string | number): string {
-  try {
-    if (localStorage.getItem(LOCALE_KEY) === 'en') return String(value);
-  } catch {
-    // SSR / tests
-  }
-  return String(value).replace(/[0-9]/g, (d) => arabicDigits[Number(d)]);
+  return formatDisplayNumber(value);
 }
 
 /** Convert Arabic-Indic / Persian digits to Western for API payloads. */
@@ -37,8 +30,8 @@ export function toWesternDigits(value: string | number): string {
     .replace(/\s+/g, '');
 }
 
-export function formatDigits(value: string | number, locale: Locale = 'ar'): string {
-  return locale === 'ar' ? toArabicDigits(value) : String(value);
+export function formatDigits(value: string | number, _locale: Locale = 'ar'): string {
+  return String(value);
 }
 
 /** @deprecated Use formatDigits(value, locale) */

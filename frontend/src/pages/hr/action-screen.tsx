@@ -18,11 +18,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 interface ActionScreenRow {
@@ -48,6 +49,10 @@ function parseEmpCode(label: string): string {
 
 export function HrActionScreenPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('affairs.action_screen:create');
+  const canUpdate = can('affairs.action_screen:update');
+  const canDelete = can('affairs.action_screen:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<ActionScreenRow>('hr/action-screen', params);
   const { data: employeeOptions = [] } = useEmployeeOptions();
@@ -120,6 +125,7 @@ export function HrActionScreenPage() {
   }, [employeeOptions, form.personCode]);
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.personName.trim() || !form.jobTitleCodeFk || !form.fromDate || !form.toDate) {
       toast.error(ui('يرجى تعبئة الاسم والمسمى الوظيفي وتواريخ الفترة'));
       return;
@@ -156,6 +162,7 @@ export function HrActionScreenPage() {
   };
 
   const handleDelete = async (row: ActionScreenRow) => {
+    if (!canDelete) return;
     const ok = await confirm({
       title: ui('حذف إعداد الإجراء'),
       description: `${ui('هل تريد حذف «')}${row.title ?? ui('هذا الإجراء')}${ui('»؟')}`,
@@ -186,16 +193,23 @@ export function HrActionScreenPage() {
     {
       id: 'actions',
       header: ui('الإجراءات'),
-      cell: ({ row }) => (
-        <div className="flex gap-1">
-          <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
-            <Pencil className="size-4" />
-          </Button>
-          <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
-            <Trash2 className="size-4 text-destructive" />
-          </Button>
-        </div>
-      ),
+      cell: ({ row }) => {
+        if (!canUpdate && !canDelete) return null;
+        return (
+          <div className="flex gap-1">
+            {canUpdate && (
+              <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+                <Pencil className="size-4" />
+              </Button>
+            )}
+            {canDelete && (
+              <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}>
+                <Trash2 className="size-4 text-destructive" />
+              </Button>
+            )}
+          </div>
+        );
+      },
     },
   ];
 
@@ -209,9 +223,11 @@ export function HrActionScreenPage() {
         error={error}
         notImplementedTitle={ui('شاشة الإجراء — قيد الإعداد على الخادم')}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('إجراء جديد')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCreate}>
+              <Plus className="size-4" /> {ui('إجراء جديد')}
+            </Button>
+          ) : undefined
         }
         stats={[
           {
@@ -224,6 +240,7 @@ export function HrActionScreenPage() {
         statsLoading={isLoading}
       >
         <DataTable
+          exportSource={{ resource: 'hr/action-screen', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -306,9 +323,11 @@ export function HrActionScreenPage() {
             <Button variant="outline" onClick={() => setFormOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()} disabled={saving}>
-              {ui('حفظ')}
-            </Button>
+            {(editId ? canUpdate : canCreate) && (
+              <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>
+                {ui('حفظ')}
+              </Button>
+            )}
           </DialogFooter>
         </DialogContent>
       </Dialog>

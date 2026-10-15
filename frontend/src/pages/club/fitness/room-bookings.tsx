@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useBranches } from '@/hooks/use-branches';
 import { useFitnessT } from '@/hooks/use-fitness-t';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { formatTime, localToday } from '@/lib/formatters';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
@@ -24,6 +25,10 @@ import { RowActions, SELECT_CLS, memberColumnDef } from './shared';
 
 export function FitnessRoomBookingsPage() {
   const ft = useFitnessT();
+  const { can } = usePermission();
+  const canCreate = can('club.fitness.room_bookings:create');
+  const canUpdate = can('club.fitness.room_bookings:update');
+  const canDelete = can('club.fitness.room_bookings:delete');
   const [tab, setTab] = useState('halls');
   const { data: branches } = useBranches();
   const branchOptions = (branches ?? []).map((b) => ({ value: String(b.id), label: b.name ?? '—' }));
@@ -75,6 +80,7 @@ export function FitnessRoomBookingsPage() {
   );
 
   const openHallCreate = () => {
+    if (!canCreate) return;
     setHallEditId(null);
     setHallForm({
       name: '',
@@ -88,6 +94,7 @@ export function FitnessRoomBookingsPage() {
   };
 
   const openHallEdit = (row: ClubHallRow) => {
+    if (!canUpdate) return;
     setHallEditId(row.id);
     setHallForm({
       name: row.name,
@@ -101,6 +108,7 @@ export function FitnessRoomBookingsPage() {
   };
 
   const saveHall = async () => {
+    if (hallEditId ? !canUpdate : !canCreate) return;
     if (!hallForm.name.trim() || !hallForm.hallNumber || !hallForm.capacity || !hallForm.branchId) {
       toast.error(ft('roomBookings.halls'));
       return;
@@ -128,6 +136,7 @@ export function FitnessRoomBookingsPage() {
   };
 
   const openBookingCreate = () => {
+    if (!canCreate) return;
     setBookingEditId(null);
     setBookingForm({
       hallId: halls?.data?.[0] ? String(halls.data[0].id) : '',
@@ -143,6 +152,7 @@ export function FitnessRoomBookingsPage() {
   };
 
   const openBookingEdit = (row: ClubHallBookingRow) => {
+    if (!canUpdate) return;
     setBookingEditId(row.id);
     setBookingForm({
       hallId: String(row.hallId),
@@ -158,6 +168,7 @@ export function FitnessRoomBookingsPage() {
   };
 
   const saveBooking = async () => {
+    if (bookingEditId ? !canUpdate : !canCreate) return;
     if (!bookingForm.hallId || !bookingForm.bookingDate || !bookingForm.startTime || !bookingForm.endTime) {
       toast.error(ft('roomBookings.bookings'));
       return;
@@ -203,21 +214,21 @@ export function FitnessRoomBookingsPage() {
       {
         id: 'actions',
         header: ft('common.actions'),
-        cell: ({ row }) => (
+        cell: ({ row }) => !canUpdate && !canDelete ? null : (
           <RowActions
             editLabel={ft('common.edit')}
             deleteLabel={ft('common.delete')}
-            onEdit={() => openHallEdit(row.original)}
-            onDelete={() =>
+            onEdit={canUpdate ? () => openHallEdit(row.original) : undefined}
+            onDelete={canDelete ? () =>
               void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
-                if (ok) deleteHallMutation.mutate(row.original.id);
+                if (ok && canDelete) deleteHallMutation.mutate(row.original.id);
               })
-            }
+            : undefined}
           />
         ),
       },
     ],
-    [ft],
+    [ft, canUpdate, canDelete, deleteHallMutation],
   );
 
   const bookingColumns = useMemo<ColumnDef<ClubHallBookingRow>[]>(
@@ -235,7 +246,7 @@ export function FitnessRoomBookingsPage() {
       {
         id: 'time',
         header: ft('common.time'),
-        cell: ({ row }) => (
+        cell: ({ row }) => !canUpdate && !canDelete ? null : (
           <span className="nums">
             {formatTime(row.original.startTime)} – {formatTime(row.original.endTime)}
           </span>
@@ -255,17 +266,17 @@ export function FitnessRoomBookingsPage() {
           <RowActions
             editLabel={ft('common.edit')}
             deleteLabel={ft('common.delete')}
-            onEdit={() => openBookingEdit(row.original)}
-            onDelete={() =>
+            onEdit={canUpdate ? () => openBookingEdit(row.original) : undefined}
+            onDelete={canDelete ? () =>
               void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
-                if (ok) deleteBookingMutation.mutate(row.original.id);
+                if (ok && canDelete) deleteBookingMutation.mutate(row.original.id);
               })
-            }
+            : undefined}
           />
         ),
       },
     ],
-    [ft],
+    [ft, canUpdate, canDelete, deleteBookingMutation],
   );
 
   return (
@@ -278,11 +289,12 @@ export function FitnessRoomBookingsPage() {
         </TabsList>
 
         <TabsContent value="halls" className="space-y-4 pt-4">
-          <Button variant="brand" onClick={openHallCreate}>
+          {canCreate ? <Button variant="brand" onClick={openHallCreate}>
             <Plus className="size-4" /> {ft('common.add')}
-          </Button>
+          </Button> : null}
           <FilterBar fields={hallFilters} />
           <DataTable
+            exportSource={{ resource: 'club-halls', params: hallQuery.params }}
             columns={hallColumns}
             data={halls?.data ?? []}
             total={halls?.total ?? 0}
@@ -300,10 +312,11 @@ export function FitnessRoomBookingsPage() {
         </TabsContent>
 
         <TabsContent value="bookings" className="space-y-4 pt-4">
-          <Button variant="brand" onClick={openBookingCreate}>
+          {canCreate ? <Button variant="brand" onClick={openBookingCreate}>
             <Plus className="size-4" /> {ft('common.add')}
-          </Button>
+          </Button> : null}
           <DataTable
+            exportSource={{ resource: 'club-hall-bookings', params: bookingQuery.params }}
             columns={bookingColumns}
             data={bookings?.data ?? []}
             total={bookings?.total ?? 0}
@@ -321,7 +334,7 @@ export function FitnessRoomBookingsPage() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={hallOpen} onOpenChange={setHallOpen}>
+      <Dialog open={hallOpen && (hallEditId ? canUpdate : canCreate)} onOpenChange={setHallOpen}>
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader><DialogTitle>{hallEditId ? ft('common.edit') : ft('common.add')}</DialogTitle></DialogHeader>
           <div className="grid gap-3 py-2">
@@ -356,12 +369,12 @@ export function FitnessRoomBookingsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setHallOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void saveHall()} disabled={saving}>{ft('common.save')}</Button>
+            <Button variant="brand" permissionAction={hallEditId ? 'update' : 'create'} onClick={() => void saveHall()} disabled={saving}>{ft('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={bookingOpen} onOpenChange={setBookingOpen}>
+      <Dialog open={bookingOpen && (bookingEditId ? canUpdate : canCreate)} onOpenChange={setBookingOpen}>
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader><DialogTitle>{bookingEditId ? ft('common.edit') : ft('common.add')}</DialogTitle></DialogHeader>
           <div className="grid gap-3 py-2">
@@ -402,7 +415,7 @@ export function FitnessRoomBookingsPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setBookingOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void saveBooking()} disabled={saving}>{ft('common.save')}</Button>
+            <Button variant="brand" permissionAction={bookingEditId ? 'update' : 'create'} onClick={() => void saveBooking()} disabled={saving}>{ft('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -11,7 +11,7 @@ export class PosPaymentMethodsService {
   private map(row: {
     id: number; name: string; name_en: string | null; code: string; base_method: SalesPaymentMethod; icon: string | null;
     fees: Prisma.Decimal; max_amount: Prisma.Decimal | null; min_amount: Prisma.Decimal | null;
-    supports_mixed_payment: boolean; requires_approval: boolean;
+    supports_mixed_payment: boolean; requires_reference: boolean; requires_approval: boolean;
     approval_threshold: Prisma.Decimal | null; provider_name: string | null;
     is_test_mode: boolean; description: string | null; is_enabled: boolean; sort_order: number;
   }) {
@@ -19,7 +19,8 @@ export class PosPaymentMethodsService {
       id: row.id, name: row.name, nameEn: row.name_en, code: row.code, baseMethod: row.base_method, icon: row.icon,
       fees: Number(row.fees), maxAmount: row.max_amount != null ? Number(row.max_amount) : null,
       minAmount: row.min_amount != null ? Number(row.min_amount) : null,
-      supportsMixedPayment: row.supports_mixed_payment, requiresApproval: row.requires_approval,
+      supportsMixedPayment: row.supports_mixed_payment, requiresReference: row.requires_reference,
+      requiresApproval: row.requires_approval,
       approvalThreshold: row.approval_threshold != null ? Number(row.approval_threshold) : null,
       providerName: row.provider_name, isTestMode: row.is_test_mode, description: row.description,
       isEnabled: row.is_enabled, sortOrder: row.sort_order,
@@ -52,6 +53,7 @@ export class PosPaymentMethodsService {
         name: dto.name, name_en: dto.nameEn, code: dto.code, base_method: dto.baseMethod ?? SalesPaymentMethod.card, icon: dto.icon,
         fees: dto.fees ?? 0, max_amount: dto.maxAmount, min_amount: dto.minAmount,
         supports_mixed_payment: dto.supportsMixedPayment ?? true,
+        requires_reference: dto.requiresReference ?? false,
         requires_approval: dto.requiresApproval ?? false,
         approval_threshold: dto.approvalThreshold,
         provider_name: dto.providerName, api_key: dto.apiKey, api_secret: dto.apiSecret,
@@ -69,7 +71,8 @@ export class PosPaymentMethodsService {
       data: {
         name: dto.name, name_en: dto.nameEn, code: dto.code, base_method: dto.baseMethod, icon: dto.icon,
         fees: dto.fees, max_amount: dto.maxAmount, min_amount: dto.minAmount,
-        supports_mixed_payment: dto.supportsMixedPayment, requires_approval: dto.requiresApproval,
+        supports_mixed_payment: dto.supportsMixedPayment, requires_reference: dto.requiresReference,
+        requires_approval: dto.requiresApproval,
         approval_threshold: dto.approvalThreshold, provider_name: dto.providerName,
         api_key: dto.apiKey, api_secret: dto.apiSecret, is_test_mode: dto.isTestMode,
         description: dto.description, is_enabled: dto.isEnabled, sort_order: dto.sortOrder,

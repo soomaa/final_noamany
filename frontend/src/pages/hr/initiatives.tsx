@@ -19,11 +19,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
 
@@ -49,6 +50,12 @@ const STATUS_LABEL: Record<InitiativeStatus, { key: StatusKey; label: string }> 
 
 export function InitiativesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('affairs.initiatives:create');
+  const canUpdate = can('affairs.initiatives:update');
+  const canDelete = can('affairs.initiatives:delete');
+  const canApprove = can('affairs.initiatives:approve');
+  const canReject = can('affairs.initiatives:reject');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<InitiativeRow>(
     'initiatives',
@@ -173,11 +180,13 @@ export function InitiativesPage() {
       header: ui('الإجراءات'),
       cell: ({ row }) => {
         const isPending = row.original.status === 'pending';
+        const hasWorkflow = isPending && (canApprove || canReject);
+        if (!hasWorkflow && !canUpdate && !canDelete) return null;
         return (
           <div className="flex gap-1">
-            {isPending && (
+            {isPending && (canApprove || canReject) && (
               <>
-                <Button
+                {canApprove ? <Button
                   variant="ghost"
                   size="icon"
                   aria-label={ui('اعتماد')}
@@ -191,8 +200,8 @@ export function InitiativesPage() {
                   }}
                 >
                   <Check className="size-4 text-success" />
-                </Button>
-                <Button
+                </Button> : null}
+                {canReject ? <Button
                   variant="ghost"
                   size="icon"
                   aria-label={ui('رفض')}
@@ -202,33 +211,37 @@ export function InitiativesPage() {
                   }}
                 >
                   <X className="size-4 text-destructive" />
-                </Button>
+                </Button> : null}
               </>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={ui('تعديل')}
-              onClick={() => openEdit(row.original)}
-            >
-              <Pencil className="size-4" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={ui('حذف')}
-              onClick={async () => {
-                const ok = await confirm({
-                  title: ui('حذف المبادرة'),
-                  description: ui('هل تريد حذف هذه المبادرة؟'),
-                  confirmLabel: ui('حذف'),
-                  variant: 'destructive',
-                });
-                if (ok) deleteMutation.mutate(row.original.id);
-              }}
-            >
-              <Trash2 className="size-4 text-destructive" />
-            </Button>
+            {canUpdate ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={ui('تعديل')}
+                onClick={() => openEdit(row.original)}
+              >
+                <Pencil className="size-4" />
+              </Button>
+            ) : null}
+            {canDelete ? (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label={ui('حذف')}
+                onClick={async () => {
+                  const ok = await confirm({
+                    title: ui('حذف المبادرة'),
+                    description: ui('هل تريد حذف هذه المبادرة؟'),
+                    confirmLabel: ui('حذف'),
+                    variant: 'destructive',
+                  });
+                  if (ok) deleteMutation.mutate(row.original.id);
+                }}
+              >
+                <Trash2 className="size-4 text-destructive" />
+              </Button>
+            ) : null}
           </div>
         );
       },
@@ -246,12 +259,15 @@ export function InitiativesPage() {
         isError={isError}
         error={error}
         actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('مبادرة جديدة')}
-          </Button>
+          canCreate ? (
+            <Button variant="brand" size="sm" onClick={openCreate}>
+              <Plus className="size-4" /> {ui('مبادرة جديدة')}
+            </Button>
+          ) : undefined
         }
       >
         <DataTable
+          exportSource={{ resource: 'initiatives', params }}
           columns={columns}
           data={data?.data ?? []}
           total={data?.total ?? 0}
@@ -334,7 +350,7 @@ export function InitiativesPage() {
             <Button variant="outline" onClick={() => setFormOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()}>{ui('حفظ')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()}>{ui('حفظ')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

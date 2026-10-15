@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState } from 'react';
 
 type Theme = 'light' | 'dark';
 
-const STORAGE_KEY = 'one80_theme';
+const STORAGE_KEY = 'hr_theme';
 
 interface ThemeContextValue {
   theme: Theme;

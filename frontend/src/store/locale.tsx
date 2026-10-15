@@ -1,26 +1,20 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import ar from '@/locales/ar.json';
-import en from '@/locales/en.json';
-import clubAr from '@/locales/club.ar.json';
-import clubEn from '@/locales/club.en.json';
-import fitnessAr from '@/locales/fitness.ar.json';
-import fitnessEn from '@/locales/fitness.en.json';
+import ar from '@/locales/core.ar.json';
+import en from '@/locales/core.en.json';
 import arShared from '@/locales/shared.ar.json';
 import enShared from '@/locales/shared.en.json';
+import uiMap from '@/locales/hr-ui-map.json';
 import { mergeLocales } from '@/lib/i18n-merge';
 import { translateUiText } from '@/lib/ui-translate';
-import { getUiStaticMap, setUiStaticMap } from '@/lib/ui-static';
+import { localeDictionaryOverlays } from '@/ports/locale-dictionary-registry';
+import { uiTranslationMap } from '@/ports/ui-translation-registry';
 
 export type Locale = 'ar' | 'en';
 export type Direction = 'rtl' | 'ltr';
 export type TFunction = (key: string, vars?: Record<string, string | number>) => string;
 
-const dictionaries: Record<Locale, Record<string, unknown>> = {
-  ar: mergeLocales(ar, arShared, { club: clubAr, fitness: fitnessAr }),
-  en: mergeLocales(en, enShared, { club: clubEn, fitness: fitnessEn }),
-};
-
-const STORAGE_KEY = 'one80_locale';
+const BASE_UI_MAP = uiMap as Record<string, string>;
+const STORAGE_KEY = 'hr_locale';
 
 interface LocaleContextValue {
   locale: Locale;
@@ -54,11 +48,14 @@ function resolve(obj: Record<string, unknown>, key: string): string | undefined 
 }
 
 export function LocaleProvider({ children }: { children: React.ReactNode }) {
+  const dictionaries = useMemo<Record<Locale, Record<string, unknown>>>(() => ({
+    ar: mergeLocales(ar, arShared, ...localeDictionaryOverlays('ar')),
+    en: mergeLocales(en, enShared, ...localeDictionaryOverlays('en')),
+  }), []);
   const [locale, setLocaleState] = useState<Locale>(() => {
     const saved = localStorage.getItem(STORAGE_KEY) as Locale | null;
     return saved === 'en' || saved === 'ar' ? saved : 'ar';
   });
-  const [uiMap, setUiMap] = useState<Record<string, string>>(() => getUiStaticMap());
 
   const dir: Direction = locale === 'ar' ? 'rtl' : 'ltr';
 
@@ -68,22 +65,7 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
     root.setAttribute('dir', dir);
     localStorage.setItem(STORAGE_KEY, locale);
     document.title = resolve(dictionaries[locale], 'app.title') ?? document.title;
-  }, [locale, dir]);
-
-  useEffect(() => {
-    if (locale !== 'en' || Object.keys(uiMap).length > 0) return;
-    let active = true;
-    void import('@/locales/ui-map.json').then((module) => {
-      if (active) {
-        const map = module.default as Record<string, string>;
-        setUiStaticMap(map);
-        setUiMap(map);
-      }
-    });
-    return () => {
-      active = false;
-    };
-  }, [locale, uiMap]);
+  }, [locale, dir, dictionaries]);
 
   const t = useCallback<TFunction>(
     (key, vars) => {
@@ -91,19 +73,19 @@ export function LocaleProvider({ children }: { children: React.ReactNode }) {
       if (vars) {
         for (const [k, v] of Object.entries(vars)) {
           const str = String(v);
-          // Support both {{var}} (app locales) and {var} (club/fitness locales).
+          // Support both common interpolation forms used by host locale adapters.
           value = value.replace(new RegExp(`\\{\\{${k}\\}\\}`, 'g'), str);
           value = value.replace(new RegExp(`\\{${k}\\}`, 'g'), str);
         }
       }
       return value;
     },
-    [locale],
+    [locale, dictionaries],
   );
 
   const ui = useCallback(
-    (text: string) => translateUiText(text, locale, uiMap),
-    [locale, uiMap],
+    (text: string) => locale === 'ar' ? text : translateUiText(text, locale, uiTranslationMap(BASE_UI_MAP)),
+    [locale],
   );
 
   // Persist before React renders the next language. A small set of legacy helpers reads

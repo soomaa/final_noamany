@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,7 +39,7 @@ export const BackdropsManager = () => {
           <ImagePlus className="h-4 w-4 text-primary" />
           {ui('إضافة خلفية مخصصة جديدة')}
         </Label>
-        <span className="text-[10px] text-muted-foreground">{backdrops.length} {ui('خلفية')}</span>
+        <span className="text-[10px] text-muted-foreground">{formatDisplayNumber(backdrops.length)} {ui('خلفية')}</span>
       </div>
 
       {/* Add form — paste a direct image URL (host the image anywhere and paste the link). */}
@@ -61,7 +62,7 @@ export const BackdropsManager = () => {
               }
             }}
           />
-          <Button type="button" onClick={onAddUrl} disabled={busy || !urlInput.trim()} className="bg-[#7CB342] hover:bg-[#558B2F]">
+          <Button permissionAction={null} type="button" onClick={onAddUrl} disabled={busy || !urlInput.trim()} className="bg-[#7CB342] hover:bg-[#558B2F]">
             <Link2 className="h-4 w-4 ml-1" />
             {ui('إضافة')}
           </Button>

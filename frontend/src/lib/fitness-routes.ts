@@ -1,7 +1,6 @@
 /** Training & fitness module routes — mirrors SwatGym sidebar under `/club/fitness`. */
 export const FITNESS_ROUTES = {
-  barcodeCheckIn: '/club/fitness/barcode-check-in',
-  spaAttendanceReport: '/club/fitness/spa-attendance',
+  inbody: '/club/fitness/inbody',
   programs: '/club/fitness/programs',
   templates: '/club/fitness/templates',
   strength: '/club/fitness/strength',
@@ -9,6 +8,7 @@ export const FITNESS_ROUTES = {
   assessments: '/club/fitness/assessments',
   scheduling: {
     schedule: '/club/fitness/scheduling',
+    bookingBoard: '/club/fitness/booking-board',
     classes: '/club/fitness/classes',
     classBooking: '/club/fitness/class-booking',
     roomBookings: '/club/fitness/room-bookings',
@@ -16,16 +16,11 @@ export const FITNESS_ROUTES = {
   },
   trainers: {
     list: '/club/fitness/trainers',
+    performance: '/club/fitness/trainer-performance',
     payments: '/club/fitness/trainer-payments',
     search: '/club/fitness/trainer-search',
     ratings: '/club/fitness/trainer-ratings',
     settings: '/club/fitness/trainer-settings',
-    targets: '/club/fitness/trainer-targets',
-    evaluations: '/club/fitness/trainer-evaluations',
-    evaluationCriteria: '/club/fitness/trainer-evaluation-criteria',
-    branchAnalysis: '/club/fitness/branch-analysis',
-    receptionAnalysis: '/club/fitness/reception-analysis',
-    shiftAnalysis: '/club/fitness/shift-analysis',
   },
   facilities: {
     list: '/club/fitness/facilities',

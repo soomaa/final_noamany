@@ -7,6 +7,8 @@ import { ListClubEventsDto } from './dto/list-club-events.dto';
 import { UpsertClubEventDto } from './dto/upsert-club-event.dto';
 import { ChangeEventStatusDto } from './dto/change-event-status.dto';
 import { buildEventNumber, computeRegistrationOpen, localDateString, toNum } from './club-events.utils';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 type EventStatus =
   | 'draft'
@@ -36,15 +38,19 @@ const TRANSITIONS: Record<EventStatus, EventStatus[]> = {
   cancelled: [],
 };
 
-/** Transitions that require the stricter `:approve` permission suffix instead of `:update`. */
-const APPROVE_GATED = new Set<string>(['pending_approval->approved', 'pending_approval->rejected', 'completed->closed']);
-
 @Injectable()
 export class ClubEventsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: BusinessAuditService,
+    private readonly branchScope: BranchScopeService,
   ) {}
+
+  private assertBranchAccess(user: JwtUser | undefined, branchId: number) {
+    if (!this.branchScope.isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+    }
+  }
 
   private mapEvent(
     row: Prisma.club_eventsGetPayload<{
@@ -158,7 +164,7 @@ export class ClubEventsService {
     staff: true,
   };
 
-  async list(q: ListClubEventsDto) {
+  async list(q: ListClubEventsDto, user?: JwtUser) {
     const and: Prisma.club_eventsWhereInput[] = [{ is_deleted: false }];
 
     if (q.search?.trim()) {
@@ -168,6 +174,8 @@ export class ClubEventsService {
       });
     }
     if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
+    const scope = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    if (scope !== null) and.push({ branch_id: { in: scope } });
     if (q.kind) and.push({ kind: q.kind as never });
     if (q.categoryId) and.push({ category_id: Number(q.categoryId) });
     if (q.status && q.status !== 'all') and.push({ status: q.status as never });
@@ -191,18 +199,20 @@ export class ClubEventsService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.club_events.findFirst({
       where: { id, is_deleted: false },
       include: this.detailInclude,
     });
     if (!row) throw new NotFoundException('الفعالية غير موجودة');
+    this.assertBranchAccess(user, row.branch_id);
     return this.mapEvent(row);
   }
 
-  private async findRawOrThrow(id: number) {
+  private async findRawOrThrow(id: number, user?: JwtUser) {
     const row = await this.prisma.club_events.findFirst({ where: { id, is_deleted: false } });
     if (!row) throw new NotFoundException('الفعالية غير موجودة');
+    this.assertBranchAccess(user, row.branch_id);
     return row;
   }
 
@@ -229,10 +239,12 @@ export class ClubEventsService {
     });
   }
 
-  async create(dto: UpsertClubEventDto, userId?: number) {
+  async create(dto: UpsertClubEventDto, user?: JwtUser) {
     if (!dto.title || !dto.categoryId || !dto.kind || !dto.branchId || !dto.startDate || !dto.endDate) {
       throw new BadRequestException('الحقول المطلوبة: العنوان، التصنيف، النوع، الفرع، تاريخ البداية والنهاية');
     }
+    this.assertBranchAccess(user, dto.branchId);
+    const userId = user?.sub;
 
     const category = await this.prisma.club_event_categories.findUnique({ where: { id: dto.categoryId } });
     if (!category) throw new BadRequestException('التصنيف غير موجود');
@@ -286,8 +298,10 @@ export class ClubEventsService {
     return this.mapEvent(row);
   }
 
-  async update(id: number, dto: Partial<UpsertClubEventDto>, userId?: number) {
-    const existing = await this.findRawOrThrow(id);
+  async update(id: number, dto: Partial<UpsertClubEventDto>, user?: JwtUser) {
+    const existing = await this.findRawOrThrow(id, user);
+    if (dto.branchId != null) this.assertBranchAccess(user, dto.branchId);
+    const userId = user?.sub;
 
     if (existing.status === 'completed' || existing.status === 'closed' || existing.status === 'cancelled') {
       throw new BadRequestException('لا يمكن تعديل فعالية مكتملة أو مغلقة أو ملغاة');
@@ -354,8 +368,9 @@ export class ClubEventsService {
    * approved/rejected and completed→closed; other transitions only need `:update` (checked by the
    * controller's base `@RequiresPermission`, so this just guards the approve-gated subset).
    */
-  async changeStatus(id: number, dto: ChangeEventStatusDto, userId: number | undefined, canApprove: boolean) {
-    const existing = await this.findRawOrThrow(id);
+  async changeStatus(id: number, dto: ChangeEventStatusDto, user: JwtUser | undefined, canTransition: boolean) {
+    const existing = await this.findRawOrThrow(id, user);
+    const userId = user?.sub;
     const from = existing.status as EventStatus;
     const to = dto.status as EventStatus;
 
@@ -369,9 +384,8 @@ export class ClubEventsService {
       throw new BadRequestException(`لا يمكن الانتقال من الحالة "${from}" إلى "${to}"`);
     }
 
-    const transitionKey = `${from}->${to}`;
-    if ((APPROVE_GATED.has(transitionKey) || isCancel) && !canApprove) {
-      throw new ForbiddenException('هذا الإجراء يتطلب صلاحية الاعتماد');
+    if (!canTransition) {
+      throw new ForbiddenException('ليس لديك صلاحية تنفيذ هذا الانتقال');
     }
 
     if (to === 'rejected' && !dto.reason?.trim()) {
@@ -418,12 +432,14 @@ export class ClubEventsService {
     return this.mapEvent(row);
   }
 
-  async duplicate(id: number, userId?: number) {
+  async duplicate(id: number, user?: JwtUser) {
     const existing = await this.prisma.club_events.findFirst({
       where: { id, is_deleted: false },
       include: { tiers: true, sessions: true },
     });
     if (!existing) throw new NotFoundException('الفعالية غير موجودة');
+    this.assertBranchAccess(user, existing.branch_id);
+    const userId = user?.sub;
 
     const eventNumber = await this.generateEventNumber();
 
@@ -512,11 +528,12 @@ export class ClubEventsService {
       after: { eventNumber, sourceEventId: id },
     });
 
-    return this.findOne(row.id);
+    return this.findOne(row.id, user);
   }
 
-  async remove(id: number, userId?: number) {
-    const existing = await this.findRawOrThrow(id);
+  async remove(id: number, user?: JwtUser) {
+    const existing = await this.findRawOrThrow(id, user);
+    const userId = user?.sub;
     if (existing.status !== 'draft' && existing.status !== 'cancelled') {
       throw new BadRequestException('لا يمكن حذف الفعالية إلا في حالة المسودة أو الملغاة');
     }
@@ -535,8 +552,12 @@ export class ClubEventsService {
     return { success: true };
   }
 
-  async statistics() {
-    const rows = await this.prisma.club_events.findMany({ where: { is_deleted: false } });
+  async statistics(user?: JwtUser) {
+    const scope = this.branchScope.resolveListFilter(user, null);
+    const branchFilter = scope === null ? {} : { branch_id: { in: scope } };
+    const rows = await this.prisma.club_events.findMany({
+      where: { is_deleted: false, ...branchFilter },
+    });
     const byStatus: Record<string, number> = {};
     const byKind: Record<string, number> = {};
     let upcoming = 0;
@@ -555,6 +576,7 @@ export class ClubEventsService {
         status: 'completed',
         payment_date: { gte: `${monthStart}-01` },
         type: 'payment',
+        ...branchFilter,
       },
       select: { amount: true },
     });

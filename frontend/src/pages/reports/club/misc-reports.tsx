@@ -10,7 +10,7 @@ import { BranchFilter, normalizeBranchParam } from '@/components/reports/branch-
 import { fetchAllReportRows } from '@/lib/report-fetch';
 import { api } from '@/lib/api';
 import { formatMoney, formatTimeFromDate } from '@/lib/formatters';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 /* ============================================================================
@@ -186,7 +186,7 @@ export function ClubSalesStaffReportPage() {
   const formatTimestamp = (value: string) => {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return toArabicDigits(value || '—');
-    return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'ar-EG', {
+    return new Intl.DateTimeFormat(locale === 'en' ? 'en-US' : 'ar-EG-u-nu-latn', {
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
@@ -242,7 +242,7 @@ export function ClubSalesStaffReportPage() {
         cell: ({ row }) => (
           <div>
             <p className="font-medium">{row.original.memberName || '—'}</p>
-            <p className="text-xs text-muted-foreground nums">{toArabicDigits(row.original.memberCode ?? '—')}</p>
+            <p className="text-xs text-muted-foreground nums">{formatDigits(row.original.memberCode ?? '—')}</p>
           </div>
         ),
       },
@@ -620,26 +620,23 @@ export function ClubLockersReportPage() {
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
   const [branch, setBranch] = useState('all');
-  const [gender, setGender] = useState('all');
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-lockers', startDate, endDate, branch, gender],
+    queryKey: ['reports', 'club-lockers', startDate, endDate, branch],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const data = await fetchAllReportRows<{
         id: number;
         lockerNumber: string;
-        customerName: string | null;
-        subscriptionStartDate: string | null;
-        subscriptionEndDate: string | null;
-        subscriptionValue: number | null;
-        gender: 'male' | 'female' | null;
+        memberName: string | null;
+        startDate: string | null;
+        endDate: string | null;
+        fee: number | null;
         status: string;
-      }>('/club-locker-subscriptions', {
+      }>('/club-lockers', {
         dateFrom: startDate,
         dateTo: endDate,
-        ...(branchId ? { mainBranchId: String(branchId) } : {}),
-        ...(gender !== 'all' ? { gender } : {}),
+        ...(branchId ? { branch: String(branchId) } : {}),
       });
       return { data, total: data.length };
     },
@@ -650,11 +647,10 @@ export function ClubLockersReportPage() {
   const columns = useMemo<ColumnDef<(typeof rows)[number]>[]>(
     () => [
       { accessorKey: 'lockerNumber', header: ui('رقم اللوكر') },
-      { accessorKey: 'customerName', header: ui('العضو'), cell: ({ getValue }) => getValue() ?? '—' },
-      { accessorKey: 'gender', header: 'الفئة', cell: ({ getValue }) => getValue() === 'female' ? 'حريمي' : getValue() === 'male' ? 'رجالي' : '—' },
-      { accessorKey: 'subscriptionStartDate', header: ui('البداية'), cell: ({ getValue }) => toArabicDigits(String(getValue() ?? '—')) },
-      { accessorKey: 'subscriptionEndDate', header: ui('النهاية'), cell: ({ getValue }) => toArabicDigits(String(getValue() ?? '—')) },
-      { accessorKey: 'subscriptionValue', header: ui('الرسوم'), cell: ({ getValue }) => (getValue() != null ? toArabicDigits(Number(getValue())) : '—') },
+      { accessorKey: 'memberName', header: ui('العضو'), cell: ({ getValue }) => getValue() ?? '—' },
+      { accessorKey: 'startDate', header: ui('البداية'), cell: ({ getValue }) => toArabicDigits(String(getValue() ?? '—')) },
+      { accessorKey: 'endDate', header: ui('النهاية'), cell: ({ getValue }) => toArabicDigits(String(getValue() ?? '—')) },
+      { accessorKey: 'fee', header: ui('الرسوم'), cell: ({ getValue }) => (getValue() != null ? toArabicDigits(Number(getValue())) : '—') },
       {
         accessorKey: 'status',
         header: ui('الحالة'),
@@ -667,12 +663,12 @@ export function ClubLockersReportPage() {
     [ui],
   );
 
-  const totalFees = rows.reduce((s, r) => s + Number(r.subscriptionValue ?? 0), 0);
+  const totalFees = rows.reduce((s, r) => s + Number(r.fee ?? 0), 0);
 
   const exportCsv = () =>
     downloadCsv(`lockers-${startDate}-${endDate}`, [
-      [ui('رقم اللوكر'), ui('العضو'), 'الفئة', ui('البداية'), ui('النهاية'), ui('الرسوم'), ui('الحالة')],
-      ...rows.map((r) => [r.lockerNumber, r.customerName ?? '', r.gender === 'female' ? 'حريمي' : r.gender === 'male' ? 'رجالي' : '', r.subscriptionStartDate ?? '', r.subscriptionEndDate ?? '', r.subscriptionValue ?? 0, r.status]),
+      [ui('رقم اللوكر'), ui('العضو'), ui('البداية'), ui('النهاية'), ui('الرسوم'), ui('الحالة')],
+      ...rows.map((r) => [r.lockerNumber, r.memberName ?? '', r.startDate ?? '', r.endDate ?? '', r.fee ?? 0, r.status]),
     ]);
 
   return (
@@ -685,7 +681,7 @@ export function ClubLockersReportPage() {
           endDate={endDate}
           onStartChange={setStartDate}
           onEndChange={setEndDate}
-          extra={<div className="flex gap-2"><BranchFilter value={branch} onChange={setBranch} /><select className="h-10 rounded-md border bg-background px-3 text-sm" value={gender} onChange={(event) => setGender(event.target.value)}><option value="all">كل الفئات</option><option value="male">رجالي</option><option value="female">حريمي</option></select></div>}
+          extra={<BranchFilter value={branch} onChange={setBranch} />}
         />
       }
       stats={

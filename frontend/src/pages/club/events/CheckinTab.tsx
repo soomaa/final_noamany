@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { MemberCell } from '@/components/club/member-cell';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -6,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { apiError } from '@/lib/api';
 import { clubEventsApi } from '@/lib/api/club-events';
 import { useLocale } from '@/store/locale';
+import { usePermission } from '@/hooks/use-permission';
 
 interface RosterSession {
   id: number;
@@ -46,6 +48,8 @@ interface StatisticsResponse {
 export function CheckinTab({ eventId }: { eventId: number }) {
   const { ui } = useLocale();
   const qc = useQueryClient();
+  const { can } = usePermission();
+  const canCreate = can('club.events.checkin:create');
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ['club-event-roster', eventId],
@@ -58,8 +62,9 @@ export function CheckinTab({ eventId }: { eventId: number }) {
   });
 
   const checkinMutation = useMutation({
-    mutationFn: (registrationId: number) =>
-      clubEventsApi.checkinManual({ registrationId, eventId }),
+    mutationFn: (registrationId: number) => canCreate
+      ? clubEventsApi.checkinManual({ registrationId, eventId })
+      : Promise.reject(new Error(ui('غير مصرح'))),
     onSuccess: () => {
       toast.success(ui('تم تسجيل الحضور'));
       void qc.invalidateQueries({ queryKey: ['club-event-roster', eventId] });
@@ -76,15 +81,15 @@ export function CheckinTab({ eventId }: { eventId: number }) {
       {stats && (
         <div className="grid grid-cols-3 gap-3">
           <div className="rounded-md border p-3 text-center">
-            <div className="text-2xl font-bold">{stats.total}</div>
+            <div className="text-2xl font-bold">{formatDisplayNumber(stats.total)}</div>
             <div className="text-xs text-muted-foreground mt-1">{ui('إجمالي المسجلين')}</div>
           </div>
           <div className="rounded-md border p-3 text-center">
-            <div className="text-2xl font-bold text-teal-600">{stats.attended}</div>
+            <div className="text-2xl font-bold text-teal-600">{formatDisplayNumber(stats.attended)}</div>
             <div className="text-xs text-muted-foreground mt-1">{ui('حضر')}</div>
           </div>
           <div className="rounded-md border p-3 text-center">
-            <div className="text-2xl font-bold text-slate-500">{stats.noShow}</div>
+            <div className="text-2xl font-bold text-slate-500">{formatDisplayNumber(stats.noShow)}</div>
             <div className="text-xs text-muted-foreground mt-1">{ui('لم يحضر')}</div>
           </div>
         </div>
@@ -132,8 +137,10 @@ export function CheckinTab({ eventId }: { eventId: number }) {
                         <span className="inline-flex items-center gap-1 text-teal-600 text-xs">
                           <CheckCircle2 className="h-4 w-4" /> {ui('حضر')}
                         </span>
-                      ) : (
+                      ) : canCreate ? (
                         <Button
+                          permissionResource="club.events.checkin"
+                          permissionAction="create"
                           variant="ghost"
                           size="sm"
                           className="h-7 text-xs text-muted-foreground"
@@ -142,7 +149,7 @@ export function CheckinTab({ eventId }: { eventId: number }) {
                         >
                           <Circle className="h-4 w-4 ms-1" /> {ui('تسجيل حضور')}
                         </Button>
-                      )}
+                      ) : '—'}
                     </td>
                   ))}
                 </tr>

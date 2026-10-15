@@ -2,14 +2,14 @@ import { PermissionEngineService } from '../rbac/engine/permission-engine.servic
 import { JwtUser } from '../../common/types/jwt-user';
 
 /**
- * Finance creator scope — same idea as daily cashier report:
- * non-admins are locked to their own user id; system admins may view everyone
- * or optionally filter by `requestedUserId`.
+ * Respect the configured finance data scope. Branch isolation is applied by each caller.
+ * Missing scope and explicit own scope stay restricted to the current creator.
  */
 export async function resolveFinanceCreatorScope(
   permissions: PermissionEngineService,
   user: JwtUser | undefined,
   requestedUserId?: string | number | null,
+  resource = 'financial-reports',
 ): Promise<{
   isSystemAdmin: boolean;
   lockedUser: boolean;
@@ -20,16 +20,18 @@ export async function resolveFinanceCreatorScope(
     return { isSystemAdmin: false, lockedUser: true, selectedUserId: -1 };
   }
   const isSystemAdmin = await permissions.isSuperAdmin(user.sub);
+  const dataScope = isSystemAdmin ? 'global' : await permissions.scopeFor(user.sub, resource);
+  const canViewBranch = isSystemAdmin || dataScope === 'global' || dataScope === 'branch';
   const parsed = Number(requestedUserId);
   const selectedUserId =
-    isSystemAdmin && Number.isInteger(parsed) && parsed > 0
+    canViewBranch && Number.isInteger(parsed) && parsed > 0
       ? parsed
-      : isSystemAdmin
+      : canViewBranch
         ? null
         : user.sub;
   return {
     isSystemAdmin,
-    lockedUser: !isSystemAdmin,
+    lockedUser: !canViewBranch,
     selectedUserId,
   };
 }
@@ -39,4 +41,3 @@ export function createdByFilter(
 ): { created_by: number } | Record<string, never> {
   return selectedUserId != null ? { created_by: selectedUserId } : {};
 }
-

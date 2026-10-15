@@ -3,6 +3,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { SalaryScaleService } from './salary-scale.service';
+import { CreateSalaryScaleDto, UpdateSalaryScaleDto } from './dto/salary-scale.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('payroll/salary-scale')
@@ -17,15 +18,21 @@ export class SalaryScaleController {
 
   @Post()
   @RequiresPermission('payroll.salary_scale:create')
-  create(@Body() body: { mo2hel: string; martba: string; dawamType: string; salaryStart: number; yearBonusValue: number }) {
+  create(@Body() body: CreateSalaryScaleDto) {
     return this.service.create(body);
+  }
+
+  @Post(':id/apply')
+  @RequiresPermission('payroll.salary_scale:update')
+  applyToEmployees(@Param('id', ParseIntPipe) id: number) {
+    return this.service.applyToEmployees(id);
   }
 
   @Patch(':id')
   @RequiresPermission('payroll.salary_scale:update')
   update(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { mo2hel?: string; martba?: string; dawamType?: string; salaryStart?: number; yearBonusValue?: number },
+    @Body() body: UpdateSalaryScaleDto,
   ) {
     return this.service.update(id, body);
   }

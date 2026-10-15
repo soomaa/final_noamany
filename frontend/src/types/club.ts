@@ -6,6 +6,7 @@ export interface ClubMemberListItem {
   email: string | null;
   gender: 'male' | 'female';
   cardNumber: string | null;
+  scannerCode: string | null;
   dateOfBirth: string | null;
   address: string | null;
   maritalStatus: string | null;
@@ -36,99 +37,10 @@ export interface ClubMemberListItem {
   } | null;
 }
 
-/** Minimal payload used by member name/code search fields. */
-export interface ClubMemberLookupItem {
-  id: number;
-  memberCode: string;
-  name: string;
-  phone: string | null;
-  gender: 'male' | 'female';
-  branchId: number;
-}
-
 export interface ClubMemberStatistics {
   total: number;
-  memberActive: number;
-  memberInactive: number;
   active: number;
   inactive: number;
-}
-
-export interface ClubMemberOverviewSubscription {
-  id: number;
-  subscriptionNumber: string;
-  subscriptionType: string | null;
-  subscriptionTypeName: string | null;
-  branchId: number;
-  startDate: string;
-  endDate: string;
-  status: 'active' | 'expired' | 'upcoming' | 'frozen';
-  isLinkedToSessions: boolean;
-  sessionsCount: number | null;
-  sessionsUsed: number | null;
-  isLinkedToSpa: boolean;
-  spaCount: number | null;
-  spaUsed: number;
-  inbodyCount: number | null;
-  inbodyUsed: number;
-  daysRemaining: number | null;
-  daysOverdue: number | null;
-  daysUntilStart: number | null;
-  paidAmount: number;
-  remainingAmount: number;
-  activeFreeze: {
-    startDate: string;
-    plannedEndDate: string | null;
-    plannedDays: number;
-    actualDays: number | null;
-    reason: string | null;
-  } | null;
-}
-
-export interface ClubMemberOverviewLocker {
-  id: number;
-  subscriptionNumber: string;
-  branchId: number;
-  lockerNumber: string | null;
-  subscriptionTypeName: string | null;
-  startDate: string;
-  endDate: string;
-  status: 'active' | 'expired' | 'upcoming' | 'frozen';
-  paidAmount: number;
-  remainingAmount: number;
-}
-
-export interface ClubMemberOverviewFreeze {
-  subscriptionId: number;
-  subscriptionNumber: string | null;
-  subscriptionType: string | null;
-  startDate: string;
-  endDate: string | null;
-  plannedDays: number;
-  actualDays: number | null;
-  isActive: boolean;
-  reason: string | null;
-}
-
-export interface ClubMemberOverview {
-  member: ClubMemberListItem & {
-    isBlocked: boolean;
-    blockReason: string | null;
-    lastCheckIn: string | null;
-  };
-  subscriptionCount: number;
-  lockerSubscriptionCount: number;
-  suspendedDays: number;
-  frozenCount: number;
-  subscriptions: ClubMemberOverviewSubscription[];
-  lockerSubscriptions: ClubMemberOverviewLocker[];
-  freezes: ClubMemberOverviewFreeze[];
-  points?: {
-    memberId: number; memberCode: string | null; points: number; value: number;
-    history: Array<{ id: number; type: string; points: number; value: number | null; action: string | null; occurredOn: string | null; expiresOn: string | null; subscriptionId: number | null }>;
-  } | null;
-  recentReceipts?: Array<{ id: number; receiptNumber: string; date: string; amount: number; status: string; description: string | null }>;
-  recentAttendance?: Array<{ id: number; checkIn: string; checkOut: string | null; subscriptionType: string | null; type: string; notes: string | null }>;
 }
 
 export interface ClubMembershipType {
@@ -146,6 +58,7 @@ export interface ClubMemberFormData {
   phone: string;
   gender: 'male' | 'female';
   cardNumber: string;
+  scannerCode: string;
   email?: string;
   dateOfBirth?: string;
   address?: string;
@@ -169,60 +82,6 @@ export interface ClubMemberCreateResponse {
   generatedCredentials: { username: string; password: string } | null;
 }
 
-export interface ClubMemberAttachment {
-  id: number;
-  type: string;
-  label: string | null;
-  originalFilename: string;
-  mimeType: string;
-  byteSize: number;
-  uploadedAt: string;
-  uploadedBy: number | null;
-  downloadUrl: string;
-}
-
-export interface ClubMemberWorkspaceSubscription {
-  id: number;
-  memberId: number | null;
-  subscriptionNumber: string;
-  subscriptionType: string | null;
-  registrationDate: string;
-  startDate: string;
-  endDate: string;
-  subscriptionValue: number;
-  paidAmount: number;
-  remainingAmount: number;
-  discountValue: number;
-  status: 'active' | 'expired' | 'upcoming' | 'frozen';
-  isLinkedToSessions: boolean;
-  sessionsCount: number | null;
-  sessionsUsed: number | null;
-}
-
-export interface ClubMemberWorkspaceLockerSubscription {
-  id: number;
-  memberId: number | null;
-  subscriptionNumber: string;
-  startDate: string;
-  endDate: string;
-  paidAmount: number;
-  status: 'active' | 'expired' | 'upcoming';
-  lockerNumber: string | null;
-  subscriptionType: string | null;
-}
-
-export interface ClubMemberWorkspace {
-  member: ClubMemberListItem;
-  summary: {
-    subscriptionCount: number;
-    totalPaid: number;
-    totalRemaining: number;
-    pointsBalance: number;
-  };
-  subscriptions: ClubMemberWorkspaceSubscription[];
-  lockerSubscriptions: ClubMemberWorkspaceLockerSubscription[];
-}
-
 export interface DuplicateCheckResult {
   hasDuplicates: boolean;
   duplicates: Array<{
@@ -242,7 +101,6 @@ export interface ClubSubscriptionListItem {
   subscriptionNumber: string;
   registrationDate: string;
   branchId: number;
-  branchName?: string | null;
   memberId: number | null;
   memberCode?: string | null;
   memberPhone?: string | null;
@@ -251,17 +109,17 @@ export interface ClubSubscriptionListItem {
   specialClassTypeId?: number | null;
   privatePackageId?: number | null;
   privateTrainerId?: number | null;
+  renewedFromSubscriptionId?: number | null;
+  renewalSuccessorId?: number | null;
   subscriptionType: string | null;
-  subscriptionTypeName?: string | null;
   subscriptionStartDate: string;
   subscriptionEndDate: string;
+  projectedSubscriptionEndDate?: string | null;
   subscriptionValue: number;
   discountEnabled: boolean;
   discountCodeId?: number | null;
   discountPercentage?: number | null;
   discountValue: number;
-  /** Points consumed to create this subscription; points are never editable afterwards. */
-  pointsRedeemed?: number;
   paidAmount: number;
   transferredCreditAmount?: number;
   settledAmount?: number;
@@ -272,6 +130,8 @@ export interface ClubSubscriptionListItem {
   customerSourceId: number | null;
   guardianName: string | null;
   guardianPhone: string | null;
+  /** Free-text member-visible note on the subscription. */
+  notes?: string | null;
   gender: 'male' | 'female' | null;
   status: 'active' | 'expired' | 'upcoming' | 'frozen';
   isSpecial: boolean;
@@ -283,7 +143,6 @@ export interface ClubSubscriptionListItem {
   sessionsUsed?: number | null;
   allowMultipleDailyEntries?: boolean;
   employeeId?: number | null;
-  assignedStaffName?: string | null;
   salesId?: number | null;
   salesName?: string | null;
   createdByUserId?: number | null;
@@ -320,6 +179,8 @@ export interface ClubPrivatePackage {
   price: number;
   durationDays: number;
   sessionsCount: number | null;
+  /** Per-count prices for a private session package; empty for duration packages. */
+  sessionPrices?: Array<{ sessionsCount: number; price: number }>;
   branchIds: number[];
   isActive: boolean;
   legacySubscriptionTypeId?: number | null;
@@ -362,11 +223,20 @@ export interface ClubPrivateEnrollment {
 
 export interface ClubSubscriptionType {
   id: number;
+  sourceSubscriptionTypeId?: number | null;
   name: string;
   branchId?: number | null;
   applyToAllBranches?: boolean;
   branchIds?: number[];
   price: number;
+  /** Per-branch sale price overrides; a branch without a row sells at `price`. */
+  branchPrices?: Array<{ branchId: number; price: number }>;
+  promoEnabled?: boolean;
+  promoPrice?: number | null;
+  promoDiscountPercent?: number | null;
+  promoImage?: string | null;
+  promoEndsAt?: string | null;
+  promoMarketingMessage?: string | null;
   days: number;
   isPartOfTarget?: boolean;
   invitationsCount?: number | null;
@@ -385,11 +255,33 @@ export interface ClubSubscriptionType {
   allowMultipleDailyEntries?: boolean;
   isLinkedToFreeze?: boolean;
   freezeDays?: number | null; // max freeze times allowed on the package
+  freezeTotalDays?: number | null; // total days the package may stay frozen (null = unlimited)
   includesSpa?: boolean;
   spaCount?: number | null;
   isActive?: boolean;
   classTypeIds?: number[];
   classTypes?: Array<{ id: number; name: string; color: string }>;
+  /** Free-text notes shown to members on this package in the app. */
+  appNotes?: string | null;
+  /** App home sections this package appears under (`ClubPackageCategoryItem.key` values). */
+  categories?: string[];
+}
+
+/** An app home section ("الفئة") managed from the packages screen. */
+export interface ClubPackageCategoryItem {
+  id: number;
+  /** What packages are tagged with; fixed at creation. */
+  key: string;
+  name: string;
+  nameEn?: string | null;
+  /** Uploaded artwork path; null means the app's bundled artwork for this key. */
+  icon?: string | null;
+  sortOrder: number;
+  isActive: boolean;
+  /** Filled by the server itself (عروض / برايفت / حصص) — cannot be deleted. */
+  isSystem: boolean;
+  /** Active packages tagged with this section. */
+  packageCount?: number;
 }
 
 export interface ClubDiscountCode {
@@ -405,14 +297,11 @@ export interface ClubDiscountCode {
 export interface ClubLockerListItem {
   id: number;
   subscriptionNumber: string;
-  mainBranchId: number;
-  subscriptionTypeId: number;
   customerName: string;
   memberId: number | null;
   memberName?: string | null;
   memberCode?: string | null;
   memberProfilePicture?: string | null;
-  subscriptionTypeName?: string | null;
   subscriptionStartDate: string;
   subscriptionEndDate: string;
   subscriptionValue: number;
@@ -421,15 +310,8 @@ export interface ClubLockerListItem {
   discountPercentage?: number | null;
   discountValue: number;
   paidAmount: number;
-  gender: 'male' | 'female' | null;
-  paymentMethod: string | null;
-  receiptNumber: string | null;
-  recommendedEmployeeId: number | null;
-  recommendedEmployeeName: string | null;
-  bookedByName: string | null;
   remainingAmount: number;
   lockerId: number;
-  lockerNumber?: string | null;
   status: 'active' | 'expired' | 'upcoming';
 }
 
@@ -468,16 +350,28 @@ export interface ClubLockerSubscriptionDetail {
   createdAt: string;
 }
 
+export interface ClubLockerHandoff {
+  id: number;
+  memberId: number;
+  memberName: string;
+  memberCode: string | null;
+  assignedAt: string;
+  releasedAt: string | null;
+}
+
 export interface ClubLockerDetails {
   id: number;
   lockerNumber: string;
   mainBranchId: number;
   subBranchId: number;
   isAvailable: boolean;
+  section?: 'male' | 'female' | 'shared';
   totalBookings: number;
   currentSubscription: ClubLockerSubscriptionDetail | null;
   lastBooking: ClubLockerSubscriptionDetail | null;
   history: ClubLockerSubscriptionDetail[];
+  currentHandoff?: ClubLockerHandoff | null;
+  handoffs?: ClubLockerHandoff[];
 }
 
 export interface ClubDashboardSummary {
@@ -518,6 +412,7 @@ export interface ExecutiveDashboardSummary extends ClubDashboardSummary {
     revenue: number;
     expenses: number;
     profit: number;
+    cafeRevenue: number;
     margin: number;
     source: 'member-management';
     expenseSource: 'general-ledger';
@@ -555,20 +450,6 @@ export interface ExecutiveDashboardSummary extends ClubDashboardSummary {
   expenseBreakdown: Array<{ name: string; value: number }>;
   packagePerformance: Array<{ name: string; count: number; revenue: number }>;
   membershipStatus: Array<{ name: string; value: number }>;
-  branchBreakdown: Array<{
-    branchId: number;
-    branchName: string;
-    totalRevenue: number;
-    subscriptionRevenue: number;
-    barRevenue: number;
-    productRevenue: number;
-    expenses: number;
-    subscriptionsCount: number;
-    newMembers: number;
-    inbodyCount: number;
-    inbodyRevenue: number;
-    blockedMembers: number;
-  }>;
   period: { start: string; end: string; days: number };
   branchId: number | null;
 }

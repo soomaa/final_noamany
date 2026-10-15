@@ -23,7 +23,6 @@ export const FIELD_MAP: Record<string, string> = {
   address: 'adress',
   emp_sign: 'emp_sign',
   personal_photo: 'personal_photo',
-  emp_code_gym: 'emp_code_gym',
   birth_img: 'birth_img',
   qualification_img: 'qualification_img',
   phesh_genai: 'phesh_genai',
@@ -55,6 +54,7 @@ export const FIELD_MAP: Record<string, string> = {
   mosma_wazefy_code: 'mosma_wazefy_code',
   job_title_id_fk: 'mosma_wazefy_code',
   employment_type: 'employment_type',
+  is_sales: 'is_sales',
   contract: 'contract',
   start_work_date_m: 'start_work_date_m',
   test_num_month: 'test_num_month',
@@ -105,7 +105,6 @@ const INT_COLS = new Set([
   'employee_type',
   'tamin_rkm',
   'marital_status',
-  'emp_code_gym',
   'card_num',
   'mosma_wazefy_code',
   'cat_mosayer_id_fk',
@@ -113,6 +112,7 @@ const INT_COLS = new Set([
   'administration',
 ]);
 const DECIMAL_COLS = new Set(['basic_salary', 'tamin_rateb', 'tamin_hesa_emp', 'tamin_hesa_oner']);
+const BOOLEAN_COLS = new Set(['is_sales']);
 const YESNO_COLS = new Set([
   'birth_img',
   'qualification_img',
@@ -132,6 +132,7 @@ function normalizeYesNo(v: unknown): 'yes' | 'no' {
 
 /** Coerce a form value to the right type for its DB column. */
 export function coerce(col: string, value: unknown): unknown {
+  if (BOOLEAN_COLS.has(col)) return value === true || value === 1 || value === '1' || value === 'true';
   if (YESNO_COLS.has(col)) return normalizeYesNo(value);
   const raw = value == null ? '' : String(value).trim();
   if (raw === '') return INT_COLS.has(col) || DECIMAL_COLS.has(col) ? null : null;
@@ -150,30 +151,17 @@ export function coerce(col: string, value: unknown): unknown {
 export function formToData(body: Record<string, unknown>): Record<string, unknown> {
   const data: Record<string, unknown> = {};
   for (const [formKey, col] of Object.entries(FIELD_MAP)) {
-    // The visible field is canonical; a hidden legacy alias must not overwrite it.
-    if (formKey === 'birthdate' && 'birth_date' in body) continue;
     if (formKey in body) data[col] = coerce(col, body[formKey]);
-  }
-  if ('birth_date' in body) {
-    const birthDate = coerce('birth_date_m', body.birth_date);
-    data.birth_date_m = birthDate;
-    data.birth_date = birthDate;
   }
   return data;
 }
 
 /** Reverse map a DB row to the form's field names (for the edit form's defaultValues). */
-export function rowToForm(row: Record<string, unknown>): Record<string, string> {
-  const out: Record<string, string> = {};
+export function rowToForm(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
   for (const [formKey, col] of Object.entries(FIELD_MAP)) {
     const v = row[col];
-    // An edit form submits every registered field. Legacy rows can have NULL
-    // enum values, which React previously turned into '' and Prisma rejects.
-    // Keep the form payload valid by using the same canonical YesNo value that
-    // the write mapper uses for an unset checkbox/radio field.
-    out[formKey] = YESNO_COLS.has(col) ? normalizeYesNo(v) : v == null ? '' : String(v);
+    out[formKey] = BOOLEAN_COLS.has(col) ? v === true || v === 1 : v == null ? '' : String(v);
   }
-  // Imported rows may store the Gregorian date only in the legacy column.
-  if (!out.birth_date && out.birthdate) out.birth_date = out.birthdate;
   return out;
 }

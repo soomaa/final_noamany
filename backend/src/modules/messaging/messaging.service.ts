@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { claimActorPrivateFile } from '../uploads/private-file-reference.util';
+import { cairoDateString, cairoTimeString } from '../../common/utils/cairo-date';
 import {
   CreateMemoDto,
   CreateMessageDto,
@@ -33,7 +35,7 @@ export class MessagingService {
   /** Now as legacy varchar date/time strings. */
   private now() {
     const d = new Date();
-    return { date: d.toISOString().slice(0, 10), time: d.toTimeString().slice(0, 5) };
+    return { date: cairoDateString(d), time: cairoTimeString(d) };
   }
 
   private async userName(userId: number | null | undefined): Promise<string | null> {
@@ -200,9 +202,10 @@ export class MessagingService {
    */
   async create(dto: CreateMessageDto, user: JwtUser) {
     const { date, time } = this.now();
-
-    const parent = await this.prisma.hr_ta3mem_personal_msg.create({
-      data: {
+    const recipients = await this.resolveRecipients(dto);
+    const parent = await this.prisma.$transaction(async (tx) => {
+      await claimActorPrivateFile(tx, dto.file, user.sub, ['message']);
+      const created = await tx.hr_ta3mem_personal_msg.create({ data: {
         msg_title: dto.title,
         subject: dto.subject ?? null,
         message: dto.body,
@@ -217,14 +220,10 @@ export class MessagingService {
         send_all_t3mem: dto.sendAll ? 1 : 0,
         file: dto.file ?? null,
         deleted: 0,
-      },
-    });
-
-    const recipients = await this.resolveRecipients(dto);
-    if (recipients.length) {
-      await this.prisma.hr_ta3mem_personal_msg_details.createMany({
+      } });
+      if (recipients.length) await tx.hr_ta3mem_personal_msg_details.createMany({
         data: recipients.map((r) => ({
-          ta3mem_msg_id_fk: parent.id,
+          ta3mem_msg_id_fk: created.id,
           to_user_id: r.userId,
           to_emp_id: r.empId,
           emp_code: r.empCode,
@@ -236,7 +235,8 @@ export class MessagingService {
           deleted: 0,
         })),
       });
-    }
+      return created;
+    });
 
     return { id: parent.id, recipients: recipients.length };
   }
@@ -325,7 +325,7 @@ export class MessagingService {
       data: {
         msg_title: dto.title,
         subject: dto.subject ?? null,
-        msg_date: new Date().toISOString().slice(0, 10),
+        msg_date: cairoDateString(),
         publisher: user.sub,
         // legacy column is (mistakenly) an int — store the user id.
         publisher_name: user.sub,

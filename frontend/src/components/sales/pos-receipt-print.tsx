@@ -3,11 +3,14 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useLocale } from '@/store/locale';
+import { toast } from 'sonner';
+import { uiStatic } from '@/lib/ui-static';
 import {
   PosPrintTemplatePreview,
   PosPrinterDestination,
@@ -38,13 +41,23 @@ export function PosReceiptPrint({
   const resolvedTemplates = templates?.length ? templates : resolveCafePrintTemplates();
   const customerTemplate = resolvedTemplates.find((template) => template.layoutConfig.documentType === 'customer_receipt') ?? resolvedTemplates[0];
   const kitchenTemplate = resolvedTemplates.find((template) => template.layoutConfig.documentType === 'kitchen_ticket') ?? resolvedTemplates[1];
-  const hasPrintBridge = typeof window !== 'undefined' && Boolean(window.Noamany_PRINT_BRIDGE);
+  const hasPrintBridge = typeof window !== 'undefined' && Boolean(window.ONE80_PRINT_BRIDGE);
 
   if (!receipt || !customerTemplate || !kitchenTemplate) return null;
 
   const close = () => {
     onOpenChange(false);
     onDone?.();
+  };
+  const reprint = (template: PosPrintTemplate) => {
+    void printSinglePosDocument(receipt, template)
+      .then((printed) => {
+        if (printed) toast.success(ui('تم إرسال النسخة للطباعة'));
+        else toast.error(ui('اسمح بفتح نافذة الطباعة في المتصفح ثم أعد المحاولة'));
+      })
+      .catch((error: unknown) => {
+        toast.error(error instanceof Error ? error.message : ui('تعذرت الطباعة. تحقق من الطابعة ثم أعد المحاولة.'));
+      });
   };
 
   return (
@@ -55,10 +68,11 @@ export function PosReceiptPrint({
             <CheckCircle2 className="size-6 text-emerald-600" />
             {ui('تم تأكيد الطلب')}
           </DialogTitle>
+          <DialogDescription>{ui(confirmationOnly ? uiStatic('راجع إيصال العميل وتذكرة التحضير قبل بدء الطلب التالي') : uiStatic('معاينة نسخ الطلب وإعادة طباعتها'))}</DialogDescription>
         </DialogHeader>
 
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50/70 p-4 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/20 dark:text-emerald-100">
-          <p className="font-bold">{hasPrintBridge ? ui('تم إرسال نسختين للطباعة تلقائيًا') : ui('معاينة الإيصالات جاهزة')}</p>
+          <p className="font-bold">{hasPrintBridge ? ui('الطباعة التلقائية مفعّلة للإيصالات') : ui('معاينة الإيصالات جاهزة')}</p>
           <p className="mt-1 text-xs opacity-80">{hasPrintBridge
             ? ui('إيصال للعميل وتذكرة منفصلة لفريق تحضير الكافيه. يمكن طباعة أي نسخة مرة أخرى من الأزرار أدناه.')
             : ui('لن تُفتح صفحة طباعة إضافية. راجع إيصال العميل وتذكرة التحضير هنا، واستخدم زر الطباعة فقط عند الحاجة.')}</p>
@@ -74,7 +88,7 @@ export function PosReceiptPrint({
               <PosPrinterDestination template={customerTemplate} />
             </div>
             <div className="max-h-[480px] overflow-y-auto p-4"><PosPrintTemplatePreview template={customerTemplate} receipt={receipt} scale={0.82} /></div>
-            <div className="border-t p-3"><Button type="button" variant="outline" className="w-full" onClick={() => printSinglePosDocument(receipt, customerTemplate)}><Printer className="me-2 size-4" />{ui('طباعة إيصال العميل')}</Button></div>
+            <div className="border-t p-3"><Button permissionAction={null} type="button" variant="outline" className="w-full" onClick={() => reprint(customerTemplate)}><Printer className="me-2 size-4" />{ui('طباعة إيصال العميل')}</Button></div>
           </section>
 
           <section className="overflow-hidden rounded-2xl border border-amber-300/60 bg-gradient-to-b from-amber-50/80 to-card shadow-sm dark:from-amber-950/15">
@@ -86,7 +100,7 @@ export function PosReceiptPrint({
               <PosPrinterDestination template={kitchenTemplate} />
             </div>
             <div className="max-h-[480px] overflow-y-auto p-4"><PosPrintTemplatePreview template={kitchenTemplate} receipt={receipt} scale={0.82} /></div>
-            <div className="border-t border-amber-200/60 p-3"><Button type="button" variant="outline" className="w-full border-amber-300 text-amber-800 dark:text-amber-200" onClick={() => printSinglePosDocument(receipt, kitchenTemplate)}><Printer className="me-2 size-4" />{ui('طباعة تذكرة التحضير')}</Button></div>
+            <div className="border-t border-amber-200/60 p-3"><Button permissionAction={null} type="button" variant="outline" className="w-full border-amber-300 text-amber-800 dark:text-amber-200" onClick={() => reprint(kitchenTemplate)}><Printer className="me-2 size-4" />{ui('طباعة تذكرة التحضير')}</Button></div>
           </section>
         </div>
 

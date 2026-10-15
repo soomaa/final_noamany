@@ -1,3 +1,4 @@
+import { formatMoneyNumber } from '@/lib/formatters';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Download, Pencil, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -17,6 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useBranches } from '@/hooks/use-branches';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
@@ -36,6 +38,7 @@ import {
 import { useLocale } from '@/store/locale';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { FinancePageShell } from './finance-shell';
+import { uiStatic } from '@/lib/ui-static';
 
 const EMPTY_FORM = {
   revenueDate: '',
@@ -43,8 +46,8 @@ const EMPTY_FORM = {
   subSource: '',
   amount: '',
   // Canonical stored values (Arabic) — locale-independent, matches backend literals.
-  paymentMethod: 'نقدي',
-  paymentStatus: 'مدفوع',
+  paymentMethod: uiStatic('نقدي'),
+  paymentStatus: uiStatic('مدفوع'),
   description: '',
   customerName: '',
   invoiceNumber: '',
@@ -57,6 +60,10 @@ const EMPTY_FORM = {
 
 export function FinanceRevenuesPage() {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('financial-reports.revenues:create');
+  const canUpdate = can('financial-reports.revenues:update');
+  const canDelete = can('financial-reports.revenues:delete');
   const { params, setParams } = useListQuery();
   const { data: branches } = useBranches();
   const { data, isLoading, isError, refetch } = usePaginatedList<RevenueRow>('revenues', params);
@@ -107,16 +114,18 @@ export function FinanceRevenuesPage() {
       {
         accessorKey: 'amount',
         header: ui('المبلغ'),
-        cell: ({ getValue }) => <span className="nums">{toArabicDigits((getValue() as number).toFixed(2))}</span>,
+        cell: ({ getValue }) => <span className="nums">{formatMoneyNumber((getValue() as number))}</span>,
       },
       { accessorKey: 'paymentMethod', header: ui('طريقة الدفع') },
       { accessorKey: 'paymentStatus', header: ui('حالة الدفع') },
       {
         id: 'actions',
         header: ui('الإجراءات'),
-        cell: ({ row }) => (
+        cell: ({ row }) => (canUpdate || canDelete) ? (
           <div className="flex gap-1">
-            <Button
+            {canUpdate ? <Button
+              permissionAction="update"
+              aria-label={ui('تعديل')}
               variant="ghost"
               size="icon"
               onClick={() => {
@@ -141,8 +150,10 @@ export function FinanceRevenuesPage() {
               }}
             >
               <Pencil className="h-4 w-4" />
-            </Button>
-            <Button
+            </Button> : null}
+            {canDelete ? <Button
+              permissionAction="delete"
+              aria-label={ui('حذف')}
               variant="ghost"
               size="icon"
               onClick={async () => {
@@ -157,21 +168,23 @@ export function FinanceRevenuesPage() {
               }}
             >
               <Trash2 className="h-4 w-4" />
-            </Button>
+            </Button> : null}
           </div>
-        ),
+        ) : null,
       },
     ],
-    [params.page, params.pageSize, refetch, ui],
+    [canDelete, canUpdate, params.page, params.pageSize, refetch, ui],
   );
 
   const openCreate = () => {
+    if (!canCreate) return;
     setEditId(null);
     setForm({ ...EMPTY_FORM, revenueDate: localToday(), branchId: String(branches?.[0]?.id ?? '') });
     setOpen(true);
   };
 
   const save = async () => {
+    if (editId == null ? !canCreate : !canUpdate) return;
     if (!form.source || !form.amount) {
       toast.error(ui('يرجى تعبئة المصدر والمبلغ'));
       return;
@@ -223,6 +236,7 @@ export function FinanceRevenuesPage() {
   };
 
   const syncRevenues = async () => {
+    if (!canCreate) return;
     setSyncing(true);
     try {
       const { data: res } = await api.post<Record<string, unknown>>('/revenues/sync', {
@@ -241,7 +255,7 @@ export function FinanceRevenuesPage() {
 
   return (
     <FinancePageShell title={ui('إدارة الإيرادات')} description={ui('تسجيل ومتابعة الإيرادات ومزامنتها من أنظمة الجيم')}>
-      <Card className="border-primary/20 bg-primary/5">
+      {canCreate ? <Card className="border-primary/20 bg-primary/5">
         <CardContent className="pt-4">
           <h3 className="mb-3 font-semibold">{ui('مزامنة الإيرادات من الجيم والمبيعات')}</h3>
           <div className="flex flex-wrap items-end gap-4">
@@ -253,7 +267,7 @@ export function FinanceRevenuesPage() {
               <Label className="text-xs">{ui('إلى تاريخ')}</Label>
               <Input className="nums" type="date" value={syncEnd} onChange={(e) => setSyncEnd(e.target.value)} />
             </div>
-            <Button onClick={() => void syncRevenues()} disabled={syncing}>
+            <Button permissionAction="create" onClick={() => void syncRevenues()} disabled={syncing}>
               {syncing ? <RefreshCw className="ms-1 h-4 w-4 animate-spin" /> : <Download className="ms-1 h-4 w-4" />}
               {ui('مزامنة الإيرادات')}
             </Button>
@@ -265,16 +279,17 @@ export function FinanceRevenuesPage() {
             </p>
           )}
         </CardContent>
-      </Card>
+      </Card> : null}
 
-      <div className="mb-4 flex justify-end">
+      {canCreate ? <div className="mb-4 flex justify-end">
         <Button onClick={openCreate}>
           <Plus className="ms-1 h-4 w-4" />
           {ui('إيراد جديد')}
         </Button>
-      </div>
+      </div> : null}
       <FilterBar fields={filters} searchPlaceholder={ui('بحث في الإيرادات…')} />
       <DataTable
+        exportSource={{ resource: 'revenues', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -289,7 +304,7 @@ export function FinanceRevenuesPage() {
         onRetry={() => void refetch()}
       />
 
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open && (editId == null ? canCreate : canUpdate)} onOpenChange={setOpen}>
         <DialogContent size="xl" className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{editId != null ? ui('تعديل إيراد') : ui('إيراد جديد')}</DialogTitle>
@@ -406,7 +421,7 @@ export function FinanceRevenuesPage() {
             <Button variant="outline" onClick={() => setOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()} disabled={saving}>
+            <Button permissionAction={editId == null ? 'create' : 'update'} onClick={() => void save()} disabled={saving}>
               {ui('حفظ')}
             </Button>
           </DialogFooter>

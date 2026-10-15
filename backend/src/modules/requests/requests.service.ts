@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -11,7 +11,11 @@ import {
 import { hrRequestStatusToLabel, SUSPEND_APPROVED, SUSPEND_REJECTED, SuspendStatus } from '../../common/utils/suspend-status.util';
 import { CreateRequestDto } from './dto/create-request.dto';
 import { ListRequestsDto } from './dto/list-requests.dto';
-import { LoansService } from '../loans/loans.service';
+import { HrDataScopeService } from '../../common/hr-scope/hr-data-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
+import { RequestEffectService } from './request-effect.service';
+import { BusinessAuditService } from '../../common/audit/business-audit.service';
+import { allocateDocumentNumber } from '../../common/number-series/document-number-series';
 
 export interface RequestRow {
   id: number;
@@ -28,12 +32,14 @@ export interface RequestRow {
 export class RequestsService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly loans: LoansService,
+    private readonly hrScope: HrDataScopeService,
+    private readonly effects: RequestEffectService,
+    private readonly audit: BusinessAuditService,
   ) {}
 
-  async list(q: ListRequestsDto) {
-    const unified = await this.listHrRequests(q);
-    const legacy = await this.listTalabatOrders(q);
+  async list(q: ListRequestsDto, user: JwtUser) {
+    const unified = await this.listHrRequests(q, user);
+    const legacy = await this.listTalabatOrders(q, user);
     const merged = [...unified, ...legacy].sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
 
     const total = merged.length;
@@ -41,8 +47,9 @@ export class RequestsService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  private async listHrRequests(q: ListRequestsDto): Promise<RequestRow[]> {
+  private async listHrRequests(q: ListRequestsDto, user: JwtUser): Promise<RequestRow[]> {
     const and: Prisma.hr_requestsWhereInput[] = [];
+    and.push(await this.hrScope.requestWhere(user));
     if (q.type && q.type !== 'all') and.push({ type: toDbRequestType(q.type) });
     if (q.status === 'approved') and.push({ status: { in: [1, 4] } });
     else if (q.status === 'rejected') and.push({ status: { in: [2, 5] } });
@@ -83,10 +90,11 @@ export class RequestsService {
     });
   }
 
-  private async listTalabatOrders(q: ListRequestsDto): Promise<RequestRow[]> {
+  private async listTalabatOrders(q: ListRequestsDto, user: JwtUser): Promise<RequestRow[]> {
     if (q.type && q.type !== 'all') return [];
 
     const and: Prisma.hr_talabat_ordersWhereInput[] = [];
+    and.push(await this.hrScope.legacyRequestWhere(user));
     if (q.status === 'approved') and.push({ suspend: { in: SUSPEND_APPROVED } });
     else if (q.status === 'rejected') and.push({ suspend: { in: SUSPEND_REJECTED } });
     else if (q.status === 'pending') and.push({ suspend: SuspendStatus.INCOMING });
@@ -120,14 +128,21 @@ export class RequestsService {
     }));
   }
 
-  async findOne(id: number) {
-    const row = await this.prisma.hr_requests.findUnique({ where: { id } });
+  async findOne(id: number, user: JwtUser) {
+    const row = await this.prisma.hr_requests.findFirst({
+      where: { AND: [{ id }, await this.hrScope.requestWhere(user)] },
+    });
     if (!row) {
-      const legacy = await this.prisma.hr_talabat_orders.findUnique({ where: { id } });
-      if (!legacy) throw new NotFoundException('الطلب غير موجود');
+      const legacy = await this.prisma.hr_talabat_orders.findFirst({
+        where: { AND: [{ id }, await this.hrScope.legacyRequestWhere(user)] },
+      });
+      if (!legacy) throw new ForbiddenException('لا تملك صلاحية الوصول إلى هذا الطلب');
       return this.mapLegacyDetail(legacy);
     }
-    return this.mapRequestDetail(row);
+    const effect = await this.prisma.hr_request_effects.findUnique({
+      where: { request_id: row.id },
+    });
+    return this.mapRequestDetail(row, effect?.snapshot_json);
   }
 
   async create(dto: CreateRequestDto, userId?: number, userName?: string | null, empId?: number | null) {
@@ -143,30 +158,40 @@ export class RequestsService {
         ? await this.prisma.employees.findFirst({ where: { id: userId } })
         : null;
 
-    const maxNo = await this.prisma.hr_requests.aggregate({ _max: { request_no: true } });
     const now = new Date().toISOString();
+    if (!emp) throw new BadRequestException('لا يوجد موظف مرتبط بالمستخدم الحالي');
 
-    const row = await this.prisma.hr_requests.create({
-      data: {
-        type: toDbRequestType(type),
-        request_no: (maxNo._max.request_no ?? 0) + 1,
-        emp_id_fk: emp?.id,
-        emp_code_fk: emp?.emp_code,
-        emp_name: emp?.employee,
-        status: 0,
-        payload: JSON.stringify(payload),
-        created_at: now,
-        publisher: userId,
-        publisher_name: userName,
-      },
+    const row = await this.prisma.$transaction(async (tx) => {
+      const maxNo = await tx.hr_requests.aggregate({ _max: { request_no: true } });
+      const requestNumber = await allocateDocumentNumber(
+        tx,
+        'hr.request',
+        (maxNo._max.request_no ?? 0) + 1,
+      );
+      return tx.hr_requests.create({
+        data: {
+          type: toDbRequestType(type),
+          request_no: requestNumber,
+          emp_id_fk: emp.id,
+          emp_code_fk: emp.emp_code,
+          emp_name: emp.employee,
+          status: 0,
+          payload: JSON.stringify(payload),
+          created_at: now,
+          publisher: userId,
+          publisher_name: userName,
+        },
+      });
     });
 
     return { id: row.id };
   }
 
-  async approve(id: number, userId?: number, dryRun = false) {
-    const row = await this.prisma.hr_requests.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('الطلب غير موجود');
+  async approve(id: number, user: JwtUser, dryRun = false) {
+    const row = await this.prisma.hr_requests.findFirst({
+      where: { AND: [{ id }, await this.hrScope.requestWhere(user)] },
+    });
+    if (!row) throw new ForbiddenException('لا تملك صلاحية الوصول إلى هذا الطلب');
     if ([1, 4].includes(row.status)) throw new BadRequestException('الطلب معتمد مسبقًا');
 
     const payload = this.parsePayload(row.payload);
@@ -188,146 +213,90 @@ export class RequestsService {
       return { dryRun: true, preview: { type: typeKey }, rows, warning: 'سيتم إنشاء سجل في النظام عند الاعتماد' };
     }
 
-    await this.routeToDomain(typeKey, row, payload, userId);
-
-    await this.prisma.hr_requests.update({
-      where: { id },
-      data: { status: 4, reason_action: 'approved' },
+    await this.effects.prepare(typeKey);
+    const result = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM hr_requests WHERE id = ${id} FOR UPDATE`);
+      const locked = await tx.hr_requests.findUnique({ where: { id } });
+      if (!locked || locked.status !== 0) {
+        throw new BadRequestException('لا يمكن اعتماد طلب غير معلق');
+      }
+      const existingEffect = await tx.hr_request_effects.findUnique({ where: { request_id: id } });
+      if (existingEffect) throw new BadRequestException('تم تنفيذ أثر الطلب مسبقًا');
+      const effectEmployee = locked.emp_id_fk
+        ? await tx.employees.findUnique({ where: { id: locked.emp_id_fk }, select: { id: true } })
+        : locked.emp_code_fk
+          ? await tx.employees.findFirst({ where: { emp_code: locked.emp_code_fk }, select: { id: true } })
+          : null;
+      if (!effectEmployee) throw new NotFoundException('الموظف المرتبط بالطلب غير موجود');
+      const effect = await this.effects.apply(
+        tx,
+        typeKey,
+        id,
+        locked.emp_id_fk,
+        locked.emp_code_fk,
+        this.parsePayload(locked.payload),
+        user.sub,
+      );
+      const evidence = await tx.hr_request_effects.create({
+        data: {
+          request_id: id,
+          effect_type: typeKey,
+          employee_id: effectEmployee.id,
+          snapshot_json: effect.snapshot,
+          result_json: effect.result,
+          applied_by: user.sub,
+        },
+      });
+      await this.audit.log({
+        entityType: 'hr_request',
+        entityId: id,
+        action: 'hr_request.approved',
+        actorUserId: user.sub,
+        branchId: user.branch || undefined,
+        before: { status: locked.status },
+        after: {
+          status: 4,
+          effectType: typeKey,
+          effectId: evidence.id,
+          employeeId: locked.emp_id_fk,
+        },
+      }, tx);
+      await tx.hr_requests.update({
+        where: { id },
+        data: { status: 4, reason_action: 'approved' },
+      });
+      return { effectId: evidence.id, effect: effect.result };
     });
 
-    return { id, status: 'approved' };
+    return { id, status: 'approved', ...result };
   }
 
-  async reject(id: number) {
-    const row = await this.prisma.hr_requests.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('الطلب غير موجود');
-    await this.prisma.hr_requests.update({
-      where: { id },
-      data: { status: 2, reason_action: 'rejected' },
+  async reject(id: number, user: JwtUser) {
+    const row = await this.prisma.hr_requests.findFirst({
+      where: { AND: [{ id }, await this.hrScope.requestWhere(user)] },
+    });
+    if (!row) throw new ForbiddenException('لا تملك صلاحية الوصول إلى هذا الطلب');
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT id FROM hr_requests WHERE id = ${id} FOR UPDATE`);
+      const locked = await tx.hr_requests.findUnique({ where: { id } });
+      if (!locked || locked.status !== 0) {
+        throw new BadRequestException('لا يمكن رفض طلب غير معلق');
+      }
+      await this.audit.log({
+        entityType: 'hr_request',
+        entityId: id,
+        action: 'hr_request.rejected',
+        actorUserId: user.sub,
+        branchId: user.branch || undefined,
+        before: { status: locked.status },
+        after: { status: 2, employeeId: locked.emp_id_fk },
+      }, tx);
+      await tx.hr_requests.update({
+        where: { id },
+        data: { status: 2, reason_action: 'rejected' },
+      });
     });
     return { id, status: 'rejected' };
-  }
-
-  private async routeToDomain(
-    typeKey: string,
-    row: { emp_id_fk: number | null; emp_code_fk: number | null; emp_name: string | null },
-    payload: Record<string, unknown>,
-    userId?: number,
-  ) {
-    const empId = row.emp_id_fk ?? (payload.empId as number | undefined);
-    const emp = empId
-      ? await this.prisma.employees.findUnique({ where: { id: empId } })
-      : row.emp_code_fk
-        ? await this.prisma.employees.findFirst({ where: { emp_code: row.emp_code_fk } })
-        : null;
-
-    switch (typeKey) {
-      case 'leave':
-        await this.createLeaveOrder(emp, payload);
-        break;
-      case 'permission':
-        await this.createPermissionOrder(emp, payload);
-        break;
-      case 'advance':
-      case 'loan':
-        await this.createLoanFromRequest(emp, payload, typeKey === 'loan', userId);
-        break;
-      case 'allowance':
-      case 'salary-certificate':
-      case 'resignation':
-      case 'transfer':
-      case 'promotion':
-      case 'data-change':
-        break;
-      default:
-        break;
-    }
-  }
-
-  private async createLeaveOrder(
-    emp: { id: number; emp_code: number | null; employee: string | null; edara_id: number | null; edara_n: string | null; qsm_id: number | null; qsm_n: string | null } | null,
-    payload: Record<string, unknown>,
-  ) {
-    if (!emp) return;
-    const leaveTypeId = Number(payload.leave_type_id);
-    const leaveType = Number.isInteger(leaveTypeId) && leaveTypeId > 0
-      ? await this.prisma.holiday_setting.findUnique({ where: { id: leaveTypeId } })
-      : null;
-    if (!leaveType || leaveType.agaza_ttype !== 0 || leaveType.active !== 'yes') {
-      throw new BadRequestException('اختر نوع إجازة نشطًا خاصًا بالموظف');
-    }
-    const maxRkm = await this.prisma.hr_all_agzat_orders.aggregate({ _max: { agaza_rkm: true } });
-    const today = new Date().toISOString().slice(0, 10);
-    await this.prisma.hr_all_agzat_orders.create({
-      data: {
-        agaza_rkm: (maxRkm._max.agaza_rkm ?? 0) + 1,
-        agaza_date_ar: today,
-        emp_id_fk: emp.id,
-        emp_code_fk: emp.emp_code != null ? BigInt(emp.emp_code) : undefined,
-        edara_id_fk: emp.edara_id,
-        edara_n: emp.edara_n,
-        qsm_id_fk: emp.qsm_id,
-        qsm_n: emp.qsm_n,
-        no3_agaza: leaveTypeId,
-        agaza_from_date_m: String(payload.date_from ?? ''),
-        agaza_to_date_m: String(payload.date_to ?? ''),
-        reason: String(payload.notes ?? payload.reason ?? ''),
-        suspend: SuspendStatus.APPROVED,
-      },
-    });
-  }
-
-  private async createPermissionOrder(
-    emp: { id: number; emp_code: number | null; employee: string | null; edara_id: number | null; edara_n: string | null; qsm_id: number | null; qsm_n: string | null; mosma_wazefy_n: string | null } | null,
-    payload: Record<string, unknown>,
-  ) {
-    if (!emp) return;
-    const maxRkm = await this.prisma.hr_all_ozonat_orders.aggregate({ _max: { ezn_rkm: true } });
-    const today = new Date().toISOString().slice(0, 10);
-    await this.prisma.hr_all_ozonat_orders.create({
-      data: {
-        ezn_rkm: (maxRkm._max.ezn_rkm ?? 0) + 1,
-        ezn_date_ar: today,
-        emp_id_fk: emp.id,
-        emp_code_fk: emp.emp_code ?? undefined,
-        emp_name: emp.employee,
-        edara_id_fk: emp.edara_id,
-        edara_n: emp.edara_n,
-        qsm_id_fk: emp.qsm_id,
-        qsm_n: emp.qsm_n,
-        job_title: emp.mosma_wazefy_n,
-        date_ar: String(payload.permission_date ?? today),
-        from_hour: String(payload.time_from ?? ''),
-        to_hour: String(payload.time_to ?? ''),
-        reason: String(payload.reason ?? ''),
-        suspend: SuspendStatus.APPROVED,
-      },
-    });
-  }
-
-  private async createLoanFromRequest(
-    emp: { id: number; emp_code: number | null; employee: string | null; edara_id: number | null; edara_n: string | null; qsm_id: number | null; qsm_n: string | null; mosma_wazefy_n: string | null } | null,
-    payload: Record<string, unknown>,
-    isLoan: boolean,
-    userId?: number,
-  ) {
-    if (!emp) return;
-    const amount = Number(payload.amount ?? 0);
-    const installments = Number(payload.installments ?? 1);
-    const deductionStart = String(payload.deductionStartDate ?? new Date().toISOString().slice(0, 10));
-    if (!amount || !installments) return;
-
-    await this.loans.create(
-      {
-        empId: emp.id,
-        amount,
-        installments: isLoan ? installments : Math.max(1, installments),
-        sadadSolfa: installments > 1 ? 3 : 2,
-        deductionStartDate: deductionStart,
-        reason: String(payload.reason ?? (isLoan ? 'قرض' : 'سلفة')),
-      },
-      userId,
-    );
   }
 
   private mapRequestDetail(row: {
@@ -338,7 +307,7 @@ export class RequestsService {
     created_at: string | null;
     payload: string | null;
     reason_action: string | null;
-  }) {
+  }, effectSnapshot?: Prisma.JsonValue) {
     const typeKey = fromDbRequestType(row.type);
     const payload = this.parsePayload(row.payload);
     const status = hrRequestStatusToLabel(row.status);
@@ -350,6 +319,7 @@ export class RequestsService {
       status,
       createdAt: row.created_at,
       payload,
+      effectSnapshot: effectSnapshot ?? null,
       timeline: this.buildTimeline(row.created_at, status, row.reason_action),
     };
   }

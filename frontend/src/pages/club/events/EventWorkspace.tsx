@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import { useState, useEffect } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -13,6 +14,7 @@ import { RegistrationsTab } from './RegistrationsTab';
 import { EventLiveHub } from './live/EventLiveHub';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { usePermission } from '@/hooks/use-permission';
 
 type EventStatus =
   | 'draft'
@@ -39,6 +41,12 @@ const TRANSITIONS: Record<EventStatus, EventStatus[]> = {
 };
 
 const PRE_COMPLETED: EventStatus[] = ['draft', 'pending_approval', 'approved', 'published', 'ongoing'];
+
+function transitionAction(status: EventStatus): 'update' | 'approve' | 'reject' {
+  if (status === 'approved' || status === 'closed') return 'approve';
+  if (status === 'rejected') return 'reject';
+  return 'update';
+}
 
 const STATUS_LABELS: Record<string, string> = {
   draft: uiStatic('مسودة'),
@@ -132,10 +140,14 @@ function StatusTransitionDialog({
 }) {
   const { ui, dir } = useLocale();
   const qc = useQueryClient();
+  const { can } = usePermission();
   const [reason, setReason] = useState('');
 
   const mutation = useMutation({
-    mutationFn: () => clubEventsApi.changeEventStatus(eventId, { status: toStatus!, reason: reason || undefined }),
+    mutationFn: () => {
+      if (!toStatus || !can(`club.events.list:${transitionAction(toStatus)}`)) throw new Error(ui('غير مصرح'));
+      return clubEventsApi.changeEventStatus(eventId, { status: toStatus, reason: reason || undefined });
+    },
     onSuccess: () => {
       toast.success(ui('تم تحديث حالة الفعالية'));
       void qc.invalidateQueries({ queryKey: ['club-event', String(eventId)] });
@@ -166,6 +178,8 @@ function StatusTransitionDialog({
             {ui('إلغاء')}
           </Button>
           <Button
+            permissionResource="club.events.list"
+            permissionAction={transitionAction(toStatus)}
             variant={toStatus === 'cancelled' || toStatus === 'rejected' ? 'destructive' : 'default'}
             disabled={mutation.isPending || (reasonRequired && !reason.trim())}
             onClick={() => mutation.mutate()}
@@ -184,6 +198,7 @@ export function EventWorkspace() {
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<TabKey>('overview');
   const [pendingStatus, setPendingStatus] = useState<EventStatus | null>(null);
+  const { can } = usePermission();
 
   useEffect(() => {
     const t = searchParams.get('tab');
@@ -204,7 +219,8 @@ export function EventWorkspace() {
   const status = event.status as EventStatus;
   const nextStatuses = TRANSITIONS[status] ?? [];
   const canCancel = PRE_COMPLETED.includes(status) && !nextStatuses.includes('cancelled');
-  const availableActions = [...nextStatuses, ...(canCancel ? (['cancelled'] as EventStatus[]) : [])];
+  const availableActions = [...nextStatuses, ...(canCancel ? (['cancelled'] as EventStatus[]) : [])]
+    .filter((next) => can(`club.events.list:${transitionAction(next)}`));
 
   return (
     <div className="p-6 space-y-4" dir={dir}>
@@ -215,6 +231,8 @@ export function EventWorkspace() {
           <div className="flex items-center gap-2">
             {availableActions.map((s) => (
               <Button
+                permissionResource="club.events.list"
+                permissionAction={transitionAction(s)}
                 key={s}
                 size="sm"
                 variant={s === 'cancelled' || s === 'rejected' ? 'destructive' : 'outline'}
@@ -235,7 +253,7 @@ export function EventWorkspace() {
       </div>
 
       <div className="flex gap-2 border-b">
-        {TABS.map((t) => (
+        {TABS.filter((t) => t.key !== 'registrations' || can('club.events.registrations:view')).map((t) => (
           <button
             key={t.key}
             onClick={() => setTab(t.key)}
@@ -257,8 +275,8 @@ export function EventWorkspace() {
           <div><span className="text-muted-foreground">{ui('تاريخ البدء: ')}</span>{event.startDate}</div>
           <div><span className="text-muted-foreground">{ui('تاريخ الانتهاء: ')}</span>{event.endDate}</div>
           <div><span className="text-muted-foreground">{ui('الطاقة الاستيعابية: ')}</span>{event.maxCapacity || ui('غير محدودة')}</div>
-          <div><span className="text-muted-foreground">{ui('المسجلون: ')}</span>{event.registrationsCount}</div>
-          <div><span className="text-muted-foreground">{ui('الحضور: ')}</span>{event.attendedCount}</div>
+          <div><span className="text-muted-foreground">{ui('المسجلون: ')}</span>{formatDisplayNumber(event.registrationsCount)}</div>
+          <div><span className="text-muted-foreground">{ui('الحضور: ')}</span>{formatDisplayNumber(event.attendedCount)}</div>
           <div><span className="text-muted-foreground">{ui('التسجيل متاح الآن: ')}</span>{event.registrationOpen ? ui('نعم') : ui('لا')}</div>
           <div><span className="text-muted-foreground">{ui('السماح بالضيوف: ')}</span>{event.allowGuests ? ui('نعم') : ui('لا')}</div>
           {event.description && (

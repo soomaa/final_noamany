@@ -4,6 +4,7 @@ import { assertDateOrder, assertNoOverlap } from '../../common/validators/valida
 import { paginated } from '../../common/dto/list-result';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { cairoDateString, dateOnlyEpochSeconds } from '../../common/utils/cairo-date';
 
 @Injectable()
 export class ActionScreenService {
@@ -39,10 +40,7 @@ export class ActionScreenService {
   }
 
   async listGrades() {
-    const rows = await this.prisma.department_jobs.findMany({
-      orderBy: [{ in_order: 'asc' }, { id: 'asc' }],
-    });
-    return rows.map((row) => ({ id: row.id, code: row.id, title: row.name }));
+    return this.prisma.hr_egraat_setting.findMany({ orderBy: [{ tarteb: 'asc' }, { id: 'asc' }] });
   }
 
   async create(
@@ -60,7 +58,9 @@ export class ActionScreenService {
     publisherId?: number,
     publisherName?: string | null,
   ) {
-    const jobTitle = await this.prisma.department_jobs.findUnique({ where: { id: body.jobTitleCodeFk } });
+    const jobTitle = await this.prisma.all_defined_setting.findFirst({
+      where: { defined_id: body.jobTitleCodeFk },
+    });
     const emp = await this.prisma.employees.findFirst({ where: { emp_code: Number(body.personCode) } });
     await this.assertActionScope(
       {
@@ -75,7 +75,7 @@ export class ActionScreenService {
       data: {
         job_title_code_fk: body.jobTitleCodeFk,
         job_title_id_fk: body.jobTitleCodeFk,
-        job_title_n: jobTitle?.name ?? null,
+        job_title_n: jobTitle?.defined_title ?? null,
         person_type: body.personType,
         person_code: body.personCode,
         person_name: body.personName,
@@ -86,10 +86,10 @@ export class ActionScreenService {
         person_id: emp?.id ?? null,
         from_date: body.fromDate,
         to_date: body.toDate,
-        from_date_str: String(Math.floor(new Date(body.fromDate).getTime() / 1000)),
-        to_date_str: String(Math.floor(new Date(body.toDate).getTime() / 1000)),
+        from_date_str: String(dateOnlyEpochSeconds(body.fromDate)),
+        to_date_str: String(dateOnlyEpochSeconds(body.toDate)),
         date: Math.floor(now.getTime() / 1000),
-        date_ar: now.toISOString().slice(0, 10),
+        date_ar: cairoDateString(now),
         publisher: publisherId,
         publisher_name: publisherName,
       },
@@ -123,8 +123,10 @@ export class ActionScreenService {
 
     let jobTitleN: string | undefined;
     if (body.jobTitleCodeFk != null) {
-      const jobTitle = await this.prisma.department_jobs.findUnique({ where: { id: body.jobTitleCodeFk } });
-      jobTitleN = jobTitle?.name ?? undefined;
+      const jobTitle = await this.prisma.all_defined_setting.findFirst({
+        where: { defined_id: body.jobTitleCodeFk },
+      });
+      jobTitleN = jobTitle?.defined_title ?? undefined;
     }
     let empData: {
       person_qsm?: string | null;
@@ -152,14 +154,14 @@ export class ActionScreenService {
         ...(body.personPrivateName != null ? { person_private_name: body.personPrivateName } : {}),
         ...(body.personSuspend != null ? { person_suspend: body.personSuspend } : {}),
         ...(body.fromDate != null
-          ? { from_date: body.fromDate, from_date_str: String(Math.floor(new Date(body.fromDate).getTime() / 1000)) }
+      ? { from_date: body.fromDate, from_date_str: String(dateOnlyEpochSeconds(body.fromDate)) }
           : {}),
         ...(body.toDate != null
-          ? { to_date: body.toDate, to_date_str: String(Math.floor(new Date(body.toDate).getTime() / 1000)) }
+      ? { to_date: body.toDate, to_date_str: String(dateOnlyEpochSeconds(body.toDate)) }
           : {}),
         ...empData,
         date: Math.floor(now.getTime() / 1000),
-        date_ar: now.toISOString().slice(0, 10),
+        date_ar: cairoDateString(now),
         ...(publisherId != null ? { publisher: publisherId } : {}),
         ...(publisherName != null ? { publisher_name: publisherName } : {}),
       },

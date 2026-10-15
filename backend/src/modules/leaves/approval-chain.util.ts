@@ -5,8 +5,8 @@
  *
  *   send_to_emp_badel (if substitute) -> send_to_direct_manager
  *     -> approve_direct_manager (suspend 1)
- *     -> approve_moder_edara    (suspend 4)
- *     -> approve_hr             (suspend 4)
+ *     -> approve_moder_edara    (suspend 1)
+ *     -> approve_hr             (suspend 1)
  *     -> approve_moder_3am      (suspend 4, sets close_talab)
  */
 
@@ -25,8 +25,8 @@ export const NEXT_STAGE_BY_CURRENT: Record<string, LeaveStage> = {
 
 export const ACCEPT_SUSPEND: Record<LeaveStage, number> = {
   approve_direct_manager: 1,
-  approve_moder_edara: 4,
-  approve_hr: 4,
+  approve_moder_edara: 1,
+  approve_hr: 1,
   approve_moder_3am: 4,
 };
 

@@ -1,4 +1,4 @@
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { MemberAvatar } from './member-avatar';
 
 export interface MemberCellProps {
@@ -45,7 +45,7 @@ export function MemberCell({
     return <span>{fallback}</span>;
   }
   if (memberId != null) {
-    return <span className="nums text-muted-foreground">{toArabicDigits(memberId)}</span>;
+    return <span className="nums text-muted-foreground">{formatDigits(memberId)}</span>;
   }
   return <span>—</span>;
 }

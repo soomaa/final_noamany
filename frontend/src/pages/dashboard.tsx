@@ -57,10 +57,10 @@ import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
 
 const QUICK_LINK_DEFS = [
-  { to: '/attendance', labelKey: 'لوحة الحضور', icon: Fingerprint },
-  { to: '/employees', labelKey: 'الموظفين', icon: Users },
-  { to: '/leaves', labelKey: 'الإجازات', icon: CalendarOff },
-  { to: '/reports', labelKey: 'التقارير', icon: FileText },
+  { to: '/attendance', labelKey: uiStatic('لوحة الحضور'), icon: Fingerprint },
+  { to: '/employees', labelKey: uiStatic('الموظفين'), icon: Users },
+  { to: '/leaves', labelKey: uiStatic('الإجازات'), icon: CalendarOff },
+  { to: '/reports', labelKey: uiStatic('التقارير'), icon: FileText },
 ] as const;
 
 const STATUS_COLORS = ['#34D399', '#FBBF24', '#F87171', '#60A5FA'];
@@ -347,7 +347,7 @@ function DashboardBody({
           {/* 3 core attendance metrics */}
           <div className="grid gap-4 sm:grid-cols-3">
             <StatCard title={uiStatic('حاضر اليوم')} value={data?.presentToday ?? 0} subtitle={data ? `${formatDigits(data.presentPct.toFixed(1), locale)}%` : undefined} icon={<UserCheck className="size-5" />} colorIndex={3} loading={isLoading} />
-            <StatCard title={uiStatic('متأخر اليوم')} value={data?.lateToday ?? 0} subtitle={data?.avgLateMinutes ? uiStatic(`متوسط ${formatDigits(Math.round(data.avgLateMinutes), locale)} د`) : undefined} icon={<Clock className="size-5" />} colorIndex={4} loading={isLoading} />
+            <StatCard title={uiStatic('متأخر اليوم')} value={data?.lateToday ?? 0} subtitle={data?.avgLateMinutes ? `${ui('متوسط ')}${formatDigits(Math.round(data.avgLateMinutes), locale)}${ui(' د')}` : undefined} icon={<Clock className="size-5" />} colorIndex={4} loading={isLoading} />
             <StatCard title={uiStatic('غائب اليوم')} value={absentToday} icon={<UserX className="size-5" />} colorIndex={1} loading={isLoading} />
           </div>
 
@@ -362,15 +362,15 @@ function DashboardBody({
             <AreaChart data={chartData}>
               <defs>
                 <linearGradient id="brandFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#ED1C24" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#ED1C24" stopOpacity={0} />
+                  <stop offset="0%" stopColor="#EAB308" stopOpacity={0.3} />
+                  <stop offset="100%" stopColor="#EAB308" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
               <XAxis dataKey="name" tick={{ fontSize: 12 }} />
               <YAxis tickFormatter={(v) => formatDigits(v, locale)} domain={[0, 100]} />
               <Tooltip formatter={(v: number) => [`${formatDigits(v.toFixed(1), locale)}%`, uiStatic('النسبة')]} />
-              <Area type="monotone" dataKey="pct" stroke="#ED1C24" fill="url(#brandFill)" strokeWidth={2} />
+              <Area type="monotone" dataKey="pct" stroke="#EAB308" fill="url(#brandFill)" strokeWidth={2} />
             </AreaChart>
           </ChartCard>
 
@@ -514,7 +514,7 @@ function DashboardBody({
                       {data!.avgLateMinutes > 0 && (
                         <span className="text-muted-foreground">
                           {' '}
-                          ({uiStatic(`متوسط ${formatDigits(Math.round(data!.avgLateMinutes), locale)} دقيقة`)})
+                          ({`${ui('متوسط ')}${formatDigits(Math.round(data!.avgLateMinutes), locale)}${ui(' دقيقة')}`})
                         </span>
                       )}
                     </div>
@@ -527,7 +527,7 @@ function DashboardBody({
                   )}
                   {(data?.presentPct ?? 0) < 50 && (data?.totalEmployees ?? 0) > 0 && (
                     <div className="rounded-xl border border-primary/25 bg-primary/5 p-3.5 text-sm">
-                      {uiStatic(`نسبة الحضور منخفضة (${formatDigits(data!.presentPct.toFixed(1), locale)}%) — راجع لوحة الحضور`)}
+                      {`${ui('نسبة الحضور منخفضة (')}${formatDigits(data!.presentPct.toFixed(1), locale)}${ui('%) — راجع لوحة الحضور')}`}
                     </div>
                   )}
                   {alertHighlights.length === 0 && (data?.lateToday ?? 0) === 0 && absentToday === 0 && (
@@ -636,7 +636,7 @@ export function DashboardPage() {
   const { data: alerts } = useAlerts();
 
   const branchOptions = useMemo(
-    () => branches?.map((b) => ({ value: String(b.id), label: b.name ?? ui(`فرع ${b.id}`) })) ?? [],
+    () => branches?.map((b) => ({ value: String(b.id), label: b.name ?? `${ui('فرع ')}${b.id}` })) ?? [],
     [branches, ui],
   );
 

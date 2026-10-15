@@ -1,3 +1,4 @@
+import { formatDisplayNumber } from '@/lib/number-display';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
@@ -15,9 +16,14 @@ import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
 import type { WorkoutTemplateRow } from '@/types/fitness';
 import { RowActions, jsonArrayToLines, linesToJsonArray, useFitnessResourceList, SELECT_CLS } from './shared';
+import { usePermission } from '@/hooks/use-permission';
 
 export function FitnessTemplatesPage() {
   const ft = useFitnessT();
+  const { can } = usePermission();
+  const canCreate = can('club.fitness.templates:create');
+  const canUpdate = can('club.fitness.templates:update');
+  const canDelete = can('club.fitness.templates:delete');
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<WorkoutTemplateRow>(
     'club-workout-templates',
@@ -35,12 +41,14 @@ export function FitnessTemplatesPage() {
   );
 
   const openCreate = () => {
+    if (!canCreate) return;
     setEditId(null);
     setForm({ name: '', description: '', selectedExerciseIds: [] });
     setOpen(true);
   };
 
   const openEdit = (row: WorkoutTemplateRow) => {
+    if (!canUpdate) return;
     setEditId(row.id);
     const names = linesToJsonArray(jsonArrayToLines(row.exercisesJson));
     const ids = (exercises ?? [])
@@ -55,6 +63,7 @@ export function FitnessTemplatesPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!form.name.trim()) {
       toast.error(ft('common.name'));
       return;
@@ -90,7 +99,7 @@ export function FitnessTemplatesPage() {
         cell: ({ getValue }) => {
           const lines = jsonArrayToLines(getValue());
           const count = lines ? lines.split('\n').length : 0;
-          return <span className="nums">{count}</span>;
+          return <span className="nums">{formatDisplayNumber(count)}</span>;
         },
       },
       {
@@ -100,17 +109,17 @@ export function FitnessTemplatesPage() {
           <RowActions
             editLabel={ft('common.edit')}
             deleteLabel={ft('common.delete')}
-            onEdit={() => openEdit(row.original)}
-            onDelete={() =>
+            onEdit={canUpdate ? () => openEdit(row.original) : undefined}
+            onDelete={canDelete ? () =>
               void confirm({ title: ft('common.confirmDelete'), variant: 'destructive' }).then((ok) => {
                 if (ok) deleteMutation.mutate(row.original.id);
               })
-            }
+            : undefined}
           />
         ),
       },
     ],
-    [ft],
+    [canDelete, canUpdate, ft],
   );
 
   return (
@@ -118,12 +127,13 @@ export function FitnessTemplatesPage() {
       <PageHeader
         title={ft('templates.title')}
         actions={
-          <Button variant="brand" onClick={openCreate}>
+          canCreate ? <Button variant="brand" onClick={openCreate}>
             <Plus className="size-4" /> {ft('common.add')}
-          </Button>
+          </Button> : null
         }
       />
       <DataTable
+        exportSource={{ resource: 'club-workout-templates', params }}
         columns={columns}
         data={data?.data ?? []}
         total={data?.total ?? 0}
@@ -138,7 +148,7 @@ export function FitnessTemplatesPage() {
         onRetry={() => void refetch()}
         emptyTitle={ft('common.noData')}
       />
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open && (editId ? canUpdate : canCreate)} onOpenChange={setOpen}>
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader>
             <DialogTitle>{editId ? ft('common.edit') : ft('common.add')}</DialogTitle>
@@ -190,7 +200,7 @@ export function FitnessTemplatesPage() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{ft('common.cancel')}</Button>
-            <Button variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
+            <Button permissionAction={editId ? 'update' : 'create'} variant="brand" onClick={() => void save()} disabled={saving}>{ft('common.save')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

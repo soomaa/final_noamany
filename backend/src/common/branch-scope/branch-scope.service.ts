@@ -1,51 +1,38 @@
-import { ForbiddenException, Injectable } from "@nestjs/common";
-import { JwtUser } from "../types/jwt-user";
-import { isSystemAdmin } from '../utils/system-admin.util';
+import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { JwtUser } from '../types/jwt-user';
 
 /**
  * Resolves the set of branches a user is allowed to read/write.
  *
- * Strict isolation rules:
- *  - level === 1 or an active RBAC super-admin role → ALL branches (no restriction).
- *  - a non-admin with no branch assigned (branch 0/null) → NO branches (fail closed).
- *  - every other non-admin → exactly the branch stored in their JWT.
+ * Rules (faithful to the legacy level model):
+ *  - level === 1 (super-admin) → ALL branches (no restriction).
+ *  - a non-admin user with no branch assigned (branch 0/null) → NO branches. Isolation
+ *    fails closed; only an explicit level-1 account is company-wide.
+ *  - otherwise → the user's own branch, expanded through the virtual-parent fanout
+ *    explicit host configuration. The portable default has no fan-out.
  *
  * `null` from allowedBranchIds() means "ALL / unrestricted".
  */
 @Injectable()
 export class BranchScopeService {
-  /**
-   * Employee scope: 1 = men, 2 = women, 3 = both. This is an authorization
-   * constraint, not a UI default. System administrators keep their existing
-   * unrestricted audience.
-   */
-  memberGenderFilter(user: JwtUser | undefined | null): 'male' | 'female' | null {
-    if (!user || isSystemAdmin(user)) return null;
-    if (user.member_sections?.length) {
-      if (user.member_sections.includes('male') && user.member_sections.includes('female')) return null;
-      return user.member_sections[0];
-    }
-    // 0 is retained as men only for legacy claims. A value of 3 deliberately
-    // has no gender filter, while branch scoping still applies.
-    if (user.man_women_type === 0 || user.man_women_type === 1) return 'male';
-    if (user.man_women_type === 2) return 'female';
-    if (user.man_women_type === 3) return null;
-    throw new ForbiddenException('نطاق القسم غير مضبوط لهذا المستخدم');
-  }
+  constructor(private readonly config: ConfigService) {}
 
-  isMemberGenderAllowed(user: JwtUser | undefined | null, gender: string | null | undefined): boolean {
-    const required = this.memberGenderFilter(user);
-    return required === null || gender === required;
-  }
-
-  /** `null` ⇒ unrestricted super-admin. `[]` ⇒ fail-closed/no branch access. */
+  /** `null` ⇒ unrestricted (super-admin or trusted internal call). Otherwise concrete allowed ids. */
   allowedBranchIds(user: JwtUser | undefined | null): number[] | null {
-    if (!user) return [];
-    if (isSystemAdmin(user)) return null; // super-admin sees everything
+    if (!user) return null;
+    if (user.level === 1) return null; // super-admin sees everything
+    if (user.branchIds) {
+      return [...new Set(user.branchIds.map(Number).filter((id) => Number.isInteger(id) && id > 0))];
+    }
     const base = Number(user.branch ?? 0);
-    if (!Number.isInteger(base) || base <= 0) return [];
+    if (!base) return []; // unassigned non-admin ⇒ no branch data (fail closed)
 
-    return [base];
+    const fanout = this.config.get<Record<number, number[]>>('dashboard.branchFanout') ?? {};
+    const expanded = fanout[base];
+    const ids = new Set<number>([base]);
+    if (Array.isArray(expanded)) expanded.forEach((b) => ids.add(Number(b)));
+    return [...ids];
   }
 
   /** True if the user may access data for `branchId`. Unrestricted users may access any. */
@@ -58,27 +45,23 @@ export class BranchScopeService {
   /**
    * Intersect a client-requested branch with the user's scope for LIST filtering.
    * Returns the branch id(s) to filter by, or null for "no branch restriction".
-   *  - super-admin + specific request → that exact branch
-   *  - super-admin + no/all request   → null (all branches)
-   *  - scoped user + no/all request   → their exact branch
-   *  - scoped user + in-scope request → their exact branch
-   *  - scoped user + foreign request  → their exact branch defensively; the global
-   *    guard rejects the explicit foreign request with 403 before the service runs.
+   *  - unrestricted user + specific request → that request (honoured as-is)
+   *  - unrestricted user + no/all request   → null (all branches)
+   *  - scoped user + no/all request          → the user's allowed set (default scope)
+   *  - scoped user + specific in-scope request → that single branch
+   *  - scoped user + specific out-of-scope    → throws is handled by the guard; here we
+   *    fall back to the allowed set defensively.
    */
   resolveListFilter(
     user: JwtUser | undefined | null,
-    requested?: number | string | "all" | null,
+    requested?: number | string | 'all' | null,
   ): number[] | null {
     const allowed = this.allowedBranchIds(user);
     // Query params arrive as strings; normalize '', 'all', null and non-numeric to "no request".
-    const n =
-      requested == null || requested === "all" || requested === ""
-        ? NaN
-        : Number(requested);
+    const n = requested == null || requested === 'all' || requested === '' ? NaN : Number(requested);
     const req = Number.isFinite(n) ? n : null;
     if (allowed === null) return req == null ? null : [req];
     if (req == null) return allowed; // default a scoped user to their branches
-    if (!allowed.includes(req)) return allowed;
-    return [req];
+    return allowed.includes(req) ? [req] : allowed;
   }
 }

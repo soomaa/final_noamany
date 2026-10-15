@@ -83,7 +83,6 @@ export class ShiftSessionsReportQueryDto {
 
 export class CurrentSessionQueryDto {
   @IsOptional() @Type(() => Number) @IsInt() branchId?: number;
-  @IsOptional() @Type(() => Number) @IsInt() userId?: number;
 }
 
 export class DailyReportQueryDto {

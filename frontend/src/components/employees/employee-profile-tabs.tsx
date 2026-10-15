@@ -23,9 +23,11 @@ import type {
   EmployeeInsurance,
   FinanceData,
 } from '@/types/employees';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, formatDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { uploadUrl } from './use-uploads';
 import { uiStatic } from '@/lib/ui-static';
+import { usePermission } from '@/hooks/use-permission';
 
 function ProfileField({ label, value }: { label: string; value: React.ReactNode }) {
   return (
@@ -48,6 +50,9 @@ function TabLoading() {
 
 export function FinanceTab({ data, loading, empId }: { data?: FinanceData; loading?: boolean; empId: string }) {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canUpdate = can('employees.list:update');
+  const canDelete = can('employees.list:delete');
   const qc = useQueryClient();
   const { data: allowanceTypes } = useLookups('allowance');
   const { data: deductionTypes } = useLookups('deduction');
@@ -66,6 +71,7 @@ export function FinanceTab({ data, loading, empId }: { data?: FinanceData; loadi
   // Per-row delete: persisted rows (numeric server id) hit the DELETE endpoint;
   // unsaved rows are dropped locally.
   const handleDelete = async (row: FinanceRow) => {
+    if (!canDelete) return;
     if (/^\d+$/.test(row.id)) {
       const ok = await confirm({
         title: ui('حذف البند المالي'),
@@ -88,6 +94,7 @@ export function FinanceTab({ data, loading, empId }: { data?: FinanceData; loadi
   };
 
   const handleSave = async () => {
+    if (!canUpdate) return;
     setSaving(true);
     try {
       await api.put(`/employees/${empId}/finance`, { rows, basic_salary: basicSalary });
@@ -112,12 +119,14 @@ export function FinanceTab({ data, loading, empId }: { data?: FinanceData; loadi
         deductionTypes={deductionTypes}
         basicSalary={basicSalary}
         onBasicSalaryChange={setBasicSalary}
+        editable={canUpdate}
+        canDelete={canDelete}
       />
       <div className="flex justify-end">
-        <Button variant="brand" onClick={handleSave} disabled={saving}>
+        {canUpdate ? <Button permissionAction="update" variant="brand" onClick={handleSave} disabled={saving}>
           {saving && <Loader2 className="size-4 animate-spin" />}
           <Save className="size-4" /> {ui('حفظ المالية')}
-        </Button>
+        </Button> : null}
       </div>
     </div>
   );
@@ -131,15 +140,15 @@ export function InsuranceTab({ data, loading }: { data?: EmployeeInsurance; load
   return (
     <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
       <ProfileField label={ui('نوع التأمين')} value={data.type_tamin ?? '—'} />
-      <ProfileField label={ui('رقم التأمين')} value={data.tamin_rkm != null ? toArabicDigits(data.tamin_rkm) : '—'} />
+      <ProfileField label={ui('رقم التأمين')} value={data.tamin_rkm != null ? formatDigits(data.tamin_rkm) : '—'} />
       <ProfileField label={ui('المسمى التأميني')} value={data.tamin_mosama_wazefy ?? '—'} />
       <ProfileField label={ui('الأجر التأميني')} value={data.tamin_rateb ? toArabicDigits(data.tamin_rateb) : '—'} />
       <ProfileField label={ui('حصة الموظف')} value={data.tamin_hesa_emp ? toArabicDigits(data.tamin_hesa_emp) : '—'} />
       <ProfileField label={ui('حصة صاحب العمل')} value={data.tamin_hesa_oner ? toArabicDigits(data.tamin_hesa_oner) : '—'} />
       <ProfileField label={ui('التأمين الطبي')} value={data.type_tamin__medicine ?? '—'} />
       <ProfileField label={ui('شركة التأمين')} value={data.tamin_company ?? '—'} />
-      <ProfileField label={ui('رقم التأمين الطبي')} value={data.tamin_medicine_num ? toArabicDigits(data.tamin_medicine_num) : '—'} />
-      <ProfileField label={ui('رقم البوليصة')} value={data.polica_num ? toArabicDigits(data.polica_num) : '—'} />
+      <ProfileField label={ui('رقم التأمين الطبي')} value={data.tamin_medicine_num ? formatDigits(data.tamin_medicine_num) : '—'} />
+      <ProfileField label={ui('رقم البوليصة')} value={data.polica_num ? formatDigits(data.polica_num) : '—'} />
       <ProfileField label={ui('تاريخ بدء التأمين')} value={<DateText value={data.start_tamin_date_m} />} />
       <ProfileField label={ui('تاريخ التأمين')} value={<DateText value={data.tamin_date_m} />} />
     </dl>
@@ -171,9 +180,9 @@ export function DocumentsTab({ data, loading }: { data?: EmployeeDocumentFile[];
               <TableCell className="nums">{doc.to_date ? toArabicDigits(doc.to_date) : '—'}</TableCell>
               <TableCell>{doc.tanbih_fk === 1 ? ui('نعم') : ui('لا')}</TableCell>
               <TableCell>
-                {doc.emp_file && (
+                {uploadUrl(doc.emp_file) && (
                   <a
-                    href={`/uploads/${doc.emp_file}`}
+                    href={uploadUrl(doc.emp_file)!}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="inline-flex items-center gap-1 text-sm text-primary hover:underline"
@@ -210,12 +219,12 @@ export function BanksTab({ data, loading }: { data?: EmployeeBankRow[]; loading?
           {data.map((b) => (
             <TableRow key={b.id}>
               <TableCell>{b.emp_bank_name ?? '—'}</TableCell>
-              <TableCell className="nums">{toArabicDigits(b.bank_account_num)}</TableCell>
+              <TableCell className="nums">{formatDigits(b.bank_account_num)}</TableCell>
               <TableCell>{b.approved_for_sarf === 1 ? ui('نعم') : ui('لا')}</TableCell>
               <TableCell>
-                {b.bank_id_fk_image && b.bank_id_fk_image !== '0' && (
+                {uploadUrl(b.bank_id_fk_image) && (
                   <a
-                    href={`/uploads/${b.bank_id_fk_image}`}
+                    href={uploadUrl(b.bank_id_fk_image)!}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-sm text-primary hover:underline"
@@ -293,6 +302,8 @@ export function ContractTab({ data,
   loading?: boolean;
   empId: string;
 }) {
+  const { can } = usePermission();
+  const canUpdate = can('employees.list:update');
   const { ui } = useLocale();
   const qc = useQueryClient();
   const [form, setForm] = useState<ContractForm>(emptyContract);
@@ -326,6 +337,7 @@ export function ContractTab({ data,
   const set = (patch: Partial<ContractForm>) => setForm((f) => ({ ...f, ...patch }));
 
   const handleSave = async () => {
+    if (!canUpdate) return;
     setSaving(true);
     try {
       await api.put(`/employees/${empId}/contract`, {
@@ -382,10 +394,10 @@ export function ContractTab({ data,
         </div>
       </div>
       <div className="flex justify-end">
-        <Button variant="brand" onClick={handleSave} disabled={saving}>
+        {canUpdate ? <Button permissionAction="update" variant="brand" onClick={handleSave} disabled={saving}>
           {saving && <Loader2 className="size-4 animate-spin" />}
           <Save className="size-4" /> {ui('حفظ العقد')}
-        </Button>
+        </Button> : null}
       </div>
     </div>
   );
@@ -401,7 +413,7 @@ const DAY_NAME_KEYS: Record<number, string> = {
   5: uiStatic('الجمعة'),
 };
 
-export function AttendanceTab({ data, loading, editHref }: { data?: DwamData; loading?: boolean; editHref: string }) {
+export function AttendanceTab({ data, loading, editHref }: { data?: DwamData; loading?: boolean; editHref?: string }) {
   
   const { ui } = useLocale();
   if (loading) return <TabLoading />;
@@ -418,9 +430,11 @@ export function AttendanceTab({ data, loading, editHref }: { data?: DwamData; lo
         {ui('نوع الدوام')}: <span className="font-medium text-foreground">{data.shift_type || '—'}</span>
       </p>
       <DwamScheduleGrid schedule={schedule} onChange={() => {}} readOnly />
-      <p className="text-xs text-muted-foreground">
-        <Link to={editHref} className="text-primary hover:underline">{ui('تعديل جدول الدوام')}</Link> {ui('من معالج الموظف.')}
-      </p>
+      {editHref ? (
+        <p className="text-xs text-muted-foreground">
+          <Link to={editHref} className="text-primary hover:underline">{ui('تعديل جدول الدوام')}</Link> {ui('من معالج الموظف.')}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -433,6 +447,9 @@ export function AppAccountTab({
   appUserId?: number | null;
 }) {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canUpdate = can('employees.list:update');
+  const canDelete = can('employees.list:delete');
   const qc = useQueryClient();
   const [loading, setLoading] = useState(false);
   const [created, setCreated] = useState<{ appUserId: number; phone: string | null; password: string } | null>(null);
@@ -444,6 +461,7 @@ export function AppAccountTab({
   );
 
   const handleCreate = async () => {
+    if (!canUpdate) return;
     setLoading(true);
     try {
       const { data } = await api.post<{ appUserId: number; phone: string | null; password?: string; alreadyExists: boolean }>(
@@ -464,6 +482,7 @@ export function AppAccountTab({
   };
 
   const handleDelete = async () => {
+    if (!canDelete) return;
     const ok = await confirm({
       title: ui('حذف حساب التطبيق'),
       description: ui('سيُحذف حساب التطبيق ويُفصل عن الموظف. لا يمكن التراجع.'),
@@ -503,10 +522,10 @@ export function AppAccountTab({
           <p className="mx-auto mt-2 max-w-md text-sm text-muted-foreground">
             {ui('أنشئ حساباً للموظف في التطبيق باستخدام رقم جواله وبريده المسجلين.')}
           </p>
-          <Button className="mt-4" onClick={handleCreate}>
+          {canUpdate ? <Button permissionAction="update" className="mt-4" onClick={handleCreate}>
             <Smartphone className="me-2 size-4" />
             {ui('إنشاء حساب تطبيق')}
-          </Button>
+          </Button> : null}
         </div>
       ) : (
         <div className="space-y-4">
@@ -517,10 +536,10 @@ export function AppAccountTab({
                 <p className="text-lg font-semibold">{linkedUser.phone ?? '—'}</p>
                 <p className="text-xs text-muted-foreground">{ui('معرف المستخدم:')} {linkedUser.appUserId}</p>
               </div>
-              <Button variant="destructive" size="sm" onClick={handleDelete}>
+              {canDelete ? <Button permissionAction="delete" variant="destructive" size="sm" onClick={handleDelete}>
                 <Trash2 className="me-2 size-4" />
                 {ui('حذف الحساب')}
-              </Button>
+              </Button> : null}
             </div>
           </div>
 

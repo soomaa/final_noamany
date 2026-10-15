@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import {
+  SUSPEND_APPROVED,
   SUSPEND_INVESTIGATING,
   buildSuspendWhere,
   suspendToListStatus,
@@ -10,13 +11,18 @@ import {
 } from '../../common/utils/suspend-status.util';
 import { CreateBylawDto, CreatePenaltyDto, UpdateBylawDto, UpdatePenaltyDto } from './dto/penalty.dto';
 import { ListPenaltiesDto } from './dto/list-penalties.dto';
+import { cairoDateString, dateOnlyEpochSeconds, dateOnlyParts } from '../../common/utils/cairo-date';
+import { HrDataScopeService } from '../../common/hr-scope/hr-data-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @Injectable()
 export class PenaltiesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly scope: HrDataScopeService) {}
 
-  async list(q: ListPenaltiesDto) {
+  async list(q: ListPenaltiesDto, user: JwtUser) {
     const and: Prisma.hr_gezaatWhereInput[] = [];
+    const identities = await this.scope.employeeIdentities(user, 'finance.penalties');
+    if (identities) and.push(identities.ids.length ? { emp_id: { in: identities.ids } } : { id: -1 });
     const statusWhere = buildSuspendWhere(q.status);
     if (statusWhere?.suspend) and.push({ suspend: statusWhere.suspend });
     if (q.search?.trim()) {
@@ -32,34 +38,30 @@ export class PenaltiesService {
 
     const data = rows.map((row) => ({
       id: row.id,
-      empId: row.emp_id,
-      empCode: row.emp_code,
       employeeName: row.emp_name,
       title: row.details,
       amount: row.geza_value ? Number(row.geza_value) : null,
       date: row.geza_date_ar,
-      month: row.month,
-      year: row.year,
-      gezaType: row.geza_type,
       status: suspendToListStatus(row.suspend),
     }));
 
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async create(dto: CreatePenaltyDto, publisherId?: number, publisherName?: string | null) {
+  async create(dto: CreatePenaltyDto, user: JwtUser, publisherId?: number, publisherName?: string | null) {
+    await this.scope.assertEmployeeInScope(user, dto.empId, 'finance.penalties');
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
-    const dateStr = dto.date ?? new Date().toISOString().slice(0, 10);
-    const date = new Date(`${dateStr}T00:00:00`);
-    if (Number.isNaN(date.getTime())) throw new BadRequestException('تاريخ الجزاء غير صحيح');
-    const ts = Math.floor(date.getTime() / 1000);
+    const dateStr = dto.date ?? cairoDateString();
+    const { month, year } = dateOnlyParts(dateStr);
+    const ts = dateOnlyEpochSeconds(dateStr);
 
-    const gezaType = dto.gezaType;
-    let amount = dto.amount;
+    let gezaType = dto.gezaType ?? 0;
+    let amount = dto.amount ?? '0';
     if (dto.bylawId != null) {
       const bylaw = await this.findBylawOrThrow(dto.bylawId);
       if (bylaw.is_active !== 1) throw new BadRequestException('بند اللائحة غير نشط');
+      gezaType = dto.bylawId;
       if (bylaw.deduction_amount != null) amount = String(bylaw.deduction_amount);
     }
 
@@ -73,80 +75,68 @@ export class PenaltiesService {
         edara_n: emp.edara_n,
         qsm_id_fk: emp.qsm_id,
         qsm_n: emp.qsm_n,
-        details: dto.title?.trim() || null,
+        details: dto.title,
         geza_value: amount,
         geza_type: gezaType,
         geza_date: String(ts),
         geza_date_ar: dateStr,
-        month: date.getMonth() + 1,
-        year: date.getFullYear(),
+        month,
+        year,
         publisher: publisherId,
         publisher_name: publisherName,
-        // New penalties wait for an explicit approve/reject action from the list page.
         suspend: SuspendStatus.INCOMING,
       },
     });
     return { id: row.id };
   }
 
-  async update(id: number, dto: UpdatePenaltyDto) {
-    const existing = await this.findPenaltyOrThrow(id);
-    // Legacy allows editing an approved penalty. Lock only after payroll has consumed it.
-    if (existing.mosayer_rkm_fk != null && (dto.empId != null || dto.amount != null || dto.date != null || dto.gezaType != null)) {
-      throw new BadRequestException('لا يمكن تعديل بيانات جزاء تم ترحيله لمسير الرواتب');
+  async update(id: number, dto: UpdatePenaltyDto, user: JwtUser) {
+    const existing = await this.findScopedPenaltyOrThrow(id, user);
+    // Once approved (suspend ∈ {1,4}) the amount / month / year are locked: mutating them after
+    // approval would change what a payroll run deducts (or re-map the penalty into another run),
+    // re-opening the negative-penalty / double-collection window. Title/type edits stay allowed.
+    const approved = SUSPEND_APPROVED.includes(existing.suspend);
+    const changesLockedFields =
+      dto.amount != null || dto.date != null;
+    if (approved && changesLockedFields) {
+      throw new BadRequestException('لا يمكن تعديل قيمة أو تاريخ جزاء معتمد');
     }
 
     const data: Prisma.hr_gezaatUpdateInput = {};
-    if (dto.empId != null) {
-      const employee = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
-      if (!employee) throw new NotFoundException('الموظف غير موجود');
-      data.emp_id = employee.id;
-      data.emp_code = employee.emp_code;
-      data.emp_name = employee.employee;
-      data.mosma_wazefy_n = employee.mosma_wazefy_n;
-      data.edara_id_fk = employee.edara_id;
-      data.edara_n = employee.edara_n;
-      data.qsm_id_fk = employee.qsm_id;
-      data.qsm_n = employee.qsm_n;
-    }
-    if (dto.title != null) data.details = dto.title.trim() || null;
+    if (dto.title != null) data.details = dto.title;
     if (dto.amount != null) data.geza_value = dto.amount;
     if (dto.gezaType != null) data.geza_type = dto.gezaType;
     if (dto.date != null) {
-      const date = new Date(`${dto.date}T00:00:00`);
-      if (Number.isNaN(date.getTime())) throw new BadRequestException('تاريخ الجزاء غير صحيح');
       data.geza_date_ar = dto.date;
-      data.geza_date = String(Math.floor(date.getTime() / 1000));
-      data.month = date.getMonth() + 1;
-      data.year = date.getFullYear();
+      data.geza_date = String(dateOnlyEpochSeconds(dto.date));
+      const parts = dateOnlyParts(dto.date);
+      data.month = parts.month;
+      data.year = parts.year;
     }
     await this.prisma.hr_gezaat.update({ where: { id }, data });
     return { id };
   }
 
-  async investigate(id: number) {
-    await this.findPenaltyOrThrow(id);
+  async investigate(id: number, user: JwtUser) {
+    await this.findScopedPenaltyOrThrow(id, user);
     await this.prisma.hr_gezaat.update({ where: { id }, data: { suspend: SUSPEND_INVESTIGATING } });
     return { id, status: 'investigating' };
   }
 
-  async approve(id: number) {
-    await this.findPenaltyOrThrow(id);
+  async approve(id: number, user: JwtUser) {
+    await this.findScopedPenaltyOrThrow(id, user);
     await this.prisma.hr_gezaat.update({ where: { id }, data: { suspend: SuspendStatus.APPROVED } });
     return { id, status: 'approved' };
   }
 
-  async reject(id: number) {
-    await this.findPenaltyOrThrow(id);
+  async reject(id: number, user: JwtUser) {
+    await this.findScopedPenaltyOrThrow(id, user);
     await this.prisma.hr_gezaat.update({ where: { id }, data: { suspend: SuspendStatus.REJECTED } });
     return { id, status: 'rejected' };
   }
 
-  async remove(id: number) {
-    const existing = await this.findPenaltyOrThrow(id);
-    if (existing.mosayer_rkm_fk != null) {
-      throw new BadRequestException('لا يمكن حذف جزاء تم ترحيله لمسير الرواتب');
-    }
+  async remove(id: number, user: JwtUser) {
+    await this.findScopedPenaltyOrThrow(id, user);
     await this.prisma.hr_gezaat.delete({ where: { id } });
     return { id };
   }
@@ -190,7 +180,7 @@ export class PenaltiesService {
         deduction_days: dto.deductionDays,
         deduction_amount: dto.deductionAmount,
         publisher: publisherId,
-        created_at: new Date().toISOString().slice(0, 10),
+        created_at: cairoDateString(),
         is_active: 1,
       },
     });
@@ -223,6 +213,13 @@ export class PenaltiesService {
   private async findPenaltyOrThrow(id: number) {
     const row = await this.prisma.hr_gezaat.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('الجزاء غير موجود');
+    return row;
+  }
+
+  private async findScopedPenaltyOrThrow(id: number, user: JwtUser) {
+    const row = await this.findPenaltyOrThrow(id);
+    if (row.emp_id == null) throw new NotFoundException('الجزاء غير موجود');
+    await this.scope.assertEmployeeInScope(user, row.emp_id, 'finance.penalties');
     return row;
   }
 

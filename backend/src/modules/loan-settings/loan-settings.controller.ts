@@ -5,6 +5,13 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { JwtUser } from '../../common/types/jwt-user';
 import { LoanSettingsService } from './loan-settings.service';
+import {
+  CreateLoanAccountDto,
+  CreateLoanRuleDto,
+  UpdateLoanAccountDto,
+  UpdateLoanRuleDto,
+  UpdateMainLoanSettingDto,
+} from './dto/loan-setting.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('loans/settings')
@@ -23,22 +30,10 @@ export class LoanSettingsController {
   }
 
   @Patch('main')
-  @RequiresPermission('finance.loan_settings:update')
+  @RequiresPermission('finance.loan_settings:configure')
   updateMain(
     @Body()
-    body: {
-      da3mValue?: number;
-      aqsaModaSadad?: number;
-      hadAdna?: number;
-      ratebAsasy?: number;
-      bdlSakn?: number;
-      bdlMowaslat?: number;
-      bdlJwal?: number;
-      ratebMokto3?: number;
-      bdlAmal?: number;
-      bdlTaklef?: number;
-      bdlMa3esha?: number;
-    },
+    body: UpdateMainLoanSettingDto,
   ) {
     return this.service.updateMain(body);
   }
@@ -49,19 +44,19 @@ export class LoanSettingsController {
   }
 
   @Post('dawabt')
-  @RequiresPermission('finance.loan_settings:configure')
-  createDawabt(@Body() body: { title: string; type: number }) {
+  @RequiresPermission('finance.loan_settings:create')
+  createDawabt(@Body() body: CreateLoanRuleDto) {
     return this.service.createDawabt(body);
   }
 
   @Patch('dawabt/:id')
   @RequiresPermission('finance.loan_settings:update')
-  updateDawabt(@Param('id', ParseIntPipe) id: number, @Body() body: { title?: string; type?: number }) {
+  updateDawabt(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateLoanRuleDto) {
     return this.service.updateDawabt(id, body);
   }
 
   @Delete('dawabt/:id')
-  @RequiresPermission('finance.loan_settings:configure')
+  @RequiresPermission('finance.loan_settings:delete')
   removeDawabt(@Param('id', ParseIntPipe) id: number) {
     return this.service.removeDawabt(id);
   }
@@ -72,9 +67,9 @@ export class LoanSettingsController {
   }
 
   @Post('accounts')
-  @RequiresPermission('finance.loan_settings:configure')
+  @RequiresPermission('finance.loan_settings:create')
   createAccount(
-    @Body() body: { empId: number; empCode?: number; empName?: string; accountNumber: string; accountName: string },
+    @Body() body: CreateLoanAccountDto,
     @CurrentUser() user: JwtUser,
   ) {
     return this.service.createAccount(body, user.sub, user.name);
@@ -84,13 +79,13 @@ export class LoanSettingsController {
   @RequiresPermission('finance.loan_settings:update')
   updateAccount(
     @Param('id', ParseIntPipe) id: number,
-    @Body() body: { empId?: number; empCode?: number; empName?: string; accountNumber?: string; accountName?: string },
+    @Body() body: UpdateLoanAccountDto,
   ) {
     return this.service.updateAccount(id, body);
   }
 
   @Delete('accounts/:id')
-  @RequiresPermission('finance.loan_settings:configure')
+  @RequiresPermission('finance.loan_settings:delete')
   removeAccount(@Param('id', ParseIntPipe) id: number) {
     return this.service.removeAccount(id);
   }
