@@ -423,6 +423,14 @@ export class ModuleLedgerService {
     );
   }
 
+  async postSupplierOpening(input: {reference:string; branchId:number; date:string; amount:number; createdBy:number}, tx?: Tx) {
+    await this.ensureChart();
+    await this.ledger.postEntry({sourceModule:'procurement',sourceDocType:'supplier_opening',sourceDocId:input.reference,
+      branchId:input.branchId,date:input.date,description:`مديونية افتتاحية لمورد ${input.reference}`,
+      lines:[{accountCode:'opening_balance_equity',debit:input.amount,credit:0},{accountCode:'accounts_payable',debit:0,credit:input.amount}],
+      createdBy:input.createdBy,entryPrefix:'A'},tx);
+  }
+
   async postSupplierPayment(
     input: {
       paymentNumber: string;
@@ -431,6 +439,7 @@ export class ModuleLedgerService {
       amount: number;
       paymentMethod?: string | null;
       createdBy: number;
+      isRefund?: boolean;
     },
     tx?: Tx,
   ): Promise<void> {
@@ -441,14 +450,14 @@ export class ModuleLedgerService {
     await this.ledger.postEntry(
       {
         sourceModule: "procurement",
-        sourceDocType: "supplier_payment",
+        sourceDocType: input.isRefund ? 'supplier_refund' : "supplier_payment",
         sourceDocId: input.paymentNumber,
         branchId: input.branchId,
         date: input.paymentDate,
         description: `دفعة مورد ${input.paymentNumber}`,
         lines: [
-          { accountCode: "accounts_payable", debit: amount, credit: 0 },
-          { accountCode: payKey, debit: 0, credit: amount },
+          { accountCode: "accounts_payable", debit: input.isRefund ? 0 : amount, credit: input.isRefund ? amount : 0 },
+          { accountCode: payKey, debit: input.isRefund ? amount : 0, credit: input.isRefund ? 0 : amount },
         ],
         createdBy: input.createdBy,
         entryPrefix: "A",

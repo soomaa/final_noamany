@@ -1,4 +1,6 @@
 import './font.css';
+import './cart-actions.css';
+import { initProductCarousel } from './product-carousel.js';
 import { addToCart, api, assetUrl, cartCount, cartTotal, escapeHtml, getCart, installGlobalCartLinks, money, productImageUrl, saveToken, showToast, updateCartItem, wireImageFallback } from './portal.js';
 
 const header = document.querySelector('.site-header');
@@ -7,6 +9,7 @@ const mobileNav = document.querySelector('.mobile-nav');
 const progressBar = document.querySelector('.page-progress span');
 const backToTop = document.querySelector('.back-to-top');
 let portalData = null;
+const refreshProductCarousel = initProductCarousel(document.querySelector('.product-grid'));
 
 window.addEventListener('scroll', () => {
   header?.classList.toggle('scrolled', window.scrollY > 30);
@@ -67,22 +70,22 @@ async function submitSimpleForm(form, endpoint, payload) {
   finally { button.disabled = false; }
 }
 document.querySelector('.contact-form')?.addEventListener('submit', (event) => { event.preventDefault(); submitSimpleForm(event.currentTarget, '/contact', Object.fromEntries(new FormData(event.currentTarget))); });
-document.querySelector('.lead-form')?.addEventListener('submit', (event) => { event.preventDefault(); const data = Object.fromEntries(new FormData(event.currentTarget)); submitSimpleForm(event.currentTarget, '/membership-leads', { ...data, branchId: Number(data.branchId) }); });
 
 function productCard(product) {
   const available = product.stockStatus === 'in_stock' && product.stock > 0;
-  return `<article class="product reveal"><a href="/product.html?id=${product.id}" class="home-product-link"><div class="product-visual" data-image-frame><img class="product-logo" src="/assets/noamany-logo.png" alt="Noamany">${product.oldPrice > product.price ? '<span class="sale-badge">خصم</span>' : ''}<img class="home-product-image" data-product-image data-placeholder="${product.image ? 'false' : 'true'}" src="${productImageUrl(product.image)}" alt="${escapeHtml(product.name)}"></div><div class="product-meta"><span>${escapeHtml(product.category)}</span><span class="stock">● ${available ? 'متوفر' : 'نفد'}</span></div><h3>${escapeHtml(product.name)}</h3><p class="product-detail">${escapeHtml(product.shortDescription || 'منتج مختار بعناية لدعم خطتك الرياضية.')}</p><div class="price"><b>${money(product.price)}</b>${product.oldPrice > product.price ? `<del>${money(product.oldPrice)}</del>` : ''}</div></a><button class="add-cart" data-product-id="${product.id}" ${available ? '' : 'disabled'}>${available ? 'إضافة إلى السلة' : 'غير متوفر'}</button></article>`;
+  return `<article class="product"><a href="/product.html?id=${product.id}" class="home-product-link"><div class="product-visual" data-image-frame><img class="product-logo" src="/assets/noamany-logo.png" alt="Noamany">${product.oldPrice > product.price ? '<span class="sale-badge">خصم</span>' : ''}<img class="home-product-image" data-product-image data-placeholder="${product.image ? 'false' : 'true'}" src="${productImageUrl(product.image)}" alt="${escapeHtml(product.name)}" loading="lazy"></div><div class="product-meta"><span>${escapeHtml(product.category)}</span><span class="stock">● ${available ? 'متوفر' : 'نفد'}</span></div><h3>${escapeHtml(product.name)}</h3></a><div class="product-footer"><a class="price" href="/product.html?id=${product.id}" aria-label="تفاصيل ${escapeHtml(product.name)}"><b>${money(product.price)}</b>${product.oldPrice > product.price ? `<del>${money(product.oldPrice)}</del>` : ''}</a><button class="add-cart" data-product-id="${product.id}" aria-label="${available ? 'إضافة إلى السلة: ' : 'غير متوفر: '}${escapeHtml(product.name)}" title="${available ? 'إضافة إلى السلة' : 'غير متوفر'}" ${available ? '' : 'disabled'}><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 4h2l2.1 10.1a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 1.9-1.5L20 8H7"/><circle cx="9" cy="20" r="1"/><circle cx="17" cy="20" r="1"/></svg></button></div></article>`;
 }
 
 function renderProducts(products) {
   const grid = document.querySelector('.product-grid');
   if (!products?.length) {
     grid.innerHTML = '<div class="home-products-empty"><b>لا توجد منتجات منشورة حاليًا</b><span>ستظهر منتجات المتجر هنا تلقائيًا فور إضافتها من لوحة الإدارة.</span><a href="/shop.html">فتح المتجر ←</a></div>';
+    refreshProductCarousel();
     return;
   }
   grid.innerHTML = products.slice(0, 8).map(productCard).join('');
   grid.querySelectorAll('[data-product-id]').forEach((button) => button.addEventListener('click', () => { const product = products.find((item) => item.id === Number(button.dataset.productId)); try { addToCart(product); renderCart(); showToast(`تمت إضافة ${product.name} إلى السلة`); } catch (error) { showToast(error.message, 'error'); } }));
-  wireImageFallback(grid); reveal(grid);
+  wireImageFallback(grid); refreshProductCarousel();
 }
 
 function offerCard(offer, index) {
@@ -116,8 +119,7 @@ function renderBranches(branches) {
     const phoneLinks = phones.length ? phones.map((phone) => `<a href="tel:${escapeHtml(phone)}" dir="ltr">${escapeHtml(phone)}</a>`).join('<span class="phone-separator">•</span>') : '<span class="branch-phone-missing">غير مسجل بعد</span>';
     return `<article class="map-card"><div class="map-card-heading"><h3>${escapeHtml(branch.name)}</h3>${branch.lat && branch.lng ? `<a class="branch-map-link" target="_blank" rel="noreferrer" href="https://maps.google.com/?q=${encodeURIComponent(`${branch.lat},${branch.lng}`)}"><span aria-hidden="true">⌖</span> عرض على الخريطة ←</a>` : ''}</div><div class="branch-contact-grid"><div class="branch-contact-row"><i aria-hidden="true">⌖</i><strong>${escapeHtml(branch.address || 'العنوان غير مسجل بعد')}</strong></div><div class="branch-contact-row branch-phone"><i aria-hidden="true">☎</i><span class="compact-phone-list">${phoneLinks}</span></div></div></article>`;
   }).join('');
-  const select = document.querySelector('.lead-form select'); select.name = 'branchId'; select.innerHTML = '<option value="">اختر الفرع</option>' + branches.map((branch) => `<option value="${branch.id}">${escapeHtml(branch.name)}</option>`).join('');
-  document.querySelectorAll('[data-branch-id]').forEach((button) => button.addEventListener('click', () => { select.value = button.dataset.branchId; document.querySelector('.cta-band').scrollIntoView({ behavior: 'smooth' }); }));
+  document.querySelectorAll('[data-branch-id]').forEach((button) => button.addEventListener('click', () => { document.querySelector('.contact-section')?.scrollIntoView({ behavior: 'smooth' }); }));
   document.querySelectorAll('.branch-map-zoom').forEach((button) => button.addEventListener('click', () => {
     let viewer = document.querySelector('.branch-map-viewer');
     if (!viewer) {
@@ -228,21 +230,25 @@ function renderHero(sliders) {
   const description = hero.querySelector('.hero-content > p');
 
   const fallback = '/assets/hero-red.png';
+  // Small screens show the whole image (no cropping), so CSS needs its real aspect ratio.
+  const show = (url, onError) => {
+    const probe = new Image();
+    probe.onload = () => {
+      background.style.setProperty('background-image', `url('${url}')`, 'important');
+      if (probe.naturalWidth && probe.naturalHeight) hero.style.setProperty('--hero-ratio', String(probe.naturalWidth / probe.naturalHeight));
+    };
+    if (onError) probe.onerror = onError;
+    probe.src = url;
+  };
   background.style.setProperty('background-image', `url('${fallback}')`, 'important');
-
   const slider = sliders?.[0];
+  const candidate = slider?.main_image ? assetUrl(slider.main_image) : null;
+  if (candidate) show(candidate, () => show(fallback));
+  else show(fallback);
   if (!slider) return;
 
   if (slider.title?.trim()) heading.innerHTML = luxuryHeading(slider.title);
   if (slider.details?.trim()) description.textContent = slider.details;
-
-  if (slider.main_image) {
-    const candidate = assetUrl(slider.main_image);
-    const probe = new Image();
-    probe.onload = () => background.style.setProperty('background-image', `url('${candidate}')`, 'important');
-    probe.onerror = () => background.style.setProperty('background-image', `url('${fallback}')`, 'important');
-    probe.src = candidate;
-  }
 }
 
 function luxuryHeading(value) {
@@ -253,13 +259,7 @@ function luxuryHeading(value) {
 function renderSectionSettings(items) {
   const selectors = { products:'.products-section', offers:'.offers-section', services:'.services-section', classes:'.classes', coaches:'.coach', gallery:'.gallery-section', membership:'.membership', branches:'.branches', contact:'.contact-section' };
   items?.forEach((item) => {
-    if (item.sectionKey === 'lead') {
-      const section = document.querySelector('.cta-band');
-      if (item.subtitle) section.querySelector('span').textContent = item.subtitle;
-      if (item.extraText) section.querySelector('h2').innerHTML = luxuryHeading(item.extraText);
-      if (item.linkText) section.querySelector('button').textContent = `${item.linkText} ←`;
-      return;
-    }
+    if (item.sectionKey === 'lead') return;
     const section = document.querySelector(selectors[item.sectionKey]); if (!section) return;
     const tag = section.querySelector('.section-tag'); const heading = section.querySelector('h2'); const description = heading?.closest('.section-heading')?.querySelector(':scope > p') || section.querySelector('.services-intro > p,.coach-copy > p');
     if (tag && item.subtitle) tag.textContent = item.subtitle;
@@ -274,6 +274,7 @@ function renderSectionSettings(items) {
 function renderStats(items) {
   if (!items?.length) return;
   const wrap = document.querySelector('.hero-stats');
+  if (!wrap) return;
   wrap.innerHTML = items.map((item) => `<div><strong>${Number(item.numericValue || 0).toLocaleString('ar-EG')}${escapeHtml(item.suffix || '')}</strong><span>${escapeHtml(item.title)}</span></div>`).join('');
   const experience = document.querySelector('.experience'); const years = items.find((item) => /خبرة|عام|سنة/.test(item.title));
   if (experience && years) experience.innerHTML = `<strong>${Number(years.numericValue || 0).toLocaleString('ar-EG')}${escapeHtml(years.suffix || '')}</strong><span>${escapeHtml(years.title)}</span>`;
@@ -314,9 +315,10 @@ function renderCoaches(trainers, features) {
 
 function renderMembership(items) {
   const plans = document.querySelector('.plans');
-  if (!plans) return;
-  if (!items?.length) { plans.innerHTML = '<p class="empty-state">لا توجد باقات اشتراك متاحة حاليًا.</p>'; return; }
-  plans.innerHTML = items.filter((item) => item.subscriptionTypeId).map((item) => `<article class="plan ${item.featured ? 'featured' : ''} reveal">${item.featured ? '<div class="popular">الأكثر اختيارًا</div>' : ''}<span class="plan-name">${escapeHtml(item.subscriptionTypeName || item.title)}</span><h3>${escapeHtml(item.subtitle || '')}</h3><p>${escapeHtml(item.details || '')}</p><div class="plan-price">${money(item.subscriptionPrice)} <small>${Number(item.subscriptionDays)} يوم</small></div><ul>${String(item.extraText || '').split(/\r?\n/).filter(Boolean).map((feature) => `<li>✓ ${escapeHtml(feature)}</li>`).join('')}</ul><a href="subscribe.html?plan=${Number(item.subscriptionTypeId)}" class="btn ${item.featured ? 'primary' : 'ghost'}">اشترك الآن</a></article>`).join('');
+  if (!plans || !items?.length) return;
+  const featured = (item) => Boolean(item.featured || item.isFeatured);
+  const ordered = items.filter((item) => item.subscriptionTypeId).sort((a, b) => Number(a.displayOrder ?? 0) - Number(b.displayOrder ?? 0));
+  plans.innerHTML = ordered.map((item) => `<article class="plan ${featured(item) ? 'featured' : ''} reveal">${featured(item) ? '<div class="popular">الأكثر اختيارًا</div>' : ''}<span class="plan-name">${escapeHtml(item.title || item.subscriptionTypeName)}</span><h3>${escapeHtml(item.subtitle || '')}</h3><p>${escapeHtml(item.details || '')}</p><div class="plan-price">${money(item.subscriptionPrice)} <small>${Number(item.subscriptionDays)} يوم</small></div><ul>${String(item.extraText || '').split(/\r?\n/).filter(Boolean).map((feature) => `<li>✓ ${escapeHtml(feature)}</li>`).join('')}</ul><a href="subscribe.html?plan=${Number(item.subscriptionTypeId)}" class="btn ${featured(item) ? 'primary' : 'ghost'}">اشترك الآن</a></article>`).join('');
   reveal(document.querySelector('.plans'));
 }
 
@@ -358,11 +360,21 @@ function renderFooterSocial(company = {}) {
   }).join('')}</div>`;
 }
 
+/** Render one homepage section; a broken section must never stop the others from loading. */
+function safely(name, render) {
+  try { render(); } catch (error) { console.warn(`Section "${name}" could not be rendered:`, error); }
+}
+
 function renderManagedContent(data) {
   const content = data.content || {};
-  renderSectionSettings(content['section-settings']); renderStats(content.stats); renderServices(content.services);
-  renderClassShowcase(content['class-showcase']); renderAboutFeatures(content['about-features']); renderCoaches(data.trainers, content['coach-features']);
-  renderMembership(content['membership-plans']); renderVideos(data.videos); renderCompany(data.company);
+  safely('section-settings', () => renderSectionSettings(content['section-settings']));
+  safely('stats', () => renderStats(content.stats));
+  safely('services', () => renderServices(content.services));
+  safely('class-showcase', () => renderClassShowcase(content['class-showcase']));
+  safely('about-features', () => renderAboutFeatures(content['about-features']));
+  safely('coaches', () => renderCoaches(data.trainers, content['coach-features']));
+  safely('videos', () => renderVideos(data.videos));
+  safely('company', () => renderCompany(data.company));
 }
 
 async function hydratePortal() {
@@ -371,22 +383,42 @@ async function hydratePortal() {
   if (productsResult.status === 'fulfilled') {
     const storeProducts = productsResult.value.items || [];
     const featuredProducts = storeProducts.filter((product) => product.featured || product.isNew);
-    renderProducts(featuredProducts.length ? featuredProducts : storeProducts);
+    safely('products', () => renderProducts(featuredProducts.length ? featuredProducts : storeProducts));
   } else {
-    renderProducts([]);
+    safely('products', () => renderProducts([]));
     console.warn('Store products could not be loaded:', productsResult.reason?.message);
   }
 
   if (homeResult.status === 'fulfilled') {
     portalData = homeResult.value;
-    renderBranches(portalData.branches); renderSchedule(portalData.branches, portalData.classes); renderAbout(portalData.about); renderGallery(portalData.photos, portalData.branches); renderHero(portalData.sliders); renderManagedContent(portalData);
-    if (portalData.offers?.length) { const grid = document.querySelector('.offer-grid'); grid.innerHTML = portalData.offers.map(offerCard).join(''); wireOfferModals(); reveal(grid); }
-    else wireOfferModals();
+    safely('branches', () => renderBranches(portalData.branches));
+    safely('schedule', () => renderSchedule(portalData.branches, portalData.classes));
+    safely('about', () => renderAbout(portalData.about));
+    safely('gallery', () => renderGallery(portalData.photos, portalData.branches));
+    safely('hero', () => renderHero(portalData.sliders));
+    renderManagedContent(portalData);
+    safely('offers', () => {
+      const grid = document.querySelector('.offer-grid');
+      if (portalData.offers?.length && grid) { grid.innerHTML = portalData.offers.map(offerCard).join(''); reveal(grid); }
+      wireOfferModals();
+    });
   } else {
     console.warn('Portal content fallback is active:', homeResult.reason?.message);
     wireOfferModals();
   }
-  try { renderMembership(await api('/membership-plans')); } catch (error) { console.warn('Membership plans could not be loaded:', error.message); }
+  try {
+    // The homepage shows only the plans curated in "باقات عضوية الموقع", priced live from the
+    // subscription catalog. The full catalog (hundreds of internal types) lives on subscribe.html.
+    const [catalog, marketing] = await Promise.all([api('/subscription-catalog'), api('/membership-plans').catch(() => [])]);
+    const curated = (Array.isArray(marketing) ? marketing : []).flatMap((item) => {
+      const plan = catalog.plans.find((p) => p.id === Number(item.subscriptionTypeId ?? item.id));
+      return plan ? [{ ...item, subscriptionTypeId: plan.id, subscriptionTypeName: plan.name, subscriptionPrice: plan.price, subscriptionDays: plan.days }] : [];
+    });
+    renderMembership(curated);
+  } catch (error) {
+    // Keep the default plan cards from index.html; they link to the full subscription page.
+    console.warn('Membership plans could not be loaded:', error.message);
+  }
 }
 
 hydratePortal();

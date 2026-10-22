@@ -19,6 +19,8 @@ env_server.txt
 *.db
 *.sqlite*
 *.sql
+!backend/prisma/migrations/20261015_flat_warehouse_drawings/migration.sql
+!backend/prisma/migrations/20261015_supplier_return_integration/migration.sql
 *.sql.gz
 uploads/
 backups/

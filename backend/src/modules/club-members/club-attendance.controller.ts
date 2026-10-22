@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -7,6 +7,7 @@ import { ClubAttendanceService } from './club-attendance.service';
 import { CheckInDto, CheckOutDto, ServiceCheckInDto } from './dto/check-in.dto';
 import { ListClubAttendanceDto } from './dto/list-club-attendance.dto';
 import { BarcodeScanTimesDto } from './dto/barcode-scan-times.dto';
+import { BarcodeAttendanceReportDto } from './dto/barcode-attendance-report.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('club-attendance')
@@ -72,6 +73,20 @@ export class ClubAttendanceController {
   @RequiresPermission('club.members.barcode.scan_times:view', 'club.members.barcode_management:view')
   barcodeScanTimes(@Query() query: BarcodeScanTimesDto, @CurrentUser() user: JwtUser) {
     return this.service.barcodeScanTimes(query, user);
+  }
+
+  @Get('barcode-report')
+  barcodeReport(@Query() query: BarcodeAttendanceReportDto, @CurrentUser() user: JwtUser) {
+    return this.service.barcodeAttendanceReport(query, user);
+  }
+
+  @Delete('barcode-report/:source/:id')
+  deleteBarcodeReportRow(
+    @Param('source') source: string,
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.deleteBarcodeAttendance(source, id, user);
   }
 
   @Get()

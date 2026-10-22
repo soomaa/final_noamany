@@ -1,8 +1,7 @@
-import { ChevronDown, ChevronLeft, ChevronRight, Dumbbell, LayoutDashboard, LayoutGrid, Undo2 } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Dumbbell, LayoutDashboard, LayoutGrid } from 'lucide-react';
 import { type CSSProperties, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { LOGO_SRC } from '@/components/brand/logo';
-import { CLUB_ROUTES } from '@/lib/club-routes';
 import {
   activeGroupId,
   activeNavPath,
@@ -367,10 +366,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { t, isRtl } = useLocale();
-  const { can, canNavRoute, canRoute, isReady } = usePermission();
-  const canCreateRefund = isReady && canNavRoute(CLUB_ROUTES.subscriptions.refunds) && (
-    can('club.subscriptions:update') || can('club.subscriptions.list:update') || can('club.reception:update')
-  );
+  const { canNavRoute, canRoute, isReady } = usePermission();
   const activePath = activeNavPath(pathname);
   const currentSection = activeSectionId(pathname);
   const currentGroup = activeGroupId(pathname);
@@ -404,23 +400,6 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <aside className="sidebar-shell flex h-full w-[288px] shrink-0 flex-col">
       <SidebarHeader />
-
-      {canCreateRefund ? (
-        <div className="shrink-0 border-b border-white/10 px-3 py-3">
-          <Link
-            to={CLUB_ROUTES.subscriptions.refunds}
-            state={{ startNewRefund: true }}
-            onClick={onNavigate}
-            className={cn(
-              'flex min-h-12 items-center justify-center gap-2 rounded-xl border border-white/25 bg-brand-gradient px-3 py-3 text-sm font-bold text-white shadow-lg transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white',
-              pathname === CLUB_ROUTES.subscriptions.refunds && 'ring-2 ring-white/60',
-            )}
-          >
-            <Undo2 className="size-5 shrink-0" />
-            <span>{t('nav.routes./club/subscriptions/refunds')}</span>
-          </Link>
-        </div>
-      ) : null}
 
       <nav className="relative flex-1 overflow-hidden">
         {detailSection ? (

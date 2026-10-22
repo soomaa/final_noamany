@@ -249,7 +249,7 @@ export class CafeProductsService {
     });
   }
 
-  async reports(dateFrom?: string, dateTo?: string, branchId?: string, user?: JwtUser) {
+  async reports(dateFrom?: string, dateTo?: string, branchId?: string, user?: JwtUser, categoryId?: string) {
     const scopedBranches = this.branchScope.resolveListFilter(user, branchId ?? null);
     const branchWhere = scopedBranches ? { branch_id: { in: scopedBranches } } : {};
     const dateFilter = dateFrom || dateTo
@@ -264,7 +264,7 @@ export class CafeProductsService {
         }
       : {};
     const allSales = await this.prisma.sales_quick_sales.findMany({
-      where: { ...dateFilter, ...branchWhere },
+      where: { ...dateFilter, ...branchWhere, ...(categoryId ? {cafe_category_id:Number(categoryId)} : {}) },
       include: { items: true, feedback: true },
     });
     const sales = allSales.filter((sale) => sale.status === QuickSaleStatus.completed);
@@ -368,12 +368,12 @@ export class CafeProductsService {
       const previousTo = new Date(fromDate); previousTo.setDate(previousTo.getDate() - 1);
       const previousFrom = new Date(previousTo); previousFrom.setDate(previousFrom.getDate() - periodDays + 1);
       const previous = await this.prisma.sales_quick_sales.findMany({
-        where: { status: QuickSaleStatus.completed, sale_type: { not: 'partner' }, sale_date: { gte: localDateString(previousFrom), lte: localDateString(previousTo) }, ...branchWhere },
-        select: { collected_amount: true, tax_amount: true },
+        where: { status: QuickSaleStatus.completed, sale_type: { not: 'partner' }, sale_date: { gte: localDateString(previousFrom), lte: localDateString(previousTo) }, ...branchWhere, ...(categoryId?{cafe_category_id:Number(categoryId)}:{}) },
+        select: { total_amount: true, tax_amount: true },
       });
-      previousRevenue = previous.reduce((sum, sale) => sum + invToNumber(sale.collected_amount) - invToNumber(sale.tax_amount), 0);
+      previousRevenue = previous.reduce((sum, sale) => sum + invToNumber(sale.total_amount) - invToNumber(sale.tax_amount), 0);
     }
-    const netRevenue = totalCollected - totalTaxes;
+    const netRevenue = revenueSales.reduce((sum,sale)=>sum+invToNumber(sale.total_amount),0) - totalTaxes;
     const revenueGrowth = previousRevenue > 0 ? roundMoney(((netRevenue - previousRevenue) / previousRevenue) * 100) : netRevenue > 0 ? 100 : 0;
 
     const productRows = [...products.values()].map((row) => ({ ...row, profit: roundMoney(row.profit), revenue: roundMoney(row.revenue), cost: roundMoney(row.cost) }));
@@ -480,6 +480,8 @@ export class CafeProductsService {
       totalOrders: revenueSales.length,
       totalSales: roundMoney(totalSales),
       totalRevenue: roundMoney(totalCollected),
+      totalCollected: roundMoney(totalCollected),
+      outstandingSales: roundMoney(revenueSales.reduce((sum,sale)=>sum+Math.max(0,invToNumber(sale.total_amount)-invToNumber(sale.collected_amount)),0)),
       netRevenue: roundMoney(netRevenue),
       previousRevenue: roundMoney(previousRevenue),
       revenueGrowth,

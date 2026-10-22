@@ -24,6 +24,7 @@ import { useLocale } from '@/store/locale';
 type WeeklySlot = { weekday: number; branchId: number | null; shiftId: number | null };
 type WeeklySchedule = { effectiveFrom?: string; slots: WeeklySlot[] };
 const WEEKDAYS = ['السبت', 'الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'];
+const MAX_SHIFTS_PER_DAY = 3;
 
 interface EmployeeIdentity {
   emp_code?: string | number;
@@ -101,7 +102,8 @@ export function EmployeeAttendancePage() {
     queryFn: () => fetchAllReportRows<ShiftRow>('/attendance/shifts', {}, 100),
   });
   const [form, setForm] = useState<AttendanceForm>(EMPTY_FORM);
-  const [slots, setSlots] = useState<Record<number, WeeklySlot>>({});
+  // A weekday holds either one rest slot or up to MAX_SHIFTS_PER_DAY split shifts.
+  const [slots, setSlots] = useState<WeeklySlot[]>([]);
   const [selectedDays, setSelectedDays] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -114,8 +116,11 @@ export function EmployeeAttendancePage() {
 
   useEffect(() => {
     if (!weekly?.slots) return;
-    setSlots(Object.fromEntries(weekly.slots.map((slot) => [slot.weekday, slot])));
+    setSlots(weekly.slots);
   }, [weekly]);
+
+  const daySlots = (weekday: number) => slots.filter((slot) => slot.weekday === weekday);
+  const isRestDay = (weekday: number) => daySlots(weekday).some((slot) => slot.shiftId == null);
 
   const selectShift = (shiftId: string) => {
     const shift = shifts.find((item) => String(item.id) === shiftId);
@@ -137,17 +142,34 @@ export function EmployeeAttendancePage() {
       return;
     }
     if (!selectedDays.length) return toast.error(ui('اختر يومًا واحدًا على الأقل'));
-    setSlots((current) => ({ ...current, ...Object.fromEntries(selectedDays.map((weekday) => [weekday, {
-      weekday,
-      branchId: rest ? null : Number(form.branchId),
-      shiftId: rest ? null : Number(form.shiftId),
-    }])) }));
+    if (!rest) {
+      const shiftId = Number(form.shiftId);
+      for (const weekday of selectedDays) {
+        const working = daySlots(weekday).filter((slot) => slot.shiftId != null);
+        if (working.some((slot) => slot.shiftId === shiftId)) {
+          return toast.error(ui(`هذا الدوام مضاف بالفعل يوم ${WEEKDAYS[weekday]}؛ اختر دوامًا مختلفًا للفترة الثانية`));
+        }
+        if (working.length >= MAX_SHIFTS_PER_DAY) {
+          return toast.error(ui(`الحد الأقصى ${MAX_SHIFTS_PER_DAY} دوامات يوم ${WEEKDAYS[weekday]}`));
+        }
+      }
+    }
+    setSlots((current) => {
+      // Rest replaces the whole day; a working shift is added next to the day's other shifts
+      // (and replaces a previous rest mark).
+      const next = current.filter((slot) => !selectedDays.includes(slot.weekday) || (!rest && slot.shiftId != null));
+      return [...next, ...selectedDays.map((weekday) => ({
+        weekday,
+        branchId: rest ? null : Number(form.branchId),
+        shiftId: rest ? null : Number(form.shiftId),
+      }))];
+    });
     setSelectedDays([]);
   };
 
   const save = async () => {
     if (!id) return;
-    if (Object.keys(slots).length !== 7) {
+    if (WEEKDAYS.some((_, weekday) => !daySlots(weekday).length)) {
       toast.error(ui('يجب تحديد دوام أو راحة لكل أيام الأسبوع'));
       return;
     }
@@ -155,7 +177,7 @@ export function EmployeeAttendancePage() {
     try {
       await api.put(`/employees/${id}/weekly-schedule`, {
         effectiveFrom: weekly?.effectiveFrom ?? new Date().toISOString().slice(0, 10),
-        slots: Object.values(slots),
+        slots,
       });
       toast.success(ui('تم حفظ الجدول الأسبوعي للموظف'));
       void queryClient.invalidateQueries({ queryKey: ['employees', id, 'weekly-schedule'] });
@@ -205,10 +227,11 @@ export function EmployeeAttendancePage() {
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {WEEKDAYS.map((day, weekday) => {
-              const used = Boolean(slots[weekday]);
+              const count = daySlots(weekday).length;
+              const status = !count ? '' : isRestDay(weekday) ? ui('راحة') : count === 1 ? ui('دوام واحد') : `${toArabicDigits(count)} ${ui('دوام')}`;
               return <label key={day} className="flex items-center gap-2 rounded border p-3 text-sm">
-                <Checkbox checked={selectedDays.includes(weekday)} disabled={used} onCheckedChange={(checked) => setSelectedDays((current) => checked ? [...current, weekday] : current.filter((value) => value !== weekday))} />
-                {ui(day)} {used ? `(${slots[weekday].shiftId == null ? ui('راحة') : ui('محدد')})` : ''}
+                <Checkbox checked={selectedDays.includes(weekday)} onCheckedChange={(checked) => setSelectedDays((current) => checked ? [...current, weekday] : current.filter((value) => value !== weekday))} />
+                {ui(day)} {status ? <span className="text-xs text-muted-foreground">({status})</span> : null}
               </label>;
             })}
           </div>
@@ -230,7 +253,7 @@ export function EmployeeAttendancePage() {
         <CardContent className="pt-6">
           <div className="mb-5">
             <h2 className="text-lg font-bold">{ui('جدول الدوام الأسبوعي')}</h2>
-            <p className="text-sm text-muted-foreground">{ui('لا يمكن اختيار اليوم أكثر من مرة')}</p>
+            <p className="text-sm text-muted-foreground">{ui(`يمكن إضافة حتى ${MAX_SHIFTS_PER_DAY} دوامات مختلفة غير متداخلة في نفس اليوم (مثل فترة صباحية وفترة مسائية). تحديد راحة يستبدل دوامات اليوم.`)}</p>
           </div>
           <Table>
             <TableHeader>
@@ -242,27 +265,40 @@ export function EmployeeAttendancePage() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {WEEKDAYS.map((day, weekday) => {
-                const slot = slots[weekday];
-                const shift = shifts.find((item) => item.id === slot?.shiftId);
-                const branch = (branches ?? []).find((item) => item.id === slot?.branchId);
-                return <TableRow key={day}>
-                  <TableCell>{ui(day)}</TableCell>
-                  <TableCell className="font-semibold">{slot ? (slot.shiftId == null ? ui('راحة') : (shift?.title ?? slot.shiftId)) : '—'}</TableCell>
-                  <TableCell>{slot?.branchId == null ? '—' : (branch?.name ?? slot.branchId)}</TableCell>
-                  <TableCell>
-                    <Button
-                      size="icon"
-                      variant="ghost"
-                      className="text-destructive hover:text-destructive"
-                      aria-label={ui('حذف')}
-                      disabled={!slot}
-                      onClick={() => setSlots((current) => { const next = { ...current }; delete next[weekday]; return next; })}
-                    >
-                      <Trash2 className="size-4" />
-                    </Button>
-                  </TableCell>
-                </TableRow>;
+              {WEEKDAYS.flatMap((day, weekday) => {
+                const rows = daySlots(weekday);
+                if (!rows.length) {
+                  return [<TableRow key={day}>
+                    <TableCell>{ui(day)}</TableCell>
+                    <TableCell className="text-muted-foreground">—</TableCell>
+                    <TableCell>—</TableCell>
+                    <TableCell />
+                  </TableRow>];
+                }
+                return rows.map((slot, index) => {
+                  const shift = shifts.find((item) => item.id === slot.shiftId);
+                  const branch = (branches ?? []).find((item) => item.id === slot.branchId);
+                  const times = shift ? `${shift.hdoorKhasmFrom ?? shift.hdoorFromTime ?? ''} - ${shift.ensrafKhasmFrom ?? shift.ensrafFromTime ?? ''}` : '';
+                  return <TableRow key={`${day}-${slot.shiftId ?? 'rest'}`}>
+                    <TableCell>{index === 0 ? ui(day) : ''}</TableCell>
+                    <TableCell className="font-semibold">
+                      {slot.shiftId == null ? ui('راحة') : (shift?.title ?? slot.shiftId)}
+                      {slot.shiftId != null && times.trim() !== '-' ? <span className="ms-2 text-xs font-normal text-muted-foreground nums" dir="ltr">{times}</span> : null}
+                    </TableCell>
+                    <TableCell>{slot.branchId == null ? '—' : (branch?.name ?? slot.branchId)}</TableCell>
+                    <TableCell>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        aria-label={ui('حذف')}
+                        onClick={() => setSlots((current) => current.filter((item) => item !== slot))}
+                      >
+                        <Trash2 className="size-4" />
+                      </Button>
+                    </TableCell>
+                  </TableRow>;
+                });
               })}
             </TableBody>
           </Table>

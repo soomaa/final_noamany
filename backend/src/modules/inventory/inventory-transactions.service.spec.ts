@@ -32,6 +32,7 @@ describe('InventoryTransactionsService Noamany inventory flow', () => {
     const location = {
       requireUserBranch: jest.fn().mockReturnValue(7),
       resolveBranchStockLocation: jest.fn().mockResolvedValue(19),
+      resolveSelection: jest.fn().mockResolvedValue({ warehouseId: 19, branchId: 7 }),
     };
     const service = new InventoryTransactionsService(
       prisma as never,

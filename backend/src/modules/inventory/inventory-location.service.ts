@@ -1,22 +1,44 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import type { JwtUser } from '../../common/types/jwt-user';
 import { notDeletedFilter } from './inventory.utils';
 
 /**
- * Keeps the database's required stock location internal to the application.
- * Noamany operates one logical inventory per branch, so users never choose a
- * warehouse in business forms.
+ * Resolves flat, branch-scoped warehouses selected in operational forms.
+ * Legacy requests without a warehouse can still use the branch's default location.
  */
 @Injectable()
 export class InventoryLocationService {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** Explicit operational locations are flat; branch ownership enforces access. */
+  async resolveSelection(user: JwtUser, warehouseId: number, branchId?: number, tx?: Prisma.TransactionClient) {
+    const location = await (tx ?? this.prisma).inv_warehouses.findFirst({
+      where: { id: warehouseId, status: 'active', ...notDeletedFilter() },
+    });
+    if (!location) throw new BadRequestException('المخزن غير موجود أو غير نشط');
+    if (!new BranchScopeService().isBranchAllowed(user, location.branch_id)) throw new ForbiddenException('المخزن خارج الفروع المسموح بها');
+    if (branchId && location.branch_id !== branchId) throw new BadRequestException('المخزن لا يتبع الفرع المحدد');
+    return { warehouseId: location.id, branchId: location.branch_id };
+  }
+
   requireUserBranch(user: JwtUser): number {
     const branchId = Number(user.branch);
     if (!Number.isInteger(branchId) || branchId <= 0) {
       throw new BadRequestException('حساب المستخدم غير مرتبط بفرع');
+    }
+    return branchId;
+  }
+
+  /** Accept an explicit branch only when it falls within the user's branch scope. */
+  requireAllowedBranch(user: JwtUser, branchId: number): number {
+    if (!Number.isInteger(branchId) || branchId <= 0) {
+      throw new BadRequestException('اختر فرعًا صحيحًا');
+    }
+    if (!new BranchScopeService().isBranchAllowed(user, branchId)) {
+      throw new ForbiddenException('الفرع خارج الفروع المسموح بها');
     }
     return branchId;
   }
@@ -33,9 +55,8 @@ export class InventoryLocationService {
     });
     if (location) return location.id;
 
-    // The DB schema requires a stock-balance location, although Noamany has no
-    // warehouse concept in the UI. Create one hidden logical location per
-    // branch on first use so a fresh branch works without manual setup.
+    // Keep requests without an explicit warehouse compatible: create a default
+    // location if the branch has not configured any stock location yet.
     const internalCode = `Noamany-STOCK-${branchId}`;
     const internal = await db.inv_warehouses.upsert({
       where: { warehouse_code: internalCode },

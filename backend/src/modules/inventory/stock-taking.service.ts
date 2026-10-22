@@ -1,4 +1,5 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { InventoryTxnType, MovementDirection, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { isDryRun, previewResponse, PreviewRow } from '../../common/preview';
@@ -7,6 +8,8 @@ import { InventoryStockService } from './inventory-stock.service';
 import { InventoryLocationService } from './inventory-location.service';
 import { toNumber } from './inventory.utils';
 import type { JwtUser } from '../../common/types/jwt-user';
+import { cairoDayRange } from '../../common/utils/cairo-day-range.util';
+import { isReceptionEmployee } from '../../common/utils/reception-user.util';
 import { ListStockTakingDto, UpsertCountItemDto, UpsertCountSessionDto } from './dto/inventory.dto';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
 
@@ -25,6 +28,7 @@ export class StockTakingService {
       sessionNumber: row.session_number,
       warehouseId: row.warehouse_id,
       branchId: row.branch_id,
+      categoryId: row.category_id,
       status: row.status,
       notes: row.notes,
       createdBy: row.created_by,
@@ -37,6 +41,7 @@ export class StockTakingService {
         systemQuantity: toNumber(i.system_quantity),
         countedQuantity: toNumber(i.counted_quantity),
         variance: toNumber(i.variance),
+        notes: i.variance_reason,
         status: i.status,
       })),
       createdAt: row.created_at,
@@ -44,11 +49,17 @@ export class StockTakingService {
     };
   }
 
-  async listSessions(q: ListStockTakingDto) {
+  async listSessions(q: ListStockTakingDto, user?: JwtUser) {
     const and: Prisma.inv_count_sessionsWhereInput[] = [];
+    if (user) { const branches=new BranchScopeService().resolveListFilter(user); if(branches) and.push({branch_id:{in:branches}}); }
+    // Reception employees only see today's count reports.
+    if (isReceptionEmployee(user)) and.push({ created_at: cairoDayRange() });
     if (q.search?.trim()) and.push({ session_number: { contains: q.search.trim() } });
     if (q.warehouseId && q.warehouseId !== 'all') and.push({ warehouse_id: Number(q.warehouseId) });
     if (q.status && q.status !== 'all') and.push({ status: q.status });
+    const cairoDay = (day: string) => cairoDayRange(new Date(`${day}T12:00:00Z`));
+    if (q.dateFrom) and.push({ created_at: { gte: cairoDay(q.dateFrom).gte } });
+    if (q.dateTo) and.push({ created_at: { lt: cairoDay(q.dateTo).lt } });
     const where = and.length ? { AND: and } : {};
     const [rows, total] = await Promise.all([
       this.prisma.inv_count_sessions.findMany({
@@ -60,63 +71,148 @@ export class StockTakingService {
       }),
       this.prisma.inv_count_sessions.count({ where }),
     ]);
-    return paginated(rows.map((r) => this.mapSession(r)), total, q.page, q.pageSize);
+    return paginated(await this.withNames(rows), total, q.page, q.pageSize);
   }
 
-  async findSession(id: number) {
+  /** Adds warehouse, category and employee names for display. */
+  private async withNames(rows: Prisma.inv_count_sessionsGetPayload<{ include: { items: true } }>[]) {
+    const warehouseIds = [...new Set(rows.map((r) => r.warehouse_id))];
+    const categoryIds = [...new Set(rows.map((r) => r.category_id).filter((v): v is number => v != null))];
+    const userIds = [...new Set(rows.map((r) => r.created_by).filter((v): v is number => v != null))];
+    const [warehouses, categories, users] = await Promise.all([
+      this.prisma.inv_warehouses.findMany({ where: { id: { in: warehouseIds } }, select: { id: true, name_ar: true } }),
+      this.prisma.inv_categories.findMany({ where: { id: { in: categoryIds } }, select: { id: true, name_ar: true } }),
+      this.prisma.users.findMany({ where: { user_id: { in: userIds } }, select: { user_id: true, name: true, username: true } }),
+    ]);
+    const warehouseNames = new Map(warehouses.map((w) => [w.id, w.name_ar]));
+    const categoryNames = new Map(categories.map((c) => [c.id, c.name_ar]));
+    const userNames = new Map(users.map((u) => [u.user_id, u.name || u.username]));
+    return rows.map((r) => ({
+      ...this.mapSession(r),
+      warehouseName: warehouseNames.get(r.warehouse_id) ?? null,
+      categoryName: r.category_id ? categoryNames.get(r.category_id) ?? null : null,
+      createdByName: r.created_by ? userNames.get(r.created_by) ?? null : null,
+    }));
+  }
+
+  /** Every active product of the category stocked in the warehouse, with its current (available) quantity. */
+  async countSheet(warehouseId: number, categoryId: number | undefined, user: JwtUser) {
+    const selected = await this.location.resolveSelection(user, warehouseId);
+    const balances = await this.prisma.inv_stock_balances.findMany({
+      where: {
+        warehouse_id: selected.warehouseId,
+        product: { is_deleted: false, status: 'active', ...(categoryId ? { category_id: categoryId } : {}) },
+      },
+      select: { product_id: true, current_stock: true, product: { select: { name_ar: true, product_code: true, unit_of_measure: true } } },
+      orderBy: { product: { name_ar: 'asc' } },
+    });
+    return balances.map((b) => ({
+      productId: b.product_id,
+      productCode: b.product.product_code,
+      productName: b.product.name_ar,
+      unit: b.product.unit_of_measure,
+      availableQuantity: toNumber(b.current_stock),
+    }));
+  }
+
+  /** Replaces the session's items with the submitted sheet, snapshotting the current system quantity. */
+  private async writeSheet(tx: Prisma.TransactionClient, sessionId: number, warehouseId: number, lines: NonNullable<UpsertCountSessionDto['items']>) {
+    if (!lines.length) throw new BadRequestException('يجب إضافة صنف واحد على الأقل للجرد');
+    const productIds = [...new Set(lines.map((l) => l.productId))];
+    if (productIds.length !== lines.length) throw new BadRequestException('صنف مكرر في محضر الجرد');
+    const [products, balances] = await Promise.all([
+      tx.inv_products.findMany({ where: { id: { in: productIds }, is_deleted: false }, select: { id: true, name_ar: true, product_code: true } }),
+      tx.inv_stock_balances.findMany({ where: { warehouse_id: warehouseId, product_id: { in: productIds } }, select: { product_id: true, current_stock: true } }),
+    ]);
+    if (products.length !== productIds.length) throw new BadRequestException('صنف غير موجود في محضر الجرد');
+    const productById = new Map(products.map((p) => [p.id, p]));
+    const stockById = new Map(balances.map((b) => [b.product_id, toNumber(b.current_stock)]));
+    await tx.inv_count_items.deleteMany({ where: { session_id: sessionId } });
+    await tx.inv_count_items.createMany({
+      data: lines.map((l) => {
+        const systemQty = stockById.get(l.productId) ?? 0;
+        const product = productById.get(l.productId)!;
+        return {
+          session_id: sessionId,
+          product_id: l.productId,
+          item_code: product.product_code,
+          item_name: product.name_ar,
+          system_quantity: systemQty,
+          counted_quantity: l.countedQuantity,
+          variance: l.countedQuantity - systemQty,
+          variance_reason: l.notes?.trim() || null,
+        };
+      }),
+    });
+  }
+
+  async findSession(id: number, user?: JwtUser) {
     const row = await this.prisma.inv_count_sessions.findUnique({
       where: { id },
       include: { items: true },
     });
     if (!row) throw new NotFoundException('جلسة الجرد غير موجودة');
+    if (user && !new BranchScopeService().isBranchAllowed(user,row.branch_id ?? 0)) throw new ForbiddenException('جلسة الجرد خارج صلاحيات المستخدم');
+    if (isReceptionEmployee(user)) {
+      const today = cairoDayRange();
+      if (row.created_at < today.gte || row.created_at >= today.lt) throw new NotFoundException('جلسة الجرد غير موجودة');
+    }
     const adjustment = await this.prisma.inv_adjustments.findFirst({
       where: { session_id: id },
       select: { id: true, status: true },
     });
     return {
-      ...this.mapSession(row),
+      ...(await this.withNames([row]))[0],
       adjustmentId: adjustment?.id ?? null,
       adjustmentStatus: adjustment?.status ?? null,
     };
   }
 
   private async generateSessionNumber(): Promise<string> {
-    const rows = await this.prisma.$queryRaw<{ maxNum: number | null }[]>`
+    const rows = await this.prisma.$queryRaw<{ maxNum: number | bigint | null }[]>`
       SELECT MAX(CAST(SUBSTRING(session_number, 4) AS UNSIGNED)) AS maxNum
       FROM inv_count_sessions WHERE session_number LIKE 'CNT%'
     `;
-    return `CNT${String((rows[0]?.maxNum ?? 0) + 1).padStart(6, '0')}`;
+    return `CNT${String(Number(rows[0]?.maxNum ?? 0) + 1).padStart(6, '0')}`;
   }
 
   async createSession(dto: UpsertCountSessionDto, user: JwtUser) {
-    const branchId = this.location.requireUserBranch(user);
-    const warehouseId = await this.location.resolveBranchStockLocation(branchId);
-    const row = await this.prisma.inv_count_sessions.create({
-      data: {
-        session_number: dto.sessionNumber?.trim() || (await this.generateSessionNumber()),
-        warehouse_id: warehouseId,
-        branch_id: branchId,
-        notes: dto.notes ?? null,
-        created_by: user.sub,
-      },
-      include: { items: true },
+    const selected = dto.warehouseId ? await this.location.resolveSelection(user, dto.warehouseId, dto.branchId) : null;
+    const branchId = selected?.branchId ?? this.location.requireUserBranch(user);
+    const warehouseId = selected?.warehouseId ?? await this.location.resolveBranchStockLocation(branchId);
+    const sessionNumber = dto.sessionNumber?.trim() || (await this.generateSessionNumber());
+    const id = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.inv_count_sessions.create({
+        data: {
+          session_number: sessionNumber,
+          warehouse_id: warehouseId,
+          branch_id: branchId,
+          category_id: dto.categoryId ?? null,
+          notes: dto.notes ?? null,
+          created_by: user.sub,
+        },
+      });
+      if (dto.items) await this.writeSheet(tx, created.id, warehouseId, dto.items);
+      return created.id;
     });
-    return this.mapSession(row);
+    return this.findSession(id);
   }
 
   async updateSession(id: number, dto: Partial<UpsertCountSessionDto>) {
     const session = await this.findSession(id);
     if (session.status !== 'draft') throw new BadRequestException('لا يمكن تعديل جلسة بعد إرسالها للاعتماد');
-    const row = await this.prisma.inv_count_sessions.update({
-      where: { id },
-      data: {
-        ...(dto.warehouseId != null ? { warehouse_id: dto.warehouseId } : {}),
-        ...(dto.branchId !== undefined ? { branch_id: dto.branchId ?? null } : {}),
-        ...(dto.notes !== undefined ? { notes: dto.notes ?? null } : {}),
-      },
-      include: { items: true },
+    await this.prisma.$transaction(async (tx) => {
+      await tx.inv_count_sessions.update({
+        where: { id },
+        data: {
+          ...(dto.warehouseId != null ? { warehouse_id: dto.warehouseId } : {}),
+          ...(dto.branchId !== undefined ? { branch_id: dto.branchId ?? null } : {}),
+          ...(dto.notes !== undefined ? { notes: dto.notes ?? null } : {}),
+        },
+      });
+      if (dto.items) await this.writeSheet(tx, id, dto.warehouseId ?? session.warehouseId, dto.items);
     });
-    return this.mapSession(row);
+    return this.findSession(id);
   }
 
   async removeSession(id: number) {
@@ -129,7 +225,9 @@ export class StockTakingService {
   async addCountItem(sessionId: number, dto: UpsertCountItemDto) {
     const session = await this.findSession(sessionId);
     if (session.status !== 'draft') throw new BadRequestException('لا يمكن إضافة أصناف بعد إرسال الجرد للاعتماد');
-    let systemQty = dto.systemQuantity ?? 0;
+    if (!dto.productId || dto.countedQuantity < 0) throw new BadRequestException('اختر صنفًا وكمية معدودة غير سالبة');
+    const existingItem = session.items.find((i) => i.productId === dto.productId);
+    let systemQty = 0;
     if (dto.productId) {
       const balance = await this.prisma.inv_stock_balances.findUnique({
         where: {
@@ -139,8 +237,7 @@ export class StockTakingService {
       if (balance) systemQty = toNumber(balance.current_stock);
     }
     const variance = dto.countedQuantity - systemQty;
-    const row = await this.prisma.inv_count_items.create({
-      data: {
+    const data = {
         session_id: sessionId,
         product_id: dto.productId ?? null,
         item_code: dto.itemCode ?? null,
@@ -150,8 +247,10 @@ export class StockTakingService {
         counted_quantity: dto.countedQuantity,
         variance,
         status: dto.status ?? null,
-      },
-    });
+    };
+    const row = existingItem
+      ? await this.prisma.inv_count_items.update({where:{id:existingItem.id},data})
+      : await this.prisma.inv_count_items.create({data});
     return {
       id: row.id,
       productId: row.product_id,
@@ -196,7 +295,19 @@ export class StockTakingService {
     return { success: true, adjustmentId: result };
   }
 
-  async approveAdjustment(adjustmentId: number, userId: number, dryRun = false) {
+  async reopenSession(id: number, user: JwtUser) {
+    await this.findSession(id,user);
+    return this.prisma.$transaction(async(tx)=>{
+      const claimed=await tx.inv_count_sessions.updateMany({where:{id,status:'awaiting_approval'},data:{status:'draft'}});
+      if(claimed.count!==1) throw new BadRequestException('يمكن إعادة فتح الجرد الذي ينتظر الاعتماد فقط');
+      const adjustment=await tx.inv_adjustments.findFirst({where:{session_id:id}});
+      if(adjustment?.status==='approved') throw new BadRequestException('لا يمكن إعادة فتح جرد معتمد');
+      await tx.inv_adjustments.deleteMany({where:{session_id:id,status:'pending'}});
+      return {success:true};
+    });
+  }
+
+  async approveAdjustment(adjustmentId: number, userId: number, dryRun = false, user?: JwtUser) {
     const adjustment = await this.prisma.inv_adjustments.findUnique({
       where: { id: adjustmentId },
       include: { session: { include: { items: true } } },
@@ -206,6 +317,7 @@ export class StockTakingService {
 
     const session = adjustment.session;
     if (!session) throw new BadRequestException('جلسة الجرد غير مرتبطة');
+    if (user && !new BranchScopeService().isBranchAllowed(user,session.branch_id ?? 0)) throw new ForbiddenException('التسوية خارج صلاحيات المستخدم');
 
     const previewRows: PreviewRow[] = session.items
       .filter((i) => i.product_id)
@@ -242,6 +354,9 @@ export class StockTakingService {
       let lossAmount = 0;
       for (const item of session.items) {
         if (!item.product_id) continue;
+        await tx.$queryRaw`SELECT id FROM inv_stock_balances WHERE product_id = ${item.product_id} AND warehouse_id = ${session.warehouse_id} FOR UPDATE`;
+        const current=await tx.inv_stock_balances.findUnique({where:{product_id_warehouse_id:{product_id:item.product_id,warehouse_id:session.warehouse_id}}});
+        if (Math.abs(toNumber(current?.current_stock)-toNumber(item.system_quantity))>0.000001) throw new BadRequestException('حدثت حركة مخزنية بعد العد؛ أعد الجرد قبل اعتماد التسوية');
         const value = Math.abs(toNumber(item.variance)) * (costByProduct.get(item.product_id) ?? 0);
         if (toNumber(item.variance) > 0) gainAmount += value;
         if (toNumber(item.variance) < 0) lossAmount += value;

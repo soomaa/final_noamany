@@ -18,6 +18,7 @@ export class PublicPortalController {
   @Get('products/:id') product(@Param('id', ParseIntPipe) id: number) { return this.service.product(id); }
   @Get('jobs') jobs() { return this.service.jobs(); }
   @Get('membership-plans') membershipPlans() { return this.service.membershipPlans(); }
+  @Get('subscription-catalog') subscriptionCatalog() { return this.service.subscriptionCatalog(); }
   @Get('payment-methods') paymentMethods() { return this.service.paymentMethods(); }
 
   @Post('online-subscription-options')

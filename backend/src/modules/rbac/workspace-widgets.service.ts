@@ -5,6 +5,7 @@ import { addDays, deriveSubStatus, toNum } from '../club-subscriptions/club-subs
 import { WorkspaceService, WorkspaceConfig } from './workspace.service';
 import { PermissionEngineService } from './engine/permission-engine.service';
 import type { JwtUser } from '../../common/types/jwt-user';
+import { cairoDayRange } from '../../common/utils/cairo-day-range.util';
 
 export type WidgetPayload = Record<string, unknown>;
 
@@ -42,6 +43,24 @@ export class WorkspaceWidgetsService {
     const branchWhere = branchIds === null ? {} : { branch_id: { in: branchIds } };
 
     switch (key) {
+      case 'members_today':
+        return {
+          count: await this.prisma.club_members.count({
+            where: { is_deleted: false, created_at: cairoDayRange(), ...branchWhere },
+          }),
+        };
+      case 'subscriptions_today':
+        return {
+          count: await this.prisma.club_subscriptions.count({
+            where: { registration_date: today, ...branchWhere },
+          }),
+        };
+      case 'checkins_today':
+        return {
+          count: await this.prisma.club_attendance.count({
+            where: { attendance_date: today, ...branchWhere },
+          }),
+        };
       case 'my_subscriptions_today': {
         const rows = await this.prisma.club_subscriptions.findMany({
           where: { registration_date: today, created_by: user.sub, ...branchWhere },
@@ -160,7 +179,11 @@ export class WorkspaceWidgetsService {
               ...branchWhere,
               ...creatorWhere,
             },
-            select: { amount: true },
+            select: {
+              amount: true,
+              payment_method: true,
+              payments: { select: { method: true, amount: true } },
+            },
           }),
           this.prisma.fin_expenses.findMany({
             where: {
@@ -172,7 +195,18 @@ export class WorkspaceWidgetsService {
             select: { total_amount: true },
           }),
         ]);
-        const incomeTotal = receipts.reduce((sum, receipt) => sum + toNum(receipt.amount), 0);
+        let cashTotal = 0;
+        let kentTotal = 0;
+        for (const receipt of receipts) {
+          const payments = receipt.payments.length > 0
+            ? receipt.payments
+            : [{ method: receipt.payment_method ?? 'cash', amount: receipt.amount }];
+          for (const payment of payments) {
+            if (payment.method === 'cash') cashTotal += toNum(payment.amount);
+            else kentTotal += toNum(payment.amount);
+          }
+        }
+        const incomeTotal = cashTotal + kentTotal;
         const expensesTotal = expenses.reduce((sum, expense) => sum + toNum(expense.total_amount), 0);
         const netTotal = incomeTotal - expensesTotal;
         return {
@@ -180,6 +214,8 @@ export class WorkspaceWidgetsService {
           // Keep `total` for older clients, but its accounting meaning is now the daily net.
           total: netTotal,
           incomeTotal,
+          cashTotal,
+          kentTotal,
           expensesTotal,
           netTotal,
           receiptCount: receipts.length,

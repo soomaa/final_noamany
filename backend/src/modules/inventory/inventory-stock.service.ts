@@ -156,7 +156,7 @@ export class InventoryStockService {
         dto.productId,
         dto.branchId,
         signedQty,
-        dto.operation === 'set' ? newStock : undefined,
+        undefined,
         dto.allowNegative === true,
       );
     }
@@ -323,10 +323,15 @@ export class InventoryStockService {
         if (dto.sourceWarehouseId === dto.targetWarehouseId) {
           throw new BadRequestException('لا يمكن التحويل إلى نفس المستودع');
         }
+        const locations = await tx.inv_warehouses.findMany({ where: { id: { in: [dto.sourceWarehouseId, dto.targetWarehouseId] }, is_deleted: false, status: 'active' }, select: { id: true, branch_id: true } });
+        const source = locations.find((w) => w.id === dto.sourceWarehouseId);
+        const target = locations.find((w) => w.id === dto.targetWarehouseId);
+        if (!source || !target) throw new BadRequestException('مخزن التحويل غير موجود أو غير نشط');
         await this.applyMovement(
           {
             ...base,
             warehouseId: dto.sourceWarehouseId,
+            branchId: source.branch_id,
             direction: MovementDirection.out,
           },
           tx,
@@ -335,6 +340,7 @@ export class InventoryStockService {
           {
             ...base,
             warehouseId: dto.targetWarehouseId,
+            branchId: target.branch_id,
             direction: MovementDirection.in,
           },
           tx,

@@ -189,12 +189,16 @@ export const InventoryProductsPage = lazyPage(() => import('@/pages/inventory/pr
 export const InventoryPriceListPage = lazyPage(() => import('@/pages/inventory/price-list'), 'InventoryPriceListPage');
 export const InventoryOpeningStockPage = lazyPage(() => import('@/pages/inventory/opening-stock'), 'InventoryOpeningStockPage');
 export const InventoryTransactionsPage = lazyPage(() => import('@/pages/inventory/transactions'), 'InventoryTransactionsPage');
+export const InventoryBranchIssueOrdersPage = lazyPage(() => import('@/pages/inventory/branch-issues'), 'InventoryBranchIssueOrdersPage');
+export const InventoryBranchIssuedItemsReportPage = lazyPage(() => import('@/pages/inventory/branch-issues'), 'InventoryBranchIssuedItemsReportPage');
 export const InventoryMovementLogPage = lazyPage(() => import('@/pages/inventory/movement-log'), 'InventoryMovementLogPage');
 export const InventoryStockTakingPage = lazyPage(() => import('@/pages/inventory/stock-taking'), 'InventoryStockTakingPage');
+export const InventoryStockTakingReportPage = lazyPage(() => import('@/pages/inventory/stock-taking-report'), 'InventoryStockTakingReportPage');
 export const InventoryPoliciesPage = lazyPage(() => import('@/pages/inventory/policies'), 'InventoryPoliciesPage');
 export const InventoryAnalyticsPage = lazyPage(() => import('@/pages/inventory/analytics'), 'InventoryAnalyticsPage');
 export const InventoryGymIssuePage = lazyPage(() => import('@/pages/inventory/gym-issue'), 'InventoryGymIssuePage');
 export const CafeSupplierPaymentsPage = lazyPage(() => import('@/pages/cafe/supplier-payments'), 'CafeSupplierPaymentsPage');
+export const CafeSupplierStatementPage = lazyPage(() => import('@/pages/cafe/supplier-statement'), 'CafeSupplierStatementPage');
 export const ProcurementIndexPage = lazyPage(() => import('@/pages/procurement'), 'ProcurementIndexPage');
 export const ProcurementSettingsPage = lazyPage(() => import('@/pages/procurement'), 'ProcurementSettingsPage');
 export const ProcurementRequisitionsPage = lazyPage(() => import('@/pages/procurement'), 'ProcurementRequisitionsPage');

@@ -1,0 +1,45 @@
+/* Shared purchase controls on the homepage, catalog and product page. */
+.products-section .product .add-cart,
+.shop-grid .shop-product .shop-add,
+.buy-row #addProduct{
+  position:relative;
+  isolation:isolate;
+  overflow:hidden;
+  background:linear-gradient(115deg,#ed1c24,#c6101a);
+  color:#fff;
+  transition:transform .25s,box-shadow .25s,background .25s;
+}
+.shop-grid .shop-add b{color:#fff;}
+.products-section .product .add-cart::before,
+.shop-grid .shop-product .shop-add::before,
+.buy-row #addProduct::before{
+  content:"";
+  position:absolute;
+  z-index:-1;
+  inset:-50% -30%;
+  background:linear-gradient(110deg,transparent 35%,#ffffff59 50%,transparent 65%);
+  transform:translateX(-100%);
+  transition:transform .65s ease;
+  pointer-events:none;
+}
+.products-section .product .add-cart:hover:not(:disabled),
+.shop-grid .shop-product .shop-add:hover:not(:disabled),
+.buy-row #addProduct:hover:not(:disabled){
+  background:linear-gradient(115deg,#d3131d,#a60b14);
+  transform:translateY(-2px);
+  box-shadow:0 10px 24px #ed1c2440;
+}
+.products-section .product .add-cart:hover:not(:disabled)::before,
+.shop-grid .shop-product .shop-add:hover:not(:disabled)::before,
+.buy-row #addProduct:hover:not(:disabled)::before{transform:translateX(100%);}
+.products-section .product .add-cart:focus-visible,
+.shop-grid .shop-product .shop-add:focus-visible,
+.buy-row #addProduct:focus-visible{outline:3px solid #ed1c24;outline-offset:4px;}
+.products-section .product .add-cart:disabled,
+.shop-grid .shop-product .shop-add:disabled{background:#81777b;box-shadow:none;opacity:.6;cursor:not-allowed;}
+@media(prefers-reduced-motion:reduce){
+  .products-section .product,.products-section .home-product-image,
+  .products-section .product .add-cart,.shop-grid .shop-product .shop-add,.buy-row #addProduct{transition:none;transform:none!important;}
+  .products-section .product-visual::after,
+  .products-section .product .add-cart::before,.shop-grid .shop-product .shop-add::before,.buy-row #addProduct::before{display:none;}
+}

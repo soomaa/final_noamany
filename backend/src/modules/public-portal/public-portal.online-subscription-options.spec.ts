@@ -1,6 +1,25 @@
 import { PublicPortalService } from './public-portal.service';
 
 describe('PublicPortalService online subscription options', () => {
+  it('lists all active assigned plans across branches, including plans without marketing cards', async () => {
+    const base = { price: 500, days: 30, is_linked_to_sessions: false, sessions_count: null, invitations_count: null, inbody_count: null, includes_spa: false, spa_count: null, is_for_students: false };
+    const prisma = {
+      club_subscription_types: { findMany: jest.fn().mockResolvedValue([
+        { ...base, id: 1, name: 'عام', branch_id: null, apply_to_all_branches: true, branches: [] },
+        { ...base, id: 2, name: 'فرع محدد', branch_id: 3, apply_to_all_branches: false, branches: [] },
+        { ...base, id: 3, name: 'عدة فروع', branch_id: null, apply_to_all_branches: false, branches: [{ branch_id: 4 }] },
+        { ...base, id: 4, name: 'بدون فرع', branch_id: null, apply_to_all_branches: false, branches: [] },
+      ]) },
+      tbl_branches: { findMany: jest.fn().mockResolvedValue([{ branch_id: 3, branch_name: 'الجلاء' }, { branch_id: 4, branch_name: 'الاستاد' }]) },
+    };
+    const service = new PublicPortalService(prisma as never, {} as never, {} as never, {} as never);
+    const catalog = await service.subscriptionCatalog();
+    expect(catalog.plans.map((plan) => [plan.id, plan.branchIds])).toEqual([[1, [3, 4]], [2, [3]], [3, [4]]]);
+    expect(catalog.plans[0]).toMatchObject({ price: 500, allBranches: true });
+    expect(catalog.branches).toEqual([{ id: 3, name: 'الجلاء' }, { id: 4, name: 'الاستاد' }]);
+    expect(prisma.club_subscription_types.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { is_active: true } }));
+  });
+
   it('returns global and member-branch plans while keeping payment methods global', async () => {
     const prisma = {
       club_members: {

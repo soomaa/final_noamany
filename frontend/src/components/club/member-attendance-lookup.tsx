@@ -559,8 +559,8 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
             />
           </div>
 
-          <div className="grid items-start gap-4 p-4 xl:grid-cols-[20rem_minmax(0,1fr)]">
-            <aside className="min-w-0 space-y-4">
+          <div className="grid items-start gap-4 p-4 xl:grid-cols-[minmax(0,1fr)_18rem] 2xl:grid-cols-[minmax(0,1fr)_20rem]">
+            <aside className="min-w-0 space-y-4 xl:order-2">
               <div className="rounded-2xl border bg-card p-4">
                 <div className="flex flex-col items-center gap-2 text-center">
                   <MemberAvatar
@@ -699,8 +699,20 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
                       </tr>
                     </thead>
                     <tbody className="divide-y">
-                      {[...overview.subscriptions].sort((a, b) => Number(b.status === 'active') - Number(a.status === 'active')).map((subscription) => (
-                        <tr key={subscription.id}>
+                      {[...overview.subscriptions]
+                        .sort((a, b) => Number(b.status === 'active') - Number(a.status === 'active'))
+                        .slice(0, 5)
+                        .map((subscription) => (
+                        <tr
+                          key={subscription.id}
+                          className={
+                            subscription.status === 'active'
+                              ? 'bg-emerald-100/85 hover:bg-emerald-200/85 dark:bg-emerald-950/35 dark:hover:bg-emerald-950/50'
+                              : subscription.status === 'expired'
+                                ? 'bg-red-100/85 hover:bg-red-200/85 dark:bg-red-950/35 dark:hover:bg-red-950/50'
+                                : undefined
+                          }
+                        >
                           <td className="px-3 py-2">
                             <p className="font-medium">
                               {subscription.subscriptionTypeName ?? ui('اشتراك')}

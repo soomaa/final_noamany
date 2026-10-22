@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api, apiError } from '@/lib/api';
 import { usePaginatedList } from '@/lib/api-hooks';
+import { useBranches } from '@/hooks/use-branches';
 import { useListQuery } from '@/lib/use-list-query';
 import { validateOverpayCap } from '@/lib/validators';
 import { toArabicDigits } from '@/lib/utils';
@@ -45,6 +46,8 @@ function PurchaseInvoicesTab() {
   const { ui } = useLocale();
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, refetch } = usePaginatedList<PurchaseInvoiceRow>('purchase-invoices', params);
+  const { data: branches } = useBranches();
+  const branchName = (id?: number | null) => (id == null ? '—' : branches?.find((b) => b.id === id)?.name ?? `#${id}`);
 
   const { data: suppliers } = useQuery({
     queryKey: ['suppliers', 'options'],
@@ -147,7 +150,8 @@ function PurchaseInvoicesTab() {
     () => [
       indexColumn(params.page, params.pageSize) as ColumnDef<PurchaseInvoiceRow>,
       { accessorKey: 'invoiceNumber', header: uiStatic('رقم الفاتورة') },
-      { accessorKey: 'supplierId', header: uiStatic('المورد') },
+      { id: 'supplier', header: uiStatic('المورد'), cell: ({ row }) => row.original.supplierName ?? `#${row.original.supplierId}` },
+      { id: 'branch', header: uiStatic('الفرع'), cell: ({ row }) => branchName(row.original.branchId) },
       {
         accessorKey: 'invoiceAmount',
         header: uiStatic('المبلغ'),
@@ -170,7 +174,8 @@ function PurchaseInvoicesTab() {
         ),
       },
     ],
-    [matchingId, params.page, params.pageSize, ui],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [matchingId, params.page, params.pageSize, ui, branches],
   );
 
   const save = async () => {
@@ -415,7 +420,7 @@ function SupplierPaymentsTab() {
     () => [
       indexColumn(params.page, params.pageSize) as ColumnDef<SupplierPaymentRow>,
       { accessorKey: 'paymentNumber', header: uiStatic('رقم الدفعة') },
-      { accessorKey: 'supplierId', header: uiStatic('المورد') },
+      { id: 'supplier', header: uiStatic('المورد'), cell: ({ row }) => row.original.supplierName ?? `#${row.original.supplierId}` },
       {
         accessorKey: 'paymentAmount',
         header: uiStatic('المبلغ'),

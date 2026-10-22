@@ -112,7 +112,7 @@ describe('AttendanceService legacy multi-shift selection', () => {
       attendance_weekly_schedule_settings: { findUnique: jest.fn().mockResolvedValue({ enabled: true }) },
       employee_weekly_schedules: { findFirst: jest.fn().mockResolvedValue({ slots: [{ weekday: 3, branch_id: 1, shift_id: 30 }] }) },
       tbl_hdoor_dawms_emps: { findMany: jest.fn() },
-      tbl_hdodr_setting: { findMany: jest.fn(), findUnique: jest.fn().mockResolvedValue(weeklyShift) },
+      tbl_hdodr_setting: { findMany: jest.fn().mockResolvedValue([weeklyShift]), findUnique: jest.fn() },
       tbl_emps_shef_edafi: { findMany: jest.fn().mockResolvedValue([]) },
       tbl_hdoor_emps_history: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({ hodoor_id: 902 }) },
       tbl_hdoor_emps: {
@@ -136,6 +136,52 @@ describe('AttendanceService legacy multi-shift selection', () => {
     expect(prisma.tbl_hdoor_dawms_emps.findMany).not.toHaveBeenCalled();
     expect(prisma.tbl_hdoor_emps.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ dwam_id_fk: 30, sheft_type: 0 }),
+    }));
+  });
+
+  it('accepts a punch for the second (evening) split shift of the same weekday', async () => {
+    const morning = {
+      id: 30, title: 'morning',
+      hdoor_from_time: '07:30 AM', hdoor_to_time: '09:00 AM', hdoor_khasm_from: '08:15 AM',
+      ensraf_from_time: '11:00 AM', ensraf_to_time: '12:00 PM', ensraf_khasm_from: '11:00 AM',
+    };
+    const evening = {
+      id: 31, title: 'evening',
+      hdoor_from_time: '02:30 PM', hdoor_to_time: '04:00 PM', hdoor_khasm_from: '03:15 PM',
+      ensraf_from_time: '10:00 PM', ensraf_to_time: '11:00 PM', ensraf_khasm_from: '10:00 PM',
+    };
+    const prisma = {
+      employees: { findFirst: jest.fn().mockResolvedValue({ id: 7, emp_code: 1007, branch_id_fk: 1, emp_sign: '1' }) },
+      attendance_channels: { findMany: jest.fn().mockResolvedValue([]) },
+      attendance_rules: { findMany: jest.fn().mockResolvedValue([]) },
+      attendance_weekly_schedule_settings: { findUnique: jest.fn().mockResolvedValue({ enabled: true }) },
+      employee_weekly_schedules: { findFirst: jest.fn().mockResolvedValue({ slots: [
+        { weekday: 3, branch_id: 1, shift_id: 30 },
+        { weekday: 3, branch_id: 1, shift_id: 31 },
+      ] }) },
+      tbl_hdoor_dawms_emps: { findMany: jest.fn() },
+      tbl_hdodr_setting: { findMany: jest.fn().mockResolvedValue([morning, evening]), findUnique: jest.fn() },
+      tbl_emps_shef_edafi: { findMany: jest.fn().mockResolvedValue([]) },
+      tbl_hdoor_emps_history: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({ hodoor_id: 903 }) },
+      tbl_hdoor_emps: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }) => ({ hodoor_id: 91, ...data })),
+        update: jest.fn().mockResolvedValue({ hodoor_id: 91 }),
+      },
+      $transaction: jest.fn(async (callback) => callback(prisma)),
+      $queryRaw: jest.fn().mockResolvedValue([{ acquired: 1 }]),
+    };
+    const service = new AttendanceService(prisma as never);
+
+    await expect(service.manualCheck(
+      { empCode: '1007', type: 'in', checkIn: '03:05 PM', channel: 'app' },
+      9,
+      1,
+      { actionDate: '2026-09-23', time: '03:05 PM' },
+    )).resolves.toEqual(expect.objectContaining({ id: 91, type: 'in' }));
+    expect(prisma.tbl_hdoor_emps.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ dwam_id_fk: 31, sheft_type: 0 }),
     }));
   });
 

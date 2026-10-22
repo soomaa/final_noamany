@@ -17,7 +17,7 @@ import { ListStatusTabs } from '@/components/common/list-status-tabs';
 import { PageHeader } from '@/components/common/page-header';
 import { StatusBadge } from '@/components/common/status-badge';
 import { NotImplementedState } from '@/components/common/states';
-import { api } from '@/lib/api';
+import { api, apiError } from '@/lib/api';
 import { confirm } from '@/lib/confirm';
 import { isNotImplemented, usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
@@ -70,8 +70,8 @@ export function EmployeesListPage() {
       await api.patch(`/employees/${row.id}/status`, { employee_type: toSuspended ? 2 : 1 });
       toast.success(ui('تم تحديث الحالة'));
       void queryClient.invalidateQueries({ queryKey: ['employees'] });
-    } catch {
-      toast.error(ui('تعذّر تحديث الحالة'));
+    } catch (error) {
+      toast.error(apiError(error, ui('تعذّر تحديث الحالة')));
     }
   };
 

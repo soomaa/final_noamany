@@ -11,7 +11,7 @@ import { OpeningStocksService } from './opening-stocks.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('opening-stocks')
-@RequiresPermission('gym-sales.inventory:view')
+@RequiresPermission('gym-sales.inventory:view', 'gym-sales.inventory.opening_stock:view')
 export class OpeningStocksController {
   constructor(private readonly service: OpeningStocksService) {}
 
@@ -36,7 +36,7 @@ export class OpeningStocksController {
   }
 
   @Post()
-  @RequiresPermission('gym-sales.inventory:create')
+  @RequiresPermission('gym-sales.inventory:create', 'gym-sales.inventory.opening_stock:create')
   create(
     @Body() body: UpsertOpeningStockDto,
     @CurrentUser() user: JwtUser,

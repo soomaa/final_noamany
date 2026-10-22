@@ -58,22 +58,23 @@ export function CafeSupplierPaymentsPage() {
     if (!selected) return toast.error(ui('اختر المورد'));
     if (!effectiveBranchId) return toast.error(ui('اختر الفرع'));
     if (!Number.isFinite(paid) || paid <= 0) return toast.error(ui('أدخل مبلغ سداد صحيح'));
-    if (paid > selected.remaining) return toast.error(ui('المبلغ أكبر من المديونية الحالية'));
+    if (paid > Math.abs(selected.remaining)) return toast.error(ui('المبلغ أكبر من الرصيد المتاح للتسوية'));
     setSaving(true);
     try {
-      const { data } = await api.post<{ remaining: number }>('/supplier-payments/settle', {
+      const { data } = await api.post<{ remaining: number }>(selected.remaining < 0 ? '/supplier-payments/refund' : '/supplier-payments/settle', {
         supplierId: selected.supplierId,
         branchId: Number(effectiveBranchId),
         paymentAmount: paid,
         paymentDate,
         paymentMethod,
       });
-      toast.success(`${ui('تم تسجيل دفعة المورد، المتبقي')} ${money(data.remaining)}`);
+      toast.success(`${ui('تم تسجيل التسوية، المتبقي')} ${money(data.remaining)}`);
       setAmount('');
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ['supplier-debts'] }),
         queryClient.invalidateQueries({ queryKey: ['supplier-payments'] }),
         queryClient.invalidateQueries({ queryKey: ['supplier-invoices'] }),
+        queryClient.invalidateQueries({ queryKey: ['supplier-statement'] }),
       ]);
     } catch (error) {
       toast.error(apiError(error));
@@ -105,7 +106,7 @@ export function CafeSupplierPaymentsPage() {
                 <thead className="bg-muted/60 text-muted-foreground">
                   <tr>
                     <th className="p-3 text-start">{ui('المورد')}</th>
-                    <th className="p-3 text-center">{ui('إجمالي المشتريات')}</th>
+                    <th className="p-3 text-center">{ui('الفواتير والرصيد الافتتاحي')}</th>
                     <th className="p-3 text-center">{ui('المدفوع')}</th>
                     <th className="p-3 text-center">{ui('المتبقي')}</th>
                     <th className="p-3 text-center">{ui('آخر سداد')}</th>
@@ -124,13 +125,13 @@ export function CafeSupplierPaymentsPage() {
                         <Button
                           size="sm"
                           variant={supplierId === String(row.supplierId) ? 'default' : 'outline'}
-                          disabled={row.remaining <= 0}
+                          disabled={row.remaining === 0}
                           onClick={() => {
                             setSupplierId(String(row.supplierId));
-                            setAmount(row.remaining > 0 ? String(row.remaining) : '');
+                            setAmount(String(Math.abs(row.remaining)));
                           }}
                         >
-                          {ui('سداد')}
+                          {ui(row.remaining < 0 ? 'استلام مستحقات' : 'سداد')}
                         </Button>
                       </td>
                     </tr>
@@ -155,8 +156,8 @@ export function CafeSupplierPaymentsPage() {
             <div className="grid gap-1.5">
               <Label>{ui('المورد')}</Label>
               <select className="rounded-lg border bg-background px-3 py-2.5" value={supplierId} onChange={(event) => setSupplierId(event.target.value)}>
-                <option value="">{ui('اختر المورد')}</option>
-                {debts.filter((row) => row.remaining > 0).map((row) => (
+                <option value="">{ui(debts.some((row) => row.remaining !== 0) ? 'اختر المورد' : 'لا يوجد موردين عليهم مديونية في هذا الفرع')}</option>
+                {debts.filter((row) => row.remaining !== 0).map((row) => (
                   <option key={row.supplierId} value={row.supplierId}>{row.supplierName}</option>
                 ))}
               </select>
@@ -164,12 +165,12 @@ export function CafeSupplierPaymentsPage() {
 
             <div className="grid grid-cols-2 gap-3 rounded-xl border bg-muted/25 p-3 text-sm">
               <div><span className="block text-muted-foreground">{ui('إجمالي المديونية')}</span><strong className="nums mt-1 block text-lg">{money(selected?.remaining ?? 0)}</strong></div>
-              <div><span className="block text-muted-foreground">{ui('بعد هذه الدفعة')}</span><strong className="nums mt-1 block text-lg text-emerald-700">{money(Math.max(0, (selected?.remaining ?? 0) - (Number(amount) || 0)))}</strong></div>
+              <div><span className="block text-muted-foreground">{ui('بعد التسوية')}</span><strong className="nums mt-1 block text-lg text-emerald-700">{money((selected?.remaining ?? 0) + ((selected?.remaining ?? 0) < 0 ? 1 : -1) * (Number(amount) || 0))}</strong></div>
             </div>
 
             <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50/70 p-3 dark:bg-emerald-950/20">
               <Label className="mb-2 flex items-center gap-2 font-bold text-emerald-800 dark:text-emerald-300">
-                <WalletCards className="size-4" /> {ui('المبلغ المدفوع للمورد')}
+                <WalletCards className="size-4" /> {ui(selected && selected.remaining < 0 ? 'المبلغ المسترد من المورد' : 'المبلغ المدفوع للمورد')}
               </Label>
               <Input className="nums h-12 text-center text-lg font-bold" type="number" min={0.01} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} />
             </div>
@@ -188,7 +189,7 @@ export function CafeSupplierPaymentsPage() {
               </select>
             </div>
             <Button className="h-12 w-full text-base" disabled={saving || !selected} onClick={() => void settle()}>
-              {saving ? ui('جارٍ تسجيل الدفعة…') : ui('حفظ وسداد المديونية')}
+              {saving ? ui('جارٍ تسجيل التسوية…') : ui(selected && selected.remaining < 0 ? 'تسجيل استلام المبلغ المسترد' : 'حفظ وسداد المديونية')}
             </Button>
           </CardContent>
         </Card>

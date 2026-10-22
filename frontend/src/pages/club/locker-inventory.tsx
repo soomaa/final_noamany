@@ -39,7 +39,7 @@ type ReportItem = {
   latest_subscription_start_date: string | null;
   latest_subscription_end_date: string | null;
 };
-type Report = { id: number; branch_id: number; employee_id: number | null; employee_name: string | null; notes: string | null; status: string; created_at: string; items: ReportItem[] };
+export type Report = { id: number; branch_id: number; employee_id: number | null; employee_name: string | null; notes: string | null; status: string; created_at: string; items: ReportItem[] };
 
 const STATUS_MAP: Record<string, string> = { pending_review: 'قيد المراجعة', approved: 'تمت الموافقة', rejected: 'مرفوض' };
 
@@ -220,20 +220,25 @@ export function ClubLockerInventoryPage() {
       ) : <p className="text-sm text-muted-foreground">لا توجد تقارير لهذا الفرع.</p>}
     </div>
 
-    <Dialog open={!!detailReport} onOpenChange={(o) => { if (!o) setDetailReport(null); }}>
-      <DialogContent className="max-h-[90vh] max-w-[95vw] overflow-y-auto"><DialogHeader><DialogTitle>تفاصيل تقرير الجرد #{detailReport?.id}</DialogTitle></DialogHeader>
-        {detailReport && <div className="space-y-3">
-          <div className="grid gap-3 text-sm md:grid-cols-2"><div><span className="text-muted-foreground">التاريخ:</span> {new Date(detailReport.created_at).toLocaleString('ar-EG')}</div><div><span className="text-muted-foreground">الفرع:</span> {branches.find((branch) => branch.id === detailReport.branch_id)?.name ?? detailReport.branch_id}</div><div><span className="text-muted-foreground">الموظف:</span> {detailReport.employee_name ?? '—'}</div><div><span className="text-muted-foreground">الحالة:</span> {STATUS_MAP[detailReport.status] ?? detailReport.status}</div><div className="md:col-span-2"><span className="text-muted-foreground">ملاحظات عامة:</span> {detailReport.notes || 'بدون'}</div></div>
-          <div className="overflow-x-auto"><Table className="min-w-[1280px]"><TableHeader><TableRow><TableHead>رقم اللوكر</TableHead><TableHead>إسم أحدث عميل مشترك باللوكر</TableHead><TableHead>هاتف العميل الحالي</TableHead><TableHead>إسم العميل السابق</TableHead><TableHead>هاتف العميل السابق</TableHead><TableHead>تاريخ بياني</TableHead><TableHead>حالة اللوكر</TableHead><TableHead>ملاحظات</TableHead></TableRow></TableHeader>
-            <TableBody>{detailReport.items.map((item) => {
-              const locker = reportItemLocker(item);
-              const dateSummary = inventoryDateSummary(locker, cairoDay(new Date(detailReport.created_at)));
-              return <TableRow key={item.id}><TableCell className="font-mono font-semibold">{locker.lockerNumber}</TableCell><TableCell>{locker.latestCustomerName || '—'}</TableCell><TableCell dir="ltr">{locker.latestCustomerPhone || '—'}</TableCell><TableCell>{locker.previousCustomerName || '—'}</TableCell><TableCell dir="ltr">{locker.previousCustomerPhone || '—'}</TableCell><TableCell><span className={dateSummary.tone}>{locker.latestSubscriptionStartDate ? dateSummary.label : '—'}</span><span dir="ltr" className="block text-xs text-muted-foreground">{dateSummary.detail}</span></TableCell><TableCell>{item.observed_status === 'available' ? 'متاح' : item.observed_status === 'occupied' ? 'مشغول' : item.observed_status === 'maintenance' ? 'صيانة' : item.observed_status === 'missing' ? 'غير موجود' : item.observed_status}</TableCell><TableCell>{item.notes || '—'}</TableCell></TableRow>;
-            })}</TableBody></Table></div>
-        </div>}
-      </DialogContent>
-    </Dialog>
+    <LockerInventoryReportDetailsDialog report={detailReport} branches={branches} onClose={() => setDetailReport(null)} />
   </div>;
+}
+
+/** Full read-only view of a saved locker inventory report — every value captured at count time. */
+export function LockerInventoryReportDetailsDialog({ report, branches, onClose }: { report: Report | null; branches: { id: number; name: string | null }[]; onClose: () => void }) {
+  return <Dialog open={!!report} onOpenChange={(o) => { if (!o) onClose(); }}>
+    <DialogContent className="max-h-[90vh] max-w-[95vw] overflow-y-auto"><DialogHeader><DialogTitle>تفاصيل تقرير الجرد #{report?.id}</DialogTitle></DialogHeader>
+      {report && <div className="space-y-3">
+        <div className="grid gap-3 text-sm md:grid-cols-3"><div><span className="text-muted-foreground">التاريخ:</span> {new Date(report.created_at).toLocaleString('ar-EG')}</div><div><span className="text-muted-foreground">الفرع:</span> {branches.find((branch) => branch.id === report.branch_id)?.name ?? report.branch_id}</div><div><span className="text-muted-foreground">الموظف:</span> {report.employee_name ?? '—'}</div><div><span className="text-muted-foreground">الحالة:</span> {STATUS_MAP[report.status] ?? report.status}</div><div><span className="text-muted-foreground">عدد اللوكرات:</span> {report.items.length}</div><div className="md:col-span-3"><span className="text-muted-foreground">ملاحظات عامة:</span> {report.notes || 'بدون'}</div></div>
+        <div className="overflow-x-auto"><Table className="min-w-[1280px]"><TableHeader><TableRow><TableHead>#</TableHead><TableHead>رقم اللوكر</TableHead><TableHead>إسم أحدث عميل مشترك باللوكر</TableHead><TableHead>هاتف العميل الحالي</TableHead><TableHead>إسم العميل السابق</TableHead><TableHead>هاتف العميل السابق</TableHead><TableHead>تاريخ بياني</TableHead><TableHead>حالة اللوكر</TableHead><TableHead>ملاحظات</TableHead></TableRow></TableHeader>
+          <TableBody>{report.items.map((item, index) => {
+            const locker = reportItemLocker(item);
+            const dateSummary = inventoryDateSummary(locker, cairoDay(new Date(report.created_at)));
+            return <TableRow key={item.id}><TableCell>{index + 1}</TableCell><TableCell className="font-mono font-semibold">{locker.lockerNumber}</TableCell><TableCell>{locker.latestCustomerName || '—'}</TableCell><TableCell><span dir="ltr" className="inline-block font-mono">{locker.latestCustomerPhone || '—'}</span></TableCell><TableCell>{locker.previousCustomerName || '—'}</TableCell><TableCell><span dir="ltr" className="inline-block font-mono">{locker.previousCustomerPhone || '—'}</span></TableCell><TableCell><span className={dateSummary.tone}>{locker.latestSubscriptionStartDate ? dateSummary.label : '—'}</span><span dir="ltr" className="block text-xs text-muted-foreground">{dateSummary.detail}</span></TableCell><TableCell>{item.observed_status === 'available' ? 'متاح' : item.observed_status === 'occupied' ? 'مشغول' : item.observed_status === 'maintenance' ? 'صيانة' : item.observed_status === 'missing' ? 'غير موجود' : item.observed_status}</TableCell><TableCell>{item.notes || '—'}</TableCell></TableRow>;
+          })}</TableBody></Table></div>
+      </div>}
+    </DialogContent>
+  </Dialog>;
 }
 
 function EditReportForm({ report, branches, employeeOptions, onClose }: { report: Report; branches: { id: number; name: string | null }[]; employeeOptions: { value: string; label: string }[]; onClose: () => void }) {

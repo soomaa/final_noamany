@@ -60,6 +60,7 @@ export class PurchaseReturnItemDto {
 }
 
 export class UpsertPurchaseReturnDto {
+  @IsOptional() @IsInt() supplierInvoiceId?: number;
   @IsOptional() @IsString() returnNumber?: string;
   @IsInt() supplierId!: number;
   @IsInt() warehouseId!: number;

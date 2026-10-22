@@ -15,7 +15,7 @@ import { InventoryTransactionsService } from './inventory-transactions.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('inventory-transactions')
-@RequiresPermission('gym-sales.inventory.gym_issue:view')
+@RequiresPermission('gym-sales.inventory.gym_issue:view', 'gym-sales.inventory.transactions:view')
 export class InventoryTransactionsController {
   constructor(private readonly service: InventoryTransactionsService) {}
 
@@ -34,31 +34,69 @@ export class InventoryTransactionsController {
     return this.service.types();
   }
 
+  @Get('drawings')
+  @RequiresPermission('gym-sales.sales.drawings:view')
+  drawings(@Query() query: ListInventoryTransactionsDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(Object.assign(query,{businessClassification:'management_withdrawal' as const}),user);
+  }
+
+  @Post('drawings')
+  @RequiresPermission('gym-sales.sales.new_receipt:create')
+  createDrawing(@Body() body: UpsertInventoryTransactionDto, @CurrentUser() user: JwtUser) {
+    return this.service.createDrawing(body,user);
+  }
+
+  // Static route must precede ':id'.
+  @Get('branch-issues')
+  @RequiresPermission('gym-sales.inventory.transactions:view', 'gym-sales.inventory.branch_orders:view', 'gym-sales.inventory.branch_items_report:view')
+  branchIssues(
+    @CurrentUser() user: JwtUser,
+    @Query() query: { targetBranchId?: string; dateFrom?: string; dateTo?: string; search?: string; page?: number; pageSize?: number },
+  ) {
+    return this.service.branchIssues(query, user);
+  }
+
+  @Patch(':id/branch-issue-quantities')
+  @RequiresPermission('gym-sales.inventory.transactions:update', 'gym-sales.inventory.branch_orders:update')
+  reduceBranchIssue(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { items: { itemId: number; quantity: number }[] },
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.reduceTransferQuantities(id, body.items, user);
+  }
+
+  @Delete(':id/branch-issue')
+  @RequiresPermission('gym-sales.inventory.transactions:delete', 'gym-sales.inventory.branch_orders:delete')
+  removeBranchIssue(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeApprovedTransfer(id, user);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
     return this.service.findOne(id, user);
   }
 
   @Post()
-  @RequiresPermission('gym-sales.inventory.gym_issue:create')
+  @RequiresPermission('gym-sales.inventory.gym_issue:create', 'gym-sales.inventory.transactions:create')
   create(@Body() body: UpsertInventoryTransactionDto, @CurrentUser() user: JwtUser) {
     return this.service.create(body, user);
   }
 
   @Put(':id')
-  @RequiresPermission('gym-sales.inventory.gym_issue:update')
+  @RequiresPermission('gym-sales.inventory.gym_issue:update', 'gym-sales.inventory.transactions:update')
   update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertInventoryTransactionDto>, @CurrentUser() user: JwtUser) {
     return this.service.update(id, body, user);
   }
 
   @Patch(':id')
-  @RequiresPermission('gym-sales.inventory.gym_issue:update')
+  @RequiresPermission('gym-sales.inventory.gym_issue:update', 'gym-sales.inventory.transactions:update')
   patch(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertInventoryTransactionDto>, @CurrentUser() user: JwtUser) {
     return this.service.update(id, body, user);
   }
 
   @Post(':id/approve')
-  @RequiresPermission('gym-sales.inventory.gym_issue:approve')
+  @RequiresPermission('gym-sales.inventory.gym_issue:approve', 'gym-sales.inventory.transactions:approve')
   approve(
     @Param('id', ParseIntPipe) id: number,
     @CurrentUser() user: JwtUser,
@@ -68,7 +106,7 @@ export class InventoryTransactionsController {
   }
 
   @Post(':id/reject')
-  @RequiresPermission('gym-sales.inventory.gym_issue:reject')
+  @RequiresPermission('gym-sales.inventory.gym_issue:reject', 'gym-sales.inventory.transactions:reject')
   reject(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: RejectTransactionDto,
@@ -78,7 +116,7 @@ export class InventoryTransactionsController {
   }
 
   @Delete(':id')
-  @RequiresPermission('gym-sales.inventory.gym_issue:delete')
+  @RequiresPermission('gym-sales.inventory.gym_issue:delete', 'gym-sales.inventory.transactions:delete')
   remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
     return this.service.remove(id, user);
   }

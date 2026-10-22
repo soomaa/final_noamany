@@ -18,8 +18,12 @@ export interface PurchaseReturnRow {
   id: number;
   returnNumber: string;
   supplierId: number;
+  supplierInvoiceId?: number | null;
+  supplierInvoiceNumber?: string | null;
   warehouseId: number;
   branchId: number;
+  returnDate?: string | null;
+  createdByName?: string | null;
   status: string;
   totalAmount: number;
   notes?: string | null;
@@ -34,6 +38,8 @@ export interface PurchaseReturnRow {
 }
 
 export interface QuickSaleRow {
+  targetEmployeeId?: number | null;
+  collectedAmount?: number;
   id: number;
   saleNumber: string;
   dailyNumber: number;
@@ -177,12 +183,27 @@ export interface PurchaseOrderRow {
   id: number;
   poNumber: string;
   supplierId: number;
+  supplierName?: string | null;
   requisitionId?: number | null;
   status: string;
   totalAmount: number;
+  subtotalAmount?: number;
+  discountAmount?: number;
+  paidAmount?: number;
+  remainingAmount?: number;
+  paymentMethod?: string | null;
+  supplierInvoiceId?: number | null;
+  supplierInvoiceCode?: string | null;
+  supplierInvoiceNumber?: string | null;
+  invoiceDate?: string | null;
+  invoicePrintDate?: string | null;
+  categoryId?: number | null;
+  warehouseId?: number | null;
   branchId: number;
   expectedDeliveryDate?: string | null;
   paymentTerms?: string | null;
+  notes?: string | null;
+  createdAt?: string;
   items?: Array<{ id: number; productId?: number | null; name: string; quantity: number; price: number; total: number }>;
 }
 
@@ -196,12 +217,15 @@ export interface GoodsReceiptRow {
   stockPosted: boolean;
   branchId: number;
   warehouseId?: number | null;
+  items?: Array<{ id: number; productId?: number | null; name: string; orderedQty: number; receivedQty: number }>;
 }
 
 export interface PurchaseInvoiceRow {
   id: number;
   invoiceNumber: string;
   supplierId: number;
+  supplierName?: string | null;
+  branchId?: number | null;
   invoiceDate?: string | null;
   status: string;
   matchingStatus?: string | null;
@@ -224,6 +248,8 @@ export interface SupplierPaymentRow {
   id: number;
   paymentNumber: string;
   supplierId: number;
+  supplierName?: string | null;
+  branchId?: number | null;
   paymentAmount: number;
   paymentMethod: string;
   status: string;

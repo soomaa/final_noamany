@@ -174,7 +174,7 @@ export function ClubLockersPage({
   const { data: discountCodes = [] } = useArrayResource<ClubDiscountCode>('club-discount-codes');
   const { data: employees = [] } = useQuery({
     queryKey: ['employees', 'locker-subscriptions'],
-    queryFn: async () => (await api.get<{ data: EmployeeListItem[] }>('/employees', { params: { page: 1, pageSize: 200, status: 1 } })).data.data ?? [],
+    queryFn: async () => (await api.get<Pick<EmployeeListItem, 'id' | 'employee' | 'emp_code'>[]>('/employees/subscription-options')).data ?? [],
   });
   const { data: stats } = useQuery({
     queryKey: ['club-lockers', 'statistics'],
@@ -393,8 +393,17 @@ export function ClubLockersPage({
   };
 
   const save = async () => {
-    if (!form.customerName.trim() || !form.lockerId || !form.subscriptionTypeId) {
-      toast.error(ct('lockers.fillRequired'));
+    // Employee is optional; name the exact missing field instead of a generic message.
+    if (!form.customerName.trim()) {
+      toast.error('اختر العميل أولاً');
+      return;
+    }
+    if (!form.subscriptionTypeId) {
+      toast.error('اختر نوع الاشتراك');
+      return;
+    }
+    if (!form.lockerId) {
+      toast.error('اختر رقم اللوكر');
       return;
     }
     if (form.discountMode === 'code' && (!selectedMember || !form.memberDiscountGrantId)) {
@@ -604,9 +613,8 @@ export function ClubLockersPage({
 
   const columns = useMemo<ColumnDef<ClubLockerListItem>[]>(
     () => [
-      { accessorKey: 'subscriptionNumber', header: ct('subscriptions.subNumber') },
       {
-        id: 'customer',
+        id: 'customer', size: 210,
         header: ct('lockers.customerName'),
         cell: ({ row }) => (
           <MemberCell
@@ -618,28 +626,28 @@ export function ClubLockersPage({
           />
         ),
       },
-      { accessorKey: 'subscriptionTypeName', header: 'نوع الاشتراك', cell: ({ getValue }) => (getValue() as string | null) || '—' },
-      { accessorKey: 'subscriptionStartDate', header: 'بداية الاشتراك', cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string)}</span> },
+      { accessorKey: 'subscriptionTypeName', size: 170, header: 'نوع الاشتراك', cell: ({ getValue }) => (getValue() as string | null) || '—' },
+      { accessorKey: 'subscriptionStartDate', size: 95, header: 'بداية الاشتراك', cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string)}</span> },
       {
-        accessorKey: 'subscriptionEndDate',
+        accessorKey: 'subscriptionEndDate', size: 95,
         header: 'نهاية الاشتراك',
         cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as string)}</span>,
       },
-      { accessorKey: 'lockerNumber', header: 'رقم اللوكر', cell: ({ getValue }) => <span className="nums">{(getValue() as string | null) || '—'}</span> },
-      { accessorKey: 'mainBranchId', header: 'الفرع', cell: ({ getValue }) => branches?.find((branch) => branch.id === getValue())?.name ?? '—' },
-      { accessorKey: 'recommendedEmployeeName', header: 'الموظف', cell: ({ getValue }) => (getValue() as string | null) || '—' },
-      { accessorKey: 'bookedByName', header: 'القائم بالإضافة', cell: ({ getValue }) => (getValue() as string | null) || '—' },
-      { accessorKey: 'paidAmount', header: 'المدفوع', cell: ({ getValue }) => <span className="nums">{formatMoney(getValue() as number)}</span> },
-      { accessorKey: 'paymentMethod', header: 'طريقة الدفع', cell: ({ getValue }) => clubPaymentMethodLabel(ct, getValue() as string | null) },
-      { accessorKey: 'receiptNumber', header: 'رقم الإيصال', cell: ({ getValue }) => <span className="nums">{(getValue() as string | null) || '—'}</span> },
+      { accessorKey: 'lockerNumber', size: 70, header: 'رقم اللوكر', cell: ({ getValue }) => <span className="nums">{(getValue() as string | null) || '—'}</span> },
+      { accessorKey: 'mainBranchId', size: 150, header: 'الفرع', cell: ({ getValue }) => branches?.find((branch) => branch.id === getValue())?.name ?? '—' },
+      { accessorKey: 'recommendedEmployeeName', size: 110, header: 'الموظف', cell: ({ getValue }) => (getValue() as string | null) || '—' },
+      { accessorKey: 'bookedByName', size: 110, header: 'القائم بالإضافة', cell: ({ getValue }) => (getValue() as string | null) || '—' },
+      { accessorKey: 'paidAmount', size: 85, header: 'المدفوع', cell: ({ getValue }) => <span className="nums">{formatMoney(getValue() as number)}</span> },
+      { accessorKey: 'paymentMethod', size: 85, header: 'طريقة الدفع', cell: ({ getValue }) => clubPaymentMethodLabel(ct, getValue() as string | null) },
+      { accessorKey: 'receiptNumber', size: 90, header: 'رقم الإيصال', cell: ({ getValue }) => <span className="nums">{(getValue() as string | null) || '—'}</span> },
       {
-        accessorKey: 'gender',
+        accessorKey: 'gender', size: 65,
         header: 'الفئة',
         cell: ({ getValue }) => getValue() === 'female' ? 'حريمي' : getValue() === 'male' ? 'رجالي' : '—',
       },
       {
         accessorKey: 'status',
-        header: ct('common.status'),
+        header: ct('common.status'), size: 85,
         cell: ({ row }) => {
           const map = { active: 'active', expired: 'expired', upcoming: 'pending' } as const;
           return <StatusBadge status={map[row.original.status]} />;
@@ -647,7 +655,7 @@ export function ClubLockersPage({
       },
       {
         id: 'actions',
-        header: ct('common.actions'),
+        header: ct('common.actions'), size: 60,
         cell: ({ row }) => (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -734,6 +742,7 @@ export function ClubLockersPage({
           <FilterBar fields={filters} />
           <DataTable
             columns={columns}
+            compact
             data={data?.data ?? []}
             total={data?.total ?? 0}
             page={params.page}
@@ -934,11 +943,11 @@ export function ClubLockersPage({
                 </select>
               </div>
               <div className="grid gap-2">
-                <Label>الموظف</Label>
+                <Label>الموظف (اختياري)</Label>
                 <Combobox
                   value={form.recommendedEmployeeId}
                   onValueChange={(v) => setForm((f) => ({ ...f, recommendedEmployeeId: v }))}
-                  options={employees.map((e) => ({ value: String(e.id), label: e.employee ?? '' }))}
+                  options={employees.map((e) => ({ value: String(e.id), label: e.employee ?? '—', searchText: String(e.emp_code ?? '') }))}
                   placeholder="—"
                 />
               </div>

@@ -145,10 +145,12 @@ export class ClubLockersService {
   async listInventoryReports(branchId: string | undefined, user: JwtUser, fromDate?: string, toDate?: string) {
     const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
     const dateFilter: Prisma.club_locker_inventory_reportsWhereInput = {};
+    // Dates are whole Cairo days: "to" includes everything recorded on that day.
+    const cairoDay = (day: string) => cairoDayRange(new Date(`${day}T12:00:00Z`));
     if (fromDate || toDate) {
       dateFilter.created_at = {
-        ...(fromDate ? { gte: new Date(fromDate) } : {}),
-        ...(toDate ? { lte: new Date(toDate) } : {}),
+        ...(fromDate ? { gte: cairoDay(fromDate).gte } : {}),
+        ...(toDate ? { lt: cairoDay(toDate).lt } : {}),
       };
     }
     const reports = await this.prisma.club_locker_inventory_reports.findMany({ where: { ...(branchId ? { branch_id: Number(branchId) } : {}), ...(scope !== null ? { branch_id: { in: scope } } : {}), ...dateFilter }, orderBy: { created_at: 'desc' }, include: { items: { include: { locker: true } } } });

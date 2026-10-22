@@ -78,6 +78,8 @@ export class ListProductBranchesDto extends PaginationDto {
 }
 
 export class ListInventoryTransactionsDto extends PaginationDto {
+  @IsOptional() @IsString() cafeCategoryId?: string;
+  @IsOptional() @IsIn(['management_withdrawal']) businessClassification?: 'management_withdrawal';
   @IsOptional() @IsString() txnType?: string;
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsString() branchId?: string;
@@ -103,6 +105,9 @@ export class ListOpeningStocksDto extends PaginationDto {
 export class ListStockTakingDto extends PaginationDto {
   @IsOptional() @IsString() warehouseId?: string;
   @IsOptional() @IsString() status?: string;
+  /** Inclusive Cairo calendar days (YYYY-MM-DD) for the stock-count report. */
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/) dateFrom?: string;
+  @IsOptional() @Matches(/^\d{4}-\d{2}-\d{2}$/) dateTo?: string;
 }
 
 export class ListSparePartsDto extends PaginationDto {
@@ -353,6 +358,10 @@ export class TransactionItemDto {
 }
 
 export class UpsertInventoryTransactionDto {
+  @IsOptional() @IsIn(['management_withdrawal']) businessClassification?: 'management_withdrawal';
+  @IsOptional() @IsString() @MaxLength(200) recipientName?: string;
+  @IsOptional() @IsInt() cafeCategoryId?: number;
+  @IsOptional() @IsIn(['male', 'female']) gender?: 'male' | 'female';
   @IsString() reference!: string;
   @IsString() txnType!: string;
   @IsDateString() txnDate!: string;
@@ -371,8 +380,8 @@ export class RejectTransactionDto {
 export class UpsertOpeningStockDto {
   @IsOptional() @IsDateString() openingStockDate?: string;
   @IsString() itemCode!: string;
-  @IsNumber() quantity!: number;
-  @IsNumber() unitCost!: number;
+  @IsNumber() @Min(0.001) quantity!: number;
+  @IsNumber() @Min(0.0001) unitCost!: number;
   @IsOptional() @IsNumber() totalCost?: number;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsInt() branchId?: number;
@@ -381,11 +390,21 @@ export class UpsertOpeningStockDto {
   @IsOptional() @IsInt() sparePartId?: number;
 }
 
+export class CountSheetLineDto {
+  @IsInt() productId!: number;
+  @IsNumber() @Min(0) countedQuantity!: number;
+  @IsOptional() @IsString() @MaxLength(255) notes?: string;
+}
+
 export class UpsertCountSessionDto {
   @IsOptional() @IsString() sessionNumber?: string;
   @IsOptional() @IsInt() warehouseId?: number;
   @IsOptional() @IsInt() branchId?: number;
+  /** Cafe category (النوع) the count covers. */
+  @IsOptional() @IsInt() categoryId?: number;
   @IsOptional() @IsString() notes?: string;
+  /** Full count sheet: when sent, replaces all session items (system qty is read server-side). */
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => CountSheetLineDto) items?: CountSheetLineDto[];
 }
 
 export class UpsertCountItemDto {

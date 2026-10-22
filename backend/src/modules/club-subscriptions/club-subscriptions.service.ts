@@ -17,6 +17,7 @@ import {
 } from '../../common/branch-groups/club-branch-group.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { isSystemAdmin } from '../../common/utils/system-admin.util';
+import { isReceptionEmployee } from '../../common/utils/reception-user.util';
 import { assertClubOperationBranch, clubOperationBranchIds } from '../../common/branch-groups/club-operation-scope';
 import { assertDateOrder } from '../../common/validators';
 import { assertMemberExists, localDateString } from '../club-members/club-member.utils';
@@ -343,6 +344,9 @@ export class ClubSubscriptionsService {
     const and: Prisma.club_subscriptionsWhereInput[] = [
       this.visibleMemberSubscriptionFilter(),
     ];
+    // Reception desk staff may review only subscriptions registered on the current Cairo day.
+    // Keep this server-side so query-string filters cannot expose historical subscriptions.
+    if (isReceptionEmployee(user)) and.push({ registration_date: localDateString() });
     if (refundSources) and.push({ member_id: { not: null }, paid_amount: { gt: 0 } });
 
     if (transferSources) {

@@ -111,6 +111,9 @@ export interface StockBalanceRow {
 }
 
 export interface InventoryTransactionRow {
+  recipientName?: string | null;
+  reason?: string | null;
+  businessClassification?: string | null;
   id: number;
   reference: string;
   txnType: string;
@@ -119,6 +122,10 @@ export interface InventoryTransactionRow {
   branchId: number;
   totalAmount: number;
   notes?: string | null;
+  sourceWarehouseId?: number | null;
+  targetWarehouseId?: number | null;
+  rejectionReason?: string | null;
+  items?: Array<{ id: number; itemName: string; quantity: number; unit?: string | null; price: number; total: number }>;
 }
 
 export interface InventoryMovementRow {

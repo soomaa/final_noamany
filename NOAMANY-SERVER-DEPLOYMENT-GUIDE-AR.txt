@@ -317,3 +317,72 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261012-r
 bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261013-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/oct13-r1-update-backup.d1FV32
 مرجع الرفع القادم: payload 20261013-r1 فوق مرجع r4 السابق، وr4 فوق r2، مع الحفاظ على إصلاح attendance_type-r2 ومخطط السيرفر المحمي 02729e6b9510c422c1539aaa1d2fe9e298773049893c73816b2915c9bb531da0 وClient وbootstrap والموقع العام. لا تعتمد r4 وحده كمرجع للملفات الستة المتغيرة في هذا الإصدار. بنية dist/dist تظل جزئية؛ التثبيت الفعلي شمل 298 من 300 ملف محتمل وفق وجود mirrors.
 السجل يؤكد نجاح التثبيت والقراءات؛ اختبارات الواجهة بحسابات المستخدمين وعمليات الحفظ الفعلية لم توثق بعد. الحزمة المسلمة تبقى كما هي؛ هذا التحديث للدليل الخارجي فقط.
+
+حزمة قيد الرفع — 20261015-r1
+----------------------------
+المرجع المثبت يظل 20261013-r1 حتى وصول سجل نجاح جديد. تحديث 15 أكتوبر يشمل الموقع العام وصفحة الاشتراك والمتجر، وكتالوج الباقات العام للقراءة، وتعديل نسب توزيع المصروفات في الإدارة. تحديث public/index.html هنا مقصود ومراجع، مع استمرار فصل الإدارة في public/system.html؛ لا تعمم قاعدة حماية index.html على إصدار طلب تحديث الموقع نفسه.
+جمعت صفحات الموقع السبع والصور الثابتة التسع من الدومين للقراءة؛ بصمة الرئيسية طابقت 122b9eb7ab7246cbfa5d1e615ba1d63e91a614a1766b5508e2649bc792ff4f48، والصور طابقت المصدر. الحزمة تشترط هذه البصمات قبل الاستبدال وتتحقق من المدخلين وصفحات الموقع والأصول بعده. backup والرجوع يشملان الموقع والإدارة والخلفية معاً؛ المخطط وClient وbootstrap محفوظة.
+ملفا public-portal القديمان من حزمة v9 المحفوظة؛ مصدر Git القديم مطابق لبصمتي المصدر في manifest المثبت 13 أكتوبر، والكود التنفيذي والاستيرادات مطابقان عند استبعاد اختلافات توليد TypeScript metadata المراجعة. قبول baseline في المثبت يظل مقيداً ببصمات النسخة المجمعة المراجعة، مع معالجة CRLF وsourceMappingURL فقط.
+نجحت أبنية الأجزاء الثلاثة و5 اختبارات خلفية و43 اختبار إدارة و11 اختبار موقع. اختبار proxy التطوير يحتاج backend على 4002 ولم ينجح لعدم تشغيله؛ قراءة المنتجات من API الإنتاج نجحت وأرجعت 39 منتجاً. MySQL المحلية 3306 متوقفة، فالقراءة المحلية الفعلية غير متاحة؛ المثبت ينفذ قراءة الخدمات والكتالوج على السيرفر قبل apply وبعد restart، ويفحص HTTP لرابط subscription-catalog الجديد بعد restart. لا تحذف هذا الفحص لتعويض غياب قاعدة الاختبار المحلية.
+نجحت تجربة تثبيت ورجوع للموقع والإدارة وفحص الأصول باستجابات HTTP محاكية، وفحوص استيراد الخلفية ببيئة توافق محلية وbootstrap اصطناعي للاختبار؛ manifest المسلّم يحتفظ ببصمات bootstrap الإنتاج الفعلية. تجاوز الاستيراد المحلي الأول 180 ثانية ثم نجح اختبار الاستيراد المعزول. تعارضات المخطط/Client والحقول الناقصة تظل توقف الرفع قبل الكتابة. الحزمة تراجع 43 نموذجاً و1426 مدخلاً، ولا تستورد بيانات أو تجدد Client.
+ملف الحزمة: release/noamany-daily-update-20261015-r1.zip. أوامر التثبيت والرجوع وتعريف نطاق التحقق في README-AR.txt وVERIFICATION.json داخل الحزمة. لا تعدّل الحزمة المسلّمة؛ أي تغييرات جديدة تحتاج إصداراً جديداً.
+
+محاولات 19 أكتوبر 2026 — r1 وr2 وr3 فشلت، وr4 قيد الرفع
+-----------------------------------------------------
+المرجع المثبت ما زال 20261015-r1. بعد rollback r3 تحقق في 19 أكتوبر أن /api/health يعيد JSON صحيحًا، وأن الصفحات العشر (/ و/login و/club/subscriptions وصفحات الموقع السبع) تطابق بصمات حزمة 15 أكتوبر حرفيًا.
+r3 أضافت الأعمدة الستة والفهرس (تبقى ولا تُحذف)، ثم فشل التشغيل بعد restart (Passenger أعاد HTML بدل JSON) لثلاثة أسباب مثبتة بالتجربة المحلية:
+1) prisma generate على Client الحي حذف 19 تصديرة enum توافقية مضافة لاحقًا في node_modules/.prisma/client/index.js، فيفشل استيراد AppModule بـ Cannot convert undefined or null to object (app-management.dto.js).
+2) استبدال dist/main.js وdist/app.module.js المحميين ببناء محلي لا يحتوي تهيئة 25 enum alias. بناء app.module.ts المحلي يختلف فقط في خيار DISABLE_SCHEDULED_TASKS وليس مطلوبًا للإنتاج.
+3) نقص ملفين جديدين يطلبهما الكود: modules/employees/dto/update-employee-status.dto.js وmodules/inventory/stock-summary.util.js (Cannot find module). قائمة الملفات الثابتة في build-oct19-r1.cjs لم تشملهما.
+4) install.sh في r3 أسقط فحوص 15 أكتوبر قبل التطبيق (verify-backend وread-smoke وcheck-schema)، فظهر الخطأ بعد restart فقط.
+قواعد إضافية: لا تشغّل prisma generate داخل node_modules/.prisma/client الحي أبدًا؛ ولّد في staging وقارن بالـClient الحي (نفس التصديرات وenums وDMMF مع الإضافات المقصودة فقط) ثم بدّل ذريًا. اجمع ملفات الخلفية بمقارنة البناء الكامل بمرجع السيرفر وليس بقائمة يدوية. افحص Nest dependency graph (preview) قبل restart.
+r4 (20 أكتوبر) توقفت في preflight قبل أي backup أو تعديل: Client الحي يحتوي index.js معدلًا مكانه (تصديرات التوافق وإصلاح attendance_type)، بينما نسختا node_modules/.prisma/client/schema.prisma وpackage.json قديمتان (بدون سطر attendance_type، وبصمة مختلفة في الاسم). الملفان غير مستخدمين وقت التشغيل.
+r5 (20 أكتوبر) توقفت أيضًا في preflight دون تعديل: Client الحي وُلّد في tmp/attendance-type-client-stage.0CmgYg بسطر output صريح ثم نُسخ، فيحتوي inlineSchema على ذلك السطر، ونسخة schema.prisma داخل Client بها فروق أخرى غير مستخدمة وقت التشغيل.
+مراجعة ملفات Prisma الفعلية من السيرفر (20 أكتوبر): prisma/schema.prisma = 02729e حرفيًا. index.js الحي وُلّد بـ output داخل tmp/attendance-type-client-stage.0CmgYg؛ لذلك يحمّل ./runtime/library.js من داخل مجلد Client، ويحتوي inlineSchema = المخطط المراجع بعد تنسيق Prisma نفسه + سطر output فقط، وattendance_type (String، default "normal") موجود، والـ19 تصديرة توافق ملحقة في نهايته بـ Object.assign(module.exports, ...). نسخة schema.prisma داخل Client مطابقة بالمعنى. لا يوجد فرق دلالي بين Client الإنتاج والمخطط المراجع.
+r6 لم تُرفع واستُبدلت بـ 20261019-r7 (release/build-oct19-r7.cjs وrelease/oct19-r7-scripts): مقارنة المخطط بالمعنى ثم DMMF حقلًا حقلًا، ونقل runtime/ وتصديرات التوافق، واختُبرت محليًا بـ index.js الفعلي من السيرفر (preflight وتطبيق وrollback حرفي). لا تعتبرها مثبتة حتى يرد UPDATE VERIFIED: 2026-10-19-r7.
+آخر تثبيت مؤكد — 20261019-r7، سجل وارد يوم 20 أكتوبر 2026
+--------------------------------------------------------
+أكد السجل: UPDATE VERIFIED: 2026-10-19-r7; database additions, Prisma Client, server, management and public website are healthy.
+نجح preflight كاملًا قبل أي تعديل: 368 ملفًا (38 خلفية) مطابقة لسجل ما قبل r3، الأعمدة الستة والفهرس موجودة (لم تُكرر)، Client الجديد = Client الحي + ستة حقول فقط (695 تصديرة، 483 نموذجًا، تصديرات التوافق الـ19 منقولة، runtime/ منقول)، قراءة الحقول الستة، استيراد الخلفية وNest dependency graph، read-smoke. نسخة schema.prisma داخل Client كانت تختلف في المسافات فقط عند attendance_type.
+بعد restart: ثلاث استجابات صحة، read-smoke، كتالوج الاشتراكات، 8 مسارات API جديدة (401 JSON)، HTML والأصول على المسارات الثمانية، ومطابقة Client والملفات. تحقق خارجي مستقل يوم 20 أكتوبر: صحة API و12 صفحة إدارة/موقع مطابقة لبصمات r7.
+النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct19-r7-update-backup.tmA6z4
+أمر الرجوع الخاص بهذا التثبيت فقط:
+bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261019-r7/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/oct19-r7-update-backup.tmA6z4
+المرجع للرفع القادم: payload r7 فوق 20261015-r1. bootstrap (main.js وapp.module.js) لم يتغير. prisma/schema.prisma أصبح المراجع 02729e + الإضافات الستة (bb64e928...). Client الحي مولّد من هذا المخطط بالطريقة الافتراضية مع ملحق تصديرات التوافق الـ19 ومجلد runtime/ القديم المنقول. لا تولّد Client في مكانه؛ استخدم أسلوب staging والمقارنة في release/oct19-r7-scripts/client.cjs.
+اختبارات المتصفح بحسابات المستخدمين وعمليات الحفظ الفعلية (مخازن، مشتريات، مرتجعات، موردين، مسحوبات، مبيعات، اشتراكات) لم توثق بعد.
+مجلدات tmp/oct19-r4-update-stage.* وoct19-r5/r7 stage وtmp/oct19-r3-* يمكن تنظيفها لاحقًا بعد التأكد من الاستقرار؛ احتفظ بـ backup r7.
+
+حزمة قيد الرفع — 20261020-r1 (كل تعديلات 20 أكتوبر)
+-------------------------------------------------
+release/build-daily-update-20261020.cjs وسكربتات release/daily-update-20261020-scripts. فوق r7: 15 ملف خلفية (حضور الباركود وتقريره، الموظفين، التقفيل اليومي والتارجت، أوامر الصرف للأفرع، المشتريات والموردين، المبيعات والورديات، الصلاحيات)، وواجهة الإدارة كاملة، والموقع العام (الصفحات السبع تغيرت). لا Client ولا مخطط ولا قاعدة بيانات: فحص TypeScript مقابل Client الإنتاج لم يُظهر حقولًا جديدة مطلوبة.
+الصفحتان «أوامر الصرف للأفرع» و«تقرير الأصناف المصروفة للأفرع» أضيفتا لكتالوج الصلاحيات (تُضافان عند فتح شاشة الصلاحيات، بلا منح تلقائي)، ونقاط branch-issues تقبل صلاحيتهما أو صلاحية الصرف والتحويلات.
+اختبارات خلفية قديمة (club-members lookup وworkspace widgets، 12 اختبارًا) تفشل لأن الكود الذي ثُبّت في r7 أحدث منها؛ الكود نفسه لم يتغير اليوم ونجح read-smoke عليه في الإنتاج. تحتاج تحديث الاختبارات لاحقًا.
+نجحت محاكاة التثبيت محليًا (preflight وapply وفحوص ما بعد التثبيت والرجوع الحرفي).
+
+آخر تثبيت مؤكد — 20261020-r1، سجل وارد يوم 20 أكتوبر 2026
+--------------------------------------------------------
+أكد السجل: UPDATE VERIFIED: 2026-10-20-r1; backend, management UI and public website updated; API healthy.
+preflight: 347 ملفًا (15 خلفية) بخطوط أساس r7، استيراد الخلفية وNest DI بـClient الحي، read-smoke، قراءة التارجت والتقفيل (يوم 2026-08-01: إيراد 41610، مصروفات 10097، صافي 31513). بعد restart: ثلاث استجابات صحة، read-smoke، التارجت والتقفيل، 8 مسارات API، HTML والأصول وصفحات الموقع السبع. تحقق خارجي مستقل: صحة API و13 صفحة مطابقة لبصمات الحزمة.
+لم يوجد في الإنتاج بيع له موظف تارجت وفئة معًا، فتخطى فحص التارجت عينة المبيعات؛ تحقق منه في المتصفح.
+النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct20-r1-update-backup.fYgfF3
+أمر الرجوع الخاص بهذا التثبيت فقط:
+bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261020-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/oct20-r1-update-backup.fYgfF3
+حزمة قيد الرفع — 20261020-r2: تعديلات ما بعد رفع r1 (واجهة: استلام المشتريات، الحركات المخزنية، طباعة إيصال POS، البيع الجديد، الفواتير؛ خلفية: التقفيل اليومي يقسم المدفوعات المختلطة نقدي/KNET ويصنف المبيعات باسم الفئة بار/بروتين ويستبعد غيرها مثل المستهلكات). release/build-daily-update-20261020-r2.cjs، أساسها payload r1 فوق r7. لا Client ولا قاعدة بيانات. نجحت المحاكاة محليًا؛ لا تعتبرها مثبتة حتى يرد UPDATE VERIFIED: 2026-10-20-r2.
+المرجع للرفع القادم (بعد r1): payload 20261020-r1 فوق r7. Client والمخطط (bb64e928...) وbootstrap دون تغيير. أداة البناء release/build-daily-update-20261020.cjs تحسب ملفات الخلفية بالمقارنة مع (emulation + r7 payload)؛ للرفع القادم أضف payload هذه الحزمة كطبقة أساس.
+
+سجل r6 للمرجع فقط — حزمة 20261019-r6: release/build-oct19-r6.cjs وسكربتات release/oct19-r6-scripts. تتجاهل سطر output فقط وتشترط تطابق inlineSchema مع المخطط المراجع حرفيًا، وتستبدل نسخة schema.prisma القديمة، وتنقل تصديرات التوافق الـ19، وتطبع كل سطر مختلف عند الفشل. لا تعتبرها مثبتة حتى يرد UPDATE VERIFIED: 2026-10-19-r6.
+
+آخر تثبيت مؤكد — 20261022-r1، سجل وارد يوم 22 أكتوبر 2026
+--------------------------------------------------------
+أكد السجل: UPDATE VERIFIED: 2026-10-22-r1; database additions, Prisma Client, backend, management UI and public website are healthy.
+السجل: release/deployment-records/noamany-daily-update-20261022-r1-server-install.txt
+أداة البناء: release/build-daily-update-20261022-r1.cjs وسكربتات release/daily-update-20261022-scripts (طريقة r7: مخطط الإنتاج المراجع + تغييرات الإصدار فقط، Client في staging ومقارنة DMMF).
+المحتوى: كل تعديلات ما بعد r2 (20 أكتوبر بعد الرفع، 21 و22 أكتوبر): 21 ملف خلفية، الواجهة كاملة، و5 migrations:
+ 9 أعمدة في prc_purchase_orders + فهرس supplier_invoice_id، inv_count_sessions.category_id، استبدال القيد الفريد uq_employee_weekly_schedule_day بفهرس عادي (ورديات متعددة)، ووسم دفعة شراء أولى واحدة بـ«مدفوع عند الشراء».
+المخطط بعد التثبيت: 63f965a823d6595447aed5d8d4a8a563ab6d68dd9cbda6e7250cb3afcb81ef54. Client = السابق + 10 حقول وإزالة القيد الفريد، 695 تصديرة و483 نموذجًا وتصديرات التوافق محفوظة. bootstrap دون تغيير.
+النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct22-r1-update-backup.ljO4r8
+أمر الرجوع الخاص بهذا التثبيت فقط:
+bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261022-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/oct22-r1-update-backup.ljO4r8
+المرجع للرفع القادم: payload 20261022-r1 فوق r2 فوق r1 فوق r7، والمخطط 63f965a8... للـ expectedSchema.
+درس مستفاد: لا تُعِد ui-map.json من git index؛ الملف كان به ترجمات غير مُلتزمة. أداة البناء الآن ترفض أي حزمة تفقد ترجمة موجودة في الإصدار المثبت.
+اختبارات المتصفح بحسابات المستخدمين وعمليات الحفظ الفعلية لم توثق بعد.

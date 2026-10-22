@@ -28,6 +28,24 @@ export class SupplierPaymentsController {
     return this.service.list(query, user);
   }
 
+  @Get('statement/suppliers')
+  @RequiresPermission('gym-sales.procurement.supplier_statement:view', 'gym-sales.procurement.supplier_payments:view')
+  statementSuppliers() {
+    return this.service.statementSuppliers();
+  }
+
+  @Get('statement')
+  @RequiresPermission('gym-sales.procurement.supplier_statement:view', 'gym-sales.procurement.supplier_payments:view')
+  statement(
+    @Query('supplierId', ParseIntPipe) supplierId: number,
+    @Query('branchId', new ParseIntPipe({ optional: true })) branchId: number | undefined,
+    @Query('dateFrom') dateFrom: string | undefined,
+    @Query('dateTo') dateTo: string | undefined,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.supplierStatement({ supplierId, branchId, dateFrom: dateFrom || undefined, dateTo: dateTo || undefined }, user);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
     return this.service.findOne(id, user);
@@ -43,6 +61,12 @@ export class SupplierPaymentsController {
   @RequiresPermission('gym-sales.procurement.supplier_payments:create')
   settle(@Body() body: SettleSupplierDebtDto, @CurrentUser() user: JwtUser) {
     return this.service.settleDebt(body, user.sub, user);
+  }
+
+  @Post('refund')
+  @RequiresPermission('gym-sales.procurement.supplier_payments:create')
+  receiveRefund(@Body() body: SettleSupplierDebtDto, @CurrentUser() user: JwtUser) {
+    return this.service.receiveRefund(body,user);
   }
 
   @Put(':id')

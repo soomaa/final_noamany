@@ -1,4 +1,6 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import type { JwtUser } from '../../common/types/jwt-user';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -7,7 +9,11 @@ import { ListWarehousesDto, UpdateWarehouseBalanceDto, UpsertWarehouseDto } from
 
 @Injectable()
 export class WarehousesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly prisma: PrismaService, private readonly scope: BranchScopeService) {}
+
+  private assertAccess(user: JwtUser | undefined, branchId: number) {
+    if (user && !this.scope.isBranchAllowed(user, branchId)) throw new ForbiddenException('لا تملك صلاحية الوصول إلى هذا المخزن');
+  }
 
   private map(row: Prisma.inv_warehousesGetPayload<object>) {
     return {
@@ -28,13 +34,17 @@ export class WarehousesService {
     };
   }
 
-  async list(q: ListWarehousesDto) {
+  async list(q: ListWarehousesDto, user?: JwtUser) {
     const and: Prisma.inv_warehousesWhereInput[] = [notDeletedFilter()];
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({ OR: [{ name_ar: { contains: s } }, { warehouse_code: { contains: s } }] });
     }
     if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
+    if (user) {
+      const branches = this.scope.resolveListFilter(user, q.branchId);
+      if (branches) and.push({ branch_id: { in: branches } });
+    }
     if (q.status === 'active') and.push({ status: 'active' });
     if (q.status === 'inactive') and.push({ status: 'inactive' });
     const where = { AND: and };
@@ -45,22 +55,24 @@ export class WarehousesService {
     return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.inv_warehouses.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!row) throw new NotFoundException('المستودع غير موجود');
+    this.assertAccess(user, row.branch_id);
     return this.map(row);
   }
 
   private async generateWarehouseCode(): Promise<string> {
-    const rows = await this.prisma.$queryRaw<{ maxNum: number | null }[]>`
-      SELECT MAX(CAST(SUBSTRING(warehouse_code, 4) AS UNSIGNED)) AS maxNum
+    const rows = await this.prisma.$queryRaw<{ maxNum: number | bigint | null }[]>`
+      SELECT MAX(CAST(SUBSTRING(warehouse_code, 3) AS UNSIGNED)) AS maxNum
       FROM inv_warehouses WHERE warehouse_code LIKE 'WH%'
     `;
-    return `WH${String((rows[0]?.maxNum ?? 0) + 1).padStart(6, '0')}`;
+    return `WH${String(Number(rows[0]?.maxNum ?? 0) + 1).padStart(6, '0')}`;
   }
 
-  async create(dto: UpsertWarehouseDto) {
+  async create(dto: UpsertWarehouseDto, user?: JwtUser) {
     if (!dto.nameAr?.trim()) throw new BadRequestException('اسم المستودع مطلوب');
+    this.assertAccess(user, dto.branchId);
     const branch = await this.prisma.tbl_branches.findUnique({ where: { branch_id: dto.branchId } });
     if (!branch) throw new BadRequestException('الفرع غير موجود');
     const row = await this.prisma.inv_warehouses.create({
@@ -81,9 +93,13 @@ export class WarehousesService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertWarehouseDto>) {
+  async update(id: number, dto: Partial<UpsertWarehouseDto>, user?: JwtUser) {
     const existing = await this.prisma.inv_warehouses.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!existing) throw new NotFoundException('المستودع غير موجود');
+    this.assertAccess(user, existing.branch_id);
+    if (dto.nameAr !== undefined && !dto.nameAr.trim()) throw new BadRequestException('اسم المخزن مطلوب');
+    if (dto.branchId != null && dto.branchId !== existing.branch_id) throw new BadRequestException('لا يمكن تغيير فرع المخزن؛ استخدم تحويل المخزون');
+    if (dto.status === 'inactive') await this.assertEmpty(id);
     const row = await this.prisma.inv_warehouses.update({
       where: { id },
       data: {
@@ -102,15 +118,22 @@ export class WarehousesService {
     return this.map(row);
   }
 
-  async remove(id: number) {
+  private async assertEmpty(id: number) {
+    const balance = await this.prisma.inv_stock_balances.findFirst({ where: { warehouse_id: id, current_stock: { not: 0 } } });
+    if (balance) throw new BadRequestException('انقل رصيد المخزن قبل تعطيله أو حذفه');
+  }
+
+  async remove(id: number, user?: JwtUser) {
     const existing = await this.prisma.inv_warehouses.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!existing) throw new NotFoundException('المستودع غير موجود');
+    this.assertAccess(user, existing.branch_id);
+    await this.assertEmpty(id);
     await this.prisma.inv_warehouses.update({ where: { id }, data: { is_deleted: true } });
     return { success: true };
   }
 
-  async warehouseInventory(id: number) {
-    await this.findOne(id);
+  async warehouseInventory(id: number, user?: JwtUser) {
+    await this.findOne(id, user);
     const balances = await this.prisma.inv_stock_balances.findMany({
       where: { warehouse_id: id },
       include: { product: true },
@@ -127,9 +150,11 @@ export class WarehousesService {
     }));
   }
 
-  async updateBalance(balanceId: number, dto: UpdateWarehouseBalanceDto) {
+  async updateBalance(balanceId: number, dto: UpdateWarehouseBalanceDto, warehouseId?: number, user?: JwtUser) {
     const balance = await this.prisma.inv_stock_balances.findUnique({ where: { id: balanceId } });
     if (!balance) throw new NotFoundException('رصيد المخزون غير موجود');
+    if (warehouseId != null && balance.warehouse_id !== warehouseId) throw new NotFoundException('الرصيد لا يتبع المخزن');
+    await this.findOne(balance.warehouse_id, user);
     const updated = await this.prisma.inv_stock_balances.update({
       where: { id: balanceId },
       data: {

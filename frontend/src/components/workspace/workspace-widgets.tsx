@@ -1,9 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { LockKeyhole } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { api } from '@/lib/api';
-import { formatTimeFromDate } from '@/lib/formatters';
 import type { WorkspaceConfig } from '@/hooks/use-permission';
 import { useLocale } from '@/store/locale';
 import { cn, toArabicDigits, withAlpha } from '@/lib/utils';
@@ -20,43 +18,17 @@ function WidgetSkeleton() {
 
 function RecentCheckinsWidget({ data }: { data: unknown }) {
   const items = (data as Array<{ memberName: string; memberCode?: string; checkInTime: string }>) ?? [];
-  if (!items.length) return <p className="text-sm text-muted-foreground dark:text-white/80">{uiStatic('لا توجد تسجيلات اليوم')}</p>;
-  return (
-    <ul className="space-y-2 text-sm">
-      {items.map((r, i) => (
-        <li key={i} className="flex justify-between gap-2">
-          <span>{r.memberName}</span>
-          <span className="nums text-muted-foreground dark:text-white/70">{formatTimeFromDate(r.checkInTime)}</span>
-        </li>
-      ))}
-    </ul>
-  );
+  return <p className="text-3xl font-bold nums dark:text-white">{toArabicDigits(items.length)}</p>;
 }
 
 function ExpiringWidget({ data }: { data: unknown }) {
   const d = data as { count?: number; items?: Array<{ customerName: string; endDate: string }> };
-  return (
-    <div className="space-y-2">
-      <p className="text-2xl font-bold nums dark:text-white">{toArabicDigits(d?.count ?? 0)}</p>
-      <ul className="space-y-1 text-sm text-muted-foreground dark:text-white/75">
-        {(d?.items ?? []).slice(0, 5).map((s, i) => (
-          <li key={i}>{s.customerName} — {toArabicDigits(s.endDate)}</li>
-        ))}
-      </ul>
-      <p className="text-xs text-muted-foreground">{uiStatic('ضمن نطاق صلاحياتك')}</p>
-    </div>
-  );
+  return <p className="text-3xl font-bold nums dark:text-white">{toArabicDigits(d?.count ?? 0)}</p>;
 }
 
 function OutstandingWidget({ data }: { data: unknown }) {
   const d = data as { count?: number; totalOutstanding?: number };
-  return (
-    <div>
-      <p className="text-2xl font-bold nums dark:text-white">{toArabicDigits(d?.totalOutstanding?.toFixed(0) ?? '0')}</p>
-      <p className="text-sm text-muted-foreground dark:text-white/75">{toArabicDigits(d?.count ?? 0)} {uiStatic('اشتراك بمستحقات')}</p>
-      <p className="text-xs text-muted-foreground">{uiStatic('ضمن نطاق صلاحياتك')}</p>
-    </div>
-  );
+  return <p className="text-3xl font-bold nums dark:text-white">{toArabicDigits(d?.count ?? 0)}</p>;
 }
 
 function ClubKpisWidget({ data }: { data: unknown }) {
@@ -74,6 +46,8 @@ function TreasuryWidget({ data }: { data: unknown }) {
   const d = data as {
     total?: number;
     incomeTotal?: number;
+    cashTotal?: number;
+    kentTotal?: number;
     expensesTotal?: number;
     netTotal?: number;
     receiptCount?: number;
@@ -95,47 +69,31 @@ function TreasuryWidget({ data }: { data: unknown }) {
       </div>
       <div className="grid grid-cols-2 gap-2 text-xs">
         <div className="rounded-lg bg-emerald-500/10 px-2 py-1.5">
-          <p className="text-muted-foreground dark:text-white/70">{uiStatic('الداخل')}</p>
+          <p className="text-muted-foreground dark:text-white/70">{uiStatic('نقدي')}</p>
           <p className="nums font-semibold text-emerald-700 dark:text-emerald-300">
-            {toArabicDigits((d?.incomeTotal ?? d?.total ?? 0).toFixed(0))}
+            {toArabicDigits((d?.cashTotal ?? 0).toFixed(0))}
           </p>
         </div>
-        <div className="rounded-lg bg-destructive/10 px-2 py-1.5">
-          <p className="text-muted-foreground dark:text-white/70">{uiStatic('المصروفات')}</p>
-          <p className="nums font-semibold text-destructive">
-            {toArabicDigits((d?.expensesTotal ?? 0).toFixed(0))}
+        <div className="rounded-lg bg-sky-500/10 px-2 py-1.5">
+          <p className="text-muted-foreground dark:text-white/70">Kent</p>
+          <p className="nums font-semibold text-sky-700 dark:text-sky-300">
+            {toArabicDigits((d?.kentTotal ?? 0).toFixed(0))}
           </p>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground dark:text-white/70">
-        {toArabicDigits(d?.receiptCount ?? 0)} {uiStatic('إيصال')} · {toArabicDigits(d?.expenseCount ?? 0)} {uiStatic('مصروف')}
-      </p>
-      {d?.userScoped ? (
-        <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground dark:text-white/75">
-          <LockKeyhole className="size-3.5 text-primary" />
-          <span className="truncate">{d.collectorName ?? '—'}</span>
-        </p>
-      ) : null}
     </div>
   );
 }
 
 function PendingTasksWidget({ data }: { data: unknown }) {
   const d = data as { count?: number; items?: Array<{ title: string; due_date?: string | null }> };
-  return (
-    <div className="space-y-2">
-      <p className="text-2xl font-bold nums">{toArabicDigits(d?.count ?? 0)}</p>
-      <ul className="text-sm text-muted-foreground">
-        {(d?.items ?? []).slice(0, 4).map((t, i) => (
-          <li key={i} className="truncate">{t.title}</li>
-        ))}
-      </ul>
-      <p className="text-xs text-muted-foreground">{uiStatic('المهام ضمن نطاقك')}</p>
-    </div>
-  );
+  return <p className="text-3xl font-bold nums">{toArabicDigits(d?.count ?? 0)}</p>;
 }
 
 const WIDGET_TITLES: Record<string, string> = {
+  members_today: uiStatic('أعضاء اليوم'),
+  subscriptions_today: uiStatic('اشتراكات اليوم'),
+  checkins_today: uiStatic('حضور اليوم'),
   my_subscriptions_today: uiStatic('اشتراكاتي اليوم'),
   recent_checkins: uiStatic('آخر الداخلين'),
   pending_tasks: uiStatic('مهام معلقة'),
@@ -151,6 +109,9 @@ const WIDGET_TITLES: Record<string, string> = {
 
 /** Accent colour per widget so the KPI row reads as distinct, colourful tiles. */
 const WIDGET_TONES: Record<string, string> = {
+  members_today: '#8B5CF6',
+  subscriptions_today: '#3B82F6',
+  checkins_today: '#F7CE1B',
   my_subscriptions_today: '#3B82F6',
   treasury_today: '#2FBF87',
   today_sales: '#2FBF87',
@@ -168,14 +129,13 @@ function renderWidget(key: string, data: unknown) {
   switch (key) {
     case 'my_subscriptions_today': {
       const d = data as { count?: number; paidTotal?: number };
-      return (
-        <div className="space-y-1">
-          <p className="text-2xl font-bold nums dark:text-white">{toArabicDigits(d?.count ?? 0)}</p>
-          <p className="text-sm text-muted-foreground dark:text-white/75">
-            {uiStatic('إجمالي المحصل')}: {toArabicDigits(d?.paidTotal?.toFixed(0) ?? '0')}
-          </p>
-        </div>
-      );
+      return <p className="text-3xl font-bold nums dark:text-white">{toArabicDigits(d?.count ?? 0)}</p>;
+    }
+    case 'members_today':
+    case 'subscriptions_today':
+    case 'checkins_today': {
+      const d = data as { count?: number };
+      return <p className="text-3xl font-bold nums dark:text-white">{toArabicDigits(d?.count ?? 0)}</p>;
     }
     case 'recent_checkins':
       return <RecentCheckinsWidget data={data} />;
@@ -244,7 +204,7 @@ export function WorkspaceWidgets({ className, branchId }: { className?: string; 
           return (
             <Card
               key={key}
-              className="group relative min-w-[220px] shrink-0 snap-start overflow-hidden lg:min-w-0"
+              className="group relative min-w-[180px] shrink-0 snap-start overflow-hidden lg:min-w-0"
               style={{ borderColor: withAlpha(tone, 0.32) }}
             >
               {/* Full-card colour — evenly tinted with the widget's tone, no glow */}
@@ -252,13 +212,13 @@ export function WorkspaceWidgets({ className, branchId }: { className?: string; 
                 className="pointer-events-none absolute inset-0 opacity-[0.13] transition-opacity duration-300 group-hover:opacity-[0.18] dark:opacity-[0.24] dark:group-hover:opacity-[0.30]"
                 style={{ backgroundColor: tone }}
               />
-              <CardHeader className="relative pb-2">
+              <CardHeader className="relative px-4 py-3">
                 <CardTitle className="flex items-center gap-2 text-sm font-semibold dark:text-white">
                   <span className="size-2 rounded-full" style={{ backgroundColor: tone }} />
                   {WIDGET_TITLES[key] ?? key}
                 </CardTitle>
               </CardHeader>
-              <CardContent className="relative dark:text-white">{renderWidget(key, payload[key])}</CardContent>
+              <CardContent className="relative px-4 pb-3 pt-0 dark:text-white">{renderWidget(key, payload[key])}</CardContent>
             </Card>
           );
         })}

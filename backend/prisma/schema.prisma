@@ -408,6 +408,7 @@ model prc_purchase_returns {
   id            Int                         @id @default(autoincrement())
   return_number String                      @unique @db.VarChar(40)
   supplier_id   Int
+  supplier_invoice_id Int?
   warehouse_id  Int
   branch_id     Int
   status        String                      @default("مسودة") @db.VarChar(30)
@@ -426,6 +427,7 @@ model prc_purchase_returns {
   @@index([branch_id])
   @@index([status])
   @@map("prc_purchase_returns")
+  @@index([supplier_invoice_id])
 }
 
 model prc_purchase_return_items {
@@ -612,6 +614,15 @@ model prc_purchase_orders {
   notes                  String?                    @db.Text
   status                 String                     @default("draft") @db.VarChar(20)
   total_amount           Decimal                    @default(0) @db.Decimal(14, 2)
+    subtotal_amount        Decimal                    @default(0) @db.Decimal(14, 2)
+    discount_amount        Decimal                    @default(0) @db.Decimal(14, 2)
+    paid_amount            Decimal                    @default(0) @db.Decimal(14, 2)
+    remaining_amount       Decimal                    @default(0) @db.Decimal(14, 2)
+    payment_method         String?                    @db.VarChar(20)
+    supplier_invoice_id    Int?
+  invoice_print_date     String?                    @db.VarChar(10)
+  category_id            Int?
+  warehouse_id           Int?
   branch_id              Int?
   created_by             Int?
   is_deleted             Boolean                    @default(false)
@@ -819,6 +830,8 @@ model prc_supplier_invoices {
   total_amount            Decimal                      @default(0) @db.Decimal(14, 2)
   paid_amount             Decimal                      @default(0) @db.Decimal(14, 2)
   remaining_amount        Decimal                      @default(0) @db.Decimal(14, 2)
+  returned_amount         Decimal                      @default(0) @db.Decimal(14, 2)
+  is_opening_balance      Boolean                      @default(false)
   currency                String                       @default("EGP") @db.VarChar(8)
   status                  String                       @default("مسودة") @db.VarChar(20)
   stock_applied           Boolean                      @default(false)
@@ -3860,7 +3873,8 @@ model employee_weekly_schedule_slots {
 
   schedule employee_weekly_schedules @relation(fields: [schedule_id], references: [id], onDelete: Cascade)
 
-  @@unique([schedule_id, weekday], map: "uq_employee_weekly_schedule_day")
+  // A weekday may hold several split shifts (validated in EmployeesService).
+  @@index([schedule_id, weekday])
   @@index([branch_id, shift_id])
   @@map("employee_weekly_schedule_slots")
 }
@@ -6959,6 +6973,9 @@ model inv_transactions {
   total_amount        Decimal                 @default(0) @db.Decimal(14, 2)
   notes               String?                 @db.Text
   reason              String?                 @db.Text
+  recipient_name      String?                 @db.VarChar(200)
+  cafe_category_id    Int?
+  gender              ClubGender?
   created_by          Int?
   approved_by         Int?
   approved_at         DateTime?
@@ -7023,6 +7040,7 @@ model inv_count_sessions {
   session_number String            @unique @db.VarChar(50)
   warehouse_id   Int
   branch_id      Int?
+  category_id    Int?
   status         String            @default("draft") @db.VarChar(30)
   notes          String?           @db.Text
   created_by     Int?

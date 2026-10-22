@@ -17,6 +17,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { ListEmployeesDto } from './dto/list-employees.dto';
 import { EmployeesService } from './employees.service';
 import { PutWeeklyScheduleDto } from './dto/weekly-schedule.dto';
+import { UpdateEmployeeStatusDto } from './dto/update-employee-status.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('employees')
@@ -43,14 +44,14 @@ export class EmployeesController {
   }
 
   @Get('pos-options')
-  @RequiresPermission('gym-sales.sales.new_receipt:view', 'gym-sales.sales.treasury:view', 'gym-sales.sales.settlements:view')
+  @RequiresPermission('gym-sales.sales.new_receipt:view', 'gym-sales.sales.treasury:view', 'gym-sales.sales.settlements:view', 'gym-sales.procurement:create')
   posOptions() {
     return this.employees.posOptions();
   }
 
   // Static route must precede ':id'.
   @Get('subscription-options')
-  @RequiresPermission('club.subscriptions:create', 'club.subscriptions.list:create', 'club.subscriptions.new:create')
+  @RequiresPermission('club.subscriptions:create', 'club.subscriptions.list:create', 'club.subscriptions.new:create', 'club.lockers:create', 'club.lockers:update')
   subscriptionOptions() {
     return this.employees.subscriptionOptions();
   }
@@ -88,8 +89,8 @@ export class EmployeesController {
 
   @Patch(':id/status')
   @RequiresPermission('employees.list:update')
-  setStatus(@Param('id', ParseIntPipe) id: number, @Body('employee_type', ParseIntPipe) employeeType: number) {
-    return this.employees.setStatus(id, employeeType);
+  setStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateEmployeeStatusDto) {
+    return this.employees.setStatus(id, dto.employee_type);
   }
 
   @Delete(':id')

@@ -52,27 +52,26 @@ const DialogOverlay = React.forwardRef<
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName;
 
 export type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> &
-  VariantProps<typeof dialogContentVariants>;
+  VariantProps<typeof dialogContentVariants> & { inline?: boolean };
 
 const DialogContent = React.forwardRef<React.ElementRef<typeof DialogPrimitive.Content>, DialogContentProps>(
-  ({ className, size, children, ...props }, ref) => (
-    <DialogPortal>
-      <DialogOverlay />
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
-        <DialogPrimitive.Content
-          ref={ref}
-          className={cn(dialogContentVariants({ size }), className)}
-          {...props}
-        >
-          {children}
-          <DialogPrimitive.Close className="absolute end-4 top-4 z-20 rounded-lg p-1.5 text-muted-foreground opacity-80 ring-offset-background transition-all hover:bg-muted hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
-            <X className="size-4" />
-            <span className="sr-only">{uiStatic('إغلاق')}</span>
-          </DialogPrimitive.Close>
-        </DialogPrimitive.Content>
-      </div>
-    </DialogPortal>
-  ),
+  ({ className, size, children, inline = false, ...props }, ref) => {
+    const content = (
+      <DialogPrimitive.Content
+        ref={ref}
+        className={cn(dialogContentVariants({ size }), inline && 'max-h-none max-w-none rounded-none border-0 shadow-none ring-0 before:hidden', className)}
+        {...props}
+      >
+        {children}
+        {!inline && <DialogPrimitive.Close className="absolute end-4 top-4 z-20 rounded-lg p-1.5 text-muted-foreground opacity-80 ring-offset-background transition-all hover:bg-muted hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2">
+          <X className="size-4" />
+          <span className="sr-only">{uiStatic('إغلاق')}</span>
+        </DialogPrimitive.Close>}
+      </DialogPrimitive.Content>
+    );
+    if (inline) return content;
+    return <DialogPortal><DialogOverlay /><div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">{content}</div></DialogPortal>;
+  },
 );
 DialogContent.displayName = DialogPrimitive.Content.displayName;
 

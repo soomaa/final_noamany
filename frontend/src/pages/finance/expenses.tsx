@@ -51,7 +51,7 @@ const EMPTY_FORM = {
   amount: '',
   // Canonical stored values (Arabic) — locale-independent, matches backend literals.
   paymentMethod: 'نقدي',
-  paymentStatus: 'معلق',
+  paymentStatus: 'مدفوع',
   description: '',
   vendor: '',
   invoiceNumber: '',
@@ -61,8 +61,8 @@ const EMPTY_FORM = {
   branchId: '',
   genderScope: '' as '' | 'male' | 'female',
   hasPercentage: false,
-  malePercentage: '60',
-  femalePercentage: '40',
+  malePercentage: '',
+  femalePercentage: '',
 };
 
 export function FinanceExpensesPage() {
@@ -289,8 +289,8 @@ export function FinanceExpensesPage() {
                   branchId: row.original.branchId != null ? String(row.original.branchId) : '',
                   genderScope: isSplit ? '' : (row.original.genderScope ?? ''),
                   hasPercentage: isSplit,
-                  malePercentage: isSplit ? String(malePct) : '60',
-                  femalePercentage: isSplit ? String(100 - malePct) : '40',
+                  malePercentage: isSplit ? String(malePct) : '',
+                  femalePercentage: isSplit ? String(100 - malePct) : '',
                 });
                 setOpen(true);
               }}
@@ -560,6 +560,8 @@ export function FinanceExpensesPage() {
                       ...f,
                       hasPercentage: e.target.checked,
                       genderScope: '',
+                      malePercentage: '',
+                      femalePercentage: '',
                     }))
                   }
                 />
@@ -593,7 +595,7 @@ export function FinanceExpensesPage() {
                           malePercentage: v,
                           femalePercentage: Number.isFinite(n) && n > 0 && n < 100
                             ? String(100 - n)
-                            : f.femalePercentage,
+                            : '',
                         }));
                       }}
                     />
@@ -615,7 +617,7 @@ export function FinanceExpensesPage() {
                           femalePercentage: v,
                           malePercentage: Number.isFinite(n) && n > 0 && n < 100
                             ? String(100 - n)
-                            : f.malePercentage,
+                            : '',
                         }));
                       }}
                     />
@@ -641,12 +643,13 @@ export function FinanceExpensesPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
-                <Label>{ui('المورد')}</Label>
-                <Input value={form.vendor} onChange={(e) => setForm((f) => ({ ...f, vendor: e.target.value }))} />
+                <Label>{ui('المورد')} <span className="text-xs font-normal text-muted-foreground">({ui('اختياري')})</span></Label>
+                <Input placeholder={ui('اختياري')} value={form.vendor} onChange={(e) => setForm((f) => ({ ...f, vendor: e.target.value }))} />
               </div>
               <div className="grid gap-1">
-                <Label>{ui('رقم الفاتورة')}</Label>
+                <Label>{ui('رقم الفاتورة')} <span className="text-xs font-normal text-muted-foreground">({ui('اختياري')})</span></Label>
                 <Input
+                  placeholder={ui('اختياري')}
                   className="nums"
                   value={form.invoiceNumber}
                   onChange={(e) => setForm((f) => ({ ...f, invoiceNumber: e.target.value }))}

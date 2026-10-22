@@ -73,8 +73,13 @@ export class OpeningStocksService {
   }
 
   async create(dto: UpsertOpeningStockDto, user: JwtUser, dryRun = false) {
-    const branchId = this.location.requireUserBranch(user);
-    const warehouseId = await this.location.resolveBranchStockLocation(branchId);
+    if (!Number.isFinite(dto.quantity) || dto.quantity <= 0 || !Number.isFinite(dto.unitCost) || dto.unitCost <= 0) throw new BadRequestException('الكمية والتكلفة يجب أن تكونا أكبر من صفر');
+    const selected = dto.warehouseId ? await this.location.resolveSelection(user, dto.warehouseId, dto.branchId) : null;
+    const requestedBranchId = dto.branchId == null
+      ? null
+      : this.location.requireAllowedBranch(user, dto.branchId);
+    const branchId = selected?.branchId ?? requestedBranchId ?? this.location.requireUserBranch(user);
+    const warehouseId = selected?.warehouseId ?? await this.location.resolveBranchStockLocation(branchId);
     let productId = dto.productId ?? null;
     if (!productId && dto.itemCode?.trim()) {
       const product = await this.prisma.inv_products.findFirst({
@@ -96,7 +101,7 @@ export class OpeningStocksService {
     });
     const currentStock = balance ? toNumber(balance.current_stock) : 0;
     const willAdd = currentStock > 0;
-    const newStock = willAdd ? currentStock + dto.quantity : dto.quantity;
+    const newStock = currentStock + dto.quantity;
 
     const previewRows: PreviewRow[] = [
       { label: 'الرصيد الحالي', before: String(currentStock), after: String(newStock) },
@@ -117,6 +122,14 @@ export class OpeningStocksService {
     }
     await this.moduleLedger.ensureChart();
     const row = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM inv_warehouses WHERE id = ${warehouseId} FOR UPDATE`;
+      const already = await tx.inv_opening_stocks.findFirst({where:{product_id:productId,warehouse_id:warehouseId,is_deleted:false}});
+      if (already) throw new BadRequestException('لهذا الصنف رصيد افتتاحي في المخزن؛ استخدم المشتريات أو الجرد لتغيير الرصيد');
+      const product = await tx.inv_products.findUniqueOrThrow({where:{id:productId}});
+      const stock = await tx.inv_stock_balances.aggregate({where:{product_id:productId},_sum:{current_stock:true}});
+      const oldQty = Math.max(0,toNumber(stock._sum.current_stock));
+      const cost = (oldQty * toNumber(product.cost_price) + totalCost) / (oldQty + dto.quantity);
+      await tx.inv_products.update({where:{id:productId},data:{cost_price:Math.round(cost*10000)/10000}});
       const opening = await tx.inv_opening_stocks.create({
         data: {
         opening_stock_date: dto.openingStockDate ? new Date(dto.openingStockDate) : new Date(),
@@ -137,7 +150,7 @@ export class OpeningStocksService {
         warehouseId,
         direction: MovementDirection.in,
         quantity: dto.quantity,
-        operation: willAdd ? 'add' : 'set',
+        operation: 'add',
         txnType: InventoryTxnType.adjustment,
         unitCost: dto.unitCost,
         docType: 'opening_stock',

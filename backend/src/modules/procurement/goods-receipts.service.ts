@@ -281,6 +281,14 @@ export class GoodsReceiptsService {
     return Math.round(total * 100) / 100;
   }
 
+  private productFromPo(
+    po: Prisma.prc_purchase_ordersGetPayload<{ include: { items: true } }>,
+    name: string,
+  ): number | null {
+    const key = name.trim().toLowerCase();
+    return po.items.find((poi) => poi.product_id && poi.name.trim().toLowerCase() === key)?.product_id ?? null;
+  }
+
   private async postStock(
     grn: Prisma.prc_goods_receiptsGetPayload<{ include: { items: true } }>,
     po: Prisma.prc_purchase_ordersGetPayload<{ include: { items: true } }>,
@@ -299,17 +307,22 @@ export class GoodsReceiptsService {
 
     for (const item of grn.items) {
       if (item.rejected || toNumber(item.received_qty) <= 0) continue;
-      if (!item.product_id) {
+      // Receipts saved without a product link fall back to the PO line with the same name.
+      const productId = item.product_id ?? this.productFromPo(po, item.name);
+      if (!productId) {
         throw new BadRequestException(`البند "${item.name}" يحتاج معرف منتج لترحيل المخزون`);
       }
+      if (!item.product_id) {
+        await tx.prc_goods_receipt_items.update({ where: { id: item.id }, data: { product_id: productId } });
+      }
       const unitCost =
-        priceByProduct.get(item.product_id) ??
+        priceByProduct.get(productId) ??
         priceByName.get(item.name.toLowerCase()) ??
         new Prisma.Decimal(0);
 
       await this.stock.applyMovement(
         {
-          productId: item.product_id,
+          productId,
           warehouseId: grn.warehouse_id,
           direction: MovementDirection.in,
           quantity: item.received_qty,
@@ -343,17 +356,18 @@ export class GoodsReceiptsService {
 
     for (const item of grn.items) {
       if (item.rejected || toNumber(item.received_qty) <= 0) continue;
-      if (!item.product_id) {
+      const productId = item.product_id ?? this.productFromPo(po, item.name);
+      if (!productId) {
         throw new BadRequestException(`البند "${item.name}" يحتاج معرف منتج لعكس ترحيل المخزون`);
       }
       const unitCost =
-        priceByProduct.get(item.product_id) ??
+        priceByProduct.get(productId) ??
         priceByName.get(item.name.toLowerCase()) ??
         new Prisma.Decimal(0);
 
       await this.stock.applyMovement(
         {
-          productId: item.product_id,
+          productId,
           warehouseId: grn.warehouse_id,
           direction: MovementDirection.out,
           quantity: item.received_qty,

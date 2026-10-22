@@ -1,4 +1,5 @@
 import './font.css';
+import './cart-actions.css';
 import { addToCart, cartCount, cartTotal, escapeHtml, getCart, installGlobalCartLinks, money, productImageUrl, showToast, updateCartItem, wireImageFallback } from './portal.js';
 import { api } from './portal.js';
 

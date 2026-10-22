@@ -92,8 +92,9 @@ export class CafeProductsController {
     @Query('dateTo') dateTo: string | undefined,
     @Query('branchId') branchId: string | undefined,
     @CurrentUser() user: JwtUser,
+    @Query('categoryId') categoryId?: string,
   ) {
-    return this.service.reports(dateFrom, dateTo, branchId, user);
+    return this.service.reports(dateFrom, dateTo, branchId, user, categoryId);
   }
 
   @Get('reports/item-feedback')

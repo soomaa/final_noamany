@@ -23,8 +23,11 @@ import { useLocale } from '@/store/locale';
 export interface CrudField {
   key: string;
   label: string;
-  type?: 'text' | 'number' | 'textarea';
+  type?: 'text' | 'number' | 'textarea' | 'select';
   required?: boolean;
+  /** Choices for `type: 'select'`. */
+  options?: { value: string; label: string }[];
+  disabled?: boolean;
 }
 
 interface SimpleCrudTabProps<T extends { id: number }> {
@@ -167,6 +170,16 @@ export function SimpleCrudTab<T extends { id: number }>({
                     value={form[f.key] ?? ''}
                     onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))}
                   />
+                ) : f.type === 'select' ? (
+                  <select
+                    className="rounded-md border bg-background px-3 py-2 text-sm"
+                    value={form[f.key] ?? ''}
+                    disabled={f.disabled}
+                    onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                  >
+                    <option value="">{ui('اختر')}</option>
+                    {(f.options ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
                 ) : (
                   <input
                     type={f.type === 'number' ? 'number' : 'text'}

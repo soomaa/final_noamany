@@ -1,5 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   CreditCard,
   FileText,
@@ -134,6 +134,8 @@ function daysBetweenLocal(startDate: string, endDate: string): number {
 
 interface ReceiptRow extends SubscriptionPaymentReceiptRow {
   memberName: string;
+  memberCode?: string | null;
+  subscriptionType?: string | null;
   subscriptionId?: number | null;
   lockerSubscriptionId?: number | null;
   branchId?: number | null;
@@ -238,6 +240,7 @@ export function ClubSubscriptionsPage({
   const subscriptionOnboarding = useFirstVisitGuide('subscriptions', user?.sub);
   const qc = useQueryClient();
   const location = useLocation();
+  const navigate = useNavigate();
   const workspaceActionHandled = useRef(false);
   const [workspaceSubscription, setWorkspaceSubscription] = useState<ClubSubscriptionListItem | null>(null);
   const initialFilters: Record<string, string> | undefined = filterSpecial
@@ -313,6 +316,21 @@ export function ClubSubscriptionsPage({
       },
     })).data.data,
   });
+
+  const printReceiptInvoice = async (receipt: ReceiptRow) => {
+    if (!receipt.subscriptionId) {
+      toast.error('لا يوجد اشتراك مرتبط بهذا الإيصال');
+      return;
+    }
+    try {
+      const { data: subscription } = await api.get<ClubSubscriptionListItem>(
+        `/club-subscriptions/${receipt.subscriptionId}`,
+      );
+      setPrintSub(subscription);
+    } catch (error) {
+      toast.error(apiError(error));
+    }
+  };
   const { data: transfers, refetch: refetchTransfers } = useArrayResource<{
     id: number;
     subscription_id: number;
@@ -787,6 +805,10 @@ export function ClubSubscriptionsPage({
 
   const openCreate = () => {
     if (!canCreateSubscriptions) return;
+    if (!openCreateOnMount) {
+      navigate('/club/subscriptions/new');
+      return;
+    }
     const branchId = user?.branch && user.branch > 0 ? user.branch : (branches?.[0]?.id ?? 0);
     setEditSubId(null);
     setSubscriptionKind('package');
@@ -1074,6 +1096,7 @@ export function ClubSubscriptionsPage({
           salesId: selectedMember?.salesId ?? undefined,
           startDate: form.startDate,
           paidAmount: form.paidAmount ? Number(form.paidAmount) : 0,
+          ...split.payload,
           ...discountPayload,
           isLinkedToSessions: form.isLinkedToSessions,
           sessionsCount: form.isLinkedToSessions && form.sessionsCount
@@ -1087,6 +1110,7 @@ export function ClubSubscriptionsPage({
       setDialogOpen(false);
       setEditSubId(null);
       invalidateAll();
+      if (!editSubId && openCreateOnMount) navigate('/club/subscriptions', { replace: true });
 
     } catch (e) {
       toast.error(apiError(e));
@@ -1389,39 +1413,40 @@ export function ClubSubscriptionsPage({
 
   const subColumns = useMemo<ColumnDef<ClubSubscriptionListItem>[]>(
     () => [
-      { id: 'index', header: ct('common.index'), cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1) },
-      { accessorKey: 'subscriptionNumber', header: ct('subscriptions.subNumber') },
-      { accessorKey: 'receiptNumber', header: ct('subscriptions.receiptNumber'), cell: ({ getValue }) => <span className="nums whitespace-nowrap">{(getValue() as string | null) || '—'}</span> },
-      { accessorKey: 'customerName', header: ct('subscriptions.customerName'), cell: ({ getValue }) => getValue() ?? '—' },
-      { accessorKey: 'subscriptionType', header: ct('subscriptions.subType'), cell: ({ getValue }) => getValue() ?? '—' },
-      { accessorKey: 'branchName', header: 'الفرع', cell: ({ getValue }) => getValue() ?? '—' },
+      { id: 'index', header: ct('common.index'), size: 30, cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1) },
+      { accessorKey: 'memberCode', header: 'كود العضو', size: 58, cell: ({ getValue }) => <span className="nums whitespace-nowrap">{(getValue() as string | null) || '—'}</span> },
+      { accessorKey: 'customerName', header: ct('subscriptions.customerName'), size: 110, cell: ({ getValue }) => <span className="block truncate" title={(getValue() as string | null) ?? undefined}>{(getValue() as string | null) ?? '—'}</span> },
+      { accessorKey: 'subscriptionType', header: ct('subscriptions.subType'), size: 100, cell: ({ getValue }) => <span className="block truncate" title={(getValue() as string | null) ?? undefined}>{(getValue() as string | null) ?? '—'}</span> },
+      { accessorKey: 'registrationDate', header: 'تاريخ التسجيل', size: 70, cell: ({ getValue }) => <span className="nums whitespace-nowrap">{(getValue() as string | null)?.slice(0, 10) || '—'}</span> },
+      { accessorKey: 'subscriptionStartDate', header: 'بداية الاشتراك', size: 70, cell: ({ getValue }) => <span className="nums whitespace-nowrap">{(getValue() as string | null)?.slice(0, 10) || '—'}</span> },
+      { accessorKey: 'subscriptionEndDate', header: 'نهاية الاشتراك', size: 70, cell: ({ getValue }) => <span className="nums whitespace-nowrap">{(getValue() as string | null)?.slice(0, 10) || '—'}</span> },
+      { accessorKey: 'branchName', header: 'الفرع', size: 72, cell: ({ getValue }) => <span className="block truncate" title={(getValue() as string | null) ?? undefined}>{(getValue() as string | null) ?? '—'}</span> },
       {
         id: 'category',
         header: 'الفئة',
+        size: 48,
         cell: ({ row }) => row.original.gender === 'female' ? 'حريمي' : row.original.gender === 'male' ? 'رجالي' : '—',
       },
       {
         accessorKey: 'assignedStaffName',
         header: 'الموظف / الكابتن',
-        cell: ({ getValue }) => getValue() ? <span className="text-sm">{getValue() as string}</span> : <span className="text-muted-foreground">—</span>,
+        size: 80,
+        cell: ({ getValue }) => getValue() ? <span className="block truncate" title={getValue() as string}>{getValue() as string}</span> : <span className="text-muted-foreground">—</span>,
       },
-      { accessorKey: 'subscriptionValue', header: 'سعر الاشتراك', cell: ({ getValue }) => <span className="nums">{formatMoney(getValue() as number)}</span> },
-      { accessorKey: 'discountValue', header: 'قيمة الخصم', cell: ({ getValue }) => <span className="nums">{formatMoney(getValue() as number)}</span> },
-      {
-        id: 'netValue',
-        header: 'صافي الاشتراك',
-        cell: ({ row }) => <span className="nums font-medium">{formatMoney(subscriptionNetValue(row.original))}</span>,
-      },
-      { accessorKey: 'paidAmount', header: 'المدفوع نقدًا', cell: ({ getValue }) => <span className="nums text-emerald-700">{formatMoney(getValue() as number)}</span> },
-      { accessorKey: 'remainingAmount', header: ct('subscriptions.remaining'), cell: ({ getValue }) => <span className="nums">{formatMoney(getValue() as number)}</span> },
+      { accessorKey: 'subscriptionValue', header: 'سعر الاشتراك', size: 62, cell: ({ getValue }) => <span className="nums whitespace-nowrap">{formatMoney(getValue() as number)}</span> },
+      { accessorKey: 'discountValue', header: 'الخصم', size: 56, cell: ({ getValue }) => <span className="nums whitespace-nowrap">{formatMoney(getValue() as number)}</span> },
+      { accessorKey: 'paidAmount', header: 'المدفوع', size: 60, cell: ({ getValue }) => <span className="nums whitespace-nowrap text-emerald-700">{formatMoney(getValue() as number)}</span> },
+      { accessorKey: 'receiptNumber', header: ct('subscriptions.receiptNumber'), size: 56, cell: ({ getValue }) => <span className="nums whitespace-nowrap">{(getValue() as string | null) || '—'}</span> },
       {
         accessorKey: 'createdByName',
         header: 'القائم بالإضافة',
-        cell: ({ getValue }) => getValue() ? <span className="text-sm">{getValue() as string}</span> : <span className="text-muted-foreground">—</span>,
+        size: 80,
+        cell: ({ getValue }) => getValue() ? <span className="block truncate" title={getValue() as string}>{getValue() as string}</span> : <span className="text-muted-foreground">—</span>,
       },
       {
         accessorKey: 'status',
         header: ct('common.status'),
+        size: 68,
         cell: ({ row }) => {
           const status = row.original.status as string;
           if (status === 'frozen') {
@@ -1438,6 +1463,7 @@ export function ClubSubscriptionsPage({
       {
         id: 'actions',
         header: ct('common.actions'),
+        size: 42,
         cell: ({ row }) => !canUpdateSubscriptions && !canDeleteSubscriptions && !canPrintSubscriptions && !canCreateRefund ? null : (
           <DropdownMenu>
             <DropdownMenuTrigger asChild><Button variant="ghost" size="icon"><MoreHorizontal /></Button></DropdownMenuTrigger>
@@ -1565,6 +1591,7 @@ export function ClubSubscriptionsPage({
 
   return (
     <div className="space-y-6">
+      <div className={openCreateOnMount ? 'hidden' : undefined}>
       <PageHeader
         title={ui(pageTitle)}
         description={ct('subscriptions.description')}
@@ -1683,6 +1710,7 @@ export function ClubSubscriptionsPage({
             isError={isError}
             onRetry={() => void refetch()}
             emptyTitle={ct('subscriptions.emptySubs')}
+            compact
           />
         </TabsContent>
 
@@ -1729,24 +1757,40 @@ export function ClubSubscriptionsPage({
                 <tr>
                   <th className="p-3 text-start">{ct('subscriptions.receiptNumber')}</th>
                   <th className="p-3 text-start">{ct('common.customer')}</th>
+                  <th className="p-3 text-start">كود العميل</th>
+                  <th className="p-3 text-start">نوع الاشتراك</th>
                   <th className="p-3 text-start">{ct('common.branch')}</th>
                   <th className="p-3 text-start">{ct('subscriptions.receiptAmount')}</th>
                   <th className="p-3 text-start">{ct('subscriptions.paymentMethod')}</th>
                   <th className="p-3 text-start">{ct('subscriptions.receiptDate')}</th>
+                  <th className="p-3 text-start">{ct('common.actions')}</th>
                 </tr>
               </thead>
               <tbody>
                 {(receipts ?? []).length === 0 && (
-                  <tr><td colSpan={6} className="p-6 text-center text-muted-foreground">{ct('common.noData')}</td></tr>
+                  <tr><td colSpan={9} className="p-6 text-center text-muted-foreground">{ct('common.noData')}</td></tr>
                 )}
                 {(receipts ?? []).map((r) => (
                   <tr key={r.id} className="border-t">
                     <td className="p-3 nums">{r.receiptNumber}</td>
                     <td className="p-3">{r.memberName}</td>
+                    <td className="p-3 nums">{r.memberCode ?? '—'}</td>
+                    <td className="p-3">{r.subscriptionType ?? '—'}</td>
                     <td className="p-3">{resolveBranchName(branches, r.branchId ?? 0, user?.branch)}</td>
                     <td className="p-3 nums">{toArabicDigits(r.amount)}</td>
                     <td className="p-3">{clubPaymentMethodsLabel(ct, r.payments, r.paymentMethod)}</td>
                     <td className="p-3 nums">{toArabicDigits(r.receiptDate)}</td>
+                    <td className="p-3">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void printReceiptInvoice(r)}
+                        disabled={!r.subscriptionId || !canPrintSubscriptions}
+                        title={!r.subscriptionId ? 'لا يوجد اشتراك مرتبط بهذا الإيصال' : undefined}
+                      >
+                        <Printer className="size-4" /> {ct('subscriptions.printInvoice')}
+                      </Button>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1952,9 +1996,16 @@ export function ClubSubscriptionsPage({
           )}
         </TabsContent>
       </Tabs>
+      </div>
 
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className={FORM_DIALOG_CONTENT_CLASS} aria-describedby={undefined}>
+      <Dialog open={dialogOpen} onOpenChange={(open) => {
+        if (!open && openCreateOnMount) {
+          navigate('/club/subscriptions', { replace: true });
+          return;
+        }
+        setDialogOpen(open);
+      }}>
+        <DialogContent inline={!!openCreateOnMount} className={cn(FORM_DIALOG_CONTENT_CLASS, openCreateOnMount && 'min-h-screen w-full max-w-none rounded-none')} aria-describedby={undefined}>
           <FormDialogHeader>
             <DialogTitle>{editSubId ? ct('subscriptions.editSub') : ct('subscriptions.newSub')}</DialogTitle>
           </FormDialogHeader>
@@ -2107,13 +2158,7 @@ export function ClubSubscriptionsPage({
               )}
             </DialogFormSection>
 
-            <Tabs defaultValue="details" className="space-y-4">
-              <TabsList className="grid h-auto w-full grid-cols-3">
-                <TabsTrigger value="details">بيانات الاشتراك</TabsTrigger>
-                <TabsTrigger value="discount">كود خصم</TabsTrigger>
-                <TabsTrigger value="payment">الدفع</TabsTrigger>
-              </TabsList>
-              <TabsContent value="details" className="mt-0 space-y-4">
+            <div className="space-y-5">
             {subscriptionKind === 'special' ? (
               <DialogFormSection title="الاشتراك الخاص" icon={CalendarDays}>
                 <DialogFormGrid>
@@ -2373,9 +2418,7 @@ export function ClubSubscriptionsPage({
             </DialogFormSection>
             )}
 
-              </TabsContent>
-
-              <TabsContent value="discount" className="mt-0">
+              <div>
                 <DialogFormSection title="كود خصم أو قيمة خصم" icon={Sparkles}>
                   <SubscriptionDiscountFields
                     grossValue={Number(form.subscriptionValue) || 0}
@@ -2397,9 +2440,7 @@ export function ClubSubscriptionsPage({
                     }))}
                   />
                 </DialogFormSection>
-              </TabsContent>
-
-              <TabsContent value="payment" className="mt-0">
+              <div>
 
             <DialogFormSection title={ct('subscriptions.sectionPayment')} icon={Wallet}>
               {!editSubId ? (
@@ -2504,12 +2545,13 @@ export function ClubSubscriptionsPage({
                 />
               )}
             </DialogFormSection>
-              </TabsContent>
-            </Tabs>
+              </div>
+            </div>
+            </div>
           </FormDialogBody>
 
           <FormDialogFooter>
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>{ct('common.cancel')}</Button>
+            <Button variant="outline" onClick={() => openCreateOnMount ? navigate('/club/subscriptions', { replace: true }) : setDialogOpen(false)}>{ct('common.cancel')}</Button>
             {(editSubId ? canUpdateSubscriptions : canCreateSubscriptions) ? (
               <Button variant="brand" onClick={() => void saveSub()} disabled={saving}>{saving ? ct('common.saving') : ct('common.save')}</Button>
             ) : null}

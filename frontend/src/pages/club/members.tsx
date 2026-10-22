@@ -8,6 +8,7 @@ import { DataTable } from '@/components/common/data-table';
 import { FilterBar, type FilterField } from '@/components/common/filter-bar';
 import { PageHeader } from '@/components/common/page-header';
 import { StatusBadge } from '@/components/common/status-badge';
+import { BarcodeAttendanceReportPanel } from './fitness/barcode-attendance-report';
 import { ErrorState } from '@/components/common/states';
 import { ClubStatCard } from '@/components/club/stat-card';
 import {
@@ -326,7 +327,11 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     isError: attError,
     refetch: refetchAttendance,
   } = usePaginatedList<AttendanceRow>('club-attendance', attendanceListParams);
-  const [attView, setAttView] = useState<'all' | 'daily'>('all');
+  const [attView, setAttView] = useState<'report' | 'all' | 'daily'>('report');
+  const attendanceReportFilters = useMemo(
+    () => ({ dateFrom: attendanceStartDate, dateTo: attendanceEndDate, branch: effectiveAttendanceBranch }),
+    [attendanceStartDate, attendanceEndDate, effectiveAttendanceBranch],
+  );
   const dailyParams = useListQuery({ pageSize: 20 });
   const dailyAttendanceListParams = useMemo(
     () => ({
@@ -1391,8 +1396,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
             <div className="mt-5 grid gap-5 border-t pt-5 lg:grid-cols-2">
               <div className="space-y-2 text-center">
                 <Label className="text-muted-foreground">{ui('طريقة العرض')}</Label>
-                <div className="mx-auto grid w-full max-w-xl grid-cols-2 gap-2 rounded-2xl bg-muted/35 p-1.5">
+                <div className="mx-auto grid w-full max-w-xl grid-cols-3 gap-2 rounded-2xl bg-muted/35 p-1.5">
                   {([
+                    { value: 'report' as const, label: ui('تقرير الحضور') },
                     { value: 'all' as const, label: ui('سجل الدخول والخروج') },
                     { value: 'daily' as const, label: ui('ملخص يومي للأعضاء') },
                   ]).map((option) => (
@@ -1441,7 +1447,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
               </div>
             </div>
           </section>
-          {attView === 'all' ? (
+          {attView === 'report' ? (
+            <BarcodeAttendanceReportPanel kind="member" externalFilters={attendanceReportFilters} />
+          ) : attView === 'all' ? (
             <DataTable
               columns={attColumns}
               data={attendance?.data ?? []}

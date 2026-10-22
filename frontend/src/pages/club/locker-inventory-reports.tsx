@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 
 import { useBranches } from '@/hooks/use-branches';
@@ -15,9 +14,7 @@ import { confirm, afterMenuClose } from '@/lib/confirm';
 import { MoreHorizontal, Eye, Trash2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-type Locker = { id: number; locker_number: string; is_available: boolean };
-type ReportItem = { id: number; observed_status: string; notes: string | null; locker: Locker };
-type Report = { id: number; branch_id: number; employee_id: number | null; employee_name: string | null; notes: string | null; status: string; created_at: string; items: ReportItem[] };
+import { LockerInventoryReportDetailsDialog, type Report } from './locker-inventory';
 
 const STATUS_MAP: Record<string, string> = { pending_review: 'قيد المراجعة', approved: 'تمت الموافقة', rejected: 'مرفوض' };
 const STATUS_COLORS: Record<string, string> = { approved: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700', pending_review: 'bg-yellow-100 text-yellow-700' };
@@ -133,54 +130,11 @@ export function ClubLockerInventoryReportsPage() {
             </Table>
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground text-center py-8">لا توجد تقارير لهذا الفرع.</p>
+          <p className="text-sm text-muted-foreground text-center py-8">{branchId ? 'لا توجد تقارير جرد لهذا الفرع في الفترة المحددة.' : 'لا توجد تقارير جرد في الفترة المحددة.'}</p>
         )}
       </div>
 
-      <Dialog open={!!detailReport} onOpenChange={(o) => { if (!o) setDetailReport(null); }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>تفاصيل تقرير الجرد #{detailReport?.id}</DialogTitle>
-          </DialogHeader>
-          {detailReport && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-muted-foreground">التاريخ:</span> {new Date(detailReport.created_at).toLocaleString('ar-EG')}</div>
-                <div><span className="text-muted-foreground">الموظف:</span> {detailReport.employee_name ?? '—'}</div>
-                <div><span className="text-muted-foreground">الحالة:</span> {STATUS_MAP[detailReport.status] ?? detailReport.status}</div>
-                <div><span className="text-muted-foreground">ملاحظات عامة:</span> {detailReport.notes || 'بدون'}</div>
-              </div>
-              <div className="overflow-x-auto">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>#</TableHead>
-                      <TableHead>رقم اللوكر</TableHead>
-                      <TableHead>الحالة الفعلية</TableHead>
-                      <TableHead>ملاحظة</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {detailReport.items.map((it, i) => (
-                      <TableRow key={it.id}>
-                        <TableCell>{i + 1}</TableCell>
-                        <TableCell className="font-mono">{it.locker.locker_number}</TableCell>
-                        <TableCell>
-                          {it.observed_status === 'available' ? 'متاح' :
-                           it.observed_status === 'occupied' ? 'مشغول' :
-                           it.observed_status === 'maintenance' ? 'صيانة' :
-                           it.observed_status === 'missing' ? 'غير موجود' : it.observed_status}
-                        </TableCell>
-                        <TableCell>{it.notes || '—'}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+      <LockerInventoryReportDetailsDialog report={detailReport} branches={branches} onClose={() => setDetailReport(null)} />
     </div>
   );
 }

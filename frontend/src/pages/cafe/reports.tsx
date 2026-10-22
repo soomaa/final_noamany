@@ -17,6 +17,7 @@ import { useAuth } from '@/store/auth';
 
 interface ProductMetric { productId: number; name: string; quantity: number; revenue: number; cost: number; profit: number }
 interface CafeReport {
+  totalCollected?: number; outstandingSales?: number;
   totalSales: number; totalOrders: number; averageOrderValue: number; netRevenue: number; previousRevenue: number; revenueGrowth: number; totalDiscounts: number; totalTaxes: number; totalRefunds: number; wasteCost: number; grossProfit: number;
   products: { bestSelling: ProductMetric[]; worstSelling: ProductMetric[]; highestRevenue: ProductMetric[]; lowestRevenue: ProductMetric[]; neverSold: Array<{ productId: number; name: string; sellPrice: number }> };
   time: { byHour: Array<{ hour: number; label: string; orders: number; sales: number }>; byDay: Array<{ date: string; orders: number; sales: number }>; byWeek: Array<{ label: string; orders: number; sales: number }>; byMonth: Array<{ label: string; orders: number; sales: number }>; byWeekday: Array<{ day: number; name: string; orders: number; sales: number }>; rushHours: Array<{ label: string; sales: number }>; quietHours: Array<{ label: string; sales: number }> };
@@ -60,6 +61,8 @@ export function CafeReportsPage() {
   const user = useAuth((state) => state.user);
   const { data: branches = [] } = useBranches();
   const [branchId, setBranchId] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const {data:reportCategories=[]}=useQuery({queryKey:['categories','report-filter'],queryFn:async()=>{const r=(await api.get('/categories',{params:{page:1,pageSize:100,status:'active'}})).data;return (Array.isArray(r)?r:r.data) as Array<{id:number;nameAr:string}>;}});
   const effectiveBranchId = branchId || (user?.branch && user.branch > 0 ? String(user.branch) : '') || String(branches[0]?.id ?? '');
 
   const selectPreset = (next: Preset) => {
@@ -67,12 +70,14 @@ export function CafeReportsPage() {
     if (next !== 'custom') { const range = presetRange(next); setFrom(range.from); setTo(range.to); }
   };
   const { data, isLoading } = useQuery({
-    queryKey: ['cafe-reports', from, to, effectiveBranchId],
-    queryFn: async () => (await api.get<CafeReport>('/cafe-products/reports/summary', { params: { dateFrom: from, dateTo: to, branchId: effectiveBranchId || undefined } })).data,
+    queryKey: ['cafe-reports', from, to, effectiveBranchId, categoryId],
+    queryFn: async () => (await api.get<CafeReport>('/cafe-products/reports/summary', { params: { dateFrom: from, dateTo: to, branchId: effectiveBranchId || undefined, categoryId:categoryId || undefined } })).data,
     enabled: !!effectiveBranchId,
   });
 
   const kpis = [
+    [ui('المحصّل فعليًا'), data?.totalCollected ?? 0, CircleDollarSign, 'money'],
+    [ui('مبيعات لم تُحصّل بعد'), data?.outstandingSales ?? 0, ReceiptText, 'money'],
     [ui('إجمالي المبيعات'), data?.totalSales ?? 0, CircleDollarSign, 'money'],
     [ui('إجمالي الطلبات'), data?.totalOrders ?? 0, ReceiptText, 'number'],
     [ui('متوسط قيمة الطلب'), data?.averageOrderValue ?? 0, ShoppingBasket, 'money'],
@@ -118,6 +123,7 @@ export function CafeReportsPage() {
           </div>
           {preset === 'custom' && <><Input className="w-40" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /><Input className="w-40" type="date" value={to} onChange={(event) => setTo(event.target.value)} /></>}
           <select className="h-9 min-w-40 rounded-md border bg-background px-3 text-sm" value={effectiveBranchId} onChange={(event) => setBranchId(event.target.value)} disabled={branches.length <= 1}>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
+          <select aria-label={ui('فئة التقرير')} className="h-9 rounded-md border bg-background px-3" value={categoryId} onChange={(e)=>setCategoryId(e.target.value)}><option value="">{ui('كل الفئات')}</option>{reportCategories.map((c)=><option key={c.id} value={c.id}>{c.nameAr}</option>)}</select>
           <Badge variant="secondary" className="ms-auto">{toArabicDigits(from)} — {toArabicDigits(to)}</Badge>
         </CardContent>
       </Card>

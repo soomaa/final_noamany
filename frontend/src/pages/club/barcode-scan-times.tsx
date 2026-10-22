@@ -34,7 +34,7 @@ type ScanRow = {
   scanType: string;
 };
 
-type ScanResult = { data: ScanRow[]; total: number; page: number; pageSize: number };
+type ScanResult = { data: ScanRow[]; total: number; page: number; pageSize: number; todayOnly?: boolean };
 
 function cairoDate(value = new Date()): string {
   const parts = new Intl.DateTimeFormat('en-GB', {
@@ -117,6 +117,13 @@ export function ClubBarcodeScanTimesPage() {
     queryFn: async () => (await api.get<ScanResult>('/club-attendance/barcode-scan-times', { params })).data,
   });
 
+  // Backend forces today's range for reception employees; lock the date inputs to match.
+  const todayOnly = data?.todayOnly ?? false;
+  useEffect(() => {
+    if (!todayOnly) return;
+    setDraft((value) => (value.startDate === today && value.endDate === today ? value : { ...value, startDate: today, endDate: today }));
+  }, [todayOnly, today]);
+
   const branchName = (id: number) => branches.find((branch) => branch.id === id)?.name ?? String(id);
   const visibleRows = printRows ?? data?.data ?? [];
   const allowedBranches = isAdmin ? branches : branches.filter((branch) => branch.id === user?.branch);
@@ -197,8 +204,8 @@ export function ClubBarcodeScanTimesPage() {
         <div><Label htmlFor="scan-branch">اسم الفرع</Label><select id="scan-branch" className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={draft.branch} onChange={(event) => setDraft((value) => ({ ...value, branch: event.target.value }))}><option value="">كل الفروع</option>{allowedBranches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></div>
         <div><Label htmlFor="scan-gender">حريمي-رجالي</Label><select id="scan-gender" className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={draft.gender} onChange={(event) => setDraft((value) => ({ ...value, gender: event.target.value as Filters['gender'] }))}><option value="all">الكل</option><option value="male">رجالي</option><option value="female">حريمي</option></select></div>
         <div><Label htmlFor="scan-code">كود العضو</Label><Input id="scan-code" className="mt-2" value={draft.memberCode} onChange={(event) => setDraft((value) => ({ ...value, memberCode: event.target.value }))} /></div>
-        <div><Label htmlFor="scan-start-date">من تاريخ</Label><Input id="scan-start-date" className="mt-2" type="date" value={draft.startDate} onChange={(event) => setDraft((value) => ({ ...value, startDate: event.target.value }))} /></div>
-        <div><Label htmlFor="scan-end-date">إلى تاريخ</Label><Input id="scan-end-date" className="mt-2" type="date" value={draft.endDate} onChange={(event) => setDraft((value) => ({ ...value, endDate: event.target.value }))} /></div>
+        <div><Label htmlFor="scan-start-date">من تاريخ</Label><Input id="scan-start-date" className="mt-2" type="date" disabled={todayOnly} value={draft.startDate} onChange={(event) => setDraft((value) => ({ ...value, startDate: event.target.value }))} /></div>
+        <div><Label htmlFor="scan-end-date">إلى تاريخ</Label><Input id="scan-end-date" className="mt-2" type="date" disabled={todayOnly} value={draft.endDate} onChange={(event) => setDraft((value) => ({ ...value, endDate: event.target.value }))} /></div>
       </div>
       <div className="mt-4 flex flex-wrap items-end gap-3">
         <div className="w-44"><Label htmlFor="scan-from-time">الوقت من</Label><Input id="scan-from-time" className="mt-2" type="time" value={draft.fromTime} onChange={(event) => setDraft((value) => ({ ...value, fromTime: event.target.value }))} /></div>

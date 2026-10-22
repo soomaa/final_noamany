@@ -30,6 +30,9 @@ export async function generatePurchaseReturnNumber(
 }
 
 /** Transaction-safe document number from a table column. */
+/** `prc_supplier_payments.notes` of the payment recorded together with a purchase invoice. */
+export const INITIAL_PURCHASE_PAYMENT_NOTE = 'مدفوع عند الشراء';
+
 export async function nextDocNumber(
   prisma: PrismaService | Prisma.TransactionClient,
   table: string,

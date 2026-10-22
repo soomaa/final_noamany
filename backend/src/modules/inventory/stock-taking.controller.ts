@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards,
+  BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
@@ -16,32 +16,50 @@ export class StockTakingController {
   constructor(private readonly service: StockTakingService) {}
 
   @Get()
-  listSessions(@Query() query: ListStockTakingDto) {
-    return this.service.listSessions(query);
+  @RequiresPermission('gym-sales.inventory.stock_taking:view', 'gym-sales.inventory.stock_taking_report:view')
+  listSessions(@Query() query: ListStockTakingDto, @CurrentUser() user: JwtUser) {
+    return this.service.listSessions(query, user);
+  }
+
+  @Get('sheet')
+  countSheet(
+    @Query('warehouseId', ParseIntPipe) warehouseId: number,
+    @CurrentUser() user: JwtUser,
+    @Query('categoryId') categoryId?: string,
+  ) {
+    return this.service.countSheet(warehouseId, categoryId ? Number(categoryId) : undefined, user);
   }
 
   @Post('adjustments/:id/approve')
   @RequiresPermission('gym-sales.inventory.stock_taking:approve')
   approveAdjustment(
     @Param('id', ParseIntPipe) id: number,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
     @Query('dryRun') dryRun?: string,
   ) {
-    return this.service.approveAdjustment(id, userId, isDryRun(dryRun));
+    return this.service.approveAdjustment(id, user.sub, isDryRun(dryRun), user);
   }
 
   @Post(':id/finalize')
   @RequiresPermission('gym-sales.inventory.stock_taking:update')
-  finalizeSession(
+  async finalizeSession(
     @Param('id', ParseIntPipe) id: number,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.finalizeSession(id, userId);
+    await this.service.findSession(id,user);
+    return this.service.finalizeSession(id, user.sub);
   }
 
   @Get(':id')
-  findSession(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findSession(id);
+  @RequiresPermission('gym-sales.inventory.stock_taking:view', 'gym-sales.inventory.stock_taking_report:view')
+  findSession(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findSession(id, user);
+  }
+
+  @Post(':id/reopen')
+  @RequiresPermission('gym-sales.inventory.stock_taking:update')
+  reopen(@Param('id', ParseIntPipe) id:number,@CurrentUser() user:JwtUser){
+    return this.service.reopenSession(id,user);
   }
 
   @Post()
@@ -52,19 +70,23 @@ export class StockTakingController {
 
   @Put(':id')
   @RequiresPermission('gym-sales.inventory.stock_taking:update')
-  updateSession(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertCountSessionDto>) {
+  async updateSession(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertCountSessionDto>, @CurrentUser() user: JwtUser) {
+    await this.service.findSession(id,user);
+    if (body.warehouseId || body.branchId) throw new BadRequestException('لا يمكن تغيير موقع جلسة جرد قائمة');
     return this.service.updateSession(id, body);
   }
 
   @Post(':id/items')
   @RequiresPermission('gym-sales.inventory.stock_taking:create')
-  addCountItem(@Param('id', ParseIntPipe) id: number, @Body() body: UpsertCountItemDto) {
+  async addCountItem(@Param('id', ParseIntPipe) id: number, @Body() body: UpsertCountItemDto, @CurrentUser() user: JwtUser) {
+    await this.service.findSession(id,user);
     return this.service.addCountItem(id, body);
   }
 
   @Delete(':id')
   @RequiresPermission('gym-sales.inventory.stock_taking:delete')
-  removeSession(@Param('id', ParseIntPipe) id: number) {
+  async removeSession(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.service.findSession(id,user);
     return this.service.removeSession(id);
   }
 }

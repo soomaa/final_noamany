@@ -213,6 +213,9 @@ export class QuickSalesService {
     q: Pick<
       ListQuickSalesDto,
       | "branchId"
+      | "cafeCategoryId"
+      | "gender"
+      | "targetEmployeeId"
       | "status"
       | "paymentMethod"
       | "saleType"
@@ -250,6 +253,9 @@ export class QuickSalesService {
       and.push({ payment_method: q.paymentMethod as SalesPaymentMethod });
     }
     if (q.saleType) and.push({ sale_type: q.saleType });
+    if (q.cafeCategoryId) and.push({ cafe_category_id: q.cafeCategoryId });
+    if (q.gender) and.push({ gender: q.gender });
+    if (q.targetEmployeeId) and.push({ target_employee_id: q.targetEmployeeId });
     if (q.employeeId != null) and.push({ employee_id: q.employeeId });
     if (q.partnerId != null) and.push({ partner_id: q.partnerId });
     if (q.billingCycle) and.push({ billing_cycle: q.billingCycle });
@@ -508,7 +514,7 @@ export class QuickSalesService {
   async summary(
     q: Pick<
       ListQuickSalesDto,
-      "branchId" | "status" | "paymentMethod" | "dateFrom" | "dateTo"
+      "branchId" | "status" | "paymentMethod" | "dateFrom" | "dateTo" | "cafeCategoryId" | "gender" | "targetEmployeeId" | "saleType" | "search"
     >,
     user?: JwtUser,
   ) {
@@ -789,7 +795,7 @@ export class QuickSalesService {
   ): Promise<number> {
     if (warehouseId) {
       const wh = await tx.inv_warehouses.findFirst({
-        where: { id: warehouseId, branch_id: branchId, ...notDeletedFilter() },
+        where: { id: warehouseId, branch_id: branchId, status:'active', ...notDeletedFilter() },
       });
       if (!wh)
         throw new BadRequestException("المستودع المحدد غير موجود لهذا الفرع");
@@ -1160,7 +1166,7 @@ export class QuickSalesService {
         "default_discount_percentage",
         dto.branchId,
       )) ?? 0;
-    const discountPct = Math.min(
+    const percentDiscount = Math.min(
       100,
       Math.max(
         0,
@@ -1171,6 +1177,11 @@ export class QuickSalesService {
             : (dto.discountPercentage ?? defaultDiscount),
       ),
     );
+    // Customer sales may carry a fixed money discount instead of a percentage.
+    const fixedDiscount =
+      saleType !== "employee" && saleType !== "partner" && dto.discountAmount != null
+        ? dto.discountAmount
+        : undefined;
     const taxEnabled = await this.posSettings.isTaxEnabled(dto.branchId);
     const settingsTaxPct = taxEnabled
       ? await this.posSettings.getTaxRate(dto.branchId)
@@ -1188,7 +1199,12 @@ export class QuickSalesService {
       ),
     );
     const { lineItems, subtotal, discountAmount, taxAmount, totalAmount } =
-      computeSaleTotals(pricedItems, discountPct, taxPct);
+      computeSaleTotals(pricedItems, percentDiscount, taxPct, fixedDiscount);
+    // Stored percentage reflects the money discount actually given.
+    const discountPct =
+      fixedDiscount != null
+        ? subtotal > 0 ? roundMoney((discountAmount / subtotal) * 100) : 0
+        : percentDiscount;
 
     const paymentMethod =
       (dto.paymentMethod as SalesPaymentMethod) ?? SalesPaymentMethod.cash;
@@ -1261,16 +1277,11 @@ export class QuickSalesService {
       this.prisma.$transaction(async (tx) => {
         const session = dto.onHold
           ? null
-          : await this.sessions.findBranchSessionForSale(
+          : await this.sessions.findDrawerSessionForSale(
               tx,
               dto.branchId,
               userId,
             );
-        if (!dto.onHold && !session) {
-          throw new BadRequestException(
-            "افتح وردية باسم المستخدم الحالي قبل تأكيد الطلب",
-          );
-        }
         const warehouseId = await this.resolveWarehouse(
           tx,
           dto.branchId,
@@ -1565,17 +1576,12 @@ export class QuickSalesService {
           dto.allowIngredientShortage === true,
         );
         const session = finalize
-          ? await this.sessions.findBranchSessionForSale(
+          ? await this.sessions.findDrawerSessionForSale(
               tx,
               dto.branchId,
               userId,
             )
           : null;
-        if (finalize && !session) {
-          throw new BadRequestException(
-            "افتح وردية باسم المستخدم الحالي قبل تأكيد الفاتورة",
-          );
-        }
         const finalSaleDate = localDateString(now);
         const finalIdentity =
           finalize && existing.sale_date !== finalSaleDate
@@ -2106,17 +2112,12 @@ export class QuickSalesService {
         });
       }
 
-      const reversalSession = await this.sessions.findBranchSessionForSale(
+      const reversalSession = await this.sessions.findDrawerSessionForSale(
         tx,
         existing.branch_id,
         userId,
       );
-      if (!reversalSession) {
-        throw new BadRequestException(
-          "افتح وردية باسم المستخدم الحالي قبل استرداد أو إلغاء الفاتورة",
-        );
-      }
-      await this.sessions.applySaleReversalToSession(tx, reversalSession.id, {
+      if (reversalSession) await this.sessions.applySaleReversalToSession(tx, reversalSession.id, {
         quickSaleId: existing.id,
         totalAmount: toNumber(existing.total_amount),
         collectedAmount: toNumber(existing.collected_amount),

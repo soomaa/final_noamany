@@ -174,6 +174,10 @@ export class PurchaseOrderItemDto {
   @IsNumber() @Min(0.001) quantity!: number;
   @IsOptional() @IsString() unit?: string;
   @IsNumber() @Min(0) price!: number;
+  /** Total purchase cost of the line; when sent it wins over quantity × price. */
+  @IsOptional() @IsNumber() @Min(0) lineTotal?: number;
+  /** New unit selling price for the product (left unchanged when omitted). */
+  @IsOptional() @IsNumber() @Min(0) salePrice?: number;
 }
 
 export class ListPurchaseOrdersDto extends PaginationDto {
@@ -188,9 +192,17 @@ export class UpsertPurchaseOrderDto {
   @IsInt() supplierId!: number;
   @IsOptional() @IsString() expectedDeliveryDate?: string;
   @IsOptional() @IsString() paymentTerms?: string;
+  @IsOptional() @IsString() paymentMethod?: string;
+  @IsOptional() @IsString() invoiceDate?: string;
+  @IsOptional() @IsString() invoicePrintDate?: string;
+  @IsOptional() @IsString() supplierInvoiceNumber?: string;
+  @IsOptional() @IsNumber() @Min(0) discountAmount?: number;
+  @IsOptional() @IsNumber() @Min(0) paidAmount?: number;
   @IsOptional() @IsString() notes?: string;
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsInt() branchId?: number;
+  @IsOptional() @IsInt() warehouseId?: number;
+  @IsOptional() @IsInt() categoryId?: number;
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => PurchaseOrderItemDto)
@@ -349,6 +361,13 @@ export class ListSupplierInvoicesDto extends PaginationDto {
   @IsOptional() @IsString() supplierId?: string;
   @IsOptional() @IsString() status?: string;
   @IsOptional() @IsString() branchId?: string;
+}
+
+export class SupplierOpeningBalanceDto {
+  @IsInt() @Min(1) supplierId!: number;
+  @IsInt() @Min(1) branchId!: number;
+  @IsNumber() @Min(0.01) amount!: number;
+  @IsDateString() date!: string;
 }
 
 export class UpsertSupplierInvoiceDto {

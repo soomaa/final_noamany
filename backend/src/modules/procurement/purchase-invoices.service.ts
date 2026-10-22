@@ -180,7 +180,17 @@ export class PurchaseInvoicesService {
       }),
       this.prisma.prc_purchase_invoices.count({ where }),
     ]);
-    return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
+    const suppliers = await this.prisma.inv_suppliers.findMany({
+      where: { id: { in: [...new Set(rows.map((r) => r.supplier_id))] } },
+      select: { id: true, name_ar: true },
+    });
+    const supplierName = new Map(suppliers.map((s) => [s.id, s.name_ar]));
+    return paginated(
+      rows.map((r) => ({ ...this.map(r), supplierName: supplierName.get(r.supplier_id) ?? null })),
+      total,
+      q.page,
+      q.pageSize,
+    );
   }
 
   async findOne(id: number) {

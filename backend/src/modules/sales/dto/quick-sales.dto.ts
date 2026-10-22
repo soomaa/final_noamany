@@ -18,6 +18,9 @@ import {
 import { PaginationDto } from "../../../common/dto/pagination.dto";
 
 export class ListQuickSalesDto extends PaginationDto {
+  @IsOptional() @Type(()=>Number) @IsInt() cafeCategoryId?: number;
+  @IsOptional() @IsIn(['male','female']) gender?: 'male'|'female';
+  @IsOptional() @Type(()=>Number) @IsInt() targetEmployeeId?: number;
   @IsOptional() @IsString() branchId?: string;
   @IsOptional()
   @IsIn(["draft", "completed", "refunded", "cancelled", "all"])
@@ -90,6 +93,8 @@ export class CreateQuickSaleDto {
   @Type(() => CreateQuickSaleItemDto)
   items!: CreateQuickSaleItemDto[];
   @IsOptional() @IsNumber() @Min(0) discountPercentage?: number;
+  /** Fixed customer discount in money; when sent it wins over discountPercentage (customer sales only). */
+  @IsOptional() @IsNumber() @Min(0) discountAmount?: number;
   @IsOptional() @IsNumber() @Min(0) taxPercentage?: number;
   @IsOptional()
   @IsIn(["cash", "card", "wallet", "transfer", "mixed"])

@@ -5,6 +5,8 @@ import { HomeRedirect } from '@/components/auth/home-redirect';
 import { ConfirmDialogProvider } from '@/components/common/confirm-dialog';
 import { PageSkeleton } from '@/components/common/page-skeleton';
 import { LoginPage } from '@/pages/login';
+import { SalesDrawingsPage } from '@/pages/sales/drawings';
+import { InventoryBalancesReportPage } from '@/pages/inventory/balances-report';
 import { useMyPermissions } from '@/hooks/use-permission';
 import { useAuth } from '@/store/auth';
 import {
@@ -164,12 +166,16 @@ import {
   InventoryPriceListPage,
   InventoryOpeningStockPage,
   InventoryTransactionsPage,
+  InventoryBranchIssueOrdersPage,
+  InventoryBranchIssuedItemsReportPage,
   InventoryMovementLogPage,
   InventoryStockTakingPage,
+  InventoryStockTakingReportPage,
   InventoryPoliciesPage,
   InventoryAnalyticsPage,
   InventoryGymIssuePage,
   CafeSupplierPaymentsPage,
+  CafeSupplierStatementPage,
   ProcurementDashboardPage,
   ProcurementGoodsReceiptsPage,
   ProcurementIndexPage,
@@ -579,18 +585,23 @@ export function AppRouter() {
           <Route path="club/cafe/purchases" element={<Lazy><CafePurchasesPage /></Lazy>} />
           <Route path="club/cafe/suppliers" element={<Lazy><CafeSuppliersPage /></Lazy>} />
           <Route path="club/cafe/supplier-payments" element={<Lazy><CafeSupplierPaymentsPage /></Lazy>} />
+          <Route path="club/cafe/supplier-statement" element={<Lazy><CafeSupplierStatementPage /></Lazy>} />
           <Route path="club/cafe/stock-taking" element={<Lazy><InventoryStockTakingPage /></Lazy>} />
+          <Route path="club/cafe/stock-taking/report" element={<Lazy><InventoryStockTakingReportPage /></Lazy>} />
           <Route path="club/cafe/movements" element={<Lazy><InventoryMovementLogPage /></Lazy>} />
           <Route path="club/cafe/pos" element={<Navigate to="/sales/new" replace />} />
 
           <Route path="inventory" element={<Navigate to="/club/cafe/raw-materials" replace />} />
           <Route path="inventory/dashboard" element={<Lazy><InventoryDashboardPage /></Lazy>} />
-          <Route path="inventory/settings" element={<Navigate to="/club/cafe/raw-materials" replace />} />
+          <Route path="inventory/settings" element={<Lazy><InventorySettingsPage /></Lazy>} />
+          <Route path="inventory/balances-report" element={<InventoryBalancesReportPage />} />
           <Route path="inventory/products" element={<Navigate to="/club/cafe/products" replace />} />
           <Route path="inventory/price-list" element={<Lazy><InventoryPriceListPage /></Lazy>} />
-          <Route path="inventory/opening-stock" element={<Navigate to="/club/cafe/movements" replace />} />
+          <Route path="inventory/opening-stock" element={<Lazy><InventoryOpeningStockPage /></Lazy>} />
           <Route path="inventory/gym-issue" element={<Lazy><InventoryGymIssuePage /></Lazy>} />
-          <Route path="inventory/transactions" element={<Navigate to="/club/cafe/movements" replace />} />
+          <Route path="inventory/transactions" element={<Lazy><InventoryTransactionsPage /></Lazy>} />
+          <Route path="inventory/transactions/branch-orders" element={<Lazy><InventoryBranchIssueOrdersPage /></Lazy>} />
+          <Route path="inventory/transactions/branch-items-report" element={<Lazy><InventoryBranchIssuedItemsReportPage /></Lazy>} />
           <Route path="inventory/movement-log" element={<Lazy><InventoryMovementLogPage /></Lazy>} />
           <Route path="inventory/stock-taking" element={<Lazy><InventoryStockTakingPage /></Lazy>} />
           <Route path="inventory/policies" element={<Navigate to="/club/cafe/raw-materials" replace />} />
@@ -610,6 +621,7 @@ export function AppRouter() {
           <Route path="sales" element={<Navigate to="/sales/new" replace />} />
           <Route path="sales/bookings" element={<Lazy><SalesBookingsPage /></Lazy>} />
           <Route path="sales/new" element={<Lazy><SalesNewReceiptPage /></Lazy>} />
+          <Route path="sales/drawings" element={<SalesDrawingsPage />} />
           <Route path="sales/drafts" element={<Lazy><SalesDraftsPage /></Lazy>} />
           <Route path="sales/invoices" element={<Lazy><SalesInvoicesPage /></Lazy>} />
           <Route path="sales/shifts" element={<Lazy><SalesShiftsPage /></Lazy>} />

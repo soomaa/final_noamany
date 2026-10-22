@@ -99,7 +99,11 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, load: [configuration] }),
-    ScheduleModule.forRoot(),
+    ScheduleModule.forRoot({
+      cronJobs: process.env.DISABLE_SCHEDULED_TASKS !== 'true',
+      intervals: process.env.DISABLE_SCHEDULED_TASKS !== 'true',
+      timeouts: process.env.DISABLE_SCHEDULED_TASKS !== 'true',
+    }),
     // Default throttle config; enforced only where ThrottlerGuard is applied (login routes).
     ThrottlerModule.forRoot([{ ttl: 60_000, limit: 10 }]),
     ExportModule,

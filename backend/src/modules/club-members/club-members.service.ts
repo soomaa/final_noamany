@@ -531,21 +531,23 @@ export class ClubMembersService {
     const select = { id: true, member_code: true, name: true, phone: true, gender: true, branch_id: true } as const;
     const partialWhere: Prisma.club_membersWhereInput = { AND: and };
     const exactCodeWhere: Prisma.club_membersWhereInput = { AND: [...and, { member_code: { equals: search } }] };
-    const exactIdentityWhere: Prisma.club_membersWhereInput = { AND: [...and, { OR: [{ phone: { equals: search } }, { name: { equals: search } }] }] };
-    const lookupOptions = { select, orderBy: { name: 'asc' as const }, take: 20 };
+    // Keep the picker fast: one small identity-only query is enough. The
+    // result is ranked in memory so exact codes/names still win over partial
+    // matches without issuing three database scans per keystroke.
+    const lookupOptions = { select, orderBy: { name: 'asc' as const }, take: 50 };
     type LookupRow = Pick<club_members, 'id' | 'member_code' | 'name' | 'phone' | 'gender' | 'branch_id'>;
-    const findMatches = async (where: Prisma.club_membersWhereInput): Promise<LookupRow[]> => this.prisma.club_members.findMany({ ...lookupOptions, where });
-    // A prefix like B868 may have more than twenty matches. Fetch the exact code
-    // independently with the same access filters so alphabetical truncation cannot hide it.
-    const [partialMatches, exactCodeMatches, exactIdentityMatches] = await Promise.all([
-      findMatches(partialWhere),
-      findMatches(exactCodeWhere),
-      findMatches(exactIdentityWhere),
-    ]);
+    // Member codes are the common picker use case. Resolve an exact code with
+    // an indexed equality lookup before falling back to the broader contains
+    // query, which can be expensive on a large members table.
+    const exactCode = typeof this.prisma.club_members.findFirst === 'function'
+      ? await this.prisma.club_members.findFirst({ where: exactCodeWhere, select })
+      : null;
+    const matches = exactCode
+      ? [exactCode]
+      : await this.prisma.club_members.findMany({ ...lookupOptions, where: partialWhere });
     const queryLower = search.toLowerCase();
-    const identityRank = (row: LookupRow) => row.phone === search ? 0 : row.name.toLowerCase() === queryLower ? 1 : 2;
-    exactIdentityMatches.sort((a, b) => identityRank(a) - identityRank(b));
-    const rows = [...new Map([...exactCodeMatches, ...exactIdentityMatches, ...partialMatches].map((row) => [row.id, row])).values()].slice(0, 20);
+    const identityRank = (row: LookupRow) => row.member_code === search ? 0 : row.phone === search ? 1 : row.name.toLowerCase() === queryLower ? 2 : 3;
+    const rows = matches.sort((a, b) => identityRank(a) - identityRank(b)).slice(0, 20);
 
     return rows.map((row) => ({
       id: row.id,

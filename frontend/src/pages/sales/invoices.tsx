@@ -23,11 +23,16 @@ import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { PosReceiptPrint, type PosReceiptData } from '@/components/sales/pos-receipt-print';
 import { resolveCafePrintTemplates, type PosPrintTemplate } from '@/components/sales/pos-printing';
+import { useBranches } from '@/hooks/use-branches';
+import { usePosEmployeeOptions } from '@/hooks/use-pos-employee-options';
 
 export function SalesInvoicesPage() {
   const { ui } = useLocale();
   const queryClient = useQueryClient();
   const { params, setParams } = useListQuery();
+  const {data:branches=[]}=useBranches();
+  const {data:employees=[]}=usePosEmployeeOptions();
+  const {data:categories=[]}=useQuery({queryKey:['categories','invoice-filter'],queryFn:async()=>{const r=(await api.get('/categories',{params:{page:1,pageSize:500}})).data;return (Array.isArray(r)?r:r.data) as Array<{id:number;nameAr:string}>;}});
   const [selected, setSelected] = useState<QuickSaleRow | null>(null);
   const [rating, setRating] = useState(0);
   const [feedback, setFeedback] = useState('');
@@ -43,6 +48,8 @@ export function SalesInvoicesPage() {
     queryFn: async () => {
       const { data: r } = await api.get<QuickSaleSummary>('/quick-sales/stats/summary', {
         params: {
+          ...params.filters,
+          search:params.search||undefined,
           status: params.filters.status,
           paymentMethod: params.filters.paymentMethod,
           dateFrom: params.filters.dateFrom,
@@ -78,6 +85,11 @@ export function SalesInvoicesPage() {
   );
 
   const filters: FilterField[] = [
+    {key:'branchId',label:ui('الفرع'),type:'select',options:branches.map((b)=>({value:String(b.id),label:b.name??`#${b.id}`}))},
+    {key:'cafeCategoryId',label:ui('الفئة'),type:'select',options:categories.map((c)=>({value:String(c.id),label:c.nameAr}))},
+    {key:'gender',label:ui('رجالي / حريمي'),type:'select',options:[{value:'male',label:ui('رجالي')},{value:'female',label:ui('حريمي')}]},
+    {key:'targetEmployeeId',label:ui('موصى بواسطة'),type:'select',options:employees},
+    {key:'saleType',label:ui('نوع الحساب'),type:'select',options:[{value:'customer',label:ui('بيع عادي')},{value:'employee',label:ui('موظف')}]},
     { key: 'status', label: ui('الحالة'), type: 'select', options: statusOptions },
     { key: 'paymentMethod', label: ui('الدفع'), type: 'select', options: paymentOptions },
     { key: 'dateFrom', label: ui('من تاريخ'), type: 'text', placeholder: 'YYYY-MM-DD' },
@@ -165,7 +177,21 @@ export function SalesInvoicesPage() {
     () => [
       indexColumn(params.page, params.pageSize) as ColumnDef<QuickSaleRow>,
       { accessorKey: 'saleNumber', header: ui('رقم الفاتورة') },
+      {
+        accessorKey: 'saleDate',
+        header: ui('التاريخ'),
+        cell: ({ row }) => (
+          <div className="nums whitespace-nowrap leading-tight">
+            <div>{String(row.original.saleDate ?? '').slice(0, 10) || '—'}</div>
+            {row.original.saleTime && <div className="text-xs text-muted-foreground">{String(row.original.saleTime).slice(0, 5)}</div>}
+          </div>
+        ),
+      },
       { accessorKey: 'customerName', header: ui('العميل') },
+      { accessorKey:'cafeCategoryId',header:ui('الفئة'),cell:({row})=>categories.find((c)=>c.id===row.original.cafeCategoryId)?.nameAr??'—'},
+      { accessorKey:'targetEmployeeId',header:ui('موصى بواسطة'),cell:({row})=>employees.find((e)=>e.value===String(row.original.targetEmployeeId))?.label??'—'},
+      { accessorKey:'collectedAmount',header:ui('المحصّل'),cell:({row})=>(row.original.collectedAmount??0).toFixed(2)},
+      { id:'remaining',header:ui('المتبقي'),cell:({row})=>row.original.status==='completed'?Math.max(0,row.original.totalAmount-(row.original.collectedAmount??0)).toFixed(2):'—'},
       {
         accessorKey: 'totalAmount',
         header: ui('الإجمالي'),
@@ -209,7 +235,7 @@ export function SalesInvoicesPage() {
         ),
       },
     ],
-    [params.page, params.pageSize, paymentOptions, ui],
+    [params.page, params.pageSize, paymentOptions, ui, categories, employees],
   );
 
   return (

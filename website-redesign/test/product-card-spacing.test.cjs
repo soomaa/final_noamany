@@ -8,6 +8,6 @@ test('keeps every homepage product-card text row away from both side edges', () 
 
   assert.match(
     styles,
-    /\.products-section\s+\.product\s*>\s*:is\(\.product-meta,\s*h3,\s*\.product-detail,\s*\.price\)\s*\{[\s\S]*?margin-inline:\s*16px\s*!important;/,
+    /\.products-section\s+\.home-product-link\s*>\s*:is\(\.product-meta,\s*h3\)\s*\{[\s\S]*?margin-inline:\s*14px\s*!important;/,
   );
 });

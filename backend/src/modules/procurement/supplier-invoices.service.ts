@@ -9,7 +9,7 @@ import { InventoryLocationService } from '../inventory/inventory-location.servic
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
 import { LedgerService } from '../accounting/ledger.service';
 import { ListSupplierInvoicesDto, SupplierInvoiceItemDto, UpsertSupplierInvoiceDto } from './dto/procurement-ext.dto';
-import { lineTotal, nextDocNumber, notDeletedFilter, toNumber } from './procurement.utils';
+import { INITIAL_PURCHASE_PAYMENT_NOTE, lineTotal, nextDocNumber, notDeletedFilter, toNumber } from './procurement.utils';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 
 @Injectable()
@@ -56,6 +56,8 @@ export class SupplierInvoicesService {
       supplierId: row.supplier_id,
       branchId: row.branch_id,
       warehouseId: row.warehouse_id,
+      isOpeningBalance: row.is_opening_balance,
+      returnedAmount: toNumber(row.returned_amount),
       invoiceDate: row.invoice_date,
       dueDate: row.due_date,
       subtotal: toNumber(row.subtotal),
@@ -109,10 +111,11 @@ export class SupplierInvoicesService {
     supplierId: number,
     value?: string | null,
     excludeInvoiceId?: number,
+    db: Prisma.TransactionClient = this.prisma,
   ) {
     const supplierInvoiceNumber = value?.trim();
     if (!supplierInvoiceNumber) return;
-    const duplicate = await this.prisma.prc_supplier_invoices.findFirst({
+    const duplicate = await db.prc_supplier_invoices.findFirst({
       where: {
         supplier_id: supplierId,
         supplier_invoice_number: supplierInvoiceNumber,
@@ -161,16 +164,53 @@ export class SupplierInvoicesService {
     return this.map(row);
   }
 
-  async create(dto: UpsertSupplierInvoiceDto, user: JwtUser) {
+  async createOpening(input: {supplierId:number;branchId:number;amount:number;date:string}, user: JwtUser) {
+    if (!Number.isFinite(input.amount) || input.amount <= 0) throw new BadRequestException('أدخل مبلغ المديونية الافتتاحية');
+    const branchId = this.requireUserBranch(user, input.branchId);
+    const supplier = await this.prisma.inv_suppliers.findFirst({where:{id:input.supplierId,is_deleted:false,is_active:true}});
+    if (!supplier) throw new BadRequestException('المورد غير موجود');
+    await this.moduleLedger.ensureChart();
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM inv_suppliers WHERE id = ${input.supplierId} FOR UPDATE`;
+      const existing = await tx.prc_supplier_invoices.findFirst({where:{supplier_id:input.supplierId,branch_id:branchId,is_opening_balance:true,is_deleted:false}});
+      if (existing) throw new BadRequestException('تم تسجيل مديونية افتتاحية لهذا المورد والفرع مسبقًا');
+      const reference = `OPEN-${input.supplierId}-${branchId}`;
+      const row = await tx.prc_supplier_invoices.create({data:{invoice_number:reference,supplier_id:input.supplierId,branch_id:branchId,
+        invoice_date:input.date,total_amount:input.amount,remaining_amount:input.amount,is_opening_balance:true,status:'رصيد افتتاحي',created_by:user.sub},include:{items:true}});
+      await this.moduleLedger.postSupplierOpening({reference,branchId,date:input.date,amount:input.amount,createdBy:user.sub},tx);
+      return this.map(row);
+    });
+  }
+
+  async statement(supplierId: number, branchId: number, user: JwtUser) {
+    if (!this.branchScope.isBranchAllowed(user, branchId)) throw new BadRequestException('الفرع خارج الصلاحيات');
+    const invoices = await this.prisma.prc_supplier_invoices.findMany({where:{supplier_id:supplierId,branch_id:branchId,is_deleted:false},include:{payments:{where:{is_deleted:false,status:'مدفوع'}}}});
+    const returns = await this.prisma.prc_purchase_returns.findMany({where:{supplier_invoice_id:{in:invoices.map((i) => i.id)},stock_posted:true,is_deleted:false}});
+    const events = invoices.flatMap((i) => [
+      {date:i.invoice_date ?? i.created_at.toISOString().slice(0,10),createdAt:i.created_at.getTime(),reference:i.invoice_number,type:i.is_opening_balance?'رصيد افتتاحي':'مشتريات',debit:toNumber(i.total_amount),credit:0},
+      ...i.payments.map((p) => ({date:p.payment_date ?? p.created_at.toISOString().slice(0,10),createdAt:p.created_at.getTime(),reference:p.payment_number,type:toNumber(p.payment_amount)<0?'استرداد من المورد':'سداد',debit:0,credit:toNumber(p.payment_amount)})),
+    ]);
+    events.push(...returns.map((r) => ({date:r.return_date ?? r.created_at.toISOString().slice(0,10),createdAt:r.created_at.getTime(),reference:r.return_number,type:'مرتجع شراء',debit:0,credit:toNumber(r.total_amount)})));
+    events.sort((a,b) => a.date.localeCompare(b.date) || a.createdAt-b.createdAt || a.reference.localeCompare(b.reference));
+    let balance=0;
+    const rows=events.map((e) => ({...e,balance:balance=Math.round((balance+e.debit-e.credit)*100)/100}));
+    return {supplierId,branchId,balance,rows};
+  }
+
+  /** Pass `outerTx` to post the invoice inside a caller's transaction (e.g. re-posting an edited purchase order). */
+  async create(dto: UpsertSupplierInvoiceDto, user: JwtUser, outerTx?: Prisma.TransactionClient) {
+    const db = outerTx ?? this.prisma;
     const userId = user.sub;
     const branchId = this.requireUserBranch(user, dto.branchId);
-    const warehouseId = await this.location.resolveBranchStockLocation(branchId);
+    const warehouseId = dto.warehouseId
+      ? (await this.location.resolveSelection(user, dto.warehouseId, branchId, outerTx)).warehouseId
+      : await this.location.resolveBranchStockLocation(branchId, outerTx);
     if (!dto.items?.length) throw new BadRequestException('أضف خامة واحدة على الأقل');
-    const supplier = await this.prisma.inv_suppliers.findFirst({
+    const supplier = await db.inv_suppliers.findFirst({
       where: { id: dto.supplierId, is_deleted: false, is_active: true },
     });
     if (!supplier) throw new BadRequestException('المورد غير موجود أو غير نشط');
-    await this.assertExternalInvoiceNumberAvailable(dto.supplierId, dto.supplierInvoiceNumber);
+    await this.assertExternalInvoiceNumberAvailable(dto.supplierId, dto.supplierInvoiceNumber, undefined, db);
     const pricedItems = dto.items.map((item) => ({
       ...item,
       unitPrice: this.resolveUnitPrice(item),
@@ -178,13 +218,13 @@ export class SupplierInvoicesService {
     }));
     const productIds = [...new Set(pricedItems.map((item) => item.productId).filter((id): id is number => !!id))];
     if (productIds.length !== pricedItems.length) throw new BadRequestException('اختر خامة مخزنية لكل بند');
-    const links = await this.prisma.inv_supplier_products.findMany({
+    const links = await db.inv_supplier_products.findMany({
       where: { supplier_id: dto.supplierId, product_id: { in: productIds }, is_active: true },
     });
     if (links.length !== productIds.length) {
       throw new BadRequestException('تحتوي الفاتورة على خامة غير مربوطة بهذا المورد');
     }
-    const products = await this.prisma.inv_products.findMany({
+    const products = await db.inv_products.findMany({
       where: { id: { in: productIds }, is_deleted: false },
     });
     if (products.length !== productIds.length) throw new BadRequestException('إحدى الخامات غير موجودة');
@@ -203,7 +243,7 @@ export class SupplierInvoicesService {
     const totals = this.computeTotals(pricedItems, dto);
     if (totals.remainingAmount < 0) throw new BadRequestException('المدفوع أكبر من إجمالي الفاتورة');
 
-    const row = await this.prisma.$transaction(async (tx) => {
+    const post = async (tx: Prisma.TransactionClient) => {
       const invoiceNumber =
         dto.invoiceNumber?.trim() ||
         (await nextDocNumber(tx, 'prc_supplier_invoices', 'invoice_number', 'SINV'));
@@ -309,6 +349,8 @@ export class SupplierInvoicesService {
             currency: dto.currency ?? 'EGP',
             payment_method: dto.initialPaymentMethod?.trim() || 'cash',
             status: 'مدفوع',
+            // Marks cash paid at purchase time: the daily closing reports it under المشتريات, not حساب موردين.
+            notes: INITIAL_PURCHASE_PAYMENT_NOTE,
             created_by: userId,
           },
         });
@@ -322,8 +364,90 @@ export class SupplierInvoicesService {
         }, tx);
       }
       return created;
-    }, { maxWait: 10000, timeout: 20000 });
+    };
+    const row = outerTx ? await post(outerTx) : await this.prisma.$transaction(post, { maxWait: 10000, timeout: 20000 });
     return this.map(row);
+  }
+
+  /**
+   * Fully undoes a posted supplier invoice inside `tx`: takes the received quantity back out of
+   * stock, restores the weighted cost, reverses the purchase and payment journal entries and
+   * voids the invoice and its payments (so they leave the supplier balance and daily closing).
+   */
+  async voidPosted(invoiceId: number, userId: number, reason: string, tx: Prisma.TransactionClient, expectedPaid?: number) {
+    const invoice = await tx.prc_supplier_invoices.findFirst({
+      where: { id: invoiceId, ...notDeletedFilter() },
+      include: { items: true },
+    });
+    if (!invoice) throw new NotFoundException('فاتورة المورد غير موجودة');
+    if (invoice.is_opening_balance || toNumber(invoice.returned_amount) > 0) {
+      throw new BadRequestException('الفاتورة عليها مرتجعات؛ لا يمكن تعديلها أو حذفها');
+    }
+    const payments = await tx.prc_supplier_payments.findMany({ where: { invoice_id: invoice.id, is_deleted: false } });
+    const paidSoFar = payments.reduce((s, p) => s + toNumber(p.payment_amount), 0);
+    if (expectedPaid != null && Math.abs(paidSoFar - expectedPaid) > 0.001) {
+      throw new BadRequestException('اتسجل سداد لاحق على الفاتورة دي من شاشة سداد الموردين؛ الغيه الأول قبل التعديل أو الحذف');
+    }
+
+    if (invoice.stock_applied && invoice.warehouse_id) {
+      const productIds = [...new Set(invoice.items.map((i) => i.product_id).filter((id): id is number => !!id))];
+      const products = new Map((await tx.inv_products.findMany({ where: { id: { in: productIds } } })).map((p) => [p.id, p]));
+      const byProduct = new Map<number, { quantity: number; value: number }>();
+      for (const item of invoice.items) {
+        if (!item.product_id) continue;
+        const current = byProduct.get(item.product_id) ?? { quantity: 0, value: 0 };
+        current.quantity += item.base_quantity != null ? toNumber(item.base_quantity) : toNumber(item.quantity);
+        current.value += toNumber(item.total_amount);
+        byProduct.set(item.product_id, current);
+      }
+      for (const [productId, old] of byProduct) {
+        const product = products.get(productId);
+        const balance = await tx.inv_stock_balances.findUnique({
+          where: { product_id_warehouse_id: { product_id: productId, warehouse_id: invoice.warehouse_id } },
+        });
+        if (toNumber(balance?.current_stock) + 0.0001 < old.quantity) {
+          throw new BadRequestException(`لا يمكن التعديل أو الحذف لأن جزءًا من كمية ${product?.name_ar ?? productId} اتصرف أو اتباع من المخزن`);
+        }
+        const aggregate = await tx.inv_stock_balances.aggregate({ where: { product_id: productId }, _sum: { current_stock: true } });
+        const totalQuantity = toNumber(aggregate._sum.current_stock);
+        const remainingQuantity = totalQuantity - old.quantity;
+        const remainingValue = totalQuantity * toNumber(product?.cost_price) - old.value;
+        const cost = remainingQuantity > 0 ? Math.max(0, remainingValue / remainingQuantity) : toNumber(product?.cost_price);
+        await this.stock.applyMovement({
+          productId,
+          warehouseId: invoice.warehouse_id,
+          direction: MovementDirection.out,
+          quantity: old.quantity,
+          unitCost: old.quantity > 0 ? old.value / old.quantity : 0,
+          txnType: InventoryTxnType.adjustment,
+          docType: 'supplier_invoice_void',
+          docRef: invoice.invoice_number,
+          branchId: invoice.branch_id ?? undefined,
+          createdBy: userId,
+        }, tx);
+        await tx.inv_products.update({ where: { id: productId }, data: { cost_price: Math.round(cost * 10000) / 10000 } });
+      }
+    }
+
+    const entries = await tx.acc_journal_entries.findMany({
+      where: {
+        source_module: 'procurement',
+        status: 'posted',
+        OR: [
+          { source_doc_type: { in: ['purchase_invoice', 'purchase_invoice_correction'] }, source_doc_id: invoice.invoice_number },
+          { source_doc_type: { in: ['purchase_invoice', 'purchase_invoice_correction'] }, source_doc_id: { startsWith: `${invoice.invoice_number}:v` } },
+          ...(payments.length ? [{ source_doc_type: { in: ['supplier_payment', 'supplier_refund'] }, source_doc_id: { in: payments.map((p) => p.payment_number) } }] : []),
+        ],
+      },
+      orderBy: { id: 'desc' },
+    });
+    for (const entry of entries) await this.ledger.reverseEntry(entry.id, reason, userId, tx);
+
+    if (payments.length) {
+      await tx.prc_supplier_payments.updateMany({ where: { id: { in: payments.map((p) => p.id) } }, data: { is_deleted: true } });
+    }
+    await tx.prc_supplier_invoices.update({ where: { id: invoice.id }, data: { is_deleted: true } });
+    return { invoiceNumber: invoice.invoice_number, paidAmount: payments.reduce((s, p) => s + toNumber(p.payment_amount), 0) };
   }
 
   private async correctPostedInvoice(
@@ -579,6 +703,7 @@ export class SupplierInvoicesService {
       existing.id,
     );
     const userBranchId = existing.branch_id;
+    if (existing.is_opening_balance || toNumber(existing.returned_amount) > 0) throw new BadRequestException('لا يمكن تصحيح رصيد افتتاحي أو فاتورة لها مرتجعات');
     if (existing.stock_applied) {
       return this.correctPostedInvoice(
         existing,
@@ -666,6 +791,7 @@ export class SupplierInvoicesService {
     if (invoice.stock_applied) {
       throw new BadRequestException('لا يمكن حذف فاتورة تم ترحيلها للمخزون؛ استخدم مرتجع شراء');
     }
+    if (invoice.is_opening_balance || toNumber(invoice.returned_amount) > 0) throw new BadRequestException('المستند مُرحّل ولا يمكن حذفه');
     await this.prisma.prc_supplier_invoices.update({
       where: { id },
       data: { is_deleted: true },

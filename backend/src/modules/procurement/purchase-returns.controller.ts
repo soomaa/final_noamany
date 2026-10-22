@@ -21,6 +21,7 @@ import {
 } from './dto/procurement.dto';
 import { isDryRun } from '../../common/preview';
 import { PurchaseReturnsService } from './purchase-returns.service';
+import type { JwtUser } from '../../common/types/jwt-user';
 
 @UseGuards(JwtAuthGuard)
 @Controller('purchase-returns')
@@ -40,8 +41,8 @@ export class PurchaseReturnsController {
 
   @Post()
   @RequiresPermission('gym-sales.procurement:create')
-  create(@Body() body: UpsertPurchaseReturnDto, @CurrentUser('sub') userId: number) {
-    return this.service.create(body, userId);
+  create(@Body() body: UpsertPurchaseReturnDto, @CurrentUser() user: JwtUser) {
+    return this.service.create(body, user.sub, user);
   }
 
   @Put(':id')
@@ -58,10 +59,10 @@ export class PurchaseReturnsController {
   changeStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: ChangePurchaseReturnStatusDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
     @Query('dryRun') dryRun?: string,
   ) {
-    return this.service.changeStatus(id, body, userId, isDryRun(dryRun));
+    return this.service.changeStatus(id, body, user.sub, isDryRun(dryRun), user);
   }
 
   @Delete(':id')

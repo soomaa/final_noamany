@@ -1,5 +1,5 @@
 import { Lock, Minus, Plus, Search, Package } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -12,7 +12,7 @@ import { api, apiError } from '@/lib/api';
 import { confirmWithPreview } from '@/lib/confirm';
 import { localToday } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
-import type { ProductListItem } from '@/types/inventory';
+import type { NamedEntity, ProductListItem } from '@/types/inventory';
 import { useAuth } from '@/store/auth';
 import { useLocale } from '@/store/locale';
 import { InventoryPageShell } from './inventory-shell';
@@ -45,20 +45,33 @@ export function InventoryGymIssuePage() {
   const [txnDate, setTxnDate] = useState(localToday());
   const [notes, setNotes] = useState('');
   const [search, setSearch] = useState('');
+  const [categoryId, setCategoryId] = useState('');
   const [lines, setLines] = useState<IssueLine[]>([]);
   const [saving, setSaving] = useState(false);
   const [selectedBranchId, setSelectedBranchId] = useState(user?.branch ? String(user.branch) : '');
   const effectiveBranchId = user?.branch ? String(user.branch) : selectedBranchId;
 
-  const { data: products } = useQuery({
-    queryKey: ['products', 'gym-issue', effectiveBranchId],
+  const { data: categories = [] } = useQuery({
+    queryKey: ['categories', 'gym-issue-options'],
+    queryFn: async () => {
+      const { data } = await api.get<PaginatedResponse<NamedEntity>>('/categories', {
+        params: { page: 1, pageSize: 200 },
+      });
+      return data.data;
+    },
+  });
+
+  const { data: products, isFetching: productsLoading } = useQuery({
+    queryKey: ['products', 'gym-issue', effectiveBranchId, categoryId, search],
     queryFn: async () => {
       const { data: r } = await api.get<PaginatedResponse<ProductListItem>>('/products', {
         params: {
           page: 1,
           pageSize: 200,
           branchId: effectiveBranchId || undefined,
-          inventorySection: 'gym_operations',
+          categoryId: categoryId || undefined,
+          search: search.trim() || undefined,
+          status: 'active',
         },
       });
       return r.data;
@@ -66,19 +79,7 @@ export function InventoryGymIssuePage() {
     enabled: !!effectiveBranchId,
   });
 
-  const filteredProducts = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return (products ?? []).slice(0, 24);
-    return (products ?? [])
-      .filter(
-        (p) =>
-          p.nameAr.toLowerCase().includes(q) ||
-          p.productCode.toLowerCase().includes(q) ||
-          (p.nameEn?.toLowerCase().includes(q) ?? false) ||
-          (p.size?.toLowerCase().includes(q) ?? false),
-      )
-      .slice(0, 24);
-  }, [products, search]);
+  const filteredProducts = (products ?? []).slice(0, 24);
 
   const addProduct = (product: ProductListItem) => {
     setLines((prev) => {
@@ -168,6 +169,7 @@ export function InventoryGymIssuePage() {
         setLines([]);
         setNotes('');
         setSearch('');
+        setCategoryId('');
       }
     } catch (e) {
       toast.error(apiError(e));
@@ -214,15 +216,39 @@ export function InventoryGymIssuePage() {
               <CardTitle className="text-base">{ui('اختيار الأصناف')}</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="relative">
-                <Search className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  className="ps-9"
-                  placeholder={ui('بحث بالاسم أو الكود...')}
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="grid gap-1.5">
+                  <Label>{ui('الفئة')}</Label>
+                  <select
+                    className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                    value={categoryId}
+                    onChange={(event) => {
+                      setCategoryId(event.target.value);
+                      setSearch('');
+                    }}
+                  >
+                    <option value="">{ui('كل الفئات')}</option>
+                    {categories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.nameAr ?? category.name ?? '—'}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label>{ui('بحث عن الصنف')}</Label>
+                  <div className="relative">
+                    <Search className="absolute start-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      className="ps-9"
+                      placeholder={ui('اكتب الاسم أو الكود لعرض الاقتراحات')}
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
+                </div>
               </div>
+              <p className="text-xs text-muted-foreground">{ui('اختر الفئة أولاً أو ابحث بالاسم أو الكود، ثم اضغط على الصنف لإضافته للصرف.')}</p>
               <div className="grid gap-2 sm:grid-cols-2">
                 {filteredProducts.map((p) => (
                   <button
@@ -244,6 +270,11 @@ export function InventoryGymIssuePage() {
                   </button>
                 ))}
               </div>
+              {!productsLoading && filteredProducts.length === 0 ? (
+                <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+                  {ui('لا توجد أصناف متاحة بهذه الفئة أو عبارة البحث في الفرع المحدد')}
+                </p>
+              ) : null}
             </CardContent>
           </Card>
         </div>

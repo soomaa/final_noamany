@@ -52,6 +52,8 @@
     "db:repair:cafe-accounting": "ts-node prisma/scripts/repair-orphan-cafe-accounting.ts",
     "db:purge:test-members": "ts-node prisma/scripts/purge-initial-test-members.ts",
     "test": "jest",
+    "test:operations": "jest --config jest.operations.config.cjs --runInBand inventory accounting procurement cafe sales",
+    "test:cafe:integration": "ts-node --transpile-only scripts/test-cafe-integration.ts",
     "test:mobile-api": "node scripts/test-mobile-api-all.js",
     "test:mobile-api:modern": "node scripts/test-mobile-api-all.js --modern-only",
     "test:watch": "jest --watch",

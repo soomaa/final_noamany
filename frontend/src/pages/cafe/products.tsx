@@ -66,7 +66,7 @@ interface ProductFormState {
 
 const emptyForm: ProductFormState = {
   name: '',
-  productType: 'prepared',
+  productType: 'ready',
   inventoryProductId: '',
   readyUnit: 'piece',
   readyMinStock: 0,

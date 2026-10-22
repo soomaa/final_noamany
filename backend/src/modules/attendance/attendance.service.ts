@@ -912,12 +912,16 @@ export class AttendanceService {
         include: { slots: { where: { weekday } } },
       });
       if (!weeklySchedule) throw new BadRequestException('لا يوجد جدول أسبوعي فعال لهذا الموظف');
-      const slot = weeklySchedule.slots[0];
-      if (slot && slot.shift_id != null) {
-        if (slot.branch_id !== assignmentBranchScope) throw new BadRequestException('الدوام المحدد ليس في فرع البصمة');
-        const shift = await db.tbl_hdodr_setting.findUnique({ where: { id: slot.shift_id } });
-        if (!shift) throw new BadRequestException('الدوام المحدد غير موجود');
-        mainShifts = [shift];
+      // A weekday may hold several split shifts (e.g. morning + evening). Every working slot in
+      // the punch's branch is a candidate; the nearest-window logic below picks the right one.
+      const workingSlots = weeklySchedule.slots.filter((slot) => slot.shift_id != null);
+      if (workingSlots.length) {
+        const branchSlots = workingSlots.filter((slot) => slot.branch_id === assignmentBranchScope);
+        if (!branchSlots.length) throw new BadRequestException('الدوام المحدد ليس في فرع البصمة');
+        const shiftIds = [...new Set(branchSlots.map((slot) => slot.shift_id as number))];
+        const shifts = await db.tbl_hdodr_setting.findMany({ where: { id: { in: shiftIds } } });
+        if (shifts.length !== shiftIds.length) throw new BadRequestException('الدوام المحدد غير موجود');
+        mainShifts = shiftIds.map((id) => shifts.find((shift) => shift.id === id)!);
       } else {
         mainShifts = [];
       }
@@ -1950,9 +1954,10 @@ export class AttendanceService {
         const punches = attendanceByDay.get(key) ?? [];
         const configuredOffDay = offDayByCode.get(employee.emp_code);
         const weeklySchedule = weeklySchedulesByEmployee.get(employee.id)?.find((schedule) => schedule.effective_from <= date && (schedule.effective_to == null || schedule.effective_to >= date));
-        const weeklySlot = weeklySchedule?.slots.find((slot) => slot.weekday === (day.getDay() + 1) % 7);
+        // A day may hold several split shifts; it is a weekly off only when every slot is rest.
+        const daySlots = weeklySchedule?.slots.filter((slot) => slot.weekday === (day.getDay() + 1) % 7) ?? [];
         const weeklyOff = weeklyScheduleSettings?.enabled
-          ? weeklySlot?.shift_id === null
+          ? daySlots.length > 0 && daySlots.every((slot) => slot.shift_id === null)
           : configuredOffDay != null && weeklyDayAliases[day.getDay()].includes(configuredOffDay);
         const swappedLeave = swappedDays.has(key);
         const approvedLeave = leaveDays.has(key);

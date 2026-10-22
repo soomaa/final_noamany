@@ -13,6 +13,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtUser } from '../../common/types/jwt-user';
 import { ListPurchaseOrdersDto, UpsertPurchaseOrderDto } from './dto/procurement-ext.dto';
 import { PurchaseOrdersService } from './purchase-orders.service';
 
@@ -27,6 +28,12 @@ export class PurchaseOrdersController {
     return this.service.list(query);
   }
 
+  /** Preview of the numbers the next direct purchase will take (final numbers are assigned on save). */
+  @Get('next-number')
+  nextNumber() {
+    return this.service.nextNumbers();
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.service.findOne(id);
@@ -34,8 +41,8 @@ export class PurchaseOrdersController {
 
   @Post()
   @RequiresPermission('gym-sales.procurement:create')
-  create(@Body() body: UpsertPurchaseOrderDto, @CurrentUser('sub') userId: number) {
-    return this.service.create(body, userId);
+  create(@Body() body: UpsertPurchaseOrderDto, @CurrentUser() user: JwtUser) {
+    return this.service.create(body, user);
   }
 
   @Put(':id')
@@ -43,13 +50,14 @@ export class PurchaseOrdersController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertPurchaseOrderDto>,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.update(id, body);
+    return this.service.update(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('gym-sales.procurement:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.remove(id, user);
   }
 }

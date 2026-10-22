@@ -17,6 +17,8 @@ import { GymSalesPageShell } from '@/pages/gym-sales/shell';
 import { InlineRawMaterialDialog } from '@/components/cafe/inline-raw-material-dialog';
 import { compatibleCafeUnits, convertCafeUnit } from '@/lib/cafe-units';
 import { useBranches } from '@/hooks/use-branches';
+import { WarehouseSelect } from '@/components/inventory/warehouse-select';
+import { Link } from 'react-router-dom';
 import { localToday } from '@/lib/formatters';
 import { usePermission } from '@/hooks/use-permission';
 
@@ -74,6 +76,7 @@ export function CafePurchasesPage() {
   const { can } = usePermission();
   const { data: branches = [] } = useBranches();
   const [branchId, setBranchId] = useState('');
+  const [warehouseId, setWarehouseId] = useState('');
   const [supplierId, setSupplierId] = useState('');
   const [supplierInvoiceNumber, setSupplierInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(localToday());
@@ -118,6 +121,7 @@ export function CafePurchasesPage() {
   const remaining = Math.max(0, total - (Number(paidAmount) || 0));
   const updateLine = (index: number, patch: Partial<PurchaseLine>) => setLines((current) => current.map((line, i) => i === index ? { ...line, ...patch } : line));
   const resetForm = () => {
+    setWarehouseId('');
     setEditingInvoiceId(null);
     setSupplierId('');
     setSupplierInvoiceNumber('');
@@ -134,6 +138,7 @@ export function CafePurchasesPage() {
     if (!invoice.branchId || !invoice.warehouseId) return toast.error(ui('هذه فاتورة قديمة لا تحتوي على بيانات مخزون مكتملة ولا يمكن تصحيحها من هذه الشاشة'));
     if (invoice.branchId !== Number(effectiveBranchId)) return toast.error(ui('لا يمكن تعديل فاتورة تخص فرعًا آخر'));
     setEditingInvoiceId(invoice.id);
+    setWarehouseId(String(invoice.warehouseId));
     setSupplierId(String(invoice.supplierId));
     setSupplierInvoiceNumber(invoice.supplierInvoiceNumber ?? '');
     setInvoiceDate(invoice.invoiceDate ?? localToday());
@@ -195,6 +200,7 @@ export function CafePurchasesPage() {
       const payload = {
         supplierId: Number(supplierId),
         branchId: Number(effectiveBranchId),
+        warehouseId: warehouseId ? Number(warehouseId) : undefined,
         supplierInvoiceNumber: supplierInvoiceNumber.trim() || undefined,
         invoiceDate,
         dueDate: dueDate || undefined,
@@ -224,6 +230,7 @@ export function CafePurchasesPage() {
                 <div><CardTitle>{ui(editingInvoiceId ? 'تصحيح فاتورة شراء' : 'فاتورة شراء جديدة')}</CardTitle><p className="mt-1 text-xs text-muted-foreground">{ui('بيانات المورد، بنود الاستلام، ثم ملخص الدفع')}</p></div>
               </div>
               {editingInvoiceId ? <Button type="button" variant="outline" size="sm" onClick={resetForm}><X className="size-4" />{ui('إلغاء التعديل')}</Button> : null}
+              <WarehouseSelect key={effectiveBranchId} branchId={effectiveBranchId} value={warehouseId} onChange={setWarehouseId} disabled={!!editingInvoiceId} label="مخزن استلام المشتريات" />
             </div>
           </CardHeader>
           <CardContent className="space-y-5">
@@ -233,7 +240,7 @@ export function CafePurchasesPage() {
               <div className="mb-4 flex items-center gap-2"><Truck className="size-5 text-primary" /><h2 className="font-bold">{ui('بيانات المورد والفاتورة')}</h2></div>
               <div className="grid gap-3 md:grid-cols-2">
                 <div><Label>{ui('المورد')}</Label><select disabled={!!editingInvoiceId} className="mt-1 h-11 w-full rounded-lg border bg-background px-3 text-sm disabled:opacity-60" value={supplierId} onChange={(event) => { setSupplierId(event.target.value); setLines([emptyLine()]); }}><option value="">{ui('اختر المورد')}</option>{(suppliers ?? []).map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.nameAr}</option>)}</select></div>
-                <div><Label>{ui('الفرع')}</Label>{user?.branch && user.branch > 0 ? <div className="mt-1 flex h-11 items-center justify-between rounded-lg border bg-background px-3 text-sm"><span>{user.branch_name || `${ui('فرع رقم')} ${effectiveBranchId}`}</span><Lock className="size-4 text-muted-foreground" /></div> : <select className="mt-1 h-11 w-full rounded-lg border bg-background px-3 text-sm" value={effectiveBranchId} onChange={(event) => setBranchId(event.target.value)}><option value="">{ui('اختر الفرع')}</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>}</div>
+                <div><Label>{ui('الفرع')}</Label>{user?.branch && user.branch > 0 ? <div className="mt-1 flex h-11 items-center justify-between rounded-lg border bg-background px-3 text-sm"><span>{user.branch_name || `${ui('فرع رقم')} ${effectiveBranchId}`}</span><Lock className="size-4 text-muted-foreground" /></div> : <select className="mt-1 h-11 w-full rounded-lg border bg-background px-3 text-sm" value={effectiveBranchId} onChange={(event) => { setBranchId(event.target.value); setWarehouseId(''); }}><option value="">{ui('اختر الفرع')}</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>}</div>
               </div>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <div><Label className="text-xs">{ui('رقم فاتورة المورد')}</Label><Input className="mt-1 h-10" value={supplierInvoiceNumber} onChange={(event) => setSupplierInvoiceNumber(event.target.value)} placeholder={ui('الرقم على الفاتورة')} /></div>
@@ -308,6 +315,7 @@ export function CafePurchasesPage() {
                 <div className="flex items-start justify-between gap-2"><div><p className="nums font-black">{invoice.invoiceNumber}</p><p className="nums mt-1 text-xs text-muted-foreground">{invoice.invoiceDate ? toArabicDigits(invoice.invoiceDate.slice(0, 10)) : '—'}</p></div><span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-bold text-primary">{ui(status)}</span></div>
                 <dl className="mt-3 grid grid-cols-2 gap-2"><div className="rounded-lg bg-muted/45 p-2"><dt className="text-[10px] text-muted-foreground">{ui('الإجمالي')}</dt><dd className="nums mt-0.5 font-bold">{toArabicDigits(invoice.totalAmount.toFixed(2))}</dd></div><div className="rounded-lg bg-muted/45 p-2"><dt className="text-[10px] text-muted-foreground">{ui('المتبقي')}</dt><dd className={`nums mt-0.5 font-bold ${invoice.remainingAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{toArabicDigits(invoice.remainingAmount.toFixed(2))}</dd></div></dl>
                 {can('gym-sales.procurement.cafe_purchases:update') ? <Button type="button" variant="outline" size="sm" className="mt-3 w-full" onClick={() => editInvoice(invoice)}><Pencil className="size-4" />{ui('فتح وتصحيح الفاتورة')}</Button> : null}
+                <Link className="mt-2 block text-sm text-primary" to={`/procurement/returns?invoiceId=${invoice.id}`}>{ui('عمل مرتجع من الفاتورة')}</Link>
               </article>;
             })}
           </CardContent>

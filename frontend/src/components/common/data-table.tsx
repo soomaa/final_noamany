@@ -57,6 +57,8 @@ interface DataTableProps<T> {
   enableExport?: boolean;
   /** Real Excel export for this table. When omitted, the legacy placeholder remains. */
   onExportExcel?: () => void | Promise<void>;
+  /** Fits dense operational tables into the available page width. */
+  compact?: boolean;
 }
 
 export function DataTable<T>({
@@ -80,6 +82,7 @@ export function DataTable<T>({
   emptyAction,
   enableExport = true,
   onExportExcel,
+  compact = false,
 }: DataTableProps<T>) {
   const { t, ui } = useLocale();
   const resolvedSearchPlaceholder = searchPlaceholder ?? ui('بحث في الجدول…');
@@ -162,12 +165,17 @@ export function DataTable<T>({
             )}
           </div>
         )}
-        <Table>
+        {/* Compact tables keep their column widths and scroll horizontally instead of squeezing. */}
+        <Table className={compact ? 'min-w-0 table-fixed text-xs' : undefined} style={compact ? { minWidth: table.getTotalSize() } : undefined}>
           <TableHeader className="table-panel-header sticky top-0 z-10 border-b border-primary/10 backdrop-blur-sm">
             {table.getHeaderGroups().map((hg) => (
               <TableRow key={hg.id}>
                 {hg.headers.map((header) => (
-                  <TableHead key={header.id}>
+                  <TableHead
+                    key={header.id}
+                    className={compact ? 'h-9 px-1 text-[10px] leading-4 tracking-normal' : undefined}
+                    style={compact ? { width: header.getSize() } : undefined}
+                  >
                     {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
                   </TableHead>
                 ))}
@@ -202,7 +210,13 @@ export function DataTable<T>({
               table.getRowModel().rows.map((row) => (
                 <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'}>
                   {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
+                    <TableCell
+                      key={cell.id}
+                      className={compact ? 'px-1 py-2 leading-5' : undefined}
+                      style={compact ? { width: cell.column.getSize() } : undefined}
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
                   ))}
                 </TableRow>
               ))}

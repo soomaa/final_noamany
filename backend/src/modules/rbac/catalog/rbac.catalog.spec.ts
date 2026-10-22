@@ -69,6 +69,7 @@ describe('RBAC catalog', () => {
       '/club/cafe/raw-materials',
       '/inventory/gym-issue',
       '/club/cafe/stock-taking',
+      '/club/cafe/stock-taking/report',
       '/club/cafe/movements',
       '/procurement/requisitions',
       '/procurement/purchase-orders',

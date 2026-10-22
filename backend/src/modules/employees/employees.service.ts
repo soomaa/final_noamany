@@ -40,10 +40,25 @@ export class EmployeesService {
 
   constructor(private readonly prisma: PrismaService) {}
 
+  /** "hh:mm AM/PM" or "HH:mm" → minutes since midnight. */
+  private shiftMinutes(raw?: string | null): number | null {
+    const value = raw?.trim() ?? '';
+    const ampm = value.match(/^(\d{1,2}):(\d{2})\s*([AaPp][Mm])$/);
+    if (ampm) return ((Number(ampm[1]) % 12) + (ampm[3].toLowerCase() === 'pm' ? 12 : 0)) * 60 + Number(ampm[2]);
+    const hm = value.match(/^(\d{1,2}):(\d{2})/);
+    return hm ? Number(hm[1]) * 60 + Number(hm[2]) : null;
+  }
+
+  /**
+   * A weekday is either one rest slot or 1..MAX_SHIFTS_PER_DAY working slots (split shifts,
+   * e.g. 08:00-11:00 and 15:00-22:00). Shifts on the same day must be different shift
+   * definitions whose attendance windows do not overlap, so each punch maps to one shift.
+   */
   private async normalizeWeeklyScheduleSlots(slots: WeeklyScheduleSlotDto[]) {
+    const MAX_SHIFTS_PER_DAY = 3;
     const days = slots.map((slot) => Number(slot.weekday));
-    if (slots.length !== 7 || new Set(days).size !== 7 || days.some((day) => day < 0 || day > 6)) {
-      throw new BadRequestException('يجب تحديد أيام الأسبوع السبعة بدون تكرار');
+    if (days.some((day) => !Number.isInteger(day) || day < 0 || day > 6) || new Set(days).size !== 7) {
+      throw new BadRequestException('يجب تحديد دوام أو راحة لكل أيام الأسبوع السبعة');
     }
     for (const slot of slots) {
       const hasBranch = slot.branchId != null;
@@ -54,10 +69,42 @@ export class EmployeesService {
     const shiftIds = [...new Set(slots.flatMap((slot) => slot.shiftId == null ? [] : [Number(slot.shiftId)]))];
     const [branches, shifts] = await Promise.all([
       branchIds.length ? this.prisma.tbl_branches.findMany({ where: { branch_id: { in: branchIds } }, select: { branch_id: true } }) : [],
-      shiftIds.length ? this.prisma.tbl_hdodr_setting.findMany({ where: { id: { in: shiftIds } }, select: { id: true } }) : [],
+      shiftIds.length
+        ? this.prisma.tbl_hdodr_setting.findMany({ where: { id: { in: shiftIds } }, select: { id: true, title: true, hdoor_from_time: true, ensraf_to_time: true } })
+        : Promise.resolve([] as Array<{ id: number; title: string | null; hdoor_from_time: string | null; ensraf_to_time: string | null }>),
     ]);
     if (branches.length !== branchIds.length) throw new BadRequestException('الفرع المحدد غير موجود');
     if (shifts.length !== shiftIds.length) throw new BadRequestException('الدوام المحدد غير موجود');
+    const shiftById = new Map(shifts.map((shift) => [shift.id, shift]));
+    for (let weekday = 0; weekday <= 6; weekday += 1) {
+      const daySlots = slots.filter((slot) => Number(slot.weekday) === weekday);
+      const working = daySlots.filter((slot) => slot.shiftId != null);
+      if (working.length && working.length !== daySlots.length) {
+        throw new BadRequestException('لا يمكن أن يكون اليوم راحة ودوامًا في نفس الوقت');
+      }
+      if (!working.length && daySlots.length > 1) throw new BadRequestException('يوم الراحة يُحدد مرة واحدة فقط');
+      if (working.length > MAX_SHIFTS_PER_DAY) throw new BadRequestException(`الحد الأقصى ${MAX_SHIFTS_PER_DAY} دوامات في اليوم الواحد`);
+      if (new Set(working.map((slot) => Number(slot.shiftId))).size !== working.length) {
+        throw new BadRequestException('لا يمكن تكرار نفس الدوام في نفس اليوم؛ اختر دوامًا مختلفًا للفترة الثانية');
+      }
+      const windows = working.map((slot) => {
+        const shift = shiftById.get(Number(slot.shiftId))!;
+        const start = this.shiftMinutes(shift.hdoor_from_time);
+        let end = this.shiftMinutes(shift.ensraf_to_time);
+        if (start != null && end != null && end <= start) end += 1440; // overnight shift
+        return { title: shift.title ?? `#${shift.id}`, start, end };
+      });
+      for (let i = 0; i < windows.length; i += 1) {
+        for (let j = i + 1; j < windows.length; j += 1) {
+          const a = windows[i];
+          const b = windows[j];
+          if (a.start == null || a.end == null || b.start == null || b.end == null) continue;
+          if (a.start < b.end && b.start < a.end) {
+            throw new BadRequestException(`أوقات الدوام "${a.title}" و"${b.title}" متداخلة في نفس اليوم`);
+          }
+        }
+      }
+    }
     return [...slots].sort((a, b) => a.weekday - b.weekday).map((slot) => ({
       weekday: slot.weekday,
       branch_id: slot.branchId ?? null,
@@ -862,6 +909,11 @@ export class EmployeesService {
   }
 
   async setStatus(id: number, employeeType: number) {
+    if (![1, 2].includes(employeeType)) {
+      throw new BadRequestException('حالة الموظف غير صالحة');
+    }
+    const employee = await this.prisma.employees.findUnique({ where: { id }, select: { id: true } });
+    if (!employee) throw new NotFoundException('الموظف غير موجود');
     await this.prisma.employees.update({ where: { id }, data: { employee_type: employeeType } });
     return { id, employee_type: employeeType };
   }

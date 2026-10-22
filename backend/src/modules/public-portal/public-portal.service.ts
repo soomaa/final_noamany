@@ -177,6 +177,34 @@ export class PublicPortalService {
     return types.map((type) => ({ id: Number(type.id), title: type.name, subtitle: '', details: '', extraText: '', featured: false, subscriptionTypeId: Number(type.id), subscriptionTypeName: type.name, subscriptionPrice: Number(type.price), subscriptionDays: Number(type.days), name: type.name, price: Number(type.price), days: Number(type.days) }));
   }
 
+  async subscriptionCatalog() {
+    const [types, branches] = await Promise.all([
+      this.prisma.club_subscription_types.findMany({
+        where: { is_active: true },
+        select: {
+          id: true, name: true, price: true, days: true, branch_id: true,
+          apply_to_all_branches: true, branches: { select: { branch_id: true } },
+          is_linked_to_sessions: true, sessions_count: true, invitations_count: true,
+          inbody_count: true, includes_spa: true, spa_count: true, is_for_students: true,
+        },
+        orderBy: [{ price: 'asc' }, { id: 'asc' }],
+      }),
+      this.prisma.tbl_branches.findMany({ select: { branch_id: true, branch_name: true } }),
+    ]);
+    const branchIds = branches.map((branch) => branch.branch_id);
+    return {
+      branches: branches.map((branch) => ({ id: branch.branch_id, name: branch.branch_name || `فرع ${branch.branch_id}` })),
+      plans: types.filter((type) => branchIds.some((id) => isSubscriptionTypeAvailableAtBranch(type, id))).map((type) => ({
+        id: type.id, name: type.name, price: Number(type.price), days: type.days,
+        allBranches: type.apply_to_all_branches,
+        branchIds: branchIds.filter((id) => isSubscriptionTypeAvailableAtBranch(type, id)),
+        isLinkedToSessions: type.is_linked_to_sessions, sessionsCount: type.sessions_count,
+        invitationsCount: type.invitations_count, inbodyCount: type.inbody_count,
+        includesSpa: type.includes_spa, spaCount: type.spa_count, forStudents: type.is_for_students,
+      })),
+    };
+  }
+
   async paymentMethods() {
     const rows = await this.safeRows('SELECT id,name,number,username,image FROM settings_payment_methods WHERE is_active=1 ORDER BY id');
     return rows.map((row) => ({

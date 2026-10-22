@@ -17,6 +17,17 @@ describe('InventoryLocationService', () => {
     expect(() => service.requireUserBranch({ branch: 0 } as never)).toThrow(BadRequestException);
   });
 
+  it('rejects a selected warehouse from another branch', async () => {
+    findFirst.mockResolvedValue({ id: 17, branch_id: 9 });
+    await expect(service.resolveSelection({ branch: 4, level: 2 } as never, 17)).rejects.toThrow();
+  });
+
+  it('keeps the selected location and its branch together', async () => {
+    findFirst.mockResolvedValue({ id: 17, branch_id: 4 });
+    await expect(service.resolveSelection({ branch: 4, level: 2 } as never, 17, 4)).resolves.toEqual({ warehouseId: 17, branchId: 4 });
+    await expect(service.resolveSelection({ branch: 4, level: 2 } as never, 17, 9)).rejects.toThrow(BadRequestException);
+  });
+
   it('uses the internal stock location assigned to the user branch', async () => {
     findFirst.mockResolvedValue({ id: 17 });
 

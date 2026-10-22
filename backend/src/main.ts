@@ -161,7 +161,7 @@ async function bootstrap() {
   }
 
   const port = config.get<number>('port') ?? 4000;
-  await app.listen(port);
+  await app.listen(port, process.env.HOST ?? '0.0.0.0');
 
   console.log(`Noamany HR API → http://localhost:${port}/api`);
 }

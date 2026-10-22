@@ -22,6 +22,12 @@ export class InventoryMovementsController {
     return this.service.stats(branchId, user);
   }
 
+  @Get('reports/balances')
+  @RequiresPermission('gym-sales.inventory.movement_log:view', 'gym-sales.inventory.balances_report:view')
+  balancesReport(@Query() query: ListInventoryMovementsDto, @CurrentUser() user: JwtUser) {
+    return this.service.balancesReport(query,user);
+  }
+
   @Get('export')
   @RequiresPermission('gym-sales.inventory.movement_log:export')
   exportList(@Query() query: ListInventoryMovementsDto, @CurrentUser() user: JwtUser) {

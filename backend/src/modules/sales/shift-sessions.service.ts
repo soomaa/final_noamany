@@ -275,6 +275,25 @@ export class ShiftSessionsService {
     });
   }
 
+  /**
+   * Drawer for a POS sale: the user's own open session, else whichever session is open in the
+   * branch, else none. The sale itself is always recorded under the logged-in user (cashier_id),
+   * so a sale no longer requires the seller to open a shift first.
+   */
+  async findDrawerSessionForSale(
+    tx: Prisma.TransactionClient,
+    branchId: number,
+    userId: number,
+  ) {
+    return (
+      (await this.findBranchSessionForSale(tx, branchId, userId)) ??
+      tx.sales_shift_sessions.findFirst({
+        where: { branch_id: branchId, status: ShiftSessionStatus.open },
+        orderBy: { id: "desc" },
+      })
+    );
+  }
+
   async applySaleToSession(
     tx: Prisma.TransactionClient,
     sessionId: number,

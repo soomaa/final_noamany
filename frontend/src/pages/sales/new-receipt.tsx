@@ -1,7 +1,6 @@
 import {
   ChevronDown,
   ChevronsUpDown,
-  FileClock,
   Loader2,
   LockKeyhole,
   MessageSquareText,
@@ -23,13 +22,15 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import {
   PosReceiptPrint,
   type PosReceiptData,
 } from "@/components/sales/pos-receipt-print";
-import { PosShiftSwitcher } from "@/components/sales/pos-shift-switcher";
+import { WarehouseSelect } from '@/components/inventory/warehouse-select';
+import { LOGO_SRC } from '@/components/brand/logo';
+import { localToday } from '@/lib/formatters';
 import { PosCategoryGrid } from "@/components/cafe/pos-category-grid";
 import { Combobox } from "@/components/common/combobox";
 import {
@@ -68,6 +69,7 @@ import { confirm } from "@/lib/confirm";
 import { GymSalesPageShell } from "../gym-sales/shell";
 
 interface CartLine {
+  inventoryProductId?: number | null;
   cafeProductId: number;
   cafeVariantId?: number;
   variantName?: string;
@@ -130,17 +132,24 @@ export function SalesNewReceiptPage() {
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [gender, setGender] = useState<"male" | "female" | "">("");
-  const [saleType, setSaleType] = useState<"customer" | "employee" | "partner">(
+  const [saleType, setSaleType] = useState<"customer" | "employee" | "partner" | "drawing">(
     "customer",
   );
   const [employeeId, setEmployeeId] = useState("");
   const [partnerId, setPartnerId] = useState("");
+  const [warehouseId, setWarehouseId] = useState('');
+  const [drawingRecipient, setDrawingRecipient] = useState('');
+  const [drawingReason, setDrawingReason] = useState('');
+  const [recommendedEmployeeId, setRecommendedEmployeeId] = useState('');
   const [billingCycle, setBillingCycle] = useState<
     "immediate" | "daily" | "monthly"
   >("immediate");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [discountPct, setDiscountPct] = useState("0");
+  /** Customer discount entered as a money amount (default) or a percentage. */
+  const [discountMode, setDiscountMode] = useState<"amount" | "percent">("amount");
+  const [discountValue, setDiscountValue] = useState("0");
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [mixedCash, setMixedCash] = useState("");
   const [mixedCard, setMixedCard] = useState("");
@@ -196,7 +205,7 @@ export function SalesNewReceiptPage() {
     fetchNextPage: fetchMoreProducts,
     isFetchingNextPage: loadingMoreProducts,
   } = useInfiniteQuery({
-    queryKey: ["cafe-products", "pos", search, categoryId, effectiveBranchId],
+    queryKey: ["cafe-products", "pos", search, categoryId, effectiveBranchId, warehouseId],
     initialPageParam: 1,
     queryFn: async ({ pageParam }) => {
       const { data: r } = await api.get<PaginatedResponse<CafeProductListItem>>(
@@ -208,6 +217,7 @@ export function SalesNewReceiptPage() {
             search: search || undefined,
             categoryId: categoryId || undefined,
             branchId: effectiveBranchId || undefined,
+            warehouseId: warehouseId || undefined,
             sellableOnly: true,
           },
         },
@@ -385,9 +395,13 @@ export function SalesNewReceiptPage() {
             : "immediate"),
     );
     setDiscountPct(String(draft.discountPercentage ?? 0));
+    setDiscountMode("amount");
+    setDiscountValue(String(draft.discountAmount ?? 0));
     setCategoryId(draft.cafeCategoryId ? String(draft.cafeCategoryId) : "");
+    setWarehouseId(draft.warehouseId ? String(draft.warehouseId) : '');
     setGender(draft.gender ?? "");
     setPaymentMethod(draft.paymentMethod ?? "cash");
+    setRecommendedEmployeeId(draft.targetEmployeeId ? String(draft.targetEmployeeId) : '');
     setReceiptComment(draft.receiptComment ?? "");
     setCommentOpen(!!draft.receiptComment);
     setCart(
@@ -495,19 +509,22 @@ export function SalesNewReceiptPage() {
   }, [paymentMethod, paymentOptions]);
 
   const discountPctNum = clampPercentage(
-    saleType === "employee"
+    saleType === 'drawing' ? 0 : saleType === "employee"
         ? configuredEmployeeDiscount
         : saleType === "partner"
           ? configuredPartnerDiscount
         : Number(discountPct),
   );
-  const effectiveTaxPct = taxPctNum;
+  const effectiveTaxPct = saleType === 'drawing' ? 0 : taxPctNum;
 
   const subtotal = useMemo(
     () => cart.reduce((sum, l) => sum + l.unitPrice * l.quantity, 0),
     [cart],
   );
-  const discountAmount = (subtotal * discountPctNum) / 100;
+  const customerAmountDiscount = saleType === "customer" && discountMode === "amount";
+  const discountAmount = customerAmountDiscount
+    ? Math.min(Math.max(Number(discountValue) || 0, 0), subtotal)
+    : (subtotal * discountPctNum) / 100;
   const afterDiscount = subtotal - discountAmount;
   const taxAmount = (afterDiscount * effectiveTaxPct) / 100;
   const total = afterDiscount + taxAmount;
@@ -518,10 +535,8 @@ export function SalesNewReceiptPage() {
     posSettings?.find((setting) => setting.key === "receipt_business_name")
       ?.value ?? "Noamany CLUB · CAFE",
   );
-  const receiptLogoUrl = String(
-    posSettings?.find((setting) => setting.key === "receipt_logo_url")?.value ??
-      "/noamany-logo.png",
-  );
+  // Always the system's Noamany brand logo (same file as the sidebar).
+  const receiptLogoUrl = LOGO_SRC;
   const receiptFooter = String(
     posSettings?.find((setting) => setting.key === "receipt_footer")?.value ??
       ui("شكراً لزيارتكم"),
@@ -531,6 +546,7 @@ export function SalesNewReceiptPage() {
   const mixedPaymentValid =
     paymentMethod !== "mixed" || Math.abs(mixedRemaining) <= 0.01;
   const deferredBilling =
+    saleType === 'drawing' ||
     saleType === "partner" ||
     (saleType === "employee" && billingCycle !== "immediate");
 
@@ -570,6 +586,7 @@ export function SalesNewReceiptPage() {
         ...prev,
         {
           cafeProductId: p.id,
+          inventoryProductId: p.inventoryProductId,
           cafeVariantId: variant?.id,
           variantName: variant?.name,
           itemNote: "",
@@ -632,6 +649,8 @@ export function SalesNewReceiptPage() {
       setMixedCash("");
       setMixedCard("");
     }
+    setWarehouseId('');
+    setRecommendedEmployeeId('');
     setBranchId(nextBranchId);
   };
 
@@ -642,6 +661,26 @@ export function SalesNewReceiptPage() {
     }
     if (!categoryId) return toast.error(ui("اختر فئة الفاتورة"));
     if (!gender) return toast.error(ui("اختر جنس العميل"));
+    if (saleType === 'drawing') {
+      if (!drawingRecipient.trim() || !drawingReason.trim()) return toast.error(ui('أدخل المستفيد وسبب المسحوبات'));
+      if (cart.some((line) => !line.inventoryProductId || line.productType !== 'ready')) return toast.error(ui('المسحوبات متاحة للمنتجات الجاهزة المرتبطة بالمخزون'));
+      if (onHold || draftId) return toast.error(ui('سجل المسحوبات كمستند مستقل'));
+      setSaving(true);
+      try {
+        await api.post('/inventory-transactions/drawings', {
+          reference: `DRAW-${crypto.randomUUID()}`, txnType: 'issue', txnDate: localToday(),
+          branchId: Number(effectiveBranchId), sourceWarehouseId: warehouseId ? Number(warehouseId) : undefined,
+          businessClassification: 'management_withdrawal', recipientName: drawingRecipient.trim(), reason: drawingReason.trim(),
+          cafeCategoryId: Number(categoryId), gender,
+          items: cart.map((line) => ({ productId: line.inventoryProductId, itemName: line.name, quantity: line.quantity })),
+        });
+        setCart([]);
+        toast.success(ui('تم تسجيل المسحوبات وخصم المخزون'));
+        navigate('/sales/drawings');
+      } catch (err) { toast.error(apiError(err)); }
+      finally { setSaving(false); }
+      return;
+    }
     if (total < 0) {
       toast.error(ui("الإجمالي غير صالح"));
       return;
@@ -668,6 +707,8 @@ export function SalesNewReceiptPage() {
     try {
       const payload: Record<string, unknown> = {
         branchId: Number(effectiveBranchId),
+        warehouseId: warehouseId ? Number(warehouseId) : undefined,
+        targetEmployeeId: recommendedEmployeeId && categories?.find((c)=>String(c.id)===categoryId)?.nameAr.includes('بروتين') ? Number(recommendedEmployeeId) : undefined,
         gender,
         cafeCategoryId: Number(categoryId),
         customerName: customerName || ui("عميل نقدي"),
@@ -677,6 +718,7 @@ export function SalesNewReceiptPage() {
         partnerId: saleType === "partner" ? Number(partnerId) : undefined,
         billingCycle: saleType === "customer" ? undefined : billingCycle,
         discountPercentage: discountPctNum,
+        discountAmount: customerAmountDiscount ? Math.round(discountAmount * 100) / 100 : undefined,
         paymentMethod,
         onHold,
         allowIngredientShortage,
@@ -755,7 +797,10 @@ export function SalesNewReceiptPage() {
       };
       setLastReceipt(completedReceipt);
       setShowPrint(true);
-      void dispatchPosPrintJobs(completedReceipt, printTemplates).catch(() =>
+      void dispatchPosPrintJobs(
+        completedReceipt,
+        printTemplates.filter((template) => template.layoutConfig.documentType === "customer_receipt"),
+      ).catch(() =>
         toast.error(
           ui(
             "تم تأكيد الطلب، وتعذر إرسال مهام الطباعة. استخدم أزرار إعادة الطباعة.",
@@ -858,19 +903,6 @@ export function SalesNewReceiptPage() {
         "اختيار أسرع للمنتجات، طلب مرتب، وتأكيد فوري متزامن مع المخزون",
       )}
     >
-      {!draftId ? <PosShiftSwitcher /> : null}
-      <div className="mb-4 flex justify-end">
-        <Button
-          asChild
-          variant="outline"
-          className="border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:bg-amber-950/20 dark:text-amber-200"
-        >
-          <Link to="/sales/drafts">
-            <FileClock className="me-2 size-4" />
-            {ui("فواتير الورديات")}
-          </Link>
-        </Button>
-      </div>
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_500px]">
         <div className="space-y-4">
           <div className="flex flex-wrap gap-3 rounded-2xl border bg-gradient-to-l from-primary/10 via-card to-card p-4 shadow-sm">
@@ -888,6 +920,10 @@ export function SalesNewReceiptPage() {
                   </option>
                 ))}
               </select>
+            </div>
+            {/* Depends on the branch: lists only that branch's warehouses / bars. */}
+            <div className="min-w-[180px] flex-1 [&_label]:text-xs">
+              <WarehouseSelect branchId={effectiveBranchId} value={warehouseId} disabled={!!draftId || cart.length > 0} onChange={setWarehouseId} label="مخزون البيع / البار" />
             </div>
             <div className="min-w-[140px] flex-1">
               <Label className="text-xs">{ui("جنس العميل")}</Label>
@@ -929,6 +965,7 @@ export function SalesNewReceiptPage() {
                   return;
                 }
                 setCategoryId(nextCategoryId);
+                setRecommendedEmployeeId('');
               }}
             />
 
@@ -1057,13 +1094,13 @@ export function SalesNewReceiptPage() {
                 [
                   [
                     "customer",
-                    `${ui("عميل")} · ${toArabicDigits(configuredCustomerDiscount)}%`,
+                    `${ui("بيع عادي")} · ${toArabicDigits(configuredCustomerDiscount)}%`,
                   ],
                   [
                     "employee",
                     `${ui("موظف")} · ${toArabicDigits(configuredEmployeeDiscount)}%`,
                   ],
-                  ["partner", ui("شريك")],
+                  ["drawing", ui("مسحوبات الإدارة")],
                 ] as const
               ).map(([value, label]) => (
                 <Button
@@ -1074,9 +1111,7 @@ export function SalesNewReceiptPage() {
                   onClick={() => {
                     setSaleType(value);
                     setBillingCycle(
-                      value === "partner"
-                        ? "monthly"
-                        : value === "employee"
+                      value === "employee"
                           ? "daily"
                           : "immediate",
                     );
@@ -1087,6 +1122,12 @@ export function SalesNewReceiptPage() {
               ))}
             </div>
 
+            {saleType === 'drawing' ? <section className="space-y-3 rounded-xl border p-3">
+              <div><Label>{ui('المسحوب له')}</Label><Input value={drawingRecipient} maxLength={200} onChange={(e) => setDrawingRecipient(e.target.value)} /></div>
+              <div><Label>{ui('سبب المسحوبات')}</Label><Input value={drawingReason} onChange={(e) => setDrawingReason(e.target.value)} /></div>
+              <p className="text-xs text-muted-foreground">{ui('تُخصم الكمية عند التسجيل، دون تسجيل مبيعات أو مديونية على المستفيد.')}</p>
+            </section> : null}
+            {saleType !== 'drawing' && categories?.find((c) => String(c.id) === categoryId)?.nameAr.includes('بروتين') ? <Combobox value={recommendedEmployeeId} onValueChange={setRecommendedEmployeeId} options={employeeOptions} placeholder={ui('موصى بواسطة (اختياري)')} /> : null}
             {saleType === "customer" ? (
               <section className="rounded-xl border border-primary/15 bg-primary/[0.025] p-3">
                 <div className="mb-2"><p className="text-sm font-bold">{ui("بيانات العميل")}</p><p className="text-[10px] text-muted-foreground">{ui("اختيارية ومحفوظة داخل النظام للأرشفة فقط — لا تظهر في أي إيصال مطبوع.")}</p></div>
@@ -1367,25 +1408,50 @@ export function SalesNewReceiptPage() {
               <section className="rounded-2xl border bg-muted/20 p-3">
                 <div className="grid grid-cols-[1fr_82px_1fr] items-end gap-2">
                   <div>
-                    <Label className="text-[11px]">
-                      {saleType === "employee"
-                        ? ui("خصم الموظف %")
-                        : ui("خصم العميل %")}
-                    </Label>
+                    <div className="flex items-center justify-between gap-1">
+                      <Label className="text-[11px]">
+                        {saleType === "employee"
+                          ? ui("خصم الموظف %")
+                          : saleType === "customer"
+                            ? ui("خصم العميل")
+                            : ui("خصم العميل %")}
+                      </Label>
+                      {saleType === "customer" && (
+                        <div className="flex overflow-hidden rounded-md border text-[11px]" role="group" aria-label={ui("نوع الخصم")}>
+                          {(["amount", "percent"] as const).map((mode) => (
+                            <button
+                              key={mode}
+                              type="button"
+                              aria-pressed={discountMode === mode}
+                              className={`px-2 py-0.5 ${discountMode === mode ? "bg-primary text-primary-foreground" : "bg-background text-muted-foreground"}`}
+                              onClick={() => setDiscountMode(mode)}
+                            >
+                              {mode === "amount" ? ui("مبلغ") : "%"}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     <Input
                       className="nums mt-1 h-9"
                       type="number"
                       min={0}
-                      max={100}
+                      max={customerAmountDiscount ? undefined : 100}
                       step="0.01"
                       value={
                         saleType === "employee"
                           ? String(configuredEmployeeDiscount)
-                          : discountPct
+                          : customerAmountDiscount
+                            ? discountValue
+                            : discountPct
                       }
                       readOnly={saleType === "employee"}
                       disabled={saleType === "employee"}
-                      onChange={(event) => setDiscountPct(event.target.value)}
+                      onChange={(event) =>
+                        customerAmountDiscount
+                          ? setDiscountValue(event.target.value)
+                          : setDiscountPct(event.target.value)
+                      }
                     />
                   </div>
                   <div>
@@ -1544,7 +1610,7 @@ export function SalesNewReceiptPage() {
               </dl>
               <div className="mt-3 flex items-center justify-between rounded-xl bg-primary px-4 py-3 text-primary-foreground shadow-sm">
                 <span className="text-sm font-bold">
-                  {saleType === "partner"
+                  {saleType === 'drawing' ? ui('قيمة البيع المرجعية — لا تُحصّل') : saleType === "partner"
                     ? ui("قيمة الاستهلاك المرجعية")
                     : ui("الإجمالي")}
                 </span>
@@ -1561,7 +1627,7 @@ export function SalesNewReceiptPage() {
               <Button
                 variant="outline"
                 className="h-14 border-amber-300 bg-amber-50 text-sm font-bold text-amber-800 hover:bg-amber-100 dark:bg-amber-950/20 dark:text-amber-200"
-                disabled={!cart.length || saving}
+                disabled={!cart.length || saving || saleType === 'drawing'}
                 onClick={() => void checkout(true)}
               >
                 <PauseCircle className="me-2 size-5" />
@@ -1578,7 +1644,7 @@ export function SalesNewReceiptPage() {
                 onClick={() => void checkout(false)}
               >
                 <PackageCheck className="me-2 size-5" />{" "}
-                {deferredBilling
+                {saleType === 'drawing' ? ui('تسجيل المسحوبات') : deferredBilling
                   ? billingCycle === "daily"
                     ? ui("إضافة للحساب اليومي")
                     : ui("إضافة للحساب الشهري")

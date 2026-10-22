@@ -14,7 +14,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtUser } from '../../common/types/jwt-user';
-import { ListSupplierInvoicesDto, UpsertSupplierInvoiceDto } from './dto/procurement-ext.dto';
+import { ListSupplierInvoicesDto, UpsertSupplierInvoiceDto, SupplierOpeningBalanceDto } from './dto/procurement-ext.dto';
 import { SupplierInvoicesService } from './supplier-invoices.service';
 
 @UseGuards(JwtAuthGuard)
@@ -33,10 +33,21 @@ export class SupplierInvoicesController {
     return this.service.findOne(id, user);
   }
 
+  @Get('supplier/:supplierId/statement')
+  statement(@Param('supplierId', ParseIntPipe) supplierId: number, @Query('branchId', ParseIntPipe) branchId: number, @CurrentUser() user: JwtUser) {
+    return this.service.statement(supplierId, branchId, user);
+  }
+
   @Post()
   @RequiresPermission('gym-sales.procurement.cafe_purchases:create')
   create(@Body() body: UpsertSupplierInvoiceDto, @CurrentUser() user: JwtUser) {
     return this.service.create(body, user);
+  }
+
+  @Post('opening-balance')
+  @RequiresPermission('gym-sales.procurement.cafe_purchases:create')
+  createOpening(@Body() body: SupplierOpeningBalanceDto, @CurrentUser() user: JwtUser) {
+    return this.service.createOpening(body, user);
   }
 
   @Put(':id')

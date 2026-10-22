@@ -42,6 +42,12 @@ export class InventoryTransactionsService {
     }
   }
 
+  private async validateLocations(user: JwtUser, kind: string, branchId: number, source?: number | null, target?: number | null) {
+    if (kind === 'transfer' && (!source || !target || source === target)) throw new BadRequestException('اختر مخزن مصدر ووجهة مختلفين للتحويل');
+    if (source) await this.location.resolveSelection(user, source, branchId);
+    if (target) await this.location.resolveSelection(user, target, kind === 'transfer' ? undefined : branchId);
+  }
+
   private map(row: Prisma.inv_transactionsGetPayload<{ include: { items: true } }>) {
     return {
       id: row.id,
@@ -55,6 +61,10 @@ export class InventoryTransactionsService {
       totalAmount: toNumber(row.total_amount),
       notes: row.notes,
       reason: row.reason,
+      recipientName: row.recipient_name,
+      cafeCategoryId: row.cafe_category_id,
+      gender: row.gender,
+      businessClassification: row.business_classification,
       createdBy: row.created_by,
       approvedBy: row.approved_by,
       approvedAt: row.approved_at,
@@ -79,11 +89,13 @@ export class InventoryTransactionsService {
 
   async list(q: ListInventoryTransactionsDto, user?: JwtUser) {
     const and: Prisma.inv_transactionsWhereInput[] = [notDeletedFilter()];
+    if (q.businessClassification) and.push({ business_classification: q.businessClassification });
+    if (q.cafeCategoryId) and.push({ cafe_category_id: Number(q.cafeCategoryId) });
     const scopedBranches = this.branchScope.resolveListFilter(user, q.branchId ?? null);
     if (scopedBranches) and.push({ branch_id: { in: scopedBranches } });
     if (q.search?.trim()) {
       const s = q.search.trim();
-      and.push({ OR: [{ reference: { contains: s } }, { notes: { contains: s } }] });
+      and.push({ OR: [{ reference: { contains: s } }, { notes: { contains: s } }, {recipient_name:{contains:s}}, {reason:{contains:s}}] });
     }
     if (q.txnType && q.txnType !== 'all') and.push({ txn_type: q.txnType as InventoryTxnType });
     if (q.status && q.status !== 'all') and.push({ status: q.status as InventoryTxnStatus });
@@ -147,7 +159,7 @@ export class InventoryTransactionsService {
     return this.map(row);
   }
 
-  async create(dto: UpsertInventoryTransactionDto, user: JwtUser) {
+  async create(dto: UpsertInventoryTransactionDto, user: JwtUser, transaction?: Prisma.TransactionClient) {
     if (!dto.items?.length) throw new BadRequestException('يجب إضافة بند واحد على الأقل');
     if (!this.supportedTypes.includes(dto.txnType as InventoryTxnType)) {
       throw new BadRequestException('استخدم شاشة المشتريات أو المرتجعات أو الجرد لهذه الحركة');
@@ -167,12 +179,20 @@ export class InventoryTransactionsService {
       }
     }
 
+    await this.validateLocations(user, dto.txnType, branchId, sourceWarehouseId, targetWarehouseId);
+    if (dto.items.some((i) => !i.productId || !Number.isFinite(i.quantity) || i.quantity <= 0)) throw new BadRequestException('اختر أصنافًا مخزنية وكميات موجبة لكل البنود');
+    if (dto.businessClassification === 'management_withdrawal') {
+      if (dto.txnType !== 'issue' || !dto.recipientName?.trim() || !dto.reason?.trim() || !dto.cafeCategoryId || !dto.gender) throw new BadRequestException('المسحوبات تتطلب المستفيد والسبب والفئة والجنس');
+      const products = await this.prisma.inv_products.findMany({ where: { id: { in: dto.items.map((i) => i.productId!) }, category_id: dto.cafeCategoryId, is_deleted: false, status: 'active' } });
+      if (new Set(products.map((p) => p.id)).size !== new Set(dto.items.map((i) => i.productId)).size) throw new BadRequestException('كل أصناف المسحوبات يجب أن تكون نشطة ومن الفئة المختارة');
+    }
+
     const totalAmount = dto.items.reduce(
       (s, i) => s + (i.total ?? (i.price ?? 0) * i.quantity),
       0,
     );
 
-    const row = await this.prisma.$transaction(async (tx) => {
+    const persist = async (tx: Prisma.TransactionClient) => {
       const txn = await tx.inv_transactions.create({
         data: {
           reference: dto.reference,
@@ -185,6 +205,10 @@ export class InventoryTransactionsService {
           total_amount: totalAmount,
           notes: dto.notes ?? null,
           reason: dto.reason ?? null,
+          business_classification: dto.businessClassification ?? null,
+          recipient_name: dto.recipientName?.trim() || null,
+          cafe_category_id: dto.cafeCategoryId ?? null,
+          gender: dto.gender ?? null,
           created_by: user.sub,
           items: {
             create: dto.items.map((i) => ({
@@ -202,9 +226,18 @@ export class InventoryTransactionsService {
         include: { items: true },
       });
       return txn;
-    });
+    };
+    const row = transaction ? await persist(transaction) : await this.prisma.$transaction(persist);
 
     return this.map(row);
+  }
+
+  async createDrawing(dto: UpsertInventoryTransactionDto, user: JwtUser) {
+    await this.moduleLedger.ensureChart();
+    return this.prisma.$transaction(async (tx) => {
+      const draft = await this.create({...dto,txnType:'issue',businessClassification:'management_withdrawal',targetWarehouseId:undefined},user,tx);
+      return this.approve(draft.id,user,false,tx);
+    });
   }
 
   async update(id: number, dto: Partial<UpsertInventoryTransactionDto>, user: JwtUser) {
@@ -220,6 +253,9 @@ export class InventoryTransactionsService {
     if (dto.txnType && !this.supportedTypes.includes(dto.txnType as InventoryTxnType)) {
       throw new BadRequestException('نوع الحركة غير مدعوم من شاشة الحركات اليدوية');
     }
+
+    await this.validateLocations(user, dto.txnType ?? existing.txn_type, dto.branchId ?? existing.branch_id,
+      dto.sourceWarehouseId ?? existing.source_warehouse_id, dto.targetWarehouseId ?? existing.target_warehouse_id);
 
     const row = await this.prisma.$transaction(async (tx) => {
       if (dto.items) {
@@ -277,8 +313,9 @@ export class InventoryTransactionsService {
     return { success: true };
   }
 
-  async approve(id: number, user: JwtUser, dryRun = false) {
-    const txn = await this.prisma.inv_transactions.findFirst({
+  async approve(id: number, user: JwtUser, dryRun = false, transaction?: Prisma.TransactionClient) {
+    const db = transaction ?? this.prisma;
+    const txn = await db.inv_transactions.findFirst({
       where: { id, ...notDeletedFilter() },
       include: { items: true },
     });
@@ -293,6 +330,7 @@ export class InventoryTransactionsService {
     if (!this.supportedTypes.includes(txn.txn_type)) {
       throw new BadRequestException('نوع الحركة يجب تنفيذه من المستند التشغيلي المخصص له');
     }
+    await this.validateLocations(user, txn.txn_type, txn.branch_id, txn.source_warehouse_id, txn.target_warehouse_id);
 
     const previewRows: PreviewRow[] = txn.items
       .filter((i) => i.product_id != null)
@@ -313,7 +351,7 @@ export class InventoryTransactionsService {
       txn.txn_type === InventoryTxnType.issue || txn.txn_type === InventoryTxnType.damage;
     if (financiallyConsumed) await this.moduleLedger.ensureChart();
 
-    await this.prisma.$transaction(async (tx) => {
+    const persist = async (tx: Prisma.TransactionClient) => {
       // Guarded claim: only one concurrent approve can flip the status (conditional updateMany
       // inside the tx). The loser sees count === 0 and never applies the stock movements twice.
       const claimed = await tx.inv_transactions.updateMany({
@@ -341,7 +379,9 @@ export class InventoryTransactionsService {
       const productCosts = new Map(products.map((product) => [product.id, toNumber(product.cost_price)]));
       const valuedItems = txn.items.map((item) => {
         const suppliedPrice = toNumber(item.price);
-        const unitCost = suppliedPrice > 0
+        const unitCost = (txn.txn_type === InventoryTxnType.transfer || txn.business_classification === 'management_withdrawal') && item.product_id != null
+          ? productCosts.get(item.product_id) ?? 0
+          : suppliedPrice > 0
           ? suppliedPrice
           : item.product_id != null
             ? productCosts.get(item.product_id) ?? 0
@@ -352,7 +392,7 @@ export class InventoryTransactionsService {
       if (financiallyConsumed && financialAmount <= 0) {
         throw new BadRequestException('لا يمكن اعتماد صرف المخزون قبل إدخال تكلفة المنتجات');
       }
-      if (financiallyConsumed) {
+      if (financiallyConsumed || txn.txn_type === InventoryTxnType.transfer) {
         for (const row of valuedItems) {
           await tx.inv_transaction_items.update({
             where: { id: row.item.id },
@@ -409,9 +449,163 @@ export class InventoryTransactionsService {
           paymentMethod: 'تسوية مخزون',
         });
       }
-    });
-
+    };
+    if (transaction) await persist(transaction); else await this.prisma.$transaction(persist);
+    if (transaction) return this.map(await transaction.inv_transactions.findFirstOrThrow({where:{id},include:{items:true}}));
     return this.findOne(id, user);
+  }
+
+  /**
+   * Approved transfers between warehouses, presented as "issue orders to branches": the receiving
+   * branch is the target warehouse's branch. Visible when either side is inside the user's scope.
+   */
+  async branchIssues(
+    q: { targetBranchId?: string; dateFrom?: string; dateTo?: string; search?: string; page?: number; pageSize?: number },
+    user: JwtUser,
+  ) {
+    const page = Math.max(1, Number(q.page) || 1);
+    const pageSize = Math.min(500, Math.max(1, Number(q.pageSize) || 10));
+    const and: Prisma.inv_transactionsWhereInput[] = [
+      notDeletedFilter(),
+      { txn_type: InventoryTxnType.transfer, status: InventoryTxnStatus.approved },
+    ];
+    const scoped = this.branchScope.resolveListFilter(user, null);
+    if (scoped) {
+      const scopedWarehouses = await this.prisma.inv_warehouses.findMany({ where: { branch_id: { in: scoped } }, select: { id: true } });
+      and.push({ OR: [{ branch_id: { in: scoped } }, { target_warehouse_id: { in: scopedWarehouses.map((w) => w.id) } }] });
+    }
+    if (q.targetBranchId) {
+      const targets = await this.prisma.inv_warehouses.findMany({ where: { branch_id: Number(q.targetBranchId) }, select: { id: true } });
+      and.push({ target_warehouse_id: { in: targets.map((w) => w.id) } });
+    }
+    if (q.dateFrom || q.dateTo) {
+      and.push({
+        txn_date: {
+          ...(q.dateFrom ? { gte: new Date(`${q.dateFrom}T00:00:00Z`) } : {}),
+          ...(q.dateTo ? { lte: new Date(`${q.dateTo}T23:59:59Z`) } : {}),
+        },
+      });
+    }
+    if (q.search?.trim()) {
+      const s = q.search.trim();
+      const numeric = Number(s);
+      and.push({ OR: [
+        { reference: { contains: s } },
+        { items: { some: { item_name: { contains: s } } } },
+        ...(Number.isInteger(numeric) && numeric > 0 ? [{ id: numeric }] : []),
+      ] });
+    }
+    const where = { AND: and };
+    const [rows, total] = await Promise.all([
+      this.prisma.inv_transactions.findMany({ where, include: { items: true }, orderBy: { id: 'desc' }, skip: (page - 1) * pageSize, take: pageSize }),
+      this.prisma.inv_transactions.count({ where }),
+    ]);
+    const warehouseIds = [...new Set(rows.flatMap((r) => [r.source_warehouse_id, r.target_warehouse_id]).filter((id): id is number => id != null))];
+    const userIds = [...new Set(rows.flatMap((r) => [r.created_by, r.approved_by]).filter((id): id is number => id != null))];
+    const [warehouses, users] = await Promise.all([
+      this.prisma.inv_warehouses.findMany({ where: { id: { in: warehouseIds } }, select: { id: true, name_ar: true, branch_id: true } }),
+      this.prisma.users.findMany({ where: { user_id: { in: userIds } }, select: { user_id: true, name: true, username: true } }),
+    ]);
+    const warehouseById = new Map(warehouses.map((w) => [w.id, w]));
+    const userName = new Map(users.map((u) => [u.user_id, u.name || u.username || null]));
+    return paginated(rows.map((r) => {
+      const source = r.source_warehouse_id != null ? warehouseById.get(r.source_warehouse_id) : undefined;
+      const target = r.target_warehouse_id != null ? warehouseById.get(r.target_warehouse_id) : undefined;
+      const base = this.map(r);
+      return {
+        ...base,
+        sourceWarehouseName: source?.name_ar ?? null,
+        sourceBranchId: source?.branch_id ?? null,
+        targetWarehouseName: target?.name_ar ?? null,
+        targetBranchId: target?.branch_id ?? null,
+        totalQuantity: base.items.reduce((sum, item) => sum + item.quantity, 0),
+        createdByName: r.created_by != null ? userName.get(r.created_by) ?? null : null,
+        approvedByName: r.approved_by != null ? userName.get(r.approved_by) ?? null : null,
+      };
+    }), total, page, pageSize);
+  }
+
+  private async loadApprovedTransfer(tx: Prisma.TransactionClient, id: number, user: JwtUser) {
+    const txn = await tx.inv_transactions.findFirst({ where: { id, ...notDeletedFilter() }, include: { items: true } });
+    if (!txn) throw new NotFoundException('أمر الصرف غير موجود');
+    this.assertBranchAccess(user, txn.branch_id);
+    if (txn.txn_type !== InventoryTxnType.transfer || txn.status !== InventoryTxnStatus.approved) {
+      throw new BadRequestException('هذا الإجراء متاح لأوامر الصرف المعتمدة فقط');
+    }
+    if (!txn.source_warehouse_id || !txn.target_warehouse_id) throw new BadRequestException('أمر الصرف بدون مخزن مصدر أو وجهة');
+    return txn;
+  }
+
+  /** Returns `quantity` of a product from the receiving warehouse back to the source warehouse. */
+  private async reverseTransferQuantity(
+    tx: Prisma.TransactionClient,
+    txn: { id: number; reference: string; branch_id: number; source_warehouse_id: number | null; target_warehouse_id: number | null },
+    productId: number,
+    quantity: number,
+    unitCost: number,
+    userId: number,
+  ) {
+    await this.stock.applyTransaction({
+      transactionId: txn.id,
+      txnType: InventoryTxnType.transfer,
+      branchId: txn.branch_id,
+      // Swapped direction: out of the branch that received it, back into the issuing warehouse.
+      sourceWarehouseId: txn.target_warehouse_id,
+      targetWarehouseId: txn.source_warehouse_id,
+      docRef: `${txn.reference}-REV`,
+      createdBy: userId,
+      lines: [{ productId, quantity, unitCost }],
+    }, tx);
+  }
+
+  /** Quantity-only edit of an approved issue order; quantities may only go down. */
+  async reduceTransferQuantities(id: number, items: { itemId: number; quantity: number }[], user: JwtUser) {
+    if (!Array.isArray(items) || !items.length) throw new BadRequestException('لا توجد تعديلات');
+    await this.prisma.$transaction(async (tx) => {
+      const txn = await this.loadApprovedTransfer(tx, id, user);
+      for (const change of items) {
+        const item = txn.items.find((i) => i.id === Number(change.itemId));
+        if (!item) throw new BadRequestException('بند غير موجود في أمر الصرف');
+        const current = toNumber(item.quantity);
+        const next = Number(change.quantity);
+        if (!Number.isFinite(next) || next < 0) throw new BadRequestException(`كمية غير صحيحة للصنف ${item.item_name}`);
+        if (next > current) throw new BadRequestException(`لا يمكن زيادة كمية ${item.item_name}؛ التعديل بالنقص فقط`);
+        if (next === current) continue;
+        if (item.product_id != null) {
+          await this.reverseTransferQuantity(tx, txn, item.product_id, current - next, toNumber(item.price), user.sub);
+        }
+        if (next === 0) {
+          await tx.inv_transaction_items.delete({ where: { id: item.id } });
+        } else {
+          await tx.inv_transaction_items.update({
+            where: { id: item.id },
+            data: { quantity: next, total: Math.round(next * toNumber(item.price) * 100) / 100 },
+          });
+        }
+      }
+      const remaining = await tx.inv_transaction_items.findMany({ where: { transaction_id: id } });
+      const total = Math.round(remaining.reduce((sum, i) => sum + toNumber(i.total), 0) * 100) / 100;
+      await tx.inv_transactions.update({
+        where: { id },
+        data: { total_amount: total, ...(remaining.length ? {} : { is_deleted: true }) },
+      });
+    });
+    return { success: true };
+  }
+
+  /** Deletes an approved issue order and returns every item to the source warehouse. */
+  async removeApprovedTransfer(id: number, user: JwtUser) {
+    await this.prisma.$transaction(async (tx) => {
+      const txn = await this.loadApprovedTransfer(tx, id, user);
+      for (const item of txn.items) {
+        const qty = toNumber(item.quantity);
+        if (item.product_id != null && qty > 0) {
+          await this.reverseTransferQuantity(tx, txn, item.product_id, qty, toNumber(item.price), user.sub);
+        }
+      }
+      await tx.inv_transactions.update({ where: { id }, data: { is_deleted: true } });
+    });
+    return { success: true };
   }
 
   async reject(id: number, dto: RejectTransactionDto, user: JwtUser) {

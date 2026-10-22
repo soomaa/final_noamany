@@ -120,6 +120,23 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
     "club.reception:update",
     "club.members.barcode.member_check_in:update"
   ],
+  "ClubAttendanceController.barcodeReport": [
+    "club.members:view",
+    "club.members.attendance:view",
+    "club.reception:view",
+    "club.members.barcode.member_check_in:view",
+    "club.members.barcode.spa_attendance:view",
+    "club.members.barcode.classes_attendance:view",
+    "club.fitness:view",
+    "club.subscriptions.special:view"
+  ],
+  "ClubAttendanceController.deleteBarcodeReportRow": [
+    "club.members.attendance:delete",
+    "club.members.barcode.member_check_in:delete",
+    "club.members.barcode.spa_check_in:delete",
+    "club.members.barcode.classes_check_in:delete",
+    "club.fitness:delete"
+  ],
   "ClubSpaAttendanceController.list": [
     "club.members.barcode.spa_attendance:view",
     "club.members.barcode.spa_check_in:view",

@@ -26,8 +26,9 @@ export class PutWeeklyScheduleDto {
   effectiveFrom!: string;
 
   @IsArray()
+  // Every weekday needs a rest or working slot; a day may carry up to 3 split shifts.
   @ArrayMinSize(7)
-  @ArrayMaxSize(7)
+  @ArrayMaxSize(21)
   @ValidateNested({ each: true })
   @Type(() => WeeklyScheduleSlotDto)
   slots!: WeeklyScheduleSlotDto[];

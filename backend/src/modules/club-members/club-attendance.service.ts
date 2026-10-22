@@ -23,6 +23,9 @@ import { localDateString } from "./club-member.utils";
 import { CheckInDto, CheckOutDto, ServiceCheckInDto } from "./dto/check-in.dto";
 import { ListClubAttendanceDto } from "./dto/list-club-attendance.dto";
 import { BarcodeScanTimesDto } from "./dto/barcode-scan-times.dto";
+import { BarcodeAttendanceReportDto } from "./dto/barcode-attendance-report.dto";
+import { isReceptionEmployee } from "../../common/utils/reception-user.util";
+import { assertSystemAdmin, isSystemAdmin } from "../../common/utils/system-admin.util";
 import { ClubMembersService } from "./club-members.service";
 import { ClubPointsService } from '../club-points/club-points.service';
 import { recordPrivateAttendanceCommission } from "../club-subscriptions/private-attendance.util";
@@ -1092,6 +1095,13 @@ export class ClubAttendanceService {
 
   /** Barcode pull times, filtered by the local Cairo scan clock. */
   async barcodeScanTimes(q: BarcodeScanTimesDto, user: JwtUser) {
+    // Reception employees only ever see today's scans, whatever range they send.
+    const todayOnly = isReceptionEmployee(user);
+    if (todayOnly) {
+      const today = cairoDateTime().date;
+      q.startDate = today;
+      q.endDate = today;
+    }
     if (!q.startDate || !q.endDate || !validIsoDay(q.startDate) || !validIsoDay(q.endDate)) {
       throw new BadRequestException('حدد تاريخ بداية ونهاية صحيحين');
     }
@@ -1141,15 +1151,192 @@ export class ClubAttendanceService {
       }),
       this.prisma.club_attendance.count({ where }),
     ]);
-    return paginated(rows.map((row) => ({
-      id: row.id,
-      memberCode: row.member_code,
-      memberName: row.member_name,
-      branchId: row.branch_id,
-      attendanceDate: row.attendance_date,
-      checkInTime: row.check_in_time,
-      scanType: row.is_grace_session ? 'استثناء' : ({ normal: 'عادي', class: 'حصص', spa: 'سبا', inbody: 'إنبودي' } as Record<string, string>)[row.attendance_type ?? 'normal'] ?? 'عادي',
-    })), total, q.page, q.pageSize);
+    return {
+      ...paginated(rows.map((row) => ({
+        id: row.id,
+        memberCode: row.member_code,
+        memberName: row.member_name,
+        branchId: row.branch_id,
+        attendanceDate: row.attendance_date,
+        checkInTime: row.check_in_time,
+        scanType: row.is_grace_session ? 'استثناء' : ({ normal: 'عادي', class: 'حصص', spa: 'سبا', inbody: 'إنبودي' } as Record<string, string>)[row.attendance_type ?? 'normal'] ?? 'عادي',
+      })), total, q.page, q.pageSize),
+      todayOnly,
+    };
+  }
+
+  /**
+   * One report shape for member / class / SPA attendance. Rows come from three tables:
+   * club_attendance (reception & service check-ins), club_spa_attendance (SPA scanner) and
+   * club_class_enrollments (class scanner). Mirrored rows are excluded so a visit appears once.
+   * Reception employees only ever see today's rows; only system admins may delete.
+   */
+  async barcodeAttendanceReport(q: BarcodeAttendanceReportDto, user: JwtUser) {
+    const todayOnly = isReceptionEmployee(user);
+    const today = cairoDateTime().date;
+    const dateFrom = todayOnly ? today : q.dateFrom;
+    const dateTo = todayOnly ? today : q.dateTo;
+    const scope = this.attendanceBranchIds(user, q.branch ?? null);
+    const search = q.search?.trim() ? `%${q.search.trim()}%` : null;
+
+    const filters = (alias: string, dateCol: string, branchCol: string, nameCol: string, codeCol: string) => {
+      const parts: Prisma.Sql[] = [];
+      if (dateFrom) parts.push(Prisma.sql`${Prisma.raw(`${alias}.${dateCol}`)} >= ${dateFrom}`);
+      if (dateTo) parts.push(Prisma.sql`${Prisma.raw(`${alias}.${dateCol}`)} <= ${dateTo}`);
+      if (scope !== null) {
+        parts.push(scope.length
+          ? Prisma.sql`${Prisma.raw(branchCol)} IN (${Prisma.join(scope)})`
+          : Prisma.sql`1 = 0`);
+      }
+      if (search) parts.push(Prisma.sql`(${Prisma.raw(nameCol)} LIKE ${search} OR ${Prisma.raw(codeCol)} LIKE ${search})`);
+      return parts;
+    };
+    const where = (parts: Prisma.Sql[]) => (parts.length ? Prisma.sql`WHERE ${Prisma.join(parts, ' AND ')}` : Prisma.empty);
+
+    const attendanceParts = filters('a', 'attendance_date', 'a.branch_id', 'a.member_name', 'a.member_code');
+    if (q.kind === 'class') attendanceParts.push(Prisma.sql`a.attendance_type = 'class'`);
+    const attendanceSql = Prisma.sql`SELECT 'a' AS src, a.id AS id, a.check_in_time AS sort_at FROM club_attendance a ${where(attendanceParts)}`;
+
+    const spaParts = filters('s', 'attendance_date', 's.branch_id', 's.member_name', 's.member_code');
+    if (q.kind === 'member') {
+      // Service check-ins write both tables; keep only the club_attendance copy in the member report.
+      spaParts.push(Prisma.sql`NOT EXISTS (SELECT 1 FROM club_attendance x WHERE x.member_id = s.member_id
+        AND x.attendance_date = s.attendance_date AND x.subscription_id = s.subscription_id AND x.attendance_type = 'spa')`);
+    }
+    const spaSql = Prisma.sql`SELECT 's' AS src, s.id AS id, s.created_at AS sort_at FROM club_spa_attendance s ${where(spaParts)}`;
+
+    const enrollmentParts = filters('c', 'class_date', 'c.branch_id', 'm.name', 'm.member_code');
+    // reception_auto enrollments already have a club_attendance row of type "class".
+    enrollmentParts.push(Prisma.sql`e.attendance_status = 'attended'`, Prisma.sql`e.booking_source <> 'reception_auto'`, Prisma.sql`c.is_deleted = 0`);
+    const enrollmentSql = Prisma.sql`SELECT 'e' AS src, e.id AS id, e.updated_at AS sort_at
+      FROM club_class_enrollments e JOIN club_classes c ON c.id = e.class_id JOIN club_members m ON m.id = e.member_id ${where(enrollmentParts)}`;
+
+    const sources = q.kind === 'spa' ? [spaSql] : q.kind === 'class' ? [attendanceSql, enrollmentSql] : [attendanceSql, spaSql, enrollmentSql];
+    const unionSql = Prisma.join(sources, ' UNION ALL ');
+    const [keys, countRows] = await Promise.all([
+      this.prisma.$queryRaw<{ src: string; id: number; sort_at: Date }[]>(
+        Prisma.sql`SELECT src, id, sort_at FROM (${unionSql}) r ORDER BY sort_at DESC, id DESC LIMIT ${q.take} OFFSET ${q.skip}`,
+      ),
+      this.prisma.$queryRaw<{ cnt: bigint }[]>(Prisma.sql`SELECT COUNT(*) AS cnt FROM (${unionSql}) r`),
+    ]);
+    const idsOf = (src: string) => keys.filter((k) => k.src === src).map((k) => Number(k.id));
+    const [attendanceRows, spaRows, enrollmentRows] = await Promise.all([
+      this.prisma.club_attendance.findMany({ where: { id: { in: idsOf('a') } } }),
+      this.prisma.club_spa_attendance.findMany({ where: { id: { in: idsOf('s') } } }),
+      this.prisma.club_class_enrollments.findMany({ where: { id: { in: idsOf('e') } }, include: { class: { select: { branch_id: true, class_date: true } } } }),
+    ]);
+    const subscriptionIds = [...new Set([...spaRows.map((r) => r.subscription_id), ...enrollmentRows.map((r) => r.subscription_id)].filter((id): id is number => id != null))];
+    const memberIds = [...new Set(enrollmentRows.map((r) => r.member_id))];
+    const userIds = [...new Set([...attendanceRows.map((r) => r.created_by), ...spaRows.map((r) => r.created_by)].filter((id): id is number => id != null))];
+    const [subscriptions, members, users] = await Promise.all([
+      this.prisma.club_subscriptions.findMany({ where: { id: { in: subscriptionIds } }, select: { id: true, subscription_type: true } }),
+      this.prisma.club_members.findMany({ where: { id: { in: memberIds } }, select: { id: true, name: true, member_code: true } }),
+      this.prisma.users.findMany({ where: { user_id: { in: userIds } }, select: { user_id: true, name: true, username: true } }),
+    ]);
+    const subscriptionName = new Map(subscriptions.map((s) => [s.id, s.subscription_type]));
+    const memberById = new Map(members.map((m) => [m.id, m]));
+    const employeeName = new Map(users.map((u) => [u.user_id, u.name || u.username || null]));
+    const attendanceById = new Map(attendanceRows.map((r) => [r.id, r]));
+    const spaById = new Map(spaRows.map((r) => [r.id, r]));
+    const enrollmentById = new Map(enrollmentRows.map((r) => [r.id, r]));
+
+    type ReportRow = {
+      key: string; source: 'a' | 's' | 'e'; id: number; memberId: number; memberCode: string; memberName: string;
+      subscriptionName: string | null; branchId: number | null; attendanceDate: string; time: string | null;
+      attendanceType: string; employeeName: string | null;
+    };
+    const data = keys.flatMap((key): ReportRow[] => {
+      const id = Number(key.id);
+      if (key.src === 'a') {
+        const r = attendanceById.get(id);
+        if (!r) return [];
+        return [{
+          key: `a-${r.id}`, source: 'a', id: r.id, memberId: r.member_id, memberCode: r.member_code, memberName: r.member_name,
+          subscriptionName: r.subscription_type, branchId: r.branch_id, attendanceDate: r.attendance_date,
+          time: cairoDateTime(r.check_in_time).time.slice(0, 5), attendanceType: r.attendance_type ?? 'normal',
+          employeeName: r.created_by != null ? employeeName.get(r.created_by) ?? null : null,
+        }];
+      }
+      if (key.src === 's') {
+        const r = spaById.get(id);
+        if (!r) return [];
+        return [{
+          key: `s-${r.id}`, source: 's', id: r.id, memberId: r.member_id, memberCode: r.member_code, memberName: r.member_name,
+          subscriptionName: subscriptionName.get(r.subscription_id) ?? null, branchId: r.branch_id, attendanceDate: r.attendance_date,
+          time: r.check_in_time.slice(0, 5), attendanceType: 'spa',
+          employeeName: r.created_by != null ? employeeName.get(r.created_by) ?? null : null,
+        }];
+      }
+      const r = enrollmentById.get(id);
+      if (!r) return [];
+      const member = memberById.get(r.member_id);
+      return [{
+        key: `e-${r.id}`, source: 'e', id: r.id, memberId: r.member_id, memberCode: member?.member_code ?? '', memberName: member?.name ?? '',
+        subscriptionName: r.subscription_id != null ? subscriptionName.get(r.subscription_id) ?? null : null,
+        branchId: r.class.branch_id, attendanceDate: r.class.class_date, time: r.attendance_time?.slice(0, 5) ?? null,
+        attendanceType: 'class', employeeName: null,
+      }];
+    });
+
+    return {
+      ...paginated(data, Number(countRows[0]?.cnt ?? 0), q.page, q.pageSize),
+      todayOnly,
+      canDelete: isSystemAdmin(user),
+    };
+  }
+
+  /** Admin-only removal of a report row; any consumed balance is returned to the subscription. */
+  async deleteBarcodeAttendance(source: string, id: number, user: JwtUser) {
+    assertSystemAdmin(user);
+    if (source === 'a') {
+      const row = await this.prisma.club_attendance.findUnique({ where: { id } });
+      if (!row) throw new NotFoundException('سجل الحضور غير موجود');
+      await this.prisma.$transaction(async (tx) => {
+        if (row.subscription_id != null && !row.is_grace_session) {
+          if (row.attendance_type === 'class') {
+            await tx.$executeRaw`UPDATE club_subscriptions SET sessions_used = sessions_used - 1
+              WHERE id = ${row.subscription_id} AND is_linked_to_sessions = 1 AND sessions_used > 0`;
+            await tx.club_class_enrollments.updateMany({
+              where: { member_id: row.member_id, subscription_id: row.subscription_id, enrollment_date: row.attendance_date, booking_source: 'reception_auto', attendance_status: 'attended' },
+              data: { attendance_status: 'cancelled' },
+            });
+          } else if (row.attendance_type === 'spa') {
+            await tx.$executeRaw`UPDATE club_subscriptions SET spa_used = spa_used - 1 WHERE id = ${row.subscription_id} AND spa_used > 0`;
+            await tx.club_spa_attendance.deleteMany({ where: { member_id: row.member_id, attendance_date: row.attendance_date, subscription_id: row.subscription_id } });
+          } else if (row.attendance_type === 'inbody') {
+            await tx.$executeRaw`UPDATE club_subscriptions SET inbody_used = inbody_used - 1 WHERE id = ${row.subscription_id} AND inbody_used > 0`;
+          }
+        }
+        await tx.club_attendance.delete({ where: { id } });
+      });
+      await this.audit.log({ entityType: 'club_attendance', entityId: id, action: 'delete', actorUserId: user.sub, branchId: row.branch_id, before: this.mapRow(row) });
+      return { deleted: true };
+    }
+    if (source === 's') {
+      const row = await this.prisma.club_spa_attendance.findUnique({ where: { id } });
+      if (!row) throw new NotFoundException('سجل حضور السبا غير موجود');
+      await this.prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`UPDATE club_subscriptions SET spa_used = spa_used - 1 WHERE id = ${row.subscription_id} AND spa_used > 0`;
+        await tx.club_attendance.deleteMany({ where: { member_id: row.member_id, attendance_date: row.attendance_date, subscription_id: row.subscription_id, attendance_type: 'spa' } });
+        await tx.club_spa_attendance.delete({ where: { id } });
+      });
+      await this.audit.log({ entityType: 'club_spa_attendance', entityId: id, action: 'delete', actorUserId: user.sub, branchId: row.branch_id ?? undefined, before: row });
+      return { deleted: true };
+    }
+    if (source === 'e') {
+      const row = await this.prisma.club_class_enrollments.findUnique({ where: { id }, include: { class: { select: { branch_id: true } } } });
+      if (!row || row.attendance_status !== 'attended') throw new NotFoundException('سجل حضور الحصة غير موجود');
+      await this.prisma.$transaction(async (tx) => {
+        await tx.club_class_enrollments.update({ where: { id }, data: { attendance_status: 'cancelled' } });
+        if (row.subscription_id != null) {
+          await tx.$executeRaw`UPDATE club_subscriptions SET sessions_used = sessions_used - 1
+            WHERE id = ${row.subscription_id} AND is_linked_to_sessions = 1 AND sessions_used > 0`;
+        }
+      });
+      await this.audit.log({ entityType: 'club_class_enrollment', entityId: id, action: 'delete', actorUserId: user.sub, branchId: row.class.branch_id, before: row });
+      return { deleted: true };
+    }
+    throw new BadRequestException('نوع السجل غير صالح');
   }
 
   /**

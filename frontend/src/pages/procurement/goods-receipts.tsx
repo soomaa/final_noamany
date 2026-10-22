@@ -16,7 +16,9 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Combobox } from '@/components/common/combobox';
 import { useBranches } from '@/hooks/use-branches';
+import { usePosEmployeeOptions } from '@/hooks/use-pos-employee-options';
 import { api, apiError } from '@/lib/api';
 import { confirmWithPreview } from '@/lib/confirm';
 import { usePaginatedList } from '@/lib/api-hooks';
@@ -28,6 +30,7 @@ import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
 
 interface GrnLineDraft {
+  productId: number | null;
   name: string;
   orderedQty: string;
   receivedQty: string;
@@ -59,6 +62,7 @@ export function ProcurementGoodsReceiptsPage() {
     },
   });
 
+  const { data: employeeOptions = [] } = usePosEmployeeOptions();
   const [open, setOpen] = useState(false);
   const [purchaseOrderId, setPurchaseOrderId] = useState('');
   const [warehouseId, setWarehouseId] = useState('');
@@ -119,6 +123,7 @@ export function ProcurementGoodsReceiptsPage() {
       setBranchId(String(po.branchId));
       setLines(
         (po.items ?? []).map((i) => ({
+          productId: i.productId ?? null,
           name: i.name,
           orderedQty: String(i.quantity),
           receivedQty: String(i.quantity),
@@ -133,9 +138,18 @@ export function ProcurementGoodsReceiptsPage() {
     () => [
       indexColumn(params.page, params.pageSize) as ColumnDef<GoodsReceiptRow>,
       { accessorKey: 'grnNumber', header: ui('رقم الاستلام') },
-      { accessorKey: 'purchaseOrderId', header: ui('أمر الشراء') },
-      { accessorKey: 'receiverName', header: ui('المستلم') },
-      { accessorKey: 'status', header: ui('الحالة') },
+      {
+        id: 'purchaseOrder',
+        header: ui('أمر الشراء'),
+        cell: ({ row }) => purchaseOrders?.find((po) => po.id === row.original.purchaseOrderId)?.poNumber ?? `#${row.original.purchaseOrderId}`,
+      },
+      { accessorKey: 'receiverName', header: ui('اسم المستلم') },
+      {
+        id: 'warehouse',
+        header: ui('المستودع'),
+        cell: ({ row }) => warehouses?.find((w) => w.id === row.original.warehouseId)?.nameAr ?? '—',
+      },
+      { accessorKey: 'status', header: ui('الحالة'), cell: ({ getValue }) => ui(({ draft: 'مسودة', completed: 'مكتمل', partial: 'جزئي', cancelled: 'ملغي' } as Record<string, string>)[getValue() as string] ?? (getValue() as string)) },
       {
         id: 'stockPosted',
         header: ui('ترحيل المخزون'),
@@ -162,7 +176,7 @@ export function ProcurementGoodsReceiptsPage() {
           ) : null,
       },
     ],
-    [confirmingId, params.page, params.pageSize, refetch, ui],
+    [confirmingId, params.page, params.pageSize, refetch, ui, purchaseOrders, warehouses],
   );
 
   const save = async () => {
@@ -188,6 +202,7 @@ export function ProcurementGoodsReceiptsPage() {
         receiptDate: receiptDate || undefined,
         branchId: Number(branchId),
         items: validLines.map((l) => ({
+          productId: l.productId ?? undefined,
           name: l.name,
           orderedQty: Number(l.orderedQty),
           receivedQty: Number(l.receivedQty),
@@ -281,7 +296,12 @@ export function ProcurementGoodsReceiptsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
                 <Label>{ui('اسم المستلم')}</Label>
-                <Input value={receiverName} onChange={(e) => setReceiverName(e.target.value)} />
+                <Combobox
+                  value={employeeOptions.find((o) => o.label === receiverName)?.value ?? ''}
+                  onValueChange={(v) => setReceiverName(employeeOptions.find((o) => o.value === v)?.label ?? '')}
+                  options={employeeOptions}
+                  placeholder={ui('اختر الموظف')}
+                />
               </div>
               <div className="grid gap-1">
                 <Label>{ui('تاريخ الاستلام')}</Label>
@@ -291,20 +311,25 @@ export function ProcurementGoodsReceiptsPage() {
             {lines.length > 0 && (
               <div className="space-y-2">
                 <Label>{ui('البنود')}</Label>
+                <div className="grid grid-cols-3 gap-2 border-b pb-1 text-xs font-semibold text-muted-foreground">
+                  <span>{ui('الصنف')}</span>
+                  <span>{ui('الكمية المطلوبة')}</span>
+                  <span>{ui('الكمية المستلمة')}</span>
+                </div>
                 {lines.map((line, idx) => (
-                  <div key={idx} className="grid grid-cols-3 gap-2 text-sm">
-                    <span className="col-span-1 truncate py-2">{line.name}</span>
+                  <div key={idx} className="grid grid-cols-3 items-center gap-2 text-sm">
+                    <span className="col-span-1 truncate py-2 font-medium" title={line.name}>{line.name}</span>
                     <Input
                       type="number"
-                      className="nums"
-                      placeholder={ui('مطلوب')}
+                      className="nums bg-muted/50"
+                      aria-label={`${ui('الكمية المطلوبة')} — ${line.name}`}
                       value={line.orderedQty}
                       readOnly
                     />
                     <Input
                       type="number"
                       className="nums"
-                      placeholder={ui('مستلم')}
+                      aria-label={`${ui('الكمية المستلمة')} — ${line.name}`}
                       value={line.receivedQty}
                       onChange={(e) => {
                         setLines((prev) => {

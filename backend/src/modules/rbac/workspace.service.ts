@@ -55,10 +55,10 @@ export class WorkspaceService {
     // manager who happens to have club view lands on the club dashboard instead of the HR hub.
     if (canCreate('club.members')) {
       const widgets: string[] = [];
+      widgets.push('members_today');
+      if (canView('club.subscriptions.list')) widgets.push('subscriptions_today');
+      if (canView('club.members.attendance')) widgets.push('checkins_today');
       if (canView('club.subscriptions.daily_cashier')) widgets.push('treasury_today');
-      if (canView('club.members.attendance')) widgets.push('recent_checkins');
-      if (canView('club.subscriptions.list')) widgets.push('expiring_subscriptions');
-      if (canView('club.subscriptions.outstanding')) widgets.push('outstanding_balances');
       return {
         homeRoute: '/workspace',
         roleHint: 'reception',

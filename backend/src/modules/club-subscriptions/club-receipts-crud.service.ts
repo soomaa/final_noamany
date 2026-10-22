@@ -79,6 +79,8 @@ export class ClubReceiptsCrudService {
     description: string | null;
     created_by?: number | null;
     payments?: { method: string; amount: unknown }[];
+    member?: { member_code: string } | null;
+    subscription?: { subscription_type: string | null } | null;
   }) {
     // Field names are consumed by the frontend — do NOT rename.
     return {
@@ -88,6 +90,9 @@ export class ClubReceiptsCrudService {
       lockerSubscriptionId: r.locker_subscription_id ?? null,
       memberId: r.member_id,
       memberName: r.member_name,
+      memberCode: r.member?.member_code ?? null,
+      // Prefer the subscription's current type; old standalone receipts retain their saved type.
+      subscriptionType: r.subscription?.subscription_type ?? r.type ?? null,
       branchId: r.branch_id ?? null,
       amount: toNum(r.amount),
       type: r.type,
@@ -147,7 +152,11 @@ export class ClubReceiptsCrudService {
         orderBy: { id: 'desc' },
         skip: q.skip,
         take: q.take,
-        include: { payments: { select: { method: true, amount: true }, orderBy: { id: 'asc' } } },
+        include: {
+          payments: { select: { method: true, amount: true }, orderBy: { id: 'asc' } },
+          member: { select: { member_code: true } },
+          subscription: { select: { subscription_type: true } },
+        },
       }),
       this.prisma.club_receipts.count({ where: scopedWhere }),
     ]);

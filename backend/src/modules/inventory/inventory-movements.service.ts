@@ -1,4 +1,5 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { cairoDayRange } from '../../common/utils/cairo-day-range.util';
 import { InventoryTxnType, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -6,6 +7,7 @@ import { toNumber } from './inventory.utils';
 import { ListInventoryMovementsDto } from './dto/inventory.dto';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import type { JwtUser } from '../../common/types/jwt-user';
+import { stockSummary } from './stock-summary.util';
 
 @Injectable()
 export class InventoryMovementsService {
@@ -110,6 +112,20 @@ export class InventoryMovementsService {
       totalMovements: total,
       movementsByType: Object.fromEntries(byType.map((r) => [r.txn_type, r._count])),
     };
+  }
+
+  async balancesReport(q: ListInventoryMovementsDto, user: JwtUser) {
+    const branches=this.branchScope.resolveListFilter(user,q.branchId);
+    const warehouseWhere={...(branches?{branch_id:{in:branches}}:{}),...(q.warehouseId?{id:Number(q.warehouseId)}:{})};
+    const from=q.dateFrom?cairoDayRange(new Date(`${q.dateFrom}T12:00:00Z`)).gte:new Date(0);
+    const end=q.dateTo?cairoDayRange(new Date(`${q.dateTo}T12:00:00Z`)).lt:new Date();
+    if (from>=end) throw new BadRequestException('تاريخ البداية يجب أن يسبق نهاية الفترة');
+    const balances=await this.prisma.inv_stock_balances.findMany({where:{warehouse:warehouseWhere,...(q.productId?{product_id:Number(q.productId)}:{})},include:{product:{include:{category:true}},warehouse:true}});
+    const movements=await this.prisma.inv_movements.findMany({where:{warehouse:warehouseWhere,movement_date:{gte:from},...(q.productId?{product_id:Number(q.productId)}:{})},include:{transaction:true}});
+    const grouped=new Map<string,typeof movements>();
+    for(const m of movements){const key=`${m.product_id}:${m.warehouse_id}`;const rows=grouped.get(key)??[];rows.push(m);grouped.set(key,rows);}
+    return balances.map((b)=>({productId:b.product_id,warehouseId:b.warehouse_id,name:b.product.name_ar,category:b.product.category?.name_ar??'',warehouse:b.warehouse.name_ar,unit:b.product.unit_of_measure,
+      ...stockSummary(toNumber(b.current_stock),(grouped.get(`${b.product_id}:${b.warehouse_id}`)??[]).map((m)=>({quantity:toNumber(m.quantity),direction:m.direction,date:m.movement_date,txnType:m.txn_type,docType:m.doc_type,drawing:m.transaction?.business_classification==='management_withdrawal'})),from,end)}));
   }
 
   async exportList(q: ListInventoryMovementsDto, user?: JwtUser) {

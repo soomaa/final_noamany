@@ -14,7 +14,6 @@ export function AppShell() {
   const [desktopCollapsed, setDesktopCollapsed] = useState(() => localStorage.getItem('one80.sidebar.collapsed') === '1');
   const { t, isRtl, locale } = useLocale();
   const { pathname } = useLocation();
-  const isCafePos = pathname === '/sales/new';
   const sidebarToggleLabel = desktopCollapsed
     ? (locale === 'ar' ? 'فتح القائمة الجانبية' : 'Expand sidebar')
     : (locale === 'ar' ? 'طي القائمة الجانبية' : 'Collapse sidebar');
@@ -76,15 +75,7 @@ export function AppShell() {
       )}
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div
-          className={cn(
-            'relative z-40 shrink-0 overflow-hidden transition-[height] duration-300',
-            isCafePos
-              ? 'h-[5.75rem] lg:h-2 lg:hover:h-[5.75rem] lg:focus-within:h-[5.75rem]'
-              : 'h-[5.75rem]',
-          )}
-          title={isCafePos ? (locale === 'ar' ? 'مرري المؤشر هنا لإظهار الهيدر' : 'Hover here to show the header') : undefined}
-        >
+        <div className="relative z-40 h-[5.75rem] shrink-0 overflow-hidden">
           <Topbar onMenuClick={() => setMobileOpen(true)} />
         </div>
         <main className="app-main-scroll flex-1 overflow-y-auto">
