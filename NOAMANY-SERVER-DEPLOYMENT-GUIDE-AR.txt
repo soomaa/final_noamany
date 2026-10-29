@@ -430,3 +430,12 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261022-r
 أمر الرجوع الخاص بهذا التثبيت فقط:
 bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/oct27-r1-update-backup.jHXPnb
 المرجع للرفع القادم: 22-r1 + payload 27-r1. خط الأساس لملفات dist الستة وsystem.html = ملفات payload 27-r1.
+
+حزمة 20261029-r1 (جاهزة، لم تُرفع بعد)
+-------------------------------------
+- الأدوات: release-tools/daily-update-20261029-r1 (نفس طريقة 27-r1، والقوائم تُحسب من الفرق بين بناءين).
+- البناء المرجعي: commit 4a5c994 (المرفوع كـ 27-r1). أعاد إنتاج ملفات 27-r1 الستة بالبايت، وsystem.html = 8e6d3520….
+  بشرط npm ci للواجهة من package-lock (مكتبات الجهاز المحلية تعطي bundle مختلف).
+- مجلدا backend/src/common/uploads وbackend/src/modules/uploads متجاهَلان في .gitignore. لازم يتنسخوا يدوياً لأي worktree بناء.
+- المحتوى: 152 ملف dist متغيّر + 4 جديدة + 265 asset. بدون main.js أو app.module.js أو schema أو قاعدة بيانات.
+- التثبيت والرجوع: README-AR.txt داخل الحزمة.
