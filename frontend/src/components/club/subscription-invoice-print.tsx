@@ -126,12 +126,11 @@ export function SubscriptionInvoicePrint({
     ? [...new Set(receipts.map((r) => r.receiptNumber).filter(Boolean))].join(' / ')
     : (subscription.receiptNumber ?? '');
   const printTime = new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date());
-  // The amount received on this receipt; split into pounds and piasters like the old paper receipt.
+  // The amount received on this receipt, shown in whole pounds beside the date.
   const received = receipts.length > 0
     ? Math.round(receipts.reduce((sum, r) => sum + (r.amount ?? 0), 0) * 100) / 100
     : subscription.paidAmount;
   const pounds = Math.trunc(received);
-  const piasters = Math.round((received - pounds) * 100);
   const branchLetter = (subscription.branchCode ?? '').trim();
   const captainName = subscription.assignedStaffName || subscription.salesName || '';
   const staffName = subscription.createdByName || '';
@@ -160,7 +159,6 @@ export function SubscriptionInvoicePrint({
             <div className="amount-line flex justify-between items-end gap-2">
               <div className="row flex flex-1 items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">التاريخ :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(receiptDate(receipts[0]?.receiptDate || subscription.registrationDate))}</span></div>
               <div className="money flex shrink-0 gap-3 text-center">
-                <div><small className="block text-[11px]">قرش</small><b className="nums">{invoiceDigits(String(piasters).padStart(2, '0'))}</b></div>
                 <div><small className="block text-[11px]">جنيه</small><b className="nums">{invoiceDigits(pounds)}</b></div>
               </div>
             </div>
