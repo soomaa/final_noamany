@@ -232,6 +232,15 @@ export class InventoryTransactionsService {
     return this.map(row);
   }
 
+  /** Issue orders and transfers move stock as soon as they are saved, with no separate approval step. */
+  async createAndApprove(dto: UpsertInventoryTransactionDto, user: JwtUser) {
+    await this.moduleLedger.ensureChart();
+    return this.prisma.$transaction(async (tx) => {
+      const draft = await this.create(dto, user, tx);
+      return this.approve(draft.id, user, false, tx);
+    });
+  }
+
   async createDrawing(dto: UpsertInventoryTransactionDto, user: JwtUser) {
     await this.moduleLedger.ensureChart();
     return this.prisma.$transaction(async (tx) => {

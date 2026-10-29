@@ -1,7 +1,8 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { GitCompareArrows, Plus } from 'lucide-react';
+import { GitCompareArrows, Plus, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { DataTable, type PaginatedResponse } from '@/components/common/data-table';
 import { PaidAmountField } from '@/components/club/paid-amount-field';
@@ -25,6 +26,9 @@ import { toArabicDigits } from '@/lib/utils';
 import type { GoodsReceiptRow, PurchaseInvoiceRow, PurchaseOrderRow, SupplierPaymentRow } from '@/types/gym-sales';
 import type { NamedEntity, ProductListItem } from '@/types/inventory';
 import { useLocale } from '@/store/locale';
+import { useAuth } from '@/store/auth';
+import { WarehouseSelect } from '@/components/inventory/warehouse-select';
+import { localToday } from '@/lib/formatters';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { uiStatic } from '@/lib/ui-static';
@@ -35,6 +39,17 @@ interface InvoiceLineDraft {
   quantity: string;
   price: string;
 }
+
+interface SupplierMaterial {
+  id: number;
+  nameAr: string;
+  size?: string | null;
+  unitOfMeasure: string;
+  costPrice: number;
+  currentStock: number;
+}
+
+const emptyInvoiceLine = (): InvoiceLineDraft => ({ productId: '', name: '', quantity: '1', price: '0' });
 
 interface SupplierInvoiceOption {
   id: number;
@@ -89,15 +104,42 @@ function PurchaseInvoicesTab() {
     },
   });
 
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const user = useAuth((state) => state.user);
   const [open, setOpen] = useState(false);
   const [supplierId, setSupplierId] = useState('');
+  const [linkToPo, setLinkToPo] = useState(false);
   const [purchaseOrderId, setPurchaseOrderId] = useState('');
   const [goodsReceiptId, setGoodsReceiptId] = useState('');
+  const [branchId, setBranchId] = useState('');
+  const [warehouseId, setWarehouseId] = useState('');
   const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [invoiceDate, setInvoiceDate] = useState('');
-  const [lines, setLines] = useState<InvoiceLineDraft[]>([{ productId: '', name: '', quantity: '1', price: '0' }]);
+  const [invoiceDate, setInvoiceDate] = useState(localToday());
+  const [paidAmount, setPaidAmount] = useState('0');
+  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [lines, setLines] = useState<InvoiceLineDraft[]>([emptyInvoiceLine()]);
   const [saving, setSaving] = useState(false);
   const [matchingId, setMatchingId] = useState<number | null>(null);
+  const userBranchLocked = !!user?.branch && user.branch > 0;
+  const effectiveBranchId = userBranchLocked ? String(user!.branch) : branchId || String(branches?.[0]?.id ?? '');
+  // Without a purchase order the invoice is a direct purchase: it goes through the supplier-invoice
+  // engine, which receives stock into the chosen warehouse and records the payment in one step.
+  const isDirect = !linkToPo || (!purchaseOrderId && !goodsReceiptId);
+
+  const { data: supplierMaterials } = useQuery({
+    queryKey: ['suppliers', supplierId, 'materials', effectiveBranchId],
+    queryFn: async () =>
+      (await api.get<SupplierMaterial[]>(`/suppliers/${supplierId}/products`, { params: { branchId: effectiveBranchId } })).data,
+    enabled: isDirect && !!supplierId && !!effectiveBranchId,
+  });
+  const lineOptions = isDirect
+    ? (supplierMaterials ?? []).map((m) => ({ id: m.id, name: `${m.nameAr}${m.size ? ` — ${m.size}` : ''}`, cost: m.costPrice, stock: m.currentStock as number | null }))
+    : (products ?? []).map((p) => ({ id: p.id, name: p.nameAr, cost: p.costPrice ?? 0, stock: null as number | null }));
+  const lineTotal = (line: InvoiceLineDraft) => (Number(line.quantity) || 0) * (Number(line.price) || 0);
+  const invoiceTotal = lines.reduce((sum, line) => sum + lineTotal(line), 0);
+  const updateLine = (idx: number, patch: Partial<InvoiceLineDraft>) =>
+    setLines((prev) => prev.map((line, i) => (i === idx ? { ...line, ...patch } : line)));
 
   const loadPurchaseOrder = async (poId: string) => {
     setPurchaseOrderId(poId);
@@ -178,30 +220,88 @@ function PurchaseInvoicesTab() {
     [matchingId, params.page, params.pageSize, ui, branches],
   );
 
+  const resetForm = () => {
+    setSupplierId('');
+    setLinkToPo(false);
+    setPurchaseOrderId('');
+    setGoodsReceiptId('');
+    setBranchId('');
+    setWarehouseId('');
+    setInvoiceNumber('');
+    setInvoiceDate(localToday());
+    setPaidAmount('0');
+    setPaymentMethod('cash');
+    setLines([emptyInvoiceLine()]);
+  };
+
   const save = async () => {
     const validLines = lines.filter((l) => l.productId && Number(l.quantity) > 0);
     if (!supplierId || !validLines.length) {
       toast.error(uiStatic('يرجى تعبئة البيانات وإضافة بند واحد على الأقل'));
       return;
     }
+    if (isDirect && !effectiveBranchId) {
+      toast.error(uiStatic('اختر الفرع'));
+      return;
+    }
+    const paid = Number(paidAmount) || 0;
+    if (isDirect && paid > invoiceTotal) {
+      toast.error(uiStatic('المدفوع أكبر من إجمالي الفاتورة'));
+      return;
+    }
     setSaving(true);
     try {
-      await api.post('/purchase-invoices', {
-        supplierId: Number(supplierId),
-        invoiceNumber: invoiceNumber.trim() || undefined,
-        purchaseOrderId: purchaseOrderId ? Number(purchaseOrderId) : undefined,
-        goodsReceiptId: goodsReceiptId ? Number(goodsReceiptId) : undefined,
-        invoiceDate: invoiceDate || undefined,
-        items: validLines.map((l) => ({
-          productId: Number(l.productId),
-          name: l.name,
-          quantity: Number(l.quantity),
-          price: Number(l.price) || 0,
-        })),
-      });
-      toast.success(uiStatic('تم إنشاء فاتورة المشتريات'));
+      if (isDirect) {
+        const option = (id: string) => supplierMaterials?.find((m) => m.id === Number(id));
+        const { data: created } = await api.post<{ id: number }>('/supplier-invoices', {
+          supplierId: Number(supplierId),
+          branchId: Number(effectiveBranchId),
+          warehouseId: warehouseId ? Number(warehouseId) : undefined,
+          supplierInvoiceNumber: invoiceNumber.trim() || undefined,
+          invoiceDate: invoiceDate || localToday(),
+          paidAmount: paid,
+          initialPaymentMethod: paymentMethod,
+          items: validLines.map((l) => ({
+            productId: Number(l.productId),
+            quantity: Number(l.quantity),
+            unit: option(l.productId)?.unitOfMeasure,
+            unitPrice: Number(l.price) || 0,
+            lineTotal: lineTotal(l),
+            costUpdateMode: 'weighted',
+          })),
+        });
+        toast.success(uiStatic('تم حفظ الفاتورة وإضافة البضاعة للمخزن'), {
+          action: {
+            label: uiStatic('عمل أمر صرف'),
+            onClick: () => navigate(`/inventory/transactions?fromInvoice=${created.id}`),
+          },
+          duration: 10_000,
+        });
+        await Promise.all([
+          qc.invalidateQueries({ queryKey: ['supplier-invoices'] }),
+          qc.invalidateQueries({ queryKey: ['products'] }),
+          qc.invalidateQueries({ queryKey: ['stock'] }),
+          qc.invalidateQueries({ queryKey: ['suppliers', supplierId, 'materials'] }),
+        ]);
+      } else {
+        await api.post('/purchase-invoices', {
+          supplierId: Number(supplierId),
+          branchId: effectiveBranchId ? Number(effectiveBranchId) : undefined,
+          invoiceNumber: invoiceNumber.trim() || undefined,
+          purchaseOrderId: purchaseOrderId ? Number(purchaseOrderId) : undefined,
+          goodsReceiptId: goodsReceiptId ? Number(goodsReceiptId) : undefined,
+          invoiceDate: invoiceDate || undefined,
+          items: validLines.map((l) => ({
+            productId: Number(l.productId),
+            name: l.name,
+            quantity: Number(l.quantity),
+            price: Number(l.price) || 0,
+          })),
+        });
+        toast.success(uiStatic('تم إنشاء فاتورة المشتريات'));
+        void refetch();
+      }
       setOpen(false);
-      void refetch();
     } catch (e) {
       toast.error(apiError(e));
     } finally {
@@ -214,12 +314,7 @@ function PurchaseInvoicesTab() {
       <div className="mb-4 flex justify-end">
         <Button
           onClick={() => {
-            setSupplierId('');
-            setPurchaseOrderId('');
-            setGoodsReceiptId('');
-            setInvoiceNumber('');
-            setInvoiceDate('');
-            setLines([{ productId: '', name: '', quantity: '1', price: '0' }]);
+            resetForm();
             setOpen(true);
           }}
         >
@@ -246,126 +341,252 @@ function PurchaseInvoicesTab() {
           <DialogHeader>
             <DialogTitle>{uiStatic('فاتورة مشتريات جديدة')}</DialogTitle>
           </DialogHeader>
-          <div className="grid gap-3 py-2">
-            <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-4 py-2">
+            <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1">
-                <Label>{uiStatic('أمر الشراء')}</Label>
+                <Label>{uiStatic('المورد')}</Label>
                 <select
-                  className="rounded-md border bg-background px-3 py-2 text-sm"
-                  value={purchaseOrderId}
-                  onChange={(e) => void loadPurchaseOrder(e.target.value)}
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                  value={supplierId}
+                  disabled={!isDirect && !!purchaseOrderId}
+                  onChange={(e) => {
+                    setSupplierId(e.target.value);
+                    if (isDirect) setLines([emptyInvoiceLine()]);
+                  }}
                 >
-                  <option value="">{uiStatic('—')}</option>
-                  {(purchaseOrders ?? []).map((po) => (
-                    <option key={po.id} value={po.id}>
-                      {po.poNumber}
+                  <option value="">{uiStatic('اختر المورد')}</option>
+                  {(suppliers ?? []).map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.nameAr}
                     </option>
                   ))}
                 </select>
               </div>
               <div className="grid gap-1">
-                <Label>{uiStatic('إذن الاستلام')}</Label>
+                <Label>{uiStatic('الفرع')}</Label>
                 <select
-                  className="rounded-md border bg-background px-3 py-2 text-sm"
-                  value={goodsReceiptId}
-                  onChange={(e) => void loadGoodsReceipt(e.target.value)}
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                  value={effectiveBranchId}
+                  disabled={userBranchLocked}
+                  onChange={(e) => {
+                    setBranchId(e.target.value);
+                    setWarehouseId('');
+                    if (isDirect) setLines([emptyInvoiceLine()]);
+                  }}
                 >
-                  <option value="">{uiStatic('—')}</option>
-                  {(goodsReceipts ?? []).map((grn) => (
-                    <option key={grn.id} value={grn.id}>
-                      {grn.grnNumber}
+                  {(branches ?? []).map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
                     </option>
                   ))}
                 </select>
               </div>
-            </div>
-            <div className="grid gap-1">
-              <Label>{uiStatic('المورد')}</Label>
-              <select
-                className="rounded-md border bg-background px-3 py-2 text-sm"
-                value={supplierId}
-                onChange={(e) => setSupplierId(e.target.value)}
-              >
-                <option value="">{uiStatic('—')}</option>
-                {(suppliers ?? []).map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.nameAr}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
                 <Label>{uiStatic('رقم فاتورة المورد')}</Label>
-                <Input value={invoiceNumber} onChange={(e) => setInvoiceNumber(e.target.value)} />
+                <Input
+                  value={invoiceNumber}
+                  placeholder={uiStatic('الرقم المكتوب على الفاتورة (اختياري)')}
+                  onChange={(e) => setInvoiceNumber(e.target.value)}
+                />
               </div>
               <div className="grid gap-1">
                 <Label>{uiStatic('تاريخ الفاتورة')}</Label>
                 <Input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
               </div>
-            </div>
-            <div className="space-y-2">
-              <Label>{uiStatic('البنود')}</Label>
-              {lines.map((line, idx) => (
-                <div key={idx} className="grid grid-cols-3 gap-2">
-                  <select
-                    className="rounded-md border bg-background px-2 py-2 text-sm"
-                    value={line.productId}
-                    onChange={(e) => {
-                      const product = products?.find((item) => item.id === Number(e.target.value));
-                      setLines((prev) => {
-                        const next = [...prev];
-                        next[idx] = {
-                          ...next[idx],
-                          productId: e.target.value,
-                          name: product?.nameAr ?? '',
-                          price: String(product?.costPrice ?? 0),
-                        };
-                        return next;
-                      });
-                    }}
-                  >
-                    <option value="">{uiStatic('المنتج')}</option>
-                    {(products ?? []).map((product) => (
-                      <option key={product.id} value={product.id}>{product.nameAr}</option>
-                    ))}
-                  </select>
-                  <Input
-                    type="number"
-                    className="nums"
-                    placeholder={uiStatic('كمية')}
-                    value={line.quantity}
-                    onChange={(e) => {
-                      setLines((prev) => {
-                        const next = [...prev];
-                        next[idx] = { ...next[idx], quantity: e.target.value };
-                        return next;
-                      });
-                    }}
-                  />
-                  <Input
-                    type="number"
-                    className="nums"
-                    placeholder={uiStatic('سعر')}
-                    value={line.price}
-                    onChange={(e) => {
-                      setLines((prev) => {
-                        const next = [...prev];
-                        next[idx] = { ...next[idx], price: e.target.value };
-                        return next;
-                      });
-                    }}
+              {isDirect ? (
+                <div className="sm:col-span-2">
+                  <WarehouseSelect
+                    key={effectiveBranchId}
+                    branchId={effectiveBranchId}
+                    value={warehouseId}
+                    onChange={setWarehouseId}
+                    label="المخزن اللي هتدخل فيه البضاعة"
                   />
                 </div>
-              ))}
+              ) : null}
+            </div>
+
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+                <input
+                  type="checkbox"
+                  checked={linkToPo}
+                  onChange={(e) => {
+                    setLinkToPo(e.target.checked);
+                    if (!e.target.checked) {
+                      setPurchaseOrderId('');
+                      setGoodsReceiptId('');
+                    }
+                    setLines([emptyInvoiceLine()]);
+                  }}
+                />
+                {uiStatic('ربط الفاتورة بأمر شراء / إذن استلام (اختياري)')}
+              </label>
+              {linkToPo ? (
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div className="grid gap-1">
+                    <Label>{uiStatic('أمر الشراء')}</Label>
+                    <select
+                      className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                      value={purchaseOrderId}
+                      onChange={(e) => void loadPurchaseOrder(e.target.value)}
+                    >
+                      <option value="">{uiStatic('بدون')}</option>
+                      {(purchaseOrders ?? []).map((po) => (
+                        <option key={po.id} value={po.id}>
+                          {po.poNumber}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid gap-1">
+                    <Label>{uiStatic('إذن الاستلام')}</Label>
+                    <select
+                      className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                      value={goodsReceiptId}
+                      onChange={(e) => void loadGoodsReceipt(e.target.value)}
+                    >
+                      <option value="">{uiStatic('بدون')}</option>
+                      {(goodsReceipts ?? []).map((grn) => (
+                        <option key={grn.id} value={grn.id}>
+                          {grn.grnNumber}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="text-xs text-muted-foreground sm:col-span-2">
+                    {uiStatic('مع أمر الشراء، البضاعة بتدخل المخزن من إذن الاستلام، والفاتورة بتتطابق معاه.')}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-2">
+              <Label>{uiStatic('البنود')}</Label>
+              <div className="hidden grid-cols-[minmax(0,2fr)_90px_minmax(0,1fr)_minmax(0,1fr)_100px_36px] gap-2 px-1 text-xs font-semibold text-muted-foreground sm:grid">
+                <span>{uiStatic('المنتج')}</span>
+                <span>{uiStatic('الرصيد المتاح')}</span>
+                <span>{uiStatic('الكمية')}</span>
+                <span>{uiStatic('سعر الوحدة')}</span>
+                <span>{uiStatic('الإجمالي')}</span>
+                <span />
+              </div>
+              {isDirect && supplierId && supplierMaterials && supplierMaterials.length === 0 ? (
+                <p className="rounded-md border border-amber-400/50 bg-amber-500/10 p-2 text-xs">
+                  {uiStatic('مفيش منتجات مربوطة بالمورد ده. اربط المنتجات بالمورد من شاشة الموردين الأول.')}
+                </p>
+              ) : null}
+              {lines.map((line, idx) => {
+                const opt = lineOptions.find((o) => o.id === Number(line.productId));
+                return (
+                  <div
+                    key={idx}
+                    className="grid grid-cols-2 gap-2 rounded-md border p-2 sm:grid-cols-[minmax(0,2fr)_90px_minmax(0,1fr)_minmax(0,1fr)_100px_36px] sm:border-0 sm:p-0"
+                  >
+                    <select
+                      aria-label={uiStatic('المنتج')}
+                      className="col-span-2 h-10 rounded-md border bg-background px-2 text-sm sm:col-span-1"
+                      value={line.productId}
+                      disabled={isDirect && !supplierId}
+                      onChange={(e) => {
+                        const picked = lineOptions.find((o) => o.id === Number(e.target.value));
+                        updateLine(idx, { productId: e.target.value, name: picked?.name ?? '', price: String(picked?.cost ?? 0) });
+                      }}
+                    >
+                      <option value="">{uiStatic(isDirect && !supplierId ? 'اختر المورد الأول' : 'اختر المنتج')}</option>
+                      {lineOptions.map((o) => (
+                        <option key={o.id} value={o.id}>{o.name}</option>
+                      ))}
+                    </select>
+                    <div className="nums flex h-10 items-center rounded-md border bg-muted/40 px-2 text-sm text-muted-foreground" title={uiStatic('الرصيد المتاح')}>
+                      {opt?.stock == null ? '—' : toArabicDigits(opt.stock)}
+                    </div>
+                    <Input
+                      type="number"
+                      min={0}
+                      aria-label={uiStatic('الكمية')}
+                      className="nums"
+                      value={line.quantity}
+                      onChange={(e) => updateLine(idx, { quantity: e.target.value })}
+                    />
+                    <Input
+                      type="number"
+                      min={0}
+                      aria-label={uiStatic('سعر الوحدة')}
+                      className="nums"
+                      value={line.price}
+                      onChange={(e) => updateLine(idx, { price: e.target.value })}
+                    />
+                    <div className="nums flex h-10 items-center rounded-md border bg-muted/40 px-2 text-sm font-semibold">
+                      {toArabicDigits(lineTotal(line).toFixed(2))}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      aria-label={uiStatic('حذف البند')}
+                      disabled={lines.length === 1}
+                      onClick={() => setLines((prev) => prev.filter((_, i) => i !== idx))}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                );
+              })}
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                onClick={() => setLines((prev) => [...prev, { productId: '', name: '', quantity: '1', price: '0' }])}
+                onClick={() => setLines((prev) => [...prev, emptyInvoiceLine()])}
               >
                 {uiStatic('إضافة بند')}
               </Button>
+            </div>
+
+            <div className="grid gap-3 rounded-lg border p-3 sm:grid-cols-3">
+              <div className="grid gap-1">
+                <Label>{uiStatic('إجمالي الفاتورة')}</Label>
+                <div className="nums flex h-10 items-center rounded-md border bg-muted/40 px-3 text-base font-bold">
+                  {toArabicDigits(invoiceTotal.toFixed(2))}
+                </div>
+              </div>
+              {isDirect ? (
+                <>
+                  <div className="grid gap-1">
+                    <Label>{uiStatic('المدفوع الآن')}</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      max={invoiceTotal}
+                      className="nums"
+                      value={paidAmount}
+                      onChange={(e) => setPaidAmount(e.target.value)}
+                    />
+                  </div>
+                  <div className="grid gap-1">
+                    <Label>{uiStatic('طريقة الدفع')}</Label>
+                    <select
+                      className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                      value={paymentMethod}
+                      disabled={(Number(paidAmount) || 0) <= 0}
+                      onChange={(e) => setPaymentMethod(e.target.value)}
+                    >
+                      <option value="cash">{uiStatic('نقدي')}</option>
+                      <option value="bank">{uiStatic('تحويل بنكي')}</option>
+                      <option value="card">{uiStatic('بطاقة')}</option>
+                      <option value="wallet">{uiStatic('محفظة')}</option>
+                    </select>
+                  </div>
+                  <p className="text-xs text-muted-foreground sm:col-span-3">
+                    {uiStatic('الباقي بيتسجل مديونية على المورد. الفاتورة دي بتظهر كمان في')}{' '}
+                    <Link className="underline" to="/club/cafe/purchases">{uiStatic('مشتريات الكافيه')}</Link>.
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground sm:col-span-2">
+                  {uiStatic('الدفع لفواتير أوامر الشراء بيتسجل من تبويب مدفوعات الموردين.')}
+                </p>
+              )}
             </div>
           </div>
           <DialogFooter>

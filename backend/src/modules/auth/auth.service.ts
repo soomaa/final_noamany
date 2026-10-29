@@ -9,6 +9,7 @@ import { JwtUser } from '../../common/types/jwt-user';
 import { MemberLoginResult } from '../../common/types/member-jwt-user';
 import { MemberAuthService } from '../member/member-auth.service';
 import { isBcryptHash, legacyMatches } from './legacy-hash.util';
+import { INACTIVE_EMPLOYEE, isEmployeeInactive } from './employee-status.util';
 
 /** Faithful to legacy Auth.php: same failure message whether user is missing,
  *  password is wrong, or the account is not approved. */
@@ -294,8 +295,13 @@ export class AuthService {
           mosma_wazefy_n: true,
           mosma_wazefy_code: true,
           personal_photo: true,
+          employee_type: true,
+          leave_emp: true,
         },
       });
+      if (user.level !== 1 && isEmployeeInactive(emp)) {
+        throw new UnauthorizedException(INACTIVE_EMPLOYEE);
+      }
       if (emp) {
         branch = emp.branch_id_fk ?? branch;
         manWomenType = emp.emp_type ?? 0;

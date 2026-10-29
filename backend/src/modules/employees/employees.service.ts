@@ -654,10 +654,11 @@ export class EmployeesService {
     // can write the requested fields, then throws while deserializing that
     // unchanged legacy value from the returned row. updateMany returns only a
     // count, so it persists the edit without reading unrelated legacy fields.
-    await this.prisma.employees.updateMany({
+    const written = await this.prisma.employees.updateMany({
       where: { id },
       data: { ...data, ...this.dualDateStamps(userId) },
     });
+    if (written.count === 0) throw new NotFoundException('لم يتم حفظ تعديل الموظف');
 
     if (data.personal_photo != null) {
       const photo = String(data.personal_photo).trim();

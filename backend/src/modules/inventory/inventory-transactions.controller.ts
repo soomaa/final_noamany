@@ -79,8 +79,12 @@ export class InventoryTransactionsController {
 
   @Post()
   @RequiresPermission('gym-sales.inventory.gym_issue:create', 'gym-sales.inventory.transactions:create')
-  create(@Body() body: UpsertInventoryTransactionDto, @CurrentUser() user: JwtUser) {
-    return this.service.create(body, user);
+  create(
+    @Body() body: UpsertInventoryTransactionDto,
+    @CurrentUser() user: JwtUser,
+    @Query('execute') execute?: string,
+  ) {
+    return execute === 'true' ? this.service.createAndApprove(body, user) : this.service.create(body, user);
   }
 
   @Put(':id')

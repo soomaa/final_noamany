@@ -159,9 +159,8 @@ export function InventoryGymIssuePage() {
           warning: ui('سيتم خصم الكميات من المخزون فور التأكيد'),
         }),
         async () => {
-          const { data } = await api.post('/inventory-transactions', payload);
-          const txnId = (data as { id: number }).id;
-          await api.post(`/inventory-transactions/${txnId}/approve`);
+          // One request so a failed deduction never leaves an orphan draft behind.
+          await api.post('/inventory-transactions?execute=true', payload);
         },
       );
       if (ok) {

@@ -1,5 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowRight, Loader2, Save, User } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { type FieldErrors, useForm } from 'react-hook-form';
@@ -178,6 +178,7 @@ export function EmployeeFormPage() {
   const [documents, setDocuments] = useState<EmployeeDocumentRow[]>([]);
   const { upload } = useFileUpload();
 
+  const queryClient = useQueryClient();
   const { data: existing, isLoading, isError, error, refetch } = useResource<EmployeeFormResponse>('employees', id);
   const { data: docsData } = useResource<EmployeeDocumentFile[]>('employees', id, 'documents');
   const { data: genders } = useLookups('gender');
@@ -336,9 +337,13 @@ export function EmployeeFormPage() {
 
       if (isEdit) {
         const empId = Number(id);
-        await api.put(`/employees/${empId}`, { ...values, addToSystem: !!values.addToSystem });
+        const { data: saved } = await api.put<{ id: number; warning?: string }>(`/employees/${empId}`, {
+          ...values,
+          addToSystem: !!values.addToSystem,
+        });
         await api.put(`/employees/${empId}/documents`, { rows: docRows });
-        toast.success(ui('تم تحديث بيانات الموظف'));
+        if (saved?.warning) toast.warning(ui(saved.warning));
+        else toast.success(ui('تم تحديث بيانات الموظف'));
       } else {
         const { data: created } = await api.post<{ id: number; emp_code: number }>('/employees', {
           ...values,
@@ -347,6 +352,8 @@ export function EmployeeFormPage() {
         if (docRows.length) await api.put(`/employees/${created.id}/documents`, { rows: docRows });
         toast.success(ui('تم إضافة الموظف'));
       }
+      // The list and this form are cached for 30s; drop them so the saved data shows right away.
+      await queryClient.invalidateQueries({ queryKey: ['employees'] });
       navigate('/employees');
     } catch (e) {
       toast.error(apiError(e));

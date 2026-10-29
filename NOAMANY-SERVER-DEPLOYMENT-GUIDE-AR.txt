@@ -386,3 +386,47 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261022-r
 المرجع للرفع القادم: payload 20261022-r1 فوق r2 فوق r1 فوق r7، والمخطط 63f965a8... للـ expectedSchema.
 درس مستفاد: لا تُعِد ui-map.json من git index؛ الملف كان به ترجمات غير مُلتزمة. أداة البناء الآن ترفض أي حزمة تفقد ترجمة موجودة في الإصدار المثبت.
 اختبارات المتصفح بحسابات المستخدمين وعمليات الحفظ الفعلية لم توثق بعد.
+
+آخر تثبيت مؤكد — 20261027-r1، سجل وارد يوم 27 أكتوبر 2026
+--------------------------------------------------------
+- من يرفع: فاطمة، من الماك (~/Downloads/nomanyfinal). أسماء لم تعد تعمل على المشروع.
+- أدوات release القديمة غير متاحة. كانت على جهاز ويندوز، ولم تُرفع على Git لأن /release/ في .gitignore.
+- الأدوات الجديدة محفوظة في Git داخل release-tools/daily-update-20261027-r1:
+  - install.sh وrollback.sh وcheck-backend.cjs وmake-package.sh.
+  - الحزمة المبنية تُحفظ في release/ (مستثنى من Git).
+- السيرفر: root@144.76.74.208، الحساب noamanycenter. الملفات مملوكة لـ noamanycenter:noamanycenter، والمثبّت يحافظ على الملكية عند التشغيل كـ root.
+
+أكد السجل: UPDATE VERIFIED: 2026-10-27-r1; backend and management UI updated; API healthy.
+
+خط الأساس قبل التثبيت (فُحص بـ deploy-check-20261027.sh):
+- المخطط 63f965a8…
+- system.html ‏f557ca4c…
+- الملفات الخمسة في dist مطابقة لبناء GitHub main 9f40e86.
+- واجهة GitHub main بعد npm ci (lockfile) أعطت system.html مطابقاً حرفياً للإنتاج.
+- تحذير: node_modules المحلي في frontend كان يحتوي react-router-dom 7 بدل 6 المثبت في lock، والبناء به يختلف عن الإنتاج. ابنِ الواجهة دائماً بعد npm ci في مجلد نظيف.
+
+المحتوى:
+- 6 ملفات خلفية: منع دخول الموظف غير النشط، فحص حفظ الموظف، تنفيذ أوامر الصرف والتحويلات عند الحفظ.
+- system.html و259 asset جديد.
+- لا مخطط، ولا Client، ولا قاعدة بيانات.
+
+نتائج المثبّت:
+- preflight وNest graph على الخلفية الحالية والجديدة نجحا.
+- backup من 11 ملفاً.
+- ثلاث استجابات صحة.
+- /login ومساران إداريان يقدمان HTML الجديد، الملف المدخل 200، وPOST API يعيد 401.
+
+تأكد بعد التثبيت:
+- العملية الشغالة: node /home/noamanycenter/final.noamanycenter.com/dist/main.js، المستخدم root، بدأت 2026-10-27 03:00:01.
+- restart.txt عُدّل 02:59:19، فالعملية بدأت بعد كتابة ملفات 27-r1 وتشغّل الكود الجديد.
+- ملاحظة: العملية تعمل كـ root وليس noamanycenter، وبدأت على رأس الدقيقة. لذلك لم يجدها pgrep "NodeApp:" ولا ps -u noamanycenter.
+  افحص (قراءة فقط) من يشغّلها قبل أي تعديل: Passenger أم cron/watchdog. لا تغيّر طريقة التشغيل بالتخمين.
+  لفحص العملية بعد restart استخدم: ps -eo pid,user,lstart,args | grep final.noamanycenter
+
+لم يتأكد بعد:
+- اختبارات المتصفح بحسابات المستخدمين.
+
+النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct27-r1-update-backup.jHXPnb
+أمر الرجوع الخاص بهذا التثبيت فقط:
+bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/oct27-r1-update-backup.jHXPnb
+المرجع للرفع القادم: 22-r1 + payload 27-r1. خط الأساس لملفات dist الستة وsystem.html = ملفات payload 27-r1.

@@ -1,6 +1,7 @@
 import type { ColumnDef } from '@tanstack/react-table';
 import { Check, Eye, Plus, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { PaginatedResponse } from '@/components/common/data-table';
@@ -107,6 +108,60 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
   const [details, setDetails] = useState<InventoryTransactionRow | null>(null);
   const warehouseName = (id?: number | null) => (id == null ? '—' : warehouses?.find((w) => w.id === id)?.nameAr ?? `#${id}`);
   const branchName = (id?: number | null) => (id == null ? '—' : branches?.find((b) => b.id === id)?.name ?? `#${id}`);
+
+  // "/inventory/transactions?fromInvoice=ID" opens a transfer prefilled from a café purchase invoice:
+  // from the warehouse the invoice was received into, with the invoice's items and quantities.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const fromInvoice = searchParams.get('fromInvoice');
+  useEffect(() => {
+    if (!fromInvoice || !warehouses) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { data: inv } = await api.get<{
+          invoiceNumber: string;
+          branchId: number | null;
+          warehouseId: number | null;
+          items: Array<{ productId: number | null; productName: string | null; quantity: number; baseQuantity: number | null; totalAmount: number }>;
+        }>(`/supplier-invoices/${fromInvoice}`);
+        if (cancelled) return;
+        setForm({
+          ...TXN_EMPTY,
+          reference: `صرف من ${inv.invoiceNumber}`,
+          txnType: 'transfer',
+          txnDate: localToday(),
+          branchId: String(inv.branchId ?? branches?.[0]?.id ?? ''),
+          sourceWarehouseId: inv.warehouseId ? String(inv.warehouseId) : '',
+        });
+        setLines(
+          inv.items
+            .filter((i) => i.productId != null)
+            .map((i) => {
+              const qty = i.baseQuantity ?? i.quantity;
+              return {
+                productId: String(i.productId),
+                itemName: i.productName ?? '',
+                quantity: String(qty),
+                price: String(qty > 0 ? Math.round((i.totalAmount / qty) * 100) / 100 : 0),
+              };
+            }),
+        );
+        setOpen(true);
+      } catch (e) {
+        toast.error(apiError(e));
+      } finally {
+        if (!cancelled) {
+          const next = new URLSearchParams(searchParams);
+          next.delete('fromInvoice');
+          setSearchParams(next, { replace: true });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fromInvoice, warehouses]);
 
   const approve = async (id: number) => {
     if (actingId != null) return;
@@ -242,7 +297,7 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
     }
     setSaving(true);
     try {
-      await api.post('/inventory-transactions', {
+      await api.post('/inventory-transactions?execute=true', {
         reference: form.reference,
         txnType: form.txnType,
         txnDate: form.txnDate,
@@ -259,7 +314,7 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
           total: Math.round(Number(l.quantity) * (Number(l.price) || 0) * 100) / 100,
         })),
       });
-      toast.success(ui('تم إنشاء الحركة (مسودة)'));
+      toast.success(ui('تم حفظ الحركة وتحديث المخزون'));
       setOpen(false);
       void refetch();
     } catch (e) {
@@ -423,7 +478,7 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
-                <Label>{ui('مستودع المصدر')}</Label>
+                <Label>{ui('من (مخزن / بار)')}</Label>
                 <select
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.sourceWarehouseId}
@@ -432,13 +487,13 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
                   <option value="">{ui('—')}</option>
                   {(warehouses ?? []).map((w) => (
                     <option key={w.id} value={w.id}>
-                      {w.nameAr}
+                      {w.nameAr} — {branchName(w.branchId)}
                     </option>
                   ))}
                 </select>
               </div>
               <div className="grid gap-1">
-                <Label>{ui('مستودع الوجهة')}</Label>
+                <Label>{ui('إلى (مخزن / بار — أي فرع)')}</Label>
                 <select
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.targetWarehouseId}
@@ -447,7 +502,7 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
                   <option value="">{ui('—')}</option>
                   {(warehouses ?? []).map((w) => (
                     <option key={w.id} value={w.id}>
-                      {w.nameAr}
+                      {w.nameAr} — {branchName(w.branchId)}
                     </option>
                   ))}
                 </select>
