@@ -439,3 +439,18 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - مجلدا backend/src/common/uploads وbackend/src/modules/uploads متجاهَلان في .gitignore. لازم يتنسخوا يدوياً لأي worktree بناء.
 - المحتوى: 152 ملف dist متغيّر + 4 جديدة + 265 asset. بدون main.js أو app.module.js أو schema أو قاعدة بيانات.
 - التثبيت والرجوع: README-AR.txt داخل الحزمة.
+
+آخر تثبيت مؤكد — 20261029-r2، يوم 29 أكتوبر 2026
+----------------------------------------------
+- r1 اترفع واترجع تلقائياً: الملفات اتكتبت، بس المثبّت ماستناش الـ restart. السيرفر رجع 27-r1 سليم.
+- طريقة التشغيل الحقيقية (اتأكدت بفحص قراءة فقط):
+  - التطبيق شغال تحت PM2 بتاع root باسم noamany-final، وبيسمع على المنفذ 9043. Passenger مش هو اللي مشغّله.
+  - root cron كل دقيقة: /usr/local/sbin/restart-noamany-on-request.
+    لو tmp/restart.txt موجود، بيمسحه ويعمل pm2 restart noamany-final.
+  - يعني الـ restart بياخد لحد دقيقة. المثبّت من r2 بيستنى لحد ما العملية تتغير وبعدين يفحص الصحة.
+- النتيجة: 152 ملف dist + 4 جديدة + 265 asset، وbackup من 305 ملف. ثلاث استجابات صحة، والعملية اتغيرت من 2743173 لـ 2832016.
+- التشغيل اتعمل في الخلفية بـ nohup setsid (release/run-install-20261029-r2.sh)، فلو SSH اتقطع التثبيت بيكمل. الـ log في tmp/install-20261029-r2.log.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct29-r2-update-backup.QQcQZn
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261029-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/oct29-r2-update-backup.QQcQZn
+- المرجع للرفع القادم: 27-r1 + payload 29-r2.
