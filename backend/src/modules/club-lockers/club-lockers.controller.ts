@@ -79,26 +79,26 @@ export class ClubLockersController {
   }
 
   @Get(':id/details')
-  lockerDetails(@Param('id', ParseIntPipe) id: number) {
-    return this.service.getLockerDetails(id);
+  lockerDetails(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.getLockerDetails(id, user);
   }
 
   @Post()
   @RequiresPermission('club.lockers:create')
-  createLocker(@Body() body: { lockerNumber: string; mainBranchId: number; subBranchId: number }) {
-    return this.service.createLocker(body);
+  createLocker(@Body() body: { lockerNumber: string; mainBranchId: number; subBranchId: number }, @CurrentUser() user: JwtUser) {
+    return this.service.createLocker(body, user);
   }
 
   @Put(':id')
   @RequiresPermission('club.lockers:update')
-  updateLocker(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateLocker(id, body as Parameters<ClubLockersService['updateLocker']>[1]);
+  updateLocker(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateLocker(id, body as Parameters<ClubLockersService['updateLocker']>[1], user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.lockers:delete')
-  removeLocker(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeLocker(id);
+  removeLocker(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeLocker(id, user);
   }
 }
 
@@ -109,31 +109,31 @@ export class ClubLockerTypesController {
   constructor(private readonly service: ClubLockersService) {}
 
   @Get('all')
-  listAll() {
-    return this.service.listTypes();
+  listAll(@CurrentUser() user: JwtUser) {
+    return this.service.listTypes(user);
   }
 
   @Get()
-  list() {
-    return this.service.listTypes();
+  list(@CurrentUser() user: JwtUser) {
+    return this.service.listTypes(user);
   }
 
   @Post()
   @RequiresPermission('club.lockers:create')
-  create(@Body() body: Record<string, unknown>) {
-    return this.service.createType(body);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createType(body, user);
   }
 
   @Put(':id')
   @RequiresPermission('club.lockers:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateType(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateType(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.lockers:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeType(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeType(id, user);
   }
 }
 
@@ -150,26 +150,26 @@ export class ClubLockerSubscriptionsController {
 
   @Post()
   @RequiresPermission('club.lockers:create')
-  create(@Body() body: Record<string, unknown>, @CurrentUser('sub') userId: number) {
-    return this.service.createSubscription(body, userId);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createSubscription(body, user.sub, user);
   }
 
   @Put(':id')
   @RequiresPermission('club.lockers:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateSubscription(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateSubscription(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.lockers:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeSubscription(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeSubscription(id, user);
   }
 
   @Patch(':id/release')
   @RequiresPermission('club.lockers:update')
-  release(@Param('id', ParseIntPipe) id: number) {
-    return this.service.releaseSubscription(id);
+  release(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.releaseSubscription(id, user);
   }
 
   @Patch(':id/freeze')
@@ -177,14 +177,15 @@ export class ClubLockerSubscriptionsController {
   freeze(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { days: number },
+    @CurrentUser() user: JwtUser,
     @Query('dryRun') dryRun?: string,
   ) {
-    return this.service.freezeSubscription(id, body.days, isDryRun(dryRun));
+    return this.service.freezeSubscription(id, body.days, isDryRun(dryRun), user);
   }
 
   @Patch(':id/unfreeze')
   @RequiresPermission('club.lockers:update')
-  unfreeze(@Param('id', ParseIntPipe) id: number, @Query('dryRun') dryRun?: string) {
-    return this.service.unfreezeSubscription(id, isDryRun(dryRun));
+  unfreeze(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser, @Query('dryRun') dryRun?: string) {
+    return this.service.unfreezeSubscription(id, isDryRun(dryRun), user);
   }
 }

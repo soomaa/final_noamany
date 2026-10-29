@@ -5,11 +5,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import type { MenuNode } from '../rbac/menu.service';
 import { syncEmployeeUserRole } from '../rbac/job-title-role.util';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { assertCanGrantLevel, assertCanManageUser } from './user-target-scope.util';
 
 /** bcrypt cost — matches the auth module's default rounds. */
 const BCRYPT_ROUNDS = 12;
@@ -36,7 +39,10 @@ export const LEVEL_LABELS: Record<number, string> = {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: BranchScopeService,
+  ) {}
 
   async findAll() {
     const rows = await this.prisma.users.findMany({
@@ -97,11 +103,16 @@ export class UsersService {
   }
 
   /** POST /users — faithful to User::adduser + User_m::add. */
-  async create(dto: CreateUserDto) {
+  async create(dto: CreateUserDto, actor: JwtUser) {
+    // Only a system admin may mint a level-1 login or one outside their branch scope.
+    assertCanGrantLevel(actor, dto.level);
     const link = dto.level === 1 ? null : await this.resolveEmployeeLink(dto.empCode!);
+    if (link) this.scope.assertBranchAllowed(actor, link.branch_id_fk);
     const existingEmployeeUser = link
       ? await this.prisma.users.findFirst({ where: { emp_code: link.emp_code }, select: { user_id: true } })
       : null;
+    // Re-using an employee's existing login is an edit of that login.
+    if (existingEmployeeUser) await assertCanManageUser(this.prisma, this.scope, actor, existingEmployeeUser.user_id);
     await this.assertUsernameUnique(dto.username, existingEmployeeUser?.user_id);
 
     const password = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
@@ -154,9 +165,12 @@ export class UsersService {
   }
 
   /** PATCH /users/:id — faithful to User::edit + User_m::edit. */
-  async update(userId: number, dto: UpdateUserDto) {
+  async update(userId: number, dto: UpdateUserDto, actor: JwtUser) {
     const existing = await this.prisma.users.findUnique({ where: { user_id: userId } });
     if (!existing) throw new NotFoundException('المستخدم غير موجود');
+    // Non-admins cannot edit/reset an admin, a foreign-branch login, or promote to level 1.
+    await assertCanManageUser(this.prisma, this.scope, actor, userId);
+    assertCanGrantLevel(actor, dto.level);
 
     await this.assertUsernameUnique(dto.username, userId);
 
@@ -171,6 +185,8 @@ export class UsersService {
       data.name = dto.fullname ?? null;
     } else {
       const link = await this.resolveEmployeeLink(dto.empCode!);
+      // Re-linking to another employee must stay inside the actor's scope too.
+      this.scope.assertBranchAllowed(actor, link.branch_id_fk);
       data.name = link.name;
       data.branch_id_fk = link.branch_id_fk;
       data.emp_code = link.emp_code;
@@ -207,9 +223,10 @@ export class UsersService {
   }
 
   /** DELETE /users/:id — faithful to User::del + User_m::delete_user. */
-  async remove(userId: number) {
+  async remove(userId: number, actor: JwtUser) {
     const existing = await this.prisma.users.findUnique({ where: { user_id: userId } });
     if (!existing) throw new NotFoundException('المستخدم غير موجود');
+    await assertCanManageUser(this.prisma, this.scope, actor, userId);
 
     // Clean up the permission grants for this user as well (legacy left orphans;
     // we keep it tidy and avoid dangling rows in the permissions junction).
@@ -226,12 +243,13 @@ export class UsersService {
    * PATCH /users/:id/approved — faithful to User::status_user_type +
    * User_m::update_status_user_type, which TOGGLES approved (1 -> 0, 0 -> 1).
    */
-  async toggleApproved(userId: number) {
+  async toggleApproved(userId: number, actor: JwtUser) {
     const existing = await this.prisma.users.findUnique({
       where: { user_id: userId },
       select: { approved: true },
     });
     if (!existing) throw new NotFoundException('المستخدم غير موجود');
+    await assertCanManageUser(this.prisma, this.scope, actor, userId);
 
     const next = existing.approved === 1 ? 0 : 1;
     await this.prisma.users.update({ where: { user_id: userId }, data: { approved: next } });

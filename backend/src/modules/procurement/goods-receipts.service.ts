@@ -10,6 +10,8 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { InventoryStockService } from '../inventory/inventory-stock.service';
 import { LedgerService } from '../accounting/ledger.service';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
+import type { JwtUser } from '../../common/types/jwt-user';
+import { ProcurementScopeService } from './procurement-scope.service';
 import {
   ChangeGoodsReceiptStatusDto,
   ListGoodsReceiptsDto,
@@ -30,6 +32,7 @@ export class GoodsReceiptsService {
     private readonly stock: InventoryStockService,
     private readonly moduleLedger: ModuleLedgerService,
     private readonly ledger: LedgerService,
+    private readonly scope: ProcurementScopeService,
   ) {}
 
   private mapItem(item: Prisma.prc_goods_receipt_itemsGetPayload<object>) {
@@ -64,8 +67,10 @@ export class GoodsReceiptsService {
     };
   }
 
-  async list(q: ListGoodsReceiptsDto) {
+  async list(q: ListGoodsReceiptsDto, user?: JwtUser) {
     const and: Prisma.prc_goods_receiptsWhereInput[] = [notDeletedFilter()];
+    const scoped = this.scope.listBranches(user, q.branchId);
+    if (scoped) and.push({ branch_id: { in: scoped } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -76,7 +81,6 @@ export class GoodsReceiptsService {
     if (q.purchaseOrderId && q.purchaseOrderId !== 'all') {
       and.push({ purchase_order_id: Number(q.purchaseOrderId) });
     }
-    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
     const where = { AND: and };
     const [rows, total] = await Promise.all([
       this.prisma.prc_goods_receipts.findMany({
@@ -91,12 +95,13 @@ export class GoodsReceiptsService {
     return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: JwtUser) {
     const row = await this.prisma.prc_goods_receipts.findFirst({
       where: { id, ...notDeletedFilter() },
       include: { items: true },
     });
     if (!row) throw new NotFoundException('إذن الاستلام غير موجود');
+    await this.scope.assertDocument(user, row);
     return this.map(row);
   }
 
@@ -157,11 +162,20 @@ export class GoodsReceiptsService {
     }
   }
 
-  async create(dto: UpsertGoodsReceiptDto, userId: number) {
-    const po = await this.prisma.prc_purchase_orders.findFirst({
-      where: { id: dto.purchaseOrderId, ...notDeletedFilter() },
-    });
-    if (!po) throw new NotFoundException('أمر الشراء غير موجود');
+  /** Branch/warehouse a receipt may be filed under: in scope, and the warehouse must belong to that branch. */
+  private async resolveReceiptLocation(user: JwtUser, branchId: number | null, warehouseId: number | null | undefined) {
+    if (branchId != null) this.scope.assertBranch(user, branchId);
+    if (warehouseId) {
+      const location = await this.scope.resolveWarehouse(user, warehouseId, branchId);
+      return location.branchId;
+    }
+    return branchId;
+  }
+
+  async create(dto: UpsertGoodsReceiptDto, user: JwtUser) {
+    const userId = user.sub;
+    const po = await this.scope.loadPurchaseOrder(user, dto.purchaseOrderId);
+    const branchId = await this.resolveReceiptLocation(user, dto.branchId ?? po.branch_id, dto.warehouseId);
     await this.validateReceiptQuantities(dto.purchaseOrderId, dto.items);
 
     const row = await this.prisma.$transaction(async (tx) => {
@@ -177,7 +191,7 @@ export class GoodsReceiptsService {
           receipt_date: dto.receiptDate ?? null,
           notes: dto.notes?.trim() ?? null,
           status: dto.status ?? 'draft',
-          branch_id: dto.branchId ?? po.branch_id,
+          branch_id: branchId,
           created_by: userId,
           items: {
             create: dto.items.map((i) => ({
@@ -196,11 +210,18 @@ export class GoodsReceiptsService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertGoodsReceiptDto>) {
+  async update(id: number, dto: Partial<UpsertGoodsReceiptDto>, user: JwtUser) {
     const existing = await this.prisma.prc_goods_receipts.findFirst({
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('إذن الاستلام غير موجود');
+    await this.scope.assertDocument(user, existing);
+    if (dto.purchaseOrderId != null && dto.purchaseOrderId !== existing.purchase_order_id) {
+      await this.scope.loadPurchaseOrder(user, dto.purchaseOrderId);
+    }
+    if (dto.branchId != null || dto.warehouseId != null) {
+      await this.resolveReceiptLocation(user, dto.branchId ?? existing.branch_id, dto.warehouseId ?? existing.warehouse_id);
+    }
     if (existing.stock_posted) {
       throw new BadRequestException('لا يمكن تعديل إذن استلام مرحّل للمخزون');
     }
@@ -244,11 +265,12 @@ export class GoodsReceiptsService {
     return this.map(row);
   }
 
-  async remove(id: number) {
+  async remove(id: number, user: JwtUser) {
     const existing = await this.prisma.prc_goods_receipts.findFirst({
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('إذن الاستلام غير موجود');
+    await this.scope.assertDocument(user, existing);
     if (existing.stock_posted) {
       throw new BadRequestException('لا يمكن حذف إذن استلام مرحّل للمخزون');
     }
@@ -383,12 +405,14 @@ export class GoodsReceiptsService {
     }
   }
 
-  async changeStatus(id: number, dto: ChangeGoodsReceiptStatusDto, userId: number, dryRun = false) {
+  async changeStatus(id: number, dto: ChangeGoodsReceiptStatusDto, user: JwtUser, dryRun = false) {
+    const userId = user.sub;
     const grnPreview = await this.prisma.prc_goods_receipts.findFirst({
       where: { id, ...notDeletedFilter() },
       include: { items: true },
     });
     if (!grnPreview) throw new NotFoundException('إذن الاستلام غير موجود');
+    await this.scope.assertDocument(user, grnPreview);
 
     const oldStatusPreview = grnPreview.status;
     const newStatusPreview = dto.status;

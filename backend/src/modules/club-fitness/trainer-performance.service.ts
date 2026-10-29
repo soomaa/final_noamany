@@ -1,7 +1,9 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
+import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
 import { toNum } from './club-fitness.utils';
 
 const validMonth = (value: string) => /^\d{4}-(0[1-9]|1[0-2])$/.test(value);
@@ -9,7 +11,53 @@ const monthDates = (month: string) => ({ from: `${month}-01`, to: `${month}-31` 
 
 @Injectable()
 export class TrainerPerformanceService {
-  constructor(private readonly prisma: PrismaService, private readonly branchScope: BranchScopeService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+    @Optional() private readonly permissions?: PermissionEngineService,
+  ) {}
+
+  /**
+   * A logged-in trainer sees only their own row (monthly evaluation / targets pages).
+   * "Manager" = system admin OR holder of `club.fitness.trainers:update`. When the
+   * permission engine is unavailable (unit tests), a branch manager (level 3) is
+   * treated as a manager and every other trainer account is self-only.
+   */
+  async isTrainerSelfOnly(user: JwtUser | undefined): Promise<boolean> {
+    if (!user || user.trainer_id == null || isSystemAdmin(user)) return false;
+    if (this.permissions) return !(await this.permissions.can(user.sub, 'club.fitness.trainers', 'update'));
+    return user.level !== 3;
+  }
+
+  /** Trainer ids visible to the user; null ⇒ unrestricted. */
+  async visibleTrainerIds(user: JwtUser | undefined): Promise<number[] | null> {
+    if (await this.isTrainerSelfOnly(user)) return [Number(user!.trainer_id)];
+    const branches = this.branchScope.allowedBranchIds(user);
+    if (branches === null) return null;
+    if (!branches.length) return [];
+    const db = this.db();
+    const employees = await db.employees.findMany({ where: { branch_id_fk: { in: branches } }, select: { id: true } });
+    const rows = await db.club_trainers.findMany({
+      where: {
+        is_deleted: false,
+        OR: [
+          { employee_id: { in: employees.map((e: { id: number }) => e.id) } },
+          // Manually created trainers have no employee link: fall back to their default schedule branch.
+          { employee_id: null, default_schedule_slots: { some: { branch_id: { in: branches } } } },
+        ],
+      },
+      select: { id: true },
+    });
+    return rows.map((row: { id: number }) => row.id);
+  }
+
+  async assertTrainerAccess(user: JwtUser | undefined, trainerId: number): Promise<void> {
+    if (!user) return;
+    const ids = await this.visibleTrainerIds(user);
+    if (ids !== null && !ids.includes(Number(trainerId))) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا المدرب');
+    }
+  }
   private db() { return this.prisma as any; }
   private month(month: string) { if (!validMonth(month)) throw new BadRequestException('الشهر يجب أن يكون بصيغة YYYY-MM'); }
 
@@ -21,9 +69,10 @@ export class TrainerPerformanceService {
   }
 
   async listCriteria() { return this.db().club_trainer_evaluation_criteria.findMany({ orderBy: [{ sort_order: 'asc' }, { id: 'asc' }] }); }
-  async listTrainers() {
+  async listTrainers(user?: JwtUser) {
+    const ids = user ? await this.visibleTrainerIds(user) : null;
     return this.db().club_trainers.findMany({
-      where: { is_deleted: false, is_active: true },
+      where: { is_deleted: false, is_active: true, ...(ids === null ? {} : { id: { in: ids } }) },
       select: { id: true, name: true, employee_id: true },
       orderBy: { name: 'asc' },
     });
@@ -34,8 +83,9 @@ export class TrainerPerformanceService {
     const data = { title, description: String(body.description ?? '').trim() || null, max_score: max, sort_order: Number(body.sortOrder ?? 0), is_active: body.isActive !== false };
     return body.id ? this.db().club_trainer_evaluation_criteria.update({ where: { id: Number(body.id) }, data }) : this.db().club_trainer_evaluation_criteria.create({ data: { ...data, created_by: userId } });
   }
-  async saveTarget(body: any, userId: number) {
+  async saveTarget(body: any, userId: number, user?: JwtUser) {
     const trainerId = Number(body.trainerId); if (!trainerId) throw new BadRequestException('اختر المدرب');
+    await this.assertTrainerAccess(user, trainerId);
     const data = { private_sales_target: Number(body.privateSalesTarget ?? 0), subscriptions_target: Number(body.subscriptionsTarget ?? 0), updated_by: userId };
     if (data.private_sales_target < 0 || data.subscriptions_target < 0) throw new BadRequestException('التارجت لا يمكن أن يكون سالبًا');
     if (body.month) { this.month(body.month); return this.db().club_trainer_target_overrides.upsert({ where: { trainer_id_target_month: { trainer_id: trainerId, target_month: body.month } }, create: { trainer_id: trainerId, target_month: body.month, ...data }, update: data }); }
@@ -43,6 +93,7 @@ export class TrainerPerformanceService {
   }
   async saveEvaluation(body: any, user: JwtUser) {
     const trainerId = Number(body.trainerId); this.month(String(body.month ?? ''));
+    await this.assertTrainerAccess(user, trainerId);
     const trainer = await this.db().club_trainers.findFirst({ where: { id: trainerId, is_deleted: false } });
     if (!trainer) throw new NotFoundException('المدرب غير موجود');
     const employee = trainer.employee_id ? await this.db().employees.findUnique({ where: { id: trainer.employee_id }, select: { branch_id_fk: true } }) : null;
@@ -55,8 +106,8 @@ export class TrainerPerformanceService {
     const total = items.reduce((sum: number, item: any) => sum + item.score, 0); const max = items.reduce((sum: number, item: any) => sum + item.max_score, 0);
     return this.db().$transaction(async (tx: any) => { const evaluation = await tx.club_trainer_evaluations.upsert({ where: { trainer_id_evaluation_month: { trainer_id: trainerId, evaluation_month: body.month } }, create: { trainer_id: trainerId, evaluation_month: body.month, branch_id: branchId, notes: String(body.notes ?? '') || null, total_score: total, max_score: max, created_by: user.sub }, update: { notes: String(body.notes ?? '') || null, total_score: total, max_score: max, created_by: user.sub } }); await tx.club_trainer_evaluation_items.deleteMany({ where: { evaluation_id: evaluation.id } }); await tx.club_trainer_evaluation_items.createMany({ data: items.map((item: any) => ({ ...item, evaluation_id: evaluation.id })) }); return evaluation; });
   }
-  async profile(trainerId: number, month: string) {
-    this.month(month); const { from, to } = monthDates(month); const db = this.db(); const [trainer, target, privateSales, subscriptions, evaluation] = await Promise.all([db.club_trainers.findFirst({ where: { id: trainerId, is_deleted: false } }), this.resolveTarget(trainerId, month), db.club_subscriptions.aggregate({ where: { private_trainer_id: trainerId, registration_date: { gte: from, lte: to } }, _sum: { subscription_value: true } }), db.club_subscriptions.count({ where: { private_trainer_id: trainerId, registration_date: { gte: from, lte: to } } }), db.club_trainer_evaluations.findUnique({ where: { trainer_id_evaluation_month: { trainer_id: trainerId, evaluation_month: month } }, include: { items: true } })]);
+  async profile(trainerId: number, month: string, user?: JwtUser) {
+    this.month(month); await this.assertTrainerAccess(user, trainerId); const { from, to } = monthDates(month); const db = this.db(); const [trainer, target, privateSales, subscriptions, evaluation] = await Promise.all([db.club_trainers.findFirst({ where: { id: trainerId, is_deleted: false } }), this.resolveTarget(trainerId, month), db.club_subscriptions.aggregate({ where: { private_trainer_id: trainerId, registration_date: { gte: from, lte: to } }, _sum: { subscription_value: true } }), db.club_subscriptions.count({ where: { private_trainer_id: trainerId, registration_date: { gte: from, lte: to } } }), db.club_trainer_evaluations.findUnique({ where: { trainer_id_evaluation_month: { trainer_id: trainerId, evaluation_month: month } }, include: { items: true } })]);
     if (!trainer) throw new NotFoundException('المدرب غير موجود'); const privateValue = toNum(privateSales._sum.subscription_value); return { trainer, month, target, privateSales: privateValue, subscriptions, privateAchievement: target.privateSalesTarget ? (privateValue / target.privateSalesTarget) * 100 : 0, subscriptionsAchievement: target.subscriptionsTarget ? (subscriptions / target.subscriptionsTarget) * 100 : 0, evaluation };
   }
 

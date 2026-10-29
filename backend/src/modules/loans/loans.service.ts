@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { hr_solaf, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
 import { todayIso } from '../../common/utils/legacy-date.util';
@@ -26,6 +27,7 @@ import {
   nextRecipientMosama,
   REJECT_SUSPEND,
 } from '../leaves/approval-chain.util';
+import { assertEmployeeInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 
 type MobileLoanCreate = {
   amount: number;
@@ -61,10 +63,19 @@ export class LoansService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly moduleLedger: ModuleLedgerService,
+    private readonly branchScope: BranchScopeService,
   ) {}
 
-  async list(q: ListLoansDto) {
+  /** Branch isolation: `{ emp_id_fk: { in } }` for scoped users, `undefined` for admins. */
+  private async scopedLoanWhere(user: JwtUser): Promise<Prisma.hr_solafWhereInput | undefined> {
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    return empIds === null ? undefined : { emp_id_fk: { in: empIds } };
+  }
+
+  async list(q: ListLoansDto, user: JwtUser) {
     const and: Prisma.hr_solafWhereInput[] = [];
+    const scoped = await this.scopedLoanWhere(user);
+    if (scoped) and.push(scoped);
     const statusWhere = buildSuspendWhere(q.status);
     if (statusWhere) and.push(statusWhere as Prisma.hr_solafWhereInput);
     if (q.search?.trim()) {
@@ -124,7 +135,8 @@ export class LoansService {
    * Also returns whether the employee currently has an unfinished active loan
    * (get_solf_suspend_new) so the FE can pre-validate.
    */
-  async ceiling(empId: number) {
+  async ceiling(empId: number, user: JwtUser) {
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, empId);
     const emp = await this.prisma.employees.findUnique({
       where: { id: empId },
       // The real legacy employee table may contain invalid values in unrelated
@@ -179,7 +191,7 @@ export class LoansService {
   /** Employee-app metadata. Identity is always derived from the JWT. */
   async mobileMeta(user: JwtUser) {
     const employee = await this.mobileEmployee(user);
-    const meta = await this.ceiling(employee.id);
+    const meta = await this.ceiling(employee.id, user);
     return {
       ...meta,
       repaymentMethods: [
@@ -510,9 +522,11 @@ export class LoansService {
     return active != null;
   }
 
-  async create(dto: CreateLoanDto, publisherId?: number) {
+  async create(dto: CreateLoanDto, publisherId?: number, user?: JwtUser) {
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
+    // Internal callers (request approval flow) pass no user; HTTP callers are branch-scoped.
+    if (user) await assertEmployeeInScope(this.prisma, this.branchScope, user, emp.id);
 
     // Eligibility guard (get_solf_suspend_new): block a new loan while one is active/unfinished.
     if (await this.hasActiveLoan(emp.id)) {
@@ -630,8 +644,8 @@ export class LoansService {
     return { id: loan.id, tRkm: loan.t_rkm, status: 'approved', installments };
   }
 
-  async approve(id: number, userId?: number) {
-    const loan = await this.findLoanOrThrow(id);
+  async approve(id: number, userId?: number, user?: JwtUser) {
+    const loan = await this.findLoanOrThrow(id, user);
     if (loan.suspend != null && [1, 4].includes(loan.suspend)) {
       throw new BadRequestException('السلفة معتمدة مسبقًا');
     }
@@ -682,14 +696,14 @@ export class LoansService {
     return { id, status: 'approved' };
   }
 
-  async reject(id: number) {
-    const loan = await this.findLoanOrThrow(id);
+  async reject(id: number, user?: JwtUser) {
+    const loan = await this.findLoanOrThrow(id, user);
     await this.prisma.hr_solaf.update({ where: { id }, data: { suspend: SuspendStatus.REJECTED } });
     return { id, status: 'rejected', tRkm: loan.t_rkm };
   }
 
-  async schedule(id: number) {
-    const loan = await this.findLoanOrThrow(id);
+  async schedule(id: number, user?: JwtUser) {
+    const loan = await this.findLoanOrThrow(id, user);
     if (!loan.t_rkm) throw new BadRequestException('رقم السلفة غير موجود');
 
     const quests = await this.prisma.hr_solaf_quest.findMany({
@@ -732,14 +746,15 @@ export class LoansService {
    * Also performs the auto-deduct hook: when the LAST unpaid installment of a
    * loan is settled, the loan is flagged ended='yes' (end_solfa).
    */
-  async payInstallment(questId: number, dto: PayInstallmentDto, userId?: number) {
+  async payInstallment(questId: number, dto: PayInstallmentDto, userId?: number, user?: JwtUser) {
     const quest = await this.prisma.hr_solaf_quest.findUnique({ where: { id: questId } });
     if (!quest) throw new NotFoundException('القسط غير موجود');
-    if (quest.paid === 'yes') throw new BadRequestException('تم سداد هذا القسط مسبقًا');
 
     const loan = quest.t_rkm_fk
       ? await this.prisma.hr_solaf.findFirst({ where: { t_rkm: quest.t_rkm_fk } })
       : null;
+    if (user) await assertEmployeeInScope(this.prisma, this.branchScope, user, loan?.emp_id_fk);
+    if (quest.paid === 'yes') throw new BadRequestException('تم سداد هذا القسط مسبقًا');
     const employee = loan?.emp_id_fk
       ? await this.prisma.employees.findUnique({
           where: { id: loan.emp_id_fk },
@@ -779,8 +794,8 @@ export class LoansService {
    * employee's active loan, e.g. when payroll is run. Mirrors the legacy
    * monthly deduction where the matching `month` quest is set paid='yes'.
    */
-  async autoDeduct(loanId: number, month?: number) {
-    await this.findLoanOrThrow(loanId);
+  async autoDeduct(loanId: number, month?: number, user?: JwtUser) {
+    await this.findLoanOrThrow(loanId, user);
     void month;
     throw new BadRequestException(
       'لا يمكن خصم قسط السلفة منفرداً؛ يتم الخصم والترحيل المحاسبي من خلال مسيرة الرواتب',
@@ -810,8 +825,9 @@ export class LoansService {
     publisherId?: number,
     publisherName?: string | null,
     dryRun = false,
+    user?: JwtUser,
   ) {
-    const loan = await this.findLoanOrThrow(loanId);
+    const loan = await this.findLoanOrThrow(loanId, user);
     if (loan.suspend !== 4) throw new BadRequestException('السلفة غير معتمدة');
     if (!loan.t_rkm) throw new BadRequestException('رقم السلفة غير موجود');
     const tRkm = loan.t_rkm;
@@ -990,9 +1006,10 @@ export class LoansService {
    * For each approved loan, a 12-cell row (month 1..12) of the installment due
    * that month, plus paid flag. Includes whole-fund aggregate totals.
    */
-  async statementGrid() {
+  async statementGrid(user: JwtUser) {
+    const scoped = await this.scopedLoanWhere(user);
     const loans = await this.prisma.hr_solaf.findMany({
-      where: { suspend: SuspendStatus.APPROVED },
+      where: { suspend: SuspendStatus.APPROVED, ...scoped },
       orderBy: { t_rkm: 'desc' },
     });
 
@@ -1053,8 +1070,11 @@ export class LoansService {
     };
   }
 
-  async statement() {
-    const approved = await this.prisma.hr_solaf.findMany({ where: { suspend: SuspendStatus.APPROVED } });
+  async statement(user: JwtUser) {
+    const scoped = await this.scopedLoanWhere(user);
+    const approved = await this.prisma.hr_solaf.findMany({
+      where: { suspend: SuspendStatus.APPROVED, ...scoped },
+    });
     const tRkms = approved.map((r) => r.t_rkm).filter((v): v is number => v != null);
     const quests = tRkms.length
       ? await this.prisma.hr_solaf_quest.findMany({
@@ -1076,8 +1096,8 @@ export class LoansService {
     };
   }
 
-  async remove(id: number) {
-    const loan = await this.findLoanOrThrow(id);
+  async remove(id: number, user?: JwtUser) {
+    const loan = await this.findLoanOrThrow(id, user);
     if (loan.t_rkm) {
       await this.prisma.hr_solaf_quest.deleteMany({ where: { t_rkm_fk: loan.t_rkm } });
     }
@@ -1202,9 +1222,11 @@ export class LoansService {
     };
   }
 
-  private async findLoanOrThrow(id: number) {
+  /** Load a loan; when an HTTP user is given, its employee must be inside the user's branch scope. */
+  private async findLoanOrThrow(id: number, user?: JwtUser) {
     const loan = await this.prisma.hr_solaf.findUnique({ where: { id } });
     if (!loan) throw new NotFoundException('السلفة غير موجودة');
+    if (user) await assertEmployeeInScope(this.prisma, this.branchScope, user, loan.emp_id_fk);
     return loan;
   }
 }

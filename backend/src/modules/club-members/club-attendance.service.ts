@@ -112,7 +112,7 @@ export class ClubAttendanceService {
     requested?: string | number | null,
   ): number[] | null {
     if (!user) return [];
-    if (user.level === 1 || user.is_super_admin)
+    if (isSystemAdmin(user))
       return expandClubReportBranchIds(
         this.branchScope.resolveListFilter(user, requested ?? null),
       );
@@ -137,7 +137,7 @@ export class ClubAttendanceService {
     branchId: number,
   ): Promise<boolean> {
     if (!user) return false;
-    if (user.level === 1) return true;
+    if (isSystemAdmin(user)) return true;
     const operatorBranchId = Number(user.branch ?? 0);
     if (!Number.isInteger(operatorBranchId) || operatorBranchId <= 0) return false;
     const target = Number(branchId);
@@ -563,6 +563,9 @@ export class ClubAttendanceService {
     if (!(await this.canOperateAttendanceBranch(user, branchId))) {
       throw new ForbiddenException('لا تملك صلاحية تسجيل حضور في هذا الفرع');
     }
+    if (!this.branchScope.isMemberGenderAllowed(user, member.gender)) {
+      throw new ForbiddenException('لا تملك صلاحية تسجيل حضور لأعضاء هذا القسم');
+    }
     const branchIds = await this.compatibleAttendanceBranches(branchId, member.branch_id);
     if (!branchIds.includes(member.branch_id)) {
       throw new ForbiddenException('لا يمكن تسجيل حضور عضو تابع لفرع آخر');
@@ -624,6 +627,9 @@ export class ClubAttendanceService {
       dto.branchId ?? (operatorBranchId > 0 ? operatorBranchId : member.branch_id);
     if (!(await this.canOperateAttendanceBranch(user, branchId))) {
       throw new ForbiddenException("لا تملك صلاحية تسجيل حضور في هذا الفرع");
+    }
+    if (!this.branchScope.isMemberGenderAllowed(user, member.gender)) {
+      throw new ForbiddenException("لا تملك صلاحية تسجيل حضور لأعضاء هذا القسم");
     }
     const compatibleBranchIds = await this.compatibleAttendanceBranches(
       branchId,
@@ -1052,6 +1058,8 @@ export class ClubAttendanceService {
     if (q.memberId) and.push({ member_id: Number(q.memberId) });
     const scope = this.attendanceBranchIds(user, q.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
+    const audience = this.branchScope.memberGenderFilter(user);
+    if (audience) and.push({ member: { is: { gender: audience } } });
     if (q.startDate && q.endDate) {
       and.push({ attendance_date: { gte: q.startDate, lte: q.endDate } });
     } else if (q.startDate) {
@@ -1177,10 +1185,14 @@ export class ClubAttendanceService {
     const dateFrom = todayOnly ? today : q.dateFrom;
     const dateTo = todayOnly ? today : q.dateTo;
     const scope = this.attendanceBranchIds(user, q.branch ?? null);
+    const audience = this.branchScope.memberGenderFilter(user);
     const search = q.search?.trim() ? `%${q.search.trim()}%` : null;
 
     const filters = (alias: string, dateCol: string, branchCol: string, nameCol: string, codeCol: string) => {
       const parts: Prisma.Sql[] = [];
+      if (audience) {
+        parts.push(Prisma.sql`${Prisma.raw(`${alias === 'c' ? 'e' : alias}.member_id`)} IN (SELECT gm.id FROM club_members gm WHERE gm.gender = ${audience})`);
+      }
       if (dateFrom) parts.push(Prisma.sql`${Prisma.raw(`${alias}.${dateCol}`)} >= ${dateFrom}`);
       if (dateTo) parts.push(Prisma.sql`${Prisma.raw(`${alias}.${dateCol}`)} <= ${dateTo}`);
       if (scope !== null) {
@@ -1356,6 +1368,10 @@ export class ClubAttendanceService {
           : Prisma.sql`branch_id = -1`,
       );
     }
+    const audience = this.branchScope.memberGenderFilter(user);
+    if (audience) {
+      conditions.push(Prisma.sql`member_id IN (SELECT gm.id FROM club_members gm WHERE gm.gender = ${audience})`);
+    }
     if (q.startDate)
       conditions.push(Prisma.sql`attendance_date >= ${q.startDate}`);
     if (q.endDate) conditions.push(Prisma.sql`attendance_date <= ${q.endDate}`);
@@ -1435,6 +1451,8 @@ export class ClubAttendanceService {
     const and: Prisma.club_attendanceWhereInput[] = [];
     const scope = this.attendanceBranchIds(user, query.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
+    const audience = this.branchScope.memberGenderFilter(user);
+    if (audience) and.push({ member: { is: { gender: audience } } });
     if (query.startDate && query.endDate) {
       and.push({
         attendance_date: { gte: query.startDate, lte: query.endDate },
@@ -1454,7 +1472,11 @@ export class ClubAttendanceService {
       Prisma.sql`attendance_date >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)`,
     ];
     if (scope !== null)
-      historyConditions.push(Prisma.sql`branch_id IN (${Prisma.join(scope)})`);
+      historyConditions.push(
+        scope.length ? Prisma.sql`branch_id IN (${Prisma.join(scope)})` : Prisma.sql`branch_id = -1`,
+      );
+    if (audience)
+      historyConditions.push(Prisma.sql`member_id IN (SELECT gm.id FROM club_members gm WHERE gm.gender = ${audience})`);
     const historyWhere = Prisma.sql`WHERE ${Prisma.join(historyConditions, " AND ")}`;
 
     const [

@@ -17,8 +17,8 @@ export class AdministrativeDecisionsController {
   constructor(private readonly decisions: AdministrativeDecisionsService) {}
 
   @Get()
-  list(@Query() query: ListAdministrativeDecisionsDto) {
-    return this.decisions.list(query);
+  list(@Query() query: ListAdministrativeDecisionsDto, @CurrentUser() user: JwtUser) {
+    return this.decisions.list(query, user);
   }
 
   @Get('lookups')
@@ -27,14 +27,14 @@ export class AdministrativeDecisionsController {
   }
 
   @Get(':id')
-  getOne(@Param('id', ParseIntPipe) id: number) {
-    return this.decisions.getOne(id);
+  getOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.decisions.getOne(id, user);
   }
 
   @Post()
   @RequiresPermission('affairs.admin_decisions:create')
   create(@Body() dto: CreateAdministrativeDecisionDto, @CurrentUser() user: JwtUser) {
-    return this.decisions.create(dto, user.sub, user.name);
+    return this.decisions.create(dto, user.sub, user.name, user);
   }
 
   @Patch(':id')
@@ -44,12 +44,12 @@ export class AdministrativeDecisionsController {
     @Body() dto: UpdateAdministrativeDecisionDto,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.decisions.update(id, dto, user.sub, user.name);
+    return this.decisions.update(id, dto, user.sub, user.name, user);
   }
 
   @Delete(':id')
   @RequiresPermission('affairs.admin_decisions:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.decisions.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.decisions.remove(id, user);
   }
 }

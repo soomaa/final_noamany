@@ -96,8 +96,8 @@ export class AttendanceController {
 
   // -------- shift swap / extra shift (tbl_emps_shef_edafi) --------
   @Get('shift-swaps')
-  listShiftSwaps(@Query() query: ListEdafiDto) {
-    return this.attendance.listShiftSwaps(query);
+  listShiftSwaps(@Query() query: ListEdafiDto, @CurrentUser() user: JwtUser) {
+    return this.attendance.listShiftSwaps(query, user);
   }
 
   @Post('shift-swaps')
@@ -114,8 +114,8 @@ export class AttendanceController {
 
   // -------- extra hours (tbl_emps_hours_edafi) --------
   @Get('extra-hours')
-  listExtraHours(@Query() query: ListEdafiDto) {
-    return this.attendance.listExtraHours(query);
+  listExtraHours(@Query() query: ListEdafiDto, @CurrentUser() user: JwtUser) {
+    return this.attendance.listExtraHours(query, user);
   }
 
   @Post('extra-hours')
@@ -132,33 +132,33 @@ export class AttendanceController {
 
   // -------- reports (date-range + employee + branch) --------
   @Get('reports/basma')
-  basmaReport(@Query() query: AttendanceReportDto) {
-    return this.attendance.basmaReport(query);
+  basmaReport(@Query() query: AttendanceReportDto, @CurrentUser() user: JwtUser) {
+    return this.attendance.basmaReport(query, user);
   }
 
   @Get('reports/full-sheet')
-  fullAttendanceSheet(@Query() query: AttendanceReportDto) {
-    return this.attendance.fullAttendanceSheet(query);
+  fullAttendanceSheet(@Query() query: AttendanceReportDto, @CurrentUser() user: JwtUser) {
+    return this.attendance.fullAttendanceSheet(query, user);
   }
 
   @Get('reports/late')
-  lateReport(@Query() query: AttendanceReportDto) {
-    return this.attendance.lateReport(query);
+  lateReport(@Query() query: AttendanceReportDto, @CurrentUser() user: JwtUser) {
+    return this.attendance.lateReport(query, user);
   }
 
   @Get('reports/absence')
-  absenceReport(@Query() query: AttendanceReportDto) {
-    return this.attendance.absenceReport(query);
+  absenceReport(@Query() query: AttendanceReportDto, @CurrentUser() user: JwtUser) {
+    return this.attendance.absenceReport(query, user);
   }
 
   @Get('reports/overtime')
-  overtimeReport(@Query() query: AttendanceReportDto) {
-    return this.attendance.overtimeReport(query);
+  overtimeReport(@Query() query: AttendanceReportDto, @CurrentUser() user: JwtUser) {
+    return this.attendance.overtimeReport(query, user);
   }
 
   @Get('reports/shift-swap')
-  shiftSwapReport(@Query() query: AttendanceReportDto) {
-    return this.attendance.shiftSwapReport(query);
+  shiftSwapReport(@Query() query: AttendanceReportDto, @CurrentUser() user: JwtUser) {
+    return this.attendance.shiftSwapReport(query, user);
   }
 
   // -------- devices --------
@@ -216,7 +216,7 @@ export class AttendanceController {
   }
 
   @Get()
-  board(@Query() query: ListQueryDto) {
-    return this.attendance.board(query);
+  board(@Query() query: ListQueryDto, @CurrentUser() user: JwtUser) {
+    return this.attendance.board(query, user);
   }
 }

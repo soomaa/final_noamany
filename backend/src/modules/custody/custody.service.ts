@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { todayIso } from '../../common/utils/legacy-date.util';
 import {
   CreateCustodyDto,
@@ -9,6 +11,11 @@ import {
   TransferCustodyDto,
   UpdateCustodyDto,
 } from './dto/custody.dto';
+import {
+  assertEmployeeInScope,
+  assertEmployeesInScope,
+  scopedEmployeeIds,
+} from '../reports/employee-branch-scope.util';
 
 export interface DeviceNode {
   id: number;
@@ -20,10 +27,16 @@ export interface DeviceNode {
 
 @Injectable()
 export class CustodyService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  async list(q: ListCustodyDto) {
+  async list(q: ListCustodyDto, user: JwtUser) {
     const and: Prisma.emp_custodyWhereInput[] = [];
+    // Branch isolation: emp_custody.emp_code stores employees.id.
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    if (empIds !== null) and.push({ emp_code: { in: empIds } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({ OR: [{ custody_title: { contains: s } }] });
@@ -61,9 +74,10 @@ export class CustodyService {
     return this.buildDeviceTree(rows);
   }
 
-  async create(dto: CreateCustodyDto) {
+  async create(dto: CreateCustodyDto, user: JwtUser) {
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, emp.id);
 
     if (dto.custodyId) {
       const dup = await this.prisma.emp_custody.findFirst({
@@ -93,8 +107,9 @@ export class CustodyService {
     return { id: row.id };
   }
 
-  async update(id: number, dto: UpdateCustodyDto) {
-    await this.findOrThrow(id);
+  async update(id: number, dto: UpdateCustodyDto, user: JwtUser) {
+    await this.findOrThrow(id, user);
+    if (dto.empId != null) await assertEmployeeInScope(this.prisma, this.branchScope, user, dto.empId);
     await this.prisma.emp_custody.update({
       where: { id },
       data: {
@@ -109,8 +124,8 @@ export class CustodyService {
     return { id };
   }
 
-  async remove(id: number) {
-    await this.findOrThrow(id);
+  async remove(id: number, user: JwtUser) {
+    await this.findOrThrow(id, user);
     await this.prisma.emp_custody.delete({ where: { id } });
     return { id };
   }
@@ -119,8 +134,8 @@ export class CustodyService {
    * Mark a custody item as returned. Status auto-flips to 0 (مُسترجعة) instead of the
    * owner having to hand-edit the status field — closes the "return is manual" gap.
    */
-  async returnItem(id: number) {
-    const row = await this.findOrThrow(id);
+  async returnItem(id: number, user: JwtUser) {
+    const row = await this.findOrThrow(id, user);
     if (row.status !== 1) {
       throw new BadRequestException('العهدة ليست مُسلّمة حتى تُسترجع');
     }
@@ -135,8 +150,9 @@ export class CustodyService {
    *     (custody_id_fk, from_emp_code, to_emp_code, date, date_ar, date_s, publisher)
    *  2) flip the emp_custody row: transfered=1, emp_code = new owner.
    */
-  async transfer(dto: TransferCustodyDto, publisherId?: number) {
-    const custody = await this.findOrThrow(dto.custodyId);
+  async transfer(dto: TransferCustodyDto, publisherId: number | undefined, user: JwtUser) {
+    const custody = await this.findOrThrow(dto.custodyId, user);
+    await assertEmployeesInScope(this.prisma, this.branchScope, user, [dto.fromEmpCode, dto.toEmpCode]);
 
     if (dto.fromEmpCode === dto.toEmpCode) {
       throw new BadRequestException('لا يمكن نقل العهدة لنفس الموظف');
@@ -179,7 +195,8 @@ export class CustodyService {
    * Transfer history for an employee (custody items this employee handed over).
    * Mirrors Custody_employee_model::getAllData_transfer.
    */
-  async listTransfers(empCode: number) {
+  async listTransfers(empCode: number, user: JwtUser) {
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, empCode);
     const rows = await this.prisma.$queryRaw<
       {
         id: number;
@@ -234,9 +251,11 @@ export class CustodyService {
     return roots;
   }
 
-  private async findOrThrow(id: number) {
+  /** Load a custody row and enforce that its holder is inside the caller's branch scope. */
+  private async findOrThrow(id: number, user: JwtUser) {
     const row = await this.prisma.emp_custody.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('العهدة غير موجودة');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, row.emp_code);
     return row;
   }
 }

@@ -1,5 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { defaultPermissionCellsForJobTitle } from './job-title-defaults';
 
 export const JOB_TITLE_ROLE_PREFIX = 'job_title_';
 
@@ -26,7 +27,7 @@ export async function ensureRoleForJobTitle(
   job: { id: number; name: string },
 ) {
   const key = jobTitleRoleKey(job.id);
-  return prisma.rbac_roles.upsert({
+  const role = await prisma.rbac_roles.upsert({
     where: { key },
     create: {
       key,
@@ -41,6 +42,32 @@ export async function ensureRoleForJobTitle(
       description: `صلاحيات المسمى الوظيفي: ${job.name}`,
     },
   });
+  await applyStarterPermissionsIfEmpty(prisma, role.id, job.name);
+  return role;
+}
+
+type StarterPrisma = Partial<Pick<PrismaClient, 'rbac_role_permissions' | 'rbac_resources' | 'rbac_actions'>>;
+
+/**
+ * Give a job-title role its starter matrix (reception, captain, …) only while it has no
+ * permissions at all. A matrix an administrator already edited is never touched.
+ */
+export async function applyStarterPermissionsIfEmpty(prisma: object, roleId: number, jobName: string) {
+  const db = prisma as StarterPrisma;
+  if (!db.rbac_role_permissions || !db.rbac_resources || !db.rbac_actions) return;
+  const cells = defaultPermissionCellsForJobTitle(jobName);
+  if (!cells.length) return;
+  if ((await db.rbac_role_permissions.count({ where: { role_id: roleId } })) > 0) return;
+  const [resources, actions] = await Promise.all([
+    db.rbac_resources.findMany({ where: { key: { in: [...new Set(cells.map((c) => c.resourceKey))] } }, select: { id: true, key: true } }),
+    db.rbac_actions.findMany({ where: { key: { in: [...new Set(cells.map((c) => c.actionKey))] } }, select: { id: true, key: true } }),
+  ]);
+  const resourceId = new Map(resources.map((r) => [r.key, r.id] as const));
+  const actionId = new Map(actions.map((a) => [a.key, a.id] as const));
+  const data = cells
+    .filter((c) => resourceId.has(c.resourceKey) && actionId.has(c.actionKey))
+    .map((c) => ({ role_id: roleId, resource_id: resourceId.get(c.resourceKey)!, action_id: actionId.get(c.actionKey)!, effect: c.effect }));
+  if (data.length) await db.rbac_role_permissions.createMany({ data, skipDuplicates: true });
 }
 
 export async function removeRoleForJobTitle(prisma: PrismaLike, jobTitleId: number) {

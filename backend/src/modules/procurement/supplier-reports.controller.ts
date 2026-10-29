@@ -13,23 +13,23 @@ export class SupplierReportsController {
   constructor(private readonly service: SupplierReportsService) {}
 
   @Get('reports')
-  reports(@Query() query: SupplierReportsQueryDto) {
-    return this.service.reports(query);
+  reports(@Query() query: SupplierReportsQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.reports(query, user);
   }
 
   @Get('reports/stats')
-  stats(@Query() query: SupplierReportsQueryDto) {
-    return this.service.stats(query);
+  stats(@Query() query: SupplierReportsQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.stats(query, user);
   }
 
   @Get('reports/performance')
-  performance(@Query() query: SupplierReportsQueryDto) {
-    return this.service.performance(query);
+  performance(@Query() query: SupplierReportsQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.performance(query, user);
   }
 
   @Get('reports/payments')
-  payments(@Query() query: SupplierReportsQueryDto) {
-    return this.service.payments(query);
+  payments(@Query() query: SupplierReportsQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.payments(query, user);
   }
 
   @Get('reports/debts')
@@ -38,17 +38,17 @@ export class SupplierReportsController {
   }
 
   @Get('reports/orders')
-  orders(@Query() query: SupplierReportsQueryDto) {
-    return this.service.orders(query);
+  orders(@Query() query: SupplierReportsQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.orders(query, user);
   }
 
   @Get('reports/complaints')
-  complaints(@Query() query: SupplierReportsQueryDto) {
-    return this.service.complaints(query);
+  complaints(@Query() query: SupplierReportsQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.complaints(query, user);
   }
 
   @Get('reports/risks')
-  risks(@Query() query: SupplierReportsQueryDto) {
-    return this.service.risks(query);
+  risks(@Query() query: SupplierReportsQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.risks(query, user);
   }
 }

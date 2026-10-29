@@ -2,6 +2,7 @@ import {
   Controller,
   ForbiddenException,
   Get,
+  NotFoundException,
   Inject,
   Param,
   ParseIntPipe,
@@ -28,6 +29,7 @@ import { BranchScopeService } from "../../common/branch-scope/branch-scope.servi
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import type { JwtUser } from "../../common/types/jwt-user";
 import { canonicalClubMemberBranchId } from "../club-members/club-branch-groups";
+import { isSystemAdmin } from "../../common/utils/system-admin.util";
 import { ClubBranchGroupService, ClubBranchGroupReader } from '../../common/branch-groups/club-branch-group.service';
 
 @UseGuards(JwtAuthGuard)
@@ -51,7 +53,7 @@ export class ClubOpsController {
     requested?: number,
   ): number[] | null {
     if (!user) return [];
-    if (user.level === 1) {
+    if (isSystemAdmin(user)) {
       return requested != null ? [canonicalClubMemberBranchId(requested)] : null;
     }
     const ownBranch = Number(user.branch ?? 0);
@@ -78,7 +80,7 @@ export class ClubOpsController {
   )
   async branchOptions(@CurrentUser() user: JwtUser) {
     const branches = await this.branchesService.findAll();
-    if (user.level === 1) return branches;
+    if (isSystemAdmin(user)) return branches;
     const ownBranch = Number(user.branch ?? 0);
     return ownBranch
       ? branches.filter((branch) => branch.id === ownBranch)
@@ -95,14 +97,15 @@ export class ClubOpsController {
   ) {
     const bid = branchId && branchId !== "all" ? Number(branchId) : undefined;
     let scopedBranchIds = this.receptionBranchIds(user, bid);
-    if (user && user.level !== 1 && scopedBranchIds?.length) {
+    if (user && !isSystemAdmin(user) && scopedBranchIds?.length) {
       const siblings = await this.branchGroups.siblingBranchIds(Number(user.branch));
       scopedBranchIds = [...new Set([...scopedBranchIds, ...siblings.map(canonicalClubMemberBranchId)])];
     }
+    const gender = this.branchScope.memberGenderFilter(user);
     if (withEntitlement === "true" || withEntitlement === "1") {
-      return this.search.searchWithEntitlement(q ?? "", scopedBranchIds);
+      return this.search.searchWithEntitlement(q ?? "", scopedBranchIds, gender);
     }
-    return this.search.universalSearch(q ?? "", scopedBranchIds);
+    return this.search.universalSearch(q ?? "", scopedBranchIds, 10, gender);
   }
 
   @Get("search/recent-checkins")
@@ -172,8 +175,10 @@ export class ClubOpsController {
   entityAudit(
     @Param("entityType") entityType: string,
     @Param("entityId") entityId: string,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.audit.forEntity(entityType, entityId);
+    // Admins see the full trail; everyone else only entries logged for their own branches.
+    return this.audit.forEntity(entityType, entityId, 50, this.branchScope.allowedBranchIds(user));
   }
 
   @Get("automation/workflows")
@@ -216,12 +221,14 @@ export class ClubOpsController {
     @Query("branchId") branchId?: string,
     @Query("page") page?: string,
     @Query("pageSize") pageSize?: string,
+    @CurrentUser() user?: JwtUser,
   ) {
     return this.automation.listTasks({
       status: status as
         "open" | "in_progress" | "completed" | "cancelled" | undefined,
       memberId: memberId ? Number(memberId) : undefined,
       branchId: branchId ? Number(branchId) : undefined,
+      branchIds: this.branchScope.resolveListFilter(user, branchId),
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 25,
     });
@@ -229,10 +236,16 @@ export class ClubOpsController {
 
   @Patch("automation/tasks/:id/status")
   @RequiresPermission("club.members:update")
-  updateTaskStatus(
+  async updateTaskStatus(
     @Param("id", ParseIntPipe) id: number,
     @Query("status") status: string,
+    @CurrentUser() user: JwtUser,
   ) {
+    if (!isSystemAdmin(user)) {
+      const task = await this.automation.findTaskBranch(id);
+      if (!task) throw new NotFoundException("المهمة غير موجودة");
+      this.branchScope.assertBranchAllowed(user, task.branch_id);
+    }
     return this.automation.updateTaskStatus(
       id,
       status as "open" | "in_progress" | "completed" | "cancelled",

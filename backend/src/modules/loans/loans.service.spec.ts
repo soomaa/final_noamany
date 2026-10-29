@@ -1,3 +1,4 @@
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { LoansService } from './loans.service';
 
 describe('LoansService legacy add workflow', () => {
@@ -47,7 +48,7 @@ describe('LoansService legacy add workflow', () => {
       ensureChart: jest.fn().mockResolvedValue(undefined),
       postEmployeeLoanDisbursement: jest.fn().mockResolvedValue(undefined),
     };
-    return { service: new LoansService(prisma as never, ledger as never), prisma, ledger, tx };
+    return { service: new LoansService(prisma as never, ledger as never, new BranchScopeService()), prisma, ledger, tx };
   }
 
   it('saves a one-time payroll deduction as approved with one generated installment', async () => {
@@ -121,7 +122,7 @@ describe('LoansService legacy add workflow', () => {
       ensureChart: jest.fn(),
       postEmployeeLoanDisbursement: jest.fn(),
     };
-    const service = new LoansService(prisma as never, ledger as never);
+    const service = new LoansService(prisma as never, ledger as never, new BranchScopeService());
 
     const result = await service.mobileCreate(
       { sub: 7, emp_code: 7, name: 'موظف اختبار' } as never,
@@ -171,7 +172,7 @@ describe('LoansService legacy add workflow', () => {
       tbl_notifications: { create: jest.fn().mockResolvedValue({ id: 1 }) },
       $transaction: jest.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
     };
-    const service = new LoansService(prisma as never, { ensureChart: jest.fn(), postEmployeeLoanDisbursement: jest.fn() } as never);
+    const service = new LoansService(prisma as never, { ensureChart: jest.fn(), postEmployeeLoanDisbursement: jest.fn() } as never, new BranchScopeService());
 
     await expect(service.mobileCreate(
       { sub: 7, emp_code: 7, name: 'موظف اختبار' } as never,
@@ -201,7 +202,7 @@ describe('LoansService legacy add workflow', () => {
         count: jest.fn().mockResolvedValue(0),
       },
     };
-    const service = new LoansService(prisma as never, {} as never);
+    const service = new LoansService(prisma as never, {} as never, new BranchScopeService());
 
     await service.mobileList({ sub: 77, emp_code: 7 } as never, { page: 1, perPage: 20, mode: 'wared' });
 
@@ -247,7 +248,7 @@ describe('LoansService legacy add workflow', () => {
       ensureChart: jest.fn().mockResolvedValue(undefined),
       postEmployeeLoanDisbursement: jest.fn().mockResolvedValue(undefined),
     };
-    const service = new LoansService(prisma as never, ledger as never);
+    const service = new LoansService(prisma as never, ledger as never, new BranchScopeService());
 
     await expect(service.mobileAction(
       { sub: 25, emp_code: 25, name: 'المدير العام' } as never,

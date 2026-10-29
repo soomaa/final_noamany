@@ -12,6 +12,8 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtUser } from '../../common/types/jwt-user';
 import { ClubWorkoutsService } from './club-workouts.service';
 import { ListClubFitnessDto } from './dto/list-club-fitness.dto';
 
@@ -57,31 +59,31 @@ export class ClubWorkoutProgramsController {
   constructor(private readonly service: ClubWorkoutsService) {}
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listPrograms(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listPrograms(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findProgram(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findProgram(id, user);
   }
 
   @Post()
   @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>) {
-    return this.service.createProgram(body);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createProgram(body, user);
   }
 
   @Put(':id')
   @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateProgram(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateProgram(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeProgram(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeProgram(id, user);
   }
 }
 
@@ -127,31 +129,31 @@ export class ClubMemberProgressController {
   constructor(private readonly service: ClubWorkoutsService) {}
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listProgress(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listProgress(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findProgress(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findProgress(id, user);
   }
 
   @Post()
   @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>) {
-    return this.service.createProgress(body);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createProgress(body, user);
   }
 
   @Put(':id')
   @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateProgress(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateProgress(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeProgress(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeProgress(id, user);
   }
 }
 
@@ -162,30 +164,30 @@ export class ClubPhysicalAssessmentsController {
   constructor(private readonly service: ClubWorkoutsService) {}
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listAssessments(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listAssessments(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findAssessment(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findAssessment(id, user);
   }
 
   @Post()
   @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>) {
-    return this.service.createAssessment(body);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createAssessment(body, user);
   }
 
   @Put(':id')
   @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateAssessment(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateAssessment(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeAssessment(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeAssessment(id, user);
   }
 }

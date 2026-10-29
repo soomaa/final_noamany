@@ -9,6 +9,7 @@ import { notDeletedFilter, toNumber } from './inventory.utils';
 import type { JwtUser } from '../../common/types/jwt-user';
 import { ListOpeningStocksDto, UpsertOpeningStockDto } from './dto/inventory.dto';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 
 @Injectable()
 export class OpeningStocksService {
@@ -18,6 +19,8 @@ export class OpeningStocksService {
     private readonly location: InventoryLocationService,
     private readonly moduleLedger: ModuleLedgerService,
   ) {}
+
+  private readonly branchScope = new BranchScopeService();
 
   private map(row: Prisma.inv_opening_stocksGetPayload<object>) {
     return {
@@ -37,10 +40,11 @@ export class OpeningStocksService {
     };
   }
 
-  async list(q: ListOpeningStocksDto) {
+  async list(q: ListOpeningStocksDto, user: JwtUser) {
     const and: Prisma.inv_opening_stocksWhereInput[] = [notDeletedFilter()];
     if (q.search?.trim()) and.push({ item_code: { contains: q.search.trim() } });
-    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
+    const branches = this.branchScope.resolveListFilter(user, q.branchId ?? null);
+    if (branches) and.push({ branch_id: { in: branches } });
     if (q.warehouseId && q.warehouseId !== 'all') and.push({ warehouse_id: Number(q.warehouseId) });
     const where = { AND: and };
     const [rows, total] = await Promise.all([
@@ -50,7 +54,8 @@ export class OpeningStocksService {
     return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
   }
 
-  async byBranch(branchId: number) {
+  async byBranch(branchId: number, user: JwtUser) {
+    this.branchScope.assertBranchAllowed(user, branchId);
     const rows = await this.prisma.inv_opening_stocks.findMany({
       where: { branch_id: branchId, ...notDeletedFilter() },
       orderBy: { id: 'desc' },
@@ -58,7 +63,8 @@ export class OpeningStocksService {
     return rows.map((r) => this.map(r));
   }
 
-  async byWarehouse(warehouseId: number) {
+  async byWarehouse(warehouseId: number, user: JwtUser) {
+    await this.location.assertWarehouseInScope(user, warehouseId);
     const rows = await this.prisma.inv_opening_stocks.findMany({
       where: { warehouse_id: warehouseId, ...notDeletedFilter() },
       orderBy: { id: 'desc' },
@@ -66,9 +72,10 @@ export class OpeningStocksService {
     return rows.map((r) => this.map(r));
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: JwtUser) {
     const row = await this.prisma.inv_opening_stocks.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!row) throw new NotFoundException('رصيد الافتتاح غير موجود');
+    this.branchScope.assertBranchAllowed(user, row.branch_id);
     return this.map(row);
   }
 
@@ -172,9 +179,10 @@ export class OpeningStocksService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertOpeningStockDto>) {
+  async update(id: number, dto: Partial<UpsertOpeningStockDto>, user: JwtUser) {
     const existing = await this.prisma.inv_opening_stocks.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!existing) throw new NotFoundException('رصيد الافتتاح غير موجود');
+    this.branchScope.assertBranchAllowed(user, existing.branch_id);
     const financialChange = [
       dto.openingStockDate, dto.itemCode, dto.quantity, dto.unitCost, dto.totalCost,
       dto.branchId, dto.warehouseId, dto.productId, dto.sparePartId,
@@ -200,9 +208,10 @@ export class OpeningStocksService {
     return this.map(row);
   }
 
-  async remove(id: number) {
+  async remove(id: number, user: JwtUser) {
     const existing = await this.prisma.inv_opening_stocks.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!existing) throw new NotFoundException('رصيد الافتتاح غير موجود');
+    this.branchScope.assertBranchAllowed(user, existing.branch_id);
     throw new BadRequestException('لا يمكن حذف رصيد أول مدة مُرحّل؛ استخدم تسوية مخزون');
   }
 }

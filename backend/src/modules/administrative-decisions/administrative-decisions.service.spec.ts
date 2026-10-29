@@ -1,5 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { AdministrativeDecisionsService } from './administrative-decisions.service';
+
+const admin = { sub: 1, level: 1, emp_code: null, branch: 0 } as unknown as JwtUser;
 
 describe('AdministrativeDecisionsService', () => {
   const prisma = {
@@ -8,7 +12,7 @@ describe('AdministrativeDecisionsService', () => {
     all_defined_setting: { findUnique: jest.fn() },
     hr_ta3en_moaqt: { create: jest.fn() },
   };
-  const service = new AdministrativeDecisionsService(prisma as never);
+  const service = new AdministrativeDecisionsService(prisma as never, new BranchScopeService());
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -38,6 +42,7 @@ describe('AdministrativeDecisionsService', () => {
       },
       1,
       'مدير النظام',
+      admin,
     );
 
     expect(prisma.hr_ta3en_moaqt.create).toHaveBeenCalledWith(
@@ -62,6 +67,8 @@ describe('AdministrativeDecisionsService', () => {
           periodTo: '2026-08-11',
         },
         1,
+        undefined,
+        admin,
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(prisma.hr_ta3en_moaqt.create).not.toHaveBeenCalled();

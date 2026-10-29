@@ -9,7 +9,7 @@ import { JwtUser } from '../../common/types/jwt-user';
 import { MemberLoginResult } from '../../common/types/member-jwt-user';
 import { MemberAuthService } from '../member/member-auth.service';
 import { isBcryptHash, legacyMatches } from './legacy-hash.util';
-import { INACTIVE_EMPLOYEE, isEmployeeInactive } from './employee-status.util';
+import { inactiveEmployeeMessage, isEmployeeInactive } from './employee-status.util';
 
 /** Faithful to legacy Auth.php: same failure message whether user is missing,
  *  password is wrong, or the account is not approved. */
@@ -297,10 +297,14 @@ export class AuthService {
           personal_photo: true,
           employee_type: true,
           leave_emp: true,
+          employee: true,
+          emp_code: true,
         },
       });
       if (user.level !== 1 && isEmployeeInactive(emp)) {
-        throw new UnauthorizedException(INACTIVE_EMPLOYEE);
+        // Name the linked HR record so the admin can see which employee file blocks this account
+        // (an account can be linked to an old/duplicate record while the visible one is active).
+        throw new UnauthorizedException(inactiveEmployeeMessage(emp));
       }
       if (emp) {
         branch = emp.branch_id_fk ?? branch;
@@ -343,6 +347,14 @@ export class AuthService {
       job_title: jobTitle,
       is_trainer: trainerId != null,
       trainer_id: trainerId,
+      is_super_admin: user.level === 1 || Boolean(await this.prisma.rbac_user_roles.findFirst({
+        where: {
+          user_id: user.user_id,
+          OR: [{ expires_at: null }, { expires_at: { gt: new Date() } }],
+          role: { is_super_admin: true },
+        },
+        select: { id: true },
+      })),
     };
   }
 }

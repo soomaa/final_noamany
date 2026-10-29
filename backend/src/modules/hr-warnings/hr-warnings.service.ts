@@ -6,6 +6,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { todayIso } from '../../common/utils/legacy-date.util';
 import { insertLegacyNotification } from '../../common/utils/legacy-notification.util';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import {
   CreateWarningDto,
   CreateWarningTemplateDto,
@@ -21,7 +22,7 @@ export class HrWarningsService {
 
   async list(q: ListWarningsDto, user?: JwtUser) {
     const and: Prisma.hr_enzaratWhereInput[] = [];
-    if (user && user.level !== 1) {
+    if (user && !isSystemAdmin(user)) {
       and.push({
         OR: [
           { publisher: user.sub },
@@ -60,7 +61,7 @@ export class HrWarningsService {
       details: row.details,
       seen: row.seen === 1,
       status: row.actions_sends,
-      canEdit: user?.level === 1 || row.publisher === user?.sub || row.direct_manager_user_id === user?.sub,
+      canEdit: isSystemAdmin(user) || row.publisher === user?.sub || row.direct_manager_user_id === user?.sub,
     }));
 
     return paginated(data, total, q.page, q.pageSize);
@@ -168,7 +169,7 @@ export class HrWarningsService {
       seenDate: row.seen_date,
       seenTime: row.seen_time,
       publisherName: row.publisher_name,
-      canEdit: !user || user.level === 1 || row.publisher === user.sub || row.direct_manager_user_id === user.sub,
+      canEdit: !user || isSystemAdmin(user) || row.publisher === user.sub || row.direct_manager_user_id === user.sub,
       attachments: attachments.map((file) => ({ id: file.id, title: file.title, file: file.file })),
       history: history.map((item) => ({
         id: item.id,
@@ -360,7 +361,7 @@ export class HrWarningsService {
     direct_manager_user_id: number | null;
     emp_name_id: number | null;
   }, user: JwtUser) {
-    if (user.level === 1 || row.publisher === user.sub || row.current_to_user_id === user.sub
+    if (isSystemAdmin(user) || row.publisher === user.sub || row.current_to_user_id === user.sub
       || row.direct_manager_user_id === user.sub || row.emp_name_id === user.emp_code) return;
     throw new ForbiddenException('غير مصرح بعرض هذا الإنذار');
   }
@@ -369,7 +370,7 @@ export class HrWarningsService {
     publisher: number | null;
     direct_manager_user_id: number | null;
   }, user: JwtUser) {
-    if (user.level === 1 || row.publisher === user.sub || row.direct_manager_user_id === user.sub) return;
+    if (isSystemAdmin(user) || row.publisher === user.sub || row.direct_manager_user_id === user.sub) return;
     throw new ForbiddenException('غير مصرح بتعديل هذا الإنذار');
   }
 

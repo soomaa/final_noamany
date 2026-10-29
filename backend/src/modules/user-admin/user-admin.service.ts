@@ -1,8 +1,15 @@
 import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcryptjs';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { syncEmployeeUserRole } from '../rbac/job-title-role.util';
+import {
+  assertCanGrantLevel,
+  assertCanManageUser,
+  resolveUserBranch,
+} from '../users/user-target-scope.util';
 import {
   CreateSystemUserDto,
   UpdateSystemUserDto,
@@ -27,6 +34,7 @@ export class UserAdminService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly scope: BranchScopeService,
   ) {}
 
   private get bcryptRounds(): number {
@@ -38,7 +46,15 @@ export class UserAdminService {
    * Hashes the password with bcrypt, hard-codes approved = 1, and guards a
    * duplicate username (legacy is_unique[users.username]).
    */
-  async create(dto: CreateSystemUserDto) {
+  async create(dto: CreateSystemUserDto, actor: JwtUser) {
+    // Non-admins cannot mint a level-1 login, nor a login outside their branch scope
+    // (the linked employee's branch wins, as in the JWT; else the explicit branchId).
+    assertCanGrantLevel(actor, dto.level);
+    if (dto.branchId != null) this.scope.assertBranchAllowed(actor, dto.branchId);
+    this.scope.assertBranchAllowed(
+      actor,
+      await resolveUserBranch(this.prisma, { emp_code: dto.empCode ?? null, branch_id_fk: dto.branchId ?? null }),
+    );
     await this.assertUsernameUnique(dto.username);
 
     const password = await bcrypt.hash(dto.password, this.bcryptRounds);
@@ -69,8 +85,12 @@ export class UserAdminService {
    * PATCH /users/:id — faithful to User::edit / User_m::edit.
    * Password is only rehashed when a non-empty value is supplied.
    */
-  async update(userId: number, dto: UpdateSystemUserDto) {
+  async update(userId: number, dto: UpdateSystemUserDto, actor: JwtUser) {
     await this.findOrThrow(userId);
+    // Non-admins cannot edit/reset an admin or a foreign-branch login, or promote to level 1.
+    await assertCanManageUser(this.prisma, this.scope, actor, userId);
+    assertCanGrantLevel(actor, dto.level);
+    if (dto.branchId != null) this.scope.assertBranchAllowed(actor, dto.branchId);
 
     const data: {
       name?: string;
@@ -113,8 +133,9 @@ export class UserAdminService {
   }
 
   /** DELETE /users/:id — faithful to User::del / User_m::delete_user. */
-  async remove(userId: number) {
+  async remove(userId: number, actor: JwtUser) {
     await this.findOrThrow(userId);
+    await assertCanManageUser(this.prisma, this.scope, actor, userId);
     // Clean up the permission grants too, to avoid dangling junction rows.
     await this.prisma.$transaction([
       this.prisma.permissions.deleteMany({ where: { user_id: userId } }),
@@ -126,8 +147,9 @@ export class UserAdminService {
   }
 
   /** PATCH /users/:id/status — faithful to User::status_user_type (approved 0|1). */
-  async updateStatus(userId: number, dto: UpdateUserStatusDto) {
+  async updateStatus(userId: number, dto: UpdateUserStatusDto, actor: JwtUser) {
     await this.findOrThrow(userId);
+    await assertCanManageUser(this.prisma, this.scope, actor, userId);
     const user = await this.prisma.users.update({
       where: { user_id: userId },
       data: { approved: dto.approved },

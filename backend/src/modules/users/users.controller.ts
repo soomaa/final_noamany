@@ -10,8 +10,10 @@ import {
   Put,
   UseGuards,
 } from '@nestjs/common';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
+import { JwtUser } from '../../common/types/jwt-user';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
@@ -31,27 +33,27 @@ export class UsersController {
   // `:view` alone let anyone who could SEE users also create and delete them (privilege gap).
   @Post()
   @RequiresPermission('admin.users:create')
-  create(@Body() dto: CreateUserDto) {
-    return this.users.create(dto);
+  create(@Body() dto: CreateUserDto, @CurrentUser() actor: JwtUser) {
+    return this.users.create(dto, actor);
   }
 
   @Patch(':id')
   @RequiresPermission('admin.users:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto) {
-    return this.users.update(id, dto);
+  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateUserDto, @CurrentUser() actor: JwtUser) {
+    return this.users.update(id, dto, actor);
   }
 
   @Delete(':id')
   @RequiresPermission('admin.users:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.users.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() actor: JwtUser) {
+    return this.users.remove(id, actor);
   }
 
   // Toggle active/inactive (legacy status_user_type flips approved 1<->0).
   @Patch(':id/approved')
   @RequiresPermission('admin.users:update')
-  toggleApproved(@Param('id', ParseIntPipe) id: number) {
-    return this.users.toggleApproved(id);
+  toggleApproved(@Param('id', ParseIntPipe) id: number, @CurrentUser() actor: JwtUser) {
+    return this.users.toggleApproved(id, actor);
   }
 
   @Get(':id/permissions')

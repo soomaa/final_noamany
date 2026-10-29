@@ -36,6 +36,7 @@ import { SellCafeCartDto } from './dto/sell-cafe-cart.dto';
 import { UpsertCafePartnerDto } from './dto/upsert-cafe-partner.dto';
 import { ProduceCafeProductDto } from './dto/produce-cafe-product.dto';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
 
 type IngredientStockSelect = {
   id: true;
@@ -671,6 +672,18 @@ export class CafeProductsService {
   }
 
   /** Prefer an explicit branch from the form, then the user's branch, then the first active branch. */
+  /**
+   * Opening stock branch: admins may pick any branch; scoped users may pick only an
+   * allowed branch (Tanta main → Tanta Up/Down) and otherwise fall back to their own.
+   */
+  private scopedOpeningBranch(user: JwtUser, requested?: number | null): number | null | undefined {
+    if (isSystemAdmin(user)) return requested;
+    const allowed = this.branchScope.allowedBranchIds(user) ?? [];
+    if (!allowed.length) throw new BadRequestException('حساب المستخدم غير مرتبط بفرع');
+    const req = Number(requested ?? 0);
+    return req > 0 && this.branchScope.isBranchAllowed(user, req) ? req : allowed[0];
+  }
+
   private async resolveOpeningStockBranchId(
     preferred?: number | null,
     userBranch?: string | number | null,
@@ -1138,10 +1151,7 @@ export class CafeProductsService {
       await this.moduleLedger.ensureChart();
     }
     const openingBranchId = productType === 'ready' && initialStock > 0
-      ? await this.resolveOpeningStockBranchId(
-          user.branch > 0 && user.level !== 1 ? user.branch : dto.openingBranchId,
-          user.branch,
-        )
+      ? await this.resolveOpeningStockBranchId(this.scopedOpeningBranch(user, dto.openingBranchId), user.branch)
       : null;
     const row = await this.prisma.$transaction(async (tx) => {
       const inventoryProductId = productType === 'ready' || productType === 'internal'

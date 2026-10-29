@@ -1,5 +1,5 @@
 import {
-  BadRequestException, Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards,
+  Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Put, Query, UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
@@ -71,9 +71,7 @@ export class StockTakingController {
   @Put(':id')
   @RequiresPermission('gym-sales.inventory.stock_taking:update')
   async updateSession(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertCountSessionDto>, @CurrentUser() user: JwtUser) {
-    await this.service.findSession(id,user);
-    if (body.warehouseId || body.branchId) throw new BadRequestException('لا يمكن تغيير موقع جلسة جرد قائمة');
-    return this.service.updateSession(id, body);
+    return this.service.updateSession(id, body, user);
   }
 
   @Post(':id/items')

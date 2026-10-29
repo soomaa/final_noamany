@@ -8,6 +8,8 @@ import { paginated } from '../../common/dto/list-result';
 import { assertUnique } from '../../common/validators';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
+import type { JwtUser } from '../../common/types/jwt-user';
+import { ProcurementScopeService } from './procurement-scope.service';
 import {
   ListPurchaseInvoicesDto,
   UpsertPurchaseInvoiceDto,
@@ -25,7 +27,22 @@ export class PurchaseInvoicesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly moduleLedger: ModuleLedgerService,
+    private readonly scope: ProcurementScopeService,
   ) {}
+
+  private async loadScoped(id: number, user: JwtUser) {
+    const row = await this.prisma.prc_purchase_invoices.findFirst({ where: { id, ...notDeletedFilter() } });
+    if (!row) throw new NotFoundException('فاتورة الشراء غير موجودة');
+    await this.scope.assertDocument(user, row);
+    return row;
+  }
+
+  /** Linked PO/GRN must be in the caller's scope; returns the PO's branch for defaulting. */
+  private async assertLinks(user: JwtUser, purchaseOrderId?: number | null, goodsReceiptId?: number | null) {
+    const po = purchaseOrderId ? await this.scope.loadPurchaseOrder(user, purchaseOrderId) : null;
+    if (goodsReceiptId) await this.scope.loadGoodsReceipt(user, goodsReceiptId);
+    return po?.branch_id ?? null;
+  }
 
   private mapItem(item: Prisma.prc_purchase_invoice_itemsGetPayload<object>) {
     return {
@@ -158,8 +175,10 @@ export class PurchaseInvoicesService {
     }
   }
 
-  async list(q: ListPurchaseInvoicesDto) {
+  async list(q: ListPurchaseInvoicesDto, user?: JwtUser) {
     const and: Prisma.prc_purchase_invoicesWhereInput[] = [notDeletedFilter()];
+    const scoped = this.scope.listBranches(user);
+    if (scoped) and.push({ branch_id: { in: scoped } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({ OR: [{ invoice_number: { contains: s } }, { notes: { contains: s } }] });
@@ -193,16 +212,20 @@ export class PurchaseInvoicesService {
     );
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: JwtUser) {
     const row = await this.prisma.prc_purchase_invoices.findFirst({
       where: { id, ...notDeletedFilter() },
       include: { items: true, payment_schedules: true },
     });
     if (!row) throw new NotFoundException('فاتورة الشراء غير موجودة');
+    await this.scope.assertDocument(user, row);
     return this.map(row);
   }
 
-  async create(dto: UpsertPurchaseInvoiceDto) {
+  async create(dto: UpsertPurchaseInvoiceDto, user: JwtUser) {
+    const poBranchId = await this.assertLinks(user, dto.purchaseOrderId, dto.goodsReceiptId);
+    const branchId = dto.branchId ?? poBranchId ?? this.scope.defaultBranch(user);
+    if (branchId != null) this.scope.assertBranch(user, branchId);
     if (dto.status === 'معتمد') {
       throw new BadRequestException('يجب إنشاء الفاتورة ثم مطابقتها قبل الاعتماد');
     }
@@ -237,7 +260,7 @@ export class PurchaseInvoicesService {
           matching_status: dto.matchingStatus ?? 'تحت المراجعة',
           notes: dto.notes?.trim() ?? null,
           invoice_amount: invoiceAmount,
-          branch_id: dto.branchId ?? null,
+          branch_id: branchId,
           items: { create: builtItems },
           payment_schedules: dto.paymentSchedules?.length
             ? {
@@ -256,11 +279,10 @@ export class PurchaseInvoicesService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertPurchaseInvoiceDto>) {
-    const existing = await this.prisma.prc_purchase_invoices.findFirst({
-      where: { id, ...notDeletedFilter() },
-    });
-    if (!existing) throw new NotFoundException('فاتورة الشراء غير موجودة');
+  async update(id: number, dto: Partial<UpsertPurchaseInvoiceDto>, user: JwtUser) {
+    const existing = await this.loadScoped(id, user);
+    if (dto.branchId != null) this.scope.assertBranch(user, dto.branchId);
+    await this.assertLinks(user, dto.purchaseOrderId, dto.goodsReceiptId);
     if (existing.status === 'معتمد' && Object.keys(dto).some((key) => key !== 'notes')) {
       throw new BadRequestException('لا يمكن تعديل فاتورة شراء مرحّلة محاسبيًا');
     }
@@ -343,11 +365,8 @@ export class PurchaseInvoicesService {
     return this.map(row);
   }
 
-  async remove(id: number) {
-    const existing = await this.prisma.prc_purchase_invoices.findFirst({
-      where: { id, ...notDeletedFilter() },
-    });
-    if (!existing) throw new NotFoundException('فاتورة الشراء غير موجودة');
+  async remove(id: number, user: JwtUser) {
+    const existing = await this.loadScoped(id, user);
     if (existing.status === 'معتمد') {
       throw new BadRequestException('لا يمكن حذف فاتورة شراء مرحّلة محاسبيًا');
     }
@@ -358,12 +377,13 @@ export class PurchaseInvoicesService {
     return { success: true };
   }
 
-  async match(id: number) {
+  async match(id: number, user: JwtUser) {
     const invoice = await this.prisma.prc_purchase_invoices.findFirst({
       where: { id, ...notDeletedFilter() },
       include: { items: true },
     });
     if (!invoice) throw new NotFoundException('فاتورة الشراء غير موجودة');
+    await this.scope.assertDocument(user, invoice);
 
     const settings = await getProcurementSettings(this.prisma);
     const tolerance = toNumber(settings.match_tolerance_percent);

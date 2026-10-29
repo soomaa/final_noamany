@@ -23,8 +23,8 @@ export class EvaluationsController {
   constructor(private readonly evaluations: EvaluationsService) {}
 
   @Get()
-  list(@Query() query: ListEvaluationsDto) {
-    return this.evaluations.list(query);
+  list(@Query() query: ListEvaluationsDto, @CurrentUser() user: JwtUser) {
+    return this.evaluations.list(query, user);
   }
 
   @Get('criteria')
@@ -33,17 +33,19 @@ export class EvaluationsController {
   }
 
   @Get(':id')
-  getOne(@Param('id', ParseIntPipe) id: number) {
-    return this.evaluations.getOne(id);
+  getOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.evaluations.getOne(id, user);
   }
 
   @Post()
+  @RequiresPermission('affairs.evaluations:create')
   create(@Body() dto: CreateEvaluationDto, @CurrentUser() user: JwtUser) {
-    return this.evaluations.create(dto, user.sub, user.name);
+    return this.evaluations.create(dto, user.sub, user.name, user);
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.evaluations.remove(id);
+  @RequiresPermission('affairs.evaluations:delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.evaluations.remove(id, user);
   }
 }

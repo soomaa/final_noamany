@@ -6,6 +6,8 @@ import {
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import type { JwtUser } from '../../common/types/jwt-user';
+import { ProcurementScopeService } from './procurement-scope.service';
 import {
   ListRequisitionsDto,
   RequisitionItemDto,
@@ -20,7 +22,16 @@ import {
 
 @Injectable()
 export class RequisitionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: ProcurementScopeService,
+  ) {}
+
+  private async assertScoped(id: number, user: JwtUser) {
+    const row = await this.prisma.prc_requisitions.findFirst({ where: { id, ...notDeletedFilter() }, select: { branch_id: true } });
+    if (!row) throw new NotFoundException('طلب الشراء غير موجود');
+    this.scope.assertBranch(user, row.branch_id);
+  }
 
   private mapItem(item: Prisma.prc_requisition_itemsGetPayload<object>) {
     return {
@@ -62,8 +73,10 @@ export class RequisitionsService {
     );
   }
 
-  async list(q: ListRequisitionsDto) {
+  async list(q: ListRequisitionsDto, user?: JwtUser) {
     const and: Prisma.prc_requisitionsWhereInput[] = [notDeletedFilter()];
+    const scoped = this.scope.listBranches(user, q.branchId);
+    if (scoped) and.push({ branch_id: { in: scoped } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -75,7 +88,6 @@ export class RequisitionsService {
     }
     if (q.status && q.status !== 'all') and.push({ status: q.status });
     if (q.department?.trim()) and.push({ requesting_department: { contains: q.department.trim() } });
-    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
     const where = { AND: and };
     const [rows, total] = await Promise.all([
       this.prisma.prc_requisitions.findMany({
@@ -90,16 +102,19 @@ export class RequisitionsService {
     return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: JwtUser) {
     const row = await this.prisma.prc_requisitions.findFirst({
       where: { id, ...notDeletedFilter() },
       include: { items: true },
     });
     if (!row) throw new NotFoundException('طلب الشراء غير موجود');
+    this.scope.assertBranch(user, row.branch_id);
     return this.map(row);
   }
 
-  async create(dto: UpsertRequisitionDto, userId: number) {
+  async create(dto: UpsertRequisitionDto, user: JwtUser) {
+    const userId = user.sub;
+    this.scope.assertBranch(user, dto.branchId);
     const items = dto.items ?? [];
     const estimatedValue = this.computeEstimatedValue(
       items.map((i) => ({ quantity: i.quantity, estimatedPrice: i.estimatedPrice })),
@@ -137,11 +152,13 @@ export class RequisitionsService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertRequisitionDto>) {
+  async update(id: number, dto: Partial<UpsertRequisitionDto>, user: JwtUser) {
     const existing = await this.prisma.prc_requisitions.findFirst({
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('طلب الشراء غير موجود');
+    this.scope.assertBranch(user, existing.branch_id);
+    if (dto.branchId != null) this.scope.assertBranch(user, dto.branchId);
     if (!['draft', 'returned'].includes(existing.status)) {
       throw new BadRequestException('لا يمكن تعديل الطلب إلا في حالة المسودة أو المرتجع');
     }
@@ -161,11 +178,12 @@ export class RequisitionsService {
     return this.map(row);
   }
 
-  async remove(id: number) {
+  async remove(id: number, user: JwtUser) {
     const existing = await this.prisma.prc_requisitions.findFirst({
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('طلب الشراء غير موجود');
+    this.scope.assertBranch(user, existing.branch_id);
     if (existing.status !== 'draft') {
       throw new BadRequestException('لا يمكن حذف طلب غير مسودة');
     }
@@ -176,7 +194,8 @@ export class RequisitionsService {
     return { success: true };
   }
 
-  async addItem(id: number, dto: RequisitionItemDto) {
+  async addItem(id: number, dto: RequisitionItemDto, user: JwtUser) {
+    await this.assertScoped(id, user);
     const existing = await this.prisma.prc_requisitions.findFirst({
       where: { id, ...notDeletedFilter() },
       include: { items: true },
@@ -207,15 +226,16 @@ export class RequisitionsService {
       where: { id },
       data: { estimated_value: estimatedValue },
     });
-    return this.findOne(id);
+    return this.findOne(id, user);
   }
 
-  async submit(id: number) {
+  async submit(id: number, user: JwtUser) {
     const existing = await this.prisma.prc_requisitions.findFirst({
       where: { id, ...notDeletedFilter() },
       include: { items: true },
     });
     if (!existing) throw new NotFoundException('طلب الشراء غير موجود');
+    this.scope.assertBranch(user, existing.branch_id);
     if (existing.status !== 'draft') {
       throw new BadRequestException('يمكن إرسال الطلبات في حالة المسودة فقط');
     }

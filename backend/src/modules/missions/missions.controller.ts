@@ -26,31 +26,34 @@ export class MissionsController {
   constructor(private readonly missions: MissionsService) {}
 
   @Get()
-  list(@Query() query: ListMissionsDto) {
-    return this.missions.list(query);
+  list(@Query() query: ListMissionsDto, @CurrentUser() user: JwtUser) {
+    return this.missions.list(query, user);
   }
 
   @Get(':id')
-  get(@Param('id', ParseIntPipe) id: number) {
-    return this.missions.get(id);
+  get(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.missions.get(id, user);
   }
 
   @Post()
+  @RequiresPermission('leaves.missions:create')
   create(@Body() dto: CreateMissionDto, @CurrentUser() user: JwtUser) {
-    return this.missions.create(dto, user.sub);
+    return this.missions.create(dto, user);
   }
 
   @Patch(':id')
+  @RequiresPermission('leaves.missions:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateMissionDto,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.missions.update(id, dto, user.sub);
+    return this.missions.update(id, dto, user);
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.missions.remove(id);
+  @RequiresPermission('leaves.missions:delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.missions.remove(id, user);
   }
 }

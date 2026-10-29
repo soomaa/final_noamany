@@ -29,8 +29,8 @@ export class CustodyController {
   constructor(private readonly custody: CustodyService) {}
 
   @Get()
-  list(@Query() query: ListCustodyDto) {
-    return this.custody.list(query);
+  list(@Query() query: ListCustodyDto, @CurrentUser() user: JwtUser) {
+    return this.custody.list(query, user);
   }
 
   @Get('devices')
@@ -39,37 +39,41 @@ export class CustodyController {
   }
 
   @Get('transfers/:empCode')
-  listTransfers(@Param('empCode', ParseIntPipe) empCode: number) {
-    return this.custody.listTransfers(empCode);
+  listTransfers(@Param('empCode', ParseIntPipe) empCode: number, @CurrentUser() user: JwtUser) {
+    return this.custody.listTransfers(empCode, user);
   }
 
   @Post('transfer')
   @RequiresPermission('affairs.custody:update')
   transfer(@Body() dto: TransferCustodyDto, @CurrentUser() user: JwtUser) {
-    return this.custody.transfer(dto, user.sub);
+    return this.custody.transfer(dto, user.sub, user);
   }
 
   @Post()
   @RequiresPermission('affairs.custody:create')
-  create(@Body() dto: CreateCustodyDto) {
-    return this.custody.create(dto);
+  create(@Body() dto: CreateCustodyDto, @CurrentUser() user: JwtUser) {
+    return this.custody.create(dto, user);
   }
 
   @Patch(':id')
   @RequiresPermission('affairs.custody:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateCustodyDto) {
-    return this.custody.update(id, dto);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateCustodyDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.custody.update(id, dto, user);
   }
 
   @Patch(':id/return')
   @RequiresPermission('affairs.custody:update')
-  returnItem(@Param('id', ParseIntPipe) id: number) {
-    return this.custody.returnItem(id);
+  returnItem(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.custody.returnItem(id, user);
   }
 
   @Delete(':id')
   @RequiresPermission('affairs.custody:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.custody.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.custody.remove(id, user);
   }
 }

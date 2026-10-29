@@ -3,7 +3,9 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ListQueryDto } from '../../common/dto/list-query.dto';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { diffDaysFromToday, parseLegacyDate, todayIso, toIsoDate } from '../../common/utils/legacy-date.util';
 
 const REPORT_KEYS = [
@@ -32,6 +34,16 @@ const REPORT_KEYS = [
 
 type ReportKey = (typeof REPORT_KEYS)[number];
 
+/**
+ * Employees a scoped user may report on (`null` = unrestricted system admin).
+ * `codes` holds both employees.emp_code and the gym attendance code (emp_code_g), since
+ * tbl_hdoor_emps.member_code may carry either.
+ */
+interface ReportScope {
+  ids: number[];
+  codes: number[];
+}
+
 interface ReportRow {
   id: number;
   name: string;
@@ -41,14 +53,55 @@ interface ReportRow {
 
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  async run(key: string, q: ListQueryDto) {
+  async run(key: string, q: ListQueryDto, user: JwtUser) {
     if (!REPORT_KEYS.includes(key as ReportKey)) {
       throw new BadRequestException('تقرير غير معروف');
     }
     const handler = this.handlers[key as ReportKey].bind(this);
-    return handler(q);
+    return handler(q, await this.reportScope(user));
+  }
+
+  /** Branch isolation: employees of the user's allowed branches (plus their own row). */
+  private async reportScope(user: JwtUser): Promise<ReportScope | null> {
+    const allowed = this.branchScope.allowedBranchIds(user);
+    if (allowed === null) return null;
+    const ownId = user?.emp_code != null ? Number(user.emp_code) : null;
+    const rows = await this.prisma.employees.findMany({
+      where: {
+        OR: [
+          ...(allowed.length ? [{ branch_id_fk: { in: allowed } }] : []),
+          ...(ownId ? [{ id: ownId }] : []),
+        ],
+      },
+      select: { id: true, emp_code: true, emp_code_g: true },
+    });
+    const codes = new Set<number>();
+    for (const r of rows) {
+      if (r.emp_code != null) codes.add(r.emp_code);
+      if (r.emp_code_g != null) codes.add(r.emp_code_g);
+    }
+    return { ids: rows.map((r) => r.id), codes: [...codes] };
+  }
+
+  private empWhere(scope: ReportScope | null): Prisma.employeesWhereInput {
+    return scope ? { id: { in: scope.ids } } : {};
+  }
+
+  private attendanceWhere(scope: ReportScope | null): Prisma.tbl_hdoor_empsWhereInput {
+    return scope ? { member_code: { in: scope.codes } } : {};
+  }
+
+  private lineWhere(scope: ReportScope | null): Prisma.hr_mosayer_detailsWhereInput {
+    return scope ? { emp_id: { in: scope.ids } } : {};
+  }
+
+  private contractWhere(scope: ReportScope | null): Prisma.contract_employeWhereInput {
+    return scope ? { emp_code: { in: scope.codes.map(String) } } : {};
   }
 
   private paginateRows(rows: ReportRow[], q: ListQueryDto) {
@@ -71,10 +124,13 @@ export class ReportsService {
     return Number(v);
   }
 
-  private handlers: Record<ReportKey, (q: ListQueryDto) => Promise<ReturnType<typeof paginated>>> = {
-    'employees-list': async (q) => {
+  private handlers: Record<
+    ReportKey,
+    (q: ListQueryDto, scope: ReportScope | null) => Promise<ReturnType<typeof paginated>>
+  > = {
+    'employees-list': async (q, scope) => {
       const rows = await this.prisma.employees.findMany({
-        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
+        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }], ...this.empWhere(scope) },
         select: { id: true, employee: true, emp_code: true, edara_n: true },
         orderBy: { id: 'desc' },
       });
@@ -89,9 +145,9 @@ export class ReportsService {
       );
     },
 
-    'employees-data': async (q) => {
+    'employees-data': async (q, scope) => {
       const rows = await this.prisma.employees.findMany({
-        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
+        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }], ...this.empWhere(scope) },
         select: {
           id: true,
           employee: true,
@@ -115,9 +171,9 @@ export class ReportsService {
       );
     },
 
-    'employees-new': async (q) => {
+    'employees-new': async (q, scope) => {
       const rows = await this.prisma.employees.findMany({
-        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
+        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }], ...this.empWhere(scope) },
         select: { id: true, employee: true, start_work_date_m: true, date: true },
         orderBy: { id: 'desc' },
         take: 500,
@@ -138,9 +194,9 @@ export class ReportsService {
       );
     },
 
-    'employees-expiring': async (q) => {
+    'employees-expiring': async (q, scope) => {
       const rows = await this.prisma.employees.findMany({
-        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
+        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }], ...this.empWhere(scope) },
         select: { id: true, employee: true, end_contract_date_m: true },
         orderBy: { id: 'desc' },
       });
@@ -159,9 +215,9 @@ export class ReportsService {
       );
     },
 
-    'employees-resigned': async (q) => {
+    'employees-resigned': async (q, scope) => {
       const rows = await this.prisma.employees.findMany({
-        where: { OR: [{ leave_emp: 1 }, { employee_type: { not: 1 } }] },
+        where: { OR: [{ leave_emp: 1 }, { employee_type: { not: 1 } }], ...this.empWhere(scope) },
         select: { id: true, employee: true, end_service_date_m: true, reason: true },
         orderBy: { id: 'desc' },
       });
@@ -176,11 +232,11 @@ export class ReportsService {
       );
     },
 
-    'attendance-daily': async (q) => {
+    'attendance-daily': async (q, scope) => {
       const date = q.date ?? q.dateFrom ?? todayIso();
       const matches = [date, String(Math.floor(new Date(date + 'T00:00:00').getTime() / 1000))];
       const rows = await this.prisma.tbl_hdoor_emps.findMany({
-        where: { action_date_s: { in: matches } },
+        where: { action_date_s: { in: matches }, ...this.attendanceWhere(scope) },
         orderBy: { hodoor_id: 'desc' },
         take: 1000,
       });
@@ -202,7 +258,7 @@ export class ReportsService {
       );
     },
 
-    'attendance-absence': async (q) => {
+    'attendance-absence': async (q, scope) => {
       const date = q.date ?? q.dateFrom ?? todayIso();
       const matches = [date, String(Math.floor(new Date(date + 'T00:00:00').getTime() / 1000))];
       const present = await this.prisma.tbl_hdoor_emps.findMany({
@@ -211,7 +267,7 @@ export class ReportsService {
       });
       const presentCodes = new Set(present.map((p) => p.member_code));
       const emps = await this.prisma.employees.findMany({
-        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }], emp_code: { not: null } },
+        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }], emp_code: { not: null }, ...this.empWhere(scope) },
         select: { id: true, employee: true, emp_code: true, edara_n: true },
       });
       const absent = emps.filter((e) => e.emp_code != null && !presentCodes.has(e.emp_code));
@@ -227,8 +283,8 @@ export class ReportsService {
       );
     },
 
-    'attendance-late': async (q) => {
-      const dateFilter: Prisma.tbl_hdoor_empsWhereInput = { late_min: { gt: 0 } };
+    'attendance-late': async (q, scope) => {
+      const dateFilter: Prisma.tbl_hdoor_empsWhereInput = { late_min: { gt: 0 }, ...this.attendanceWhere(scope) };
       if (q.dateFrom || q.dateTo) {
         const from = q.dateFrom ?? '1970-01-01';
         const to = q.dateTo ?? todayIso();
@@ -256,8 +312,9 @@ export class ReportsService {
       );
     },
 
-    'attendance-hours': async (q) => {
+    'attendance-hours': async (q, scope) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
+        where: this.lineWhere(scope),
         select: { id: true, emp_name: true, sa3at_amal: true, ayam_amal: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -273,9 +330,9 @@ export class ReportsService {
       );
     },
 
-    'attendance-overtime': async (q) => {
+    'attendance-overtime': async (q, scope) => {
       const rows = await this.prisma.tbl_hdoor_emps.findMany({
-        where: { num_min: { gt: 0 } },
+        where: { num_min: { gt: 0 }, ...this.attendanceWhere(scope) },
         orderBy: { hodoor_id: 'desc' },
         take: 1000,
       });
@@ -296,9 +353,9 @@ export class ReportsService {
       );
     },
 
-    'attendance-shift': async (q) => {
+    'attendance-shift': async (q, scope) => {
       const rows = await this.prisma.tbl_hdoor_emps.findMany({
-        where: { sheft_type: { not: 0 } },
+        where: { sheft_type: { not: 0 }, ...this.attendanceWhere(scope) },
         orderBy: { hodoor_id: 'desc' },
         take: 1000,
       });
@@ -319,8 +376,9 @@ export class ReportsService {
       );
     },
 
-    'payroll-sheet': async (q) => {
+    'payroll-sheet': async (q, scope) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
+        where: this.lineWhere(scope),
         select: { id: true, emp_name: true, rateb_asasy: true, safi: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -336,8 +394,9 @@ export class ReportsService {
       );
     },
 
-    'payroll-deductions': async (q) => {
+    'payroll-deductions': async (q, scope) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
+        where: this.lineWhere(scope),
         select: {
           id: true,
           emp_name: true,
@@ -362,8 +421,9 @@ export class ReportsService {
       );
     },
 
-    'payroll-incentives': async (q) => {
+    'payroll-incentives': async (q, scope) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
+        where: this.lineWhere(scope),
         select: { id: true, emp_name: true, tot_mokafaa: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -378,8 +438,9 @@ export class ReportsService {
       );
     },
 
-    'payroll-allowances': async (q) => {
+    'payroll-allowances': async (q, scope) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
+        where: this.lineWhere(scope),
         select: {
           id: true,
           emp_name: true,
@@ -407,8 +468,9 @@ export class ReportsService {
       );
     },
 
-    'payroll-commissions': async (q) => {
+    'payroll-commissions': async (q, scope) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
+        where: this.lineWhere(scope),
         select: { id: true, emp_name: true, tot_entdab: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -423,8 +485,9 @@ export class ReportsService {
       );
     },
 
-    'payroll-taxes': async (q) => {
+    'payroll-taxes': async (q, scope) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
+        where: this.lineWhere(scope),
         select: { id: true, emp_name: true, khasm_keyab: true, agaza_bdon_rateb: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -439,8 +502,9 @@ export class ReportsService {
       );
     },
 
-    'payroll-insurance': async (q) => {
+    'payroll-insurance': async (q, scope) => {
       const rows = await this.prisma.hr_mosayer_details.findMany({
+        where: this.lineWhere(scope),
         select: { id: true, emp_name: true, khasm_tamen: true },
         orderBy: { id: 'desc' },
         take: 1000,
@@ -455,8 +519,8 @@ export class ReportsService {
       );
     },
 
-    'leaves-balance': async (q) => {
-      const contracts = await this.prisma.contract_employe.findMany({ take: 1000 });
+    'leaves-balance': async (q, scope) => {
+      const contracts = await this.prisma.contract_employe.findMany({ where: this.contractWhere(scope), take: 1000 });
       const emps = await this.prisma.employees.findMany({
         select: { id: true, emp_code: true, employee: true },
       });
@@ -477,9 +541,9 @@ export class ReportsService {
       );
     },
 
-    'leaves-used': async (q) => {
+    'leaves-used': async (q, scope) => {
       const rows = await this.prisma.hr_all_agzat_orders.findMany({
-        where: { suspend: SuspendStatus.APPROVED },
+        where: { suspend: SuspendStatus.APPROVED, ...(scope ? { emp_id_fk: { in: scope.ids } } : {}) },
         select: {
           id: true,
           emp_id_fk: true,
@@ -508,11 +572,11 @@ export class ReportsService {
       );
     },
 
-    'leaves-remaining': async (q) => {
-      const contracts = await this.prisma.contract_employe.findMany({ take: 1000 });
+    'leaves-remaining': async (q, scope) => {
+      const contracts = await this.prisma.contract_employe.findMany({ where: this.contractWhere(scope), take: 1000 });
       const usedRows = await this.prisma.hr_all_agzat_orders.groupBy({
         by: ['emp_id_fk'],
-        where: { suspend: SuspendStatus.APPROVED },
+        where: { suspend: SuspendStatus.APPROVED, ...(scope ? { emp_id_fk: { in: scope.ids } } : {}) },
         _sum: { num_days: true },
       });
       const usedByEmp = new Map(usedRows.map((u) => [u.emp_id_fk, u._sum.num_days ?? 0]));

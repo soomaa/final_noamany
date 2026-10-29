@@ -10,7 +10,9 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { JwtUser } from '../../common/types/jwt-user';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { ClearanceService } from './clearance.service';
 import { CreateClearanceDto, ListClearanceDto, UpdateClearanceDto } from './dto/clearance.dto';
@@ -22,27 +24,34 @@ export class ClearanceController {
   constructor(private readonly clearance: ClearanceService) {}
 
   @Get()
-  list(@Query() query: ListClearanceDto) {
-    return this.clearance.list(query);
+  list(@Query() query: ListClearanceDto, @CurrentUser() user: JwtUser) {
+    return this.clearance.list(query, user);
   }
 
   @Get(':groupId')
-  getGroup(@Param('groupId', ParseIntPipe) groupId: number) {
-    return this.clearance.getGroup(groupId);
+  getGroup(@Param('groupId', ParseIntPipe) groupId: number, @CurrentUser() user: JwtUser) {
+    return this.clearance.getGroup(groupId, user);
   }
 
   @Post()
-  create(@Body() dto: CreateClearanceDto) {
-    return this.clearance.create(dto);
+  @RequiresPermission('termination.clearance:create')
+  create(@Body() dto: CreateClearanceDto, @CurrentUser() user: JwtUser) {
+    return this.clearance.create(dto, user);
   }
 
   @Patch(':groupId')
-  update(@Param('groupId', ParseIntPipe) groupId: number, @Body() dto: UpdateClearanceDto) {
-    return this.clearance.update(groupId, dto);
+  @RequiresPermission('termination.clearance:update')
+  update(
+    @Param('groupId', ParseIntPipe) groupId: number,
+    @Body() dto: UpdateClearanceDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.clearance.update(groupId, dto, user);
   }
 
   @Delete(':groupId')
-  remove(@Param('groupId', ParseIntPipe) groupId: number) {
-    return this.clearance.remove(groupId);
+  @RequiresPermission('termination.clearance:delete')
+  remove(@Param('groupId', ParseIntPipe) groupId: number, @CurrentUser() user: JwtUser) {
+    return this.clearance.remove(groupId, user);
   }
 }

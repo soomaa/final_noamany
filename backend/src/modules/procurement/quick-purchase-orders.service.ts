@@ -7,6 +7,9 @@ import { InventoryTxnType, MovementDirection, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { InventoryStockService } from '../inventory/inventory-stock.service';
+import { InventoryLocationService } from '../inventory/inventory-location.service';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import {
   ChangeQuickPurchaseOrderStatusDto,
   ListQuickPurchaseOrdersDto,
@@ -24,7 +27,13 @@ export class QuickPurchaseOrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly stock: InventoryStockService,
+    private readonly location: InventoryLocationService,
+    private readonly branchScope: BranchScopeService,
   ) {}
+
+  private assertOrderBranch(user: JwtUser, order: { branch_id: number }) {
+    this.branchScope.assertBranchAllowed(user, order.branch_id, 'لا تملك صلاحية الوصول لأمر شراء هذا الفرع');
+  }
 
   private map(row: Prisma.prc_quick_purchase_ordersGetPayload<object>) {
     return {
@@ -48,8 +57,10 @@ export class QuickPurchaseOrdersService {
     };
   }
 
-  async list(q: ListQuickPurchaseOrdersDto) {
+  async list(q: ListQuickPurchaseOrdersDto, user?: JwtUser) {
     const and: Prisma.prc_quick_purchase_ordersWhereInput[] = [notDeletedFilter()];
+    const scoped = this.branchScope.resolveListFilter(user, q.branchId ?? null);
+    if (scoped) and.push({ branch_id: { in: scoped } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -62,7 +73,6 @@ export class QuickPurchaseOrdersService {
     }
     if (q.supplierId && q.supplierId !== 'all') and.push({ supplier_id: Number(q.supplierId) });
     if (q.status && q.status !== 'all') and.push({ status: q.status });
-    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
     if (q.dateFrom || q.dateTo) {
       and.push({
         created_at: {
@@ -84,10 +94,11 @@ export class QuickPurchaseOrdersService {
     return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
   }
 
-  async statistics(q: QuickPurchaseOrderStatisticsDto) {
+  async statistics(q: QuickPurchaseOrderStatisticsDto, user?: JwtUser) {
     const and: Prisma.prc_quick_purchase_ordersWhereInput[] = [notDeletedFilter()];
+    const scoped = this.branchScope.resolveListFilter(user, q.branchId ?? null);
+    if (scoped) and.push({ branch_id: { in: scoped } });
     if (q.supplierId && q.supplierId !== 'all') and.push({ supplier_id: Number(q.supplierId) });
-    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
     if (q.startDate || q.endDate) {
       and.push({
         created_at: {
@@ -121,11 +132,12 @@ export class QuickPurchaseOrdersService {
     };
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: JwtUser) {
     const row = await this.prisma.prc_quick_purchase_orders.findFirst({
       where: { id, ...notDeletedFilter() },
     });
     if (!row) throw new NotFoundException('أمر الشراء السريع غير موجود');
+    this.assertOrderBranch(user, row);
     return this.map(row);
   }
 
@@ -133,7 +145,10 @@ export class QuickPurchaseOrdersService {
     return Math.round(quantity * unitPrice * 100) / 100;
   }
 
-  async create(dto: UpsertQuickPurchaseOrderDto, userId: number) {
+  async create(dto: UpsertQuickPurchaseOrderDto, user: JwtUser) {
+    const userId = user.sub;
+    // The warehouse must be active, inside the caller's scope and belong to the chosen branch.
+    await this.location.resolveSelection(user, dto.warehouseId, dto.branchId);
     const totalAmount = this.computeTotal(dto.quantity, dto.unitPrice);
     const row = await this.prisma.$transaction(async (tx) => {
       const orderNumber = dto.orderNumber?.trim() || (await generateQpoNumber(tx));
@@ -157,11 +172,15 @@ export class QuickPurchaseOrdersService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertQuickPurchaseOrderDto>) {
+  async update(id: number, dto: Partial<UpsertQuickPurchaseOrderDto>, user: JwtUser) {
     const existing = await this.prisma.prc_quick_purchase_orders.findFirst({
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('أمر الشراء السريع غير موجود');
+    this.assertOrderBranch(user, existing);
+    if (dto.warehouseId != null || dto.branchId != null) {
+      await this.location.resolveSelection(user, dto.warehouseId ?? existing.warehouse_id, dto.branchId ?? existing.branch_id);
+    }
     if (existing.status !== 'مسودة') {
       throw new BadRequestException('لا يمكن تعديل أمر الشراء إلا في حالة المسودة');
     }
@@ -187,11 +206,12 @@ export class QuickPurchaseOrdersService {
     return this.map(row);
   }
 
-  async remove(id: number) {
+  async remove(id: number, user: JwtUser) {
     const existing = await this.prisma.prc_quick_purchase_orders.findFirst({
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('أمر الشراء السريع غير موجود');
+    this.assertOrderBranch(user, existing);
     if (existing.status === 'مؤكد') {
       throw new BadRequestException('لا يمكن حذف أمر شراء مؤكد — قم بإلغاء التأكيد أولاً');
     }
@@ -202,12 +222,14 @@ export class QuickPurchaseOrdersService {
     return { success: true };
   }
 
-  async changeStatus(id: number, dto: ChangeQuickPurchaseOrderStatusDto, userId: number) {
+  async changeStatus(id: number, dto: ChangeQuickPurchaseOrderStatusDto, user: JwtUser) {
+    const userId = user.sub;
     const result = await this.prisma.$transaction(async (tx) => {
       const order = await tx.prc_quick_purchase_orders.findFirst({
         where: { id, ...notDeletedFilter() },
       });
       if (!order) throw new NotFoundException('أمر الشراء السريع غير موجود');
+      this.assertOrderBranch(user, order);
 
       const oldStatus = order.status;
       const newStatus = dto.status;

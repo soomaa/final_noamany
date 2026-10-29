@@ -25,8 +25,8 @@ export class RewardsController {
   constructor(private readonly rewards: RewardsService) {}
 
   @Get()
-  list(@Query() query: ListRewardsDto) {
-    return this.rewards.list(query);
+  list(@Query() query: ListRewardsDto, @CurrentUser() user: JwtUser) {
+    return this.rewards.list(query, user);
   }
 
   @Get('next-number')
@@ -37,30 +37,34 @@ export class RewardsController {
   @Post()
   @RequiresPermission('finance.rewards:create')
   create(@Body() dto: CreateRewardDto, @CurrentUser() user: JwtUser) {
-    return this.rewards.create(dto, user.sub);
+    return this.rewards.create(dto, user.sub, user);
   }
 
   @Patch(':id')
   @RequiresPermission('finance.rewards:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateRewardDto) {
-    return this.rewards.update(id, dto);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateRewardDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.rewards.update(id, dto, user);
   }
 
   @Patch(':id/approve')
   @RequiresPermission('finance.rewards:approve')
-  approve(@Param('id', ParseIntPipe) id: number) {
-    return this.rewards.approve(id);
+  approve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.rewards.approve(id, user);
   }
 
   @Patch(':id/reject')
   @RequiresPermission('finance.rewards:reject')
-  reject(@Param('id', ParseIntPipe) id: number) {
-    return this.rewards.reject(id);
+  reject(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.rewards.reject(id, user);
   }
 
   @Delete(':id')
   @RequiresPermission('finance.rewards:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.rewards.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.rewards.remove(id, user);
   }
 }

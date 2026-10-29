@@ -29,13 +29,13 @@ export class TasksController {
   constructor(private readonly tasks: TasksService) {}
 
   @Get()
-  list(@Query() query: ListTasksDto) {
-    return this.tasks.list(query);
+  list(@Query() query: ListTasksDto, @CurrentUser() user: JwtUser) {
+    return this.tasks.list(query, user);
   }
 
   @Get(':id')
-  get(@Param('id', ParseIntPipe) id: number) {
-    return this.tasks.get(id);
+  get(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.tasks.get(id, user);
   }
 
   @Post()
@@ -46,14 +46,18 @@ export class TasksController {
 
   @Patch(':id')
   @RequiresPermission('affairs.tasks:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateTaskDto) {
-    return this.tasks.update(id, dto);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateTaskDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.tasks.update(id, dto, user);
   }
 
   @Delete(':id')
   @RequiresPermission('affairs.tasks:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.tasks.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.tasks.remove(id, user);
   }
 
   @Post(':id/action')
@@ -63,6 +67,6 @@ export class TasksController {
     @Body() dto: TaskActionDto,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.tasks.action(id, dto, user.sub);
+    return this.tasks.action(id, dto, user);
   }
 }

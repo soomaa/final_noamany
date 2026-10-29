@@ -36,13 +36,16 @@ describe('PurchaseInvoicesService', () => {
       $queryRawUnsafe: jest.fn().mockResolvedValue([{ maxNum: 0 }]),
       $transaction: jest.fn(async (callback: (tx: unknown) => unknown) => callback(prisma)),
     };
-    const service = new PurchaseInvoicesService(prisma as never, {} as never);
+    const service = new PurchaseInvoicesService(prisma as never, {} as never, {
+      defaultBranch: () => null,
+      assertBranch: jest.fn(),
+    } as never);
 
     await service.create({
       supplierId: 2,
       invoiceDate: '2026-09-24',
       items: [{ productId: 41, name: 'بروتين', quantity: 2, price: 15 }],
-    });
+    }, { sub: 1, level: 1 } as never);
 
     expect(prisma.prc_purchase_invoices.create).toHaveBeenCalledWith(
       expect.objectContaining({

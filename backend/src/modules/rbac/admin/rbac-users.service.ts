@@ -4,7 +4,10 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { BranchScopeService } from '../../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../../common/prisma/prisma.service';
+import { JwtUser } from '../../../common/types/jwt-user';
+import { assertCanManageUser } from '../../users/user-target-scope.util';
 import { flattenCatalog, permKey } from '../catalog/rbac.catalog';
 import { PermissionEngineService } from '../engine/permission-engine.service';
 import { effectiveForRole, StoredCell, unionRoles } from '../engine/permission-resolver';
@@ -23,6 +26,8 @@ export class RbacUsersService {
     private readonly prisma: PrismaService,
     private readonly engine: PermissionEngineService,
     private readonly audit: RbacAuditService,
+    // Stateless; defaulted so unit specs that predate branch scoping still construct it.
+    private readonly scope: BranchScopeService = new BranchScopeService(),
   ) {}
 
   // ---- user picker --------------------------------------------------------------------
@@ -81,15 +86,42 @@ export class RbacUsersService {
     };
   }
 
-  async setUserRoles(userId: number, dto: AssignRolesDto, actorUserId: number) {
+  async setUserRoles(userId: number, dto: AssignRolesDto, actorUserId: number, actor?: JwtUser) {
     await this.getUserOrThrow(userId);
+    await this.assertTargetManageable(userId, actor);
     const wanted = [...new Set(dto.roleIds)];
     const valid = await this.prisma.rbac_roles.findMany({
       where: { id: { in: wanted } },
-      select: { id: true },
+      select: { id: true, is_super_admin: true },
     });
     const validIds = new Set(valid.map((v) => v.id));
     const filtered = wanted.filter((id) => validIds.has(id));
+
+    // Anti-escalation (mirrors setExceptions): a non-super-admin cannot edit their own
+    // roles, cannot hand out a super-admin role, and cannot ADD a role that grants a
+    // permission they don't hold. Removing roles is a revoke and stays allowed.
+    const editor = await this.engine.getEffective(actorUserId);
+    if (!editor.superAdmin) {
+      if (userId === actorUserId) throw new ForbiddenException('لا يمكنك تعديل أدوارك بنفسك');
+      if (valid.some((r) => r.is_super_admin && filtered.includes(r.id))) {
+        throw new ForbiddenException('منح دور المدير العام متاح للمدير العام فقط');
+      }
+      const current = await this.prisma.rbac_user_roles.findMany({
+        where: { user_id: userId },
+        select: { role_id: true },
+      });
+      const already = new Set(current.map((c) => c.role_id));
+      const added = filtered.filter((id) => !already.has(id));
+      const perRole = await this.roleAllowSets(added);
+      const escalations = [...new Set([...perRole.values()].flatMap((keys) => [...keys]))].filter(
+        (k) => !editor.keys.has(k),
+      );
+      if (escalations.length) {
+        throw new ForbiddenException(
+          `لا يمكنك منح صلاحيات لا تملكها: ${escalations.slice(0, 5).join(', ')}${escalations.length > 5 ? ' …' : ''}`,
+        );
+      }
+    }
 
     await this.prisma.$transaction([
       this.prisma.rbac_user_roles.deleteMany({ where: { user_id: userId, role_id: { notIn: filtered.length ? filtered : [-1] } } }),
@@ -117,8 +149,10 @@ export class RbacUsersService {
     return { assignments, exceptions };
   }
 
-  async setOperationalScope(userId: number, dto: AssignOperationalScopeDto, actorUserId: number) {
+  async setOperationalScope(userId: number, dto: AssignOperationalScopeDto, actorUserId: number, actor?: JwtUser) {
     await this.getUserOrThrow(userId);
+    await this.assertTargetManageable(userId, actor);
+    if (actor) this.scope.assertBranchAllowed(actor, dto.branchId);
     const store = this.prisma as any;
     await store.rbac_user_operational_scopes.upsert({
       where: { user_id_branch_id_section: { user_id: userId, branch_id: dto.branchId, section: dto.section } },
@@ -130,8 +164,10 @@ export class RbacUsersService {
     return this.getOperationalScope(userId);
   }
 
-  async setSectionException(userId: number, dto: SetSectionExceptionDto, actorUserId: number) {
+  async setSectionException(userId: number, dto: SetSectionExceptionDto, actorUserId: number, actor?: JwtUser) {
     await this.getUserOrThrow(userId);
+    await this.assertTargetManageable(userId, actor);
+    if (actor) this.scope.assertBranchAllowed(actor, dto.branchId);
     const store = this.prisma as any;
     await store.rbac_user_section_exceptions.upsert({
       where: { user_id_branch_id_section: { user_id: userId, branch_id: dto.branchId, section: dto.section } },
@@ -143,8 +179,16 @@ export class RbacUsersService {
     return this.getOperationalScope(userId);
   }
 
-  async clearSectionException(userId: number, branchId: number, section: 'female' | 'male', actorUserId: number) {
+  async clearSectionException(
+    userId: number,
+    branchId: number,
+    section: 'female' | 'male',
+    actorUserId: number,
+    actor?: JwtUser,
+  ) {
     await this.getUserOrThrow(userId);
+    await this.assertTargetManageable(userId, actor);
+    if (actor) this.scope.assertBranchAllowed(actor, branchId);
     const store = this.prisma as any;
     await store.rbac_user_section_exceptions.deleteMany({ where: { user_id: userId, branch_id: branchId, section } });
     await this.audit.log({ actorUserId, action: 'scope.exception.clear', targetType: 'user', targetId: userId, detail: { branchId, section } });
@@ -207,8 +251,9 @@ export class RbacUsersService {
     };
   }
 
-  async setExceptions(userId: number, dto: SaveMatrixDto, actorUserId: number) {
+  async setExceptions(userId: number, dto: SaveMatrixDto, actorUserId: number, actor?: JwtUser) {
     await this.getUserOrThrow(userId);
+    await this.assertTargetManageable(userId, actor);
 
     for (const c of dto.changes) {
       if (!this.validCells.has(permKey(c.resourceKey, c.actionKey))) {
@@ -251,8 +296,9 @@ export class RbacUsersService {
   }
 
   /** Reset every exception cell to inherit. */
-  async clearExceptions(userId: number, actorUserId: number) {
+  async clearExceptions(userId: number, actorUserId: number, actor?: JwtUser) {
     await this.getUserOrThrow(userId);
+    await this.assertTargetManageable(userId, actor);
     await this.prisma.rbac_user_exceptions.deleteMany({ where: { user_id: userId } });
     await this.audit.log({ actorUserId, action: 'exception.clear', targetType: 'user', targetId: userId });
     this.engine.invalidateUser(userId);
@@ -260,6 +306,15 @@ export class RbacUsersService {
   }
 
   // ---- helpers ------------------------------------------------------------------------
+
+  /**
+   * Non-system-admins may only edit staff inside their branch scope and never a
+   * level-1 / super-admin account. The controller always passes the actor; it is
+   * optional only so older unit specs that call the service directly still compile.
+   */
+  private async assertTargetManageable(userId: number, actor?: JwtUser) {
+    if (actor) await assertCanManageUser(this.prisma, this.scope, actor, userId);
+  }
 
   private async getUserOrThrow(userId: number) {
     const user = await this.prisma.users.findUnique({
@@ -290,6 +345,12 @@ export class RbacUsersService {
     });
     const roleIds = userRoles.map((r) => r.role_id);
     if (!roleIds.length) return new Set();
+    return unionRoles([...(await this.roleAllowSets(roleIds)).values()]);
+  }
+
+  /** Effective allow-set of each role (matrix inheritance resolved), keyed by role id. */
+  private async roleAllowSets(roleIds: number[]): Promise<Map<number, Set<string>>> {
+    if (!roleIds.length) return new Map();
     const [rows, maps] = await Promise.all([
       this.prisma.rbac_role_permissions.findMany({
         where: { role_id: { in: roleIds } },
@@ -306,7 +367,7 @@ export class RbacUsersService {
       perRole.get(c.role_id)?.push({ resourceKey, actionKey, effect: c.effect as 'allow' | 'deny' });
     }
     const input = this.engine.getResolveInput();
-    return unionRoles([...perRole.values()].map((cells) => effectiveForRole(cells, input)));
+    return new Map([...perRole].map(([id, cells]) => [id, effectiveForRole(cells, input)]));
   }
 
   private async loadExceptionCells(userId: number): Promise<StoredCell[]> {

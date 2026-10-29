@@ -14,6 +14,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtUser } from '../../common/types/jwt-user';
 import { ListEmployeesDto } from './dto/list-employees.dto';
 import { EmployeesService } from './employees.service';
 import { PutWeeklyScheduleDto } from './dto/weekly-schedule.dto';
@@ -25,9 +26,16 @@ import { UpdateEmployeeStatusDto } from './dto/update-employee-status.dto';
 export class EmployeesController {
   constructor(private readonly employees: EmployeesService) {}
 
+  // Branch isolation: lists/pickers are clamped to the caller's branch scope inside the
+  // service, and every `:id` route first checks the employee belongs to that scope
+  // (`inScope`). System admins are unrestricted.
+  private inScope(user: JwtUser, id: number) {
+    return this.employees.assertEmployeeInScope(user, id);
+  }
+
   @Get()
-  list(@Query() query: ListEmployeesDto) {
-    return this.employees.list(query);
+  list(@Query() query: ListEmployeesDto, @CurrentUser() user: JwtUser) {
+    return this.employees.list(query, user);
   }
 
   // Static route must precede ':id'
@@ -39,142 +47,191 @@ export class EmployeesController {
 
   @Get('sales-reps')
   @RequiresPermission('club.members:view', 'club.members:create')
-  salesReps() {
-    return this.employees.salesReps();
+  salesReps(@CurrentUser() user: JwtUser) {
+    return this.employees.salesReps(user);
   }
 
   @Get('pos-options')
   @RequiresPermission('gym-sales.sales.new_receipt:view', 'gym-sales.sales.treasury:view', 'gym-sales.sales.settlements:view', 'gym-sales.procurement:create')
-  posOptions() {
-    return this.employees.posOptions();
+  posOptions(@CurrentUser() user: JwtUser) {
+    return this.employees.posOptions(user);
   }
 
   // Static route must precede ':id'.
   @Get('subscription-options')
   @RequiresPermission('club.subscriptions:create', 'club.subscriptions.list:create', 'club.subscriptions.new:create', 'club.lockers:create', 'club.lockers:update')
-  subscriptionOptions() {
-    return this.employees.subscriptionOptions();
+  subscriptionOptions(@CurrentUser() user: JwtUser) {
+    return this.employees.subscriptionOptions(user);
   }
 
   @Get(':id/identity')
-  identity(@Param('id', ParseIntPipe) id: number) {
+  async identity(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.identity(id);
   }
 
   @Get(':id')
-  findForForm(@Param('id', ParseIntPipe) id: number) {
+  async findForForm(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.findForForm(id);
   }
 
   @Get(':id/profile')
-  profile(@Param('id', ParseIntPipe) id: number) {
+  async profile(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.profile(id);
   }
 
   @Post()
   @RequiresPermission('employees.list:create')
-  create(@Body() body: Record<string, unknown>, @CurrentUser('sub') userId: number) {
-    return this.employees.create(body, userId);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    this.employees.assertEmployeeBodyInScope(user, body, true);
+    return this.employees.create(body, user.sub);
   }
 
   @Put(':id')
   @RequiresPermission('employees.list:update')
-  update(
+  async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Record<string, unknown>,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.employees.update(id, body, userId);
+    await this.inScope(user, id);
+    this.employees.assertEmployeeBodyInScope(user, body, false);
+    return this.employees.update(id, body, user.sub);
   }
 
   @Patch(':id/status')
   @RequiresPermission('employees.list:update')
-  setStatus(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateEmployeeStatusDto) {
+  async setStatus(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateEmployeeStatusDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    await this.inScope(user, id);
     return this.employees.setStatus(id, dto.employee_type);
   }
 
   @Delete(':id')
   @RequiresPermission('employees.list:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
+  async remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.remove(id);
   }
 
   @Get(':id/finance')
-  getFinance(@Param('id', ParseIntPipe) id: number) {
+  async getFinance(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.getFinance(id);
   }
 
+  // Writes below used to inherit only the class-level `:view`; they now need update/delete.
   @Put(':id/finance')
-  putFinance(
+  @RequiresPermission('employees.list:update')
+  async putFinance(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { rows?: unknown[]; basic_salary?: string },
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.employees.putFinance(id, body, userId);
+    await this.inScope(user, id);
+    return this.employees.putFinance(id, body, user.sub);
   }
 
   @Delete(':id/finance/:rowId')
-  deleteFinanceRow(
+  @RequiresPermission('employees.list:delete')
+  async deleteFinanceRow(
     @Param('id', ParseIntPipe) id: number,
     @Param('rowId', ParseIntPipe) rowId: number,
+    @CurrentUser() user: JwtUser,
   ) {
+    await this.inScope(user, id);
     return this.employees.deleteFinanceRow(id, rowId);
   }
 
   @Get(':id/dwam')
-  getDwam(@Param('id', ParseIntPipe) id: number) {
+  async getDwam(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.getDwam(id);
   }
 
   @Get(':id/weekly-schedule')
-  getWeeklySchedule(@Param('id', ParseIntPipe) id: number, @Query('date') date?: string) {
+  async getWeeklySchedule(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
+    @Query('date') date?: string,
+  ) {
+    await this.inScope(user, id);
     return this.employees.getWeeklySchedule(id, date);
   }
 
   @Put(':id/weekly-schedule')
   @RequiresPermission('employees.list:update')
-  putWeeklySchedule(@Param('id', ParseIntPipe) id: number, @Body() dto: PutWeeklyScheduleDto, @CurrentUser('sub') userId: number) {
-    return this.employees.putWeeklySchedule(id, dto, userId);
+  async putWeeklySchedule(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PutWeeklyScheduleDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    await this.inScope(user, id);
+    this.employees.assertScheduleInScope(user, dto);
+    return this.employees.putWeeklySchedule(id, dto, user.sub);
   }
 
   @Post(':id/weekly-schedule/validate')
   @RequiresPermission('employees.list:update')
-  validateWeeklySchedule(@Param('id', ParseIntPipe) id: number, @Body() dto: PutWeeklyScheduleDto) {
+  async validateWeeklySchedule(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: PutWeeklyScheduleDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    await this.inScope(user, id);
+    this.employees.assertScheduleInScope(user, dto);
     return this.employees.validateWeeklySchedule(id, dto);
   }
 
   @Put(':id/dwam')
-  putDwam(@Param('id', ParseIntPipe) id: number, @Body() body: {
-    shiftId?: number | string;
-    branchId?: number | string;
-    hdoorFromTime?: string;
-    hdoorToTime?: string;
-    hdoorKhasmFrom?: string;
-    ensrafFromTime?: string;
-    ensrafToTime?: string;
-    ensrafKhasmFrom?: string;
-    schedule?: unknown[];
-    shift_type?: string;
-  }) {
+  @RequiresPermission('employees.list:update')
+  async putDwam(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
+    @Body() body: {
+      shiftId?: number | string;
+      branchId?: number | string;
+      hdoorFromTime?: string;
+      hdoorToTime?: string;
+      hdoorKhasmFrom?: string;
+      ensrafFromTime?: string;
+      ensrafToTime?: string;
+      ensrafKhasmFrom?: string;
+      schedule?: unknown[];
+      shift_type?: string;
+    },
+  ) {
+    await this.inScope(user, id);
     return this.employees.putDwam(id, body);
   }
 
   @Delete(':id/dwam/:assignmentId')
-  deleteDwamAssignment(
+  @RequiresPermission('employees.list:delete')
+  async deleteDwamAssignment(
     @Param('id', ParseIntPipe) id: number,
     @Param('assignmentId', ParseIntPipe) assignmentId: number,
+    @CurrentUser() user: JwtUser,
   ) {
+    await this.inScope(user, id);
     return this.employees.deleteDwamAssignment(id, assignmentId);
   }
 
   @Get(':id/banks')
-  getBanks(@Param('id', ParseIntPipe) id: number) {
+  async getBanks(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.getBanks(id);
   }
 
   @Put(':id/banks')
-  putBanks(
+  @RequiresPermission('employees.list:update')
+  async putBanks(
     @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
     @Body()
     body: {
       rows?: Array<{
@@ -186,30 +243,38 @@ export class EmployeesController {
       }>;
     },
   ) {
+    await this.inScope(user, id);
     return this.employees.putBanks(id, body);
   }
 
   @Get(':id/contract')
-  getContract(@Param('id', ParseIntPipe) id: number) {
+  async getContract(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.getContract(id);
   }
 
   @Put(':id/contract')
-  putContract(
+  @RequiresPermission('employees.list:update')
+  async putContract(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Record<string, unknown>,
+    @CurrentUser() user: JwtUser,
   ) {
+    await this.inScope(user, id);
     return this.employees.putContract(id, body);
   }
 
   @Get(':id/documents')
-  getDocuments(@Param('id', ParseIntPipe) id: number) {
+  async getDocuments(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.getDocuments(id);
   }
 
   @Put(':id/documents')
-  putDocuments(
+  @RequiresPermission('employees.list:update')
+  async putDocuments(
     @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
     @Body()
     body: {
       rows?: Array<{
@@ -221,23 +286,27 @@ export class EmployeesController {
       }>;
     },
   ) {
+    await this.inScope(user, id);
     return this.employees.putDocuments(id, body);
   }
 
   @Get(':id/insurance')
-  getInsurance(@Param('id', ParseIntPipe) id: number) {
+  async getInsurance(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.getInsurance(id);
   }
 
   @Post(':id/app-user')
   @RequiresPermission('employees.list:update')
-  convertToAppUser(@Param('id', ParseIntPipe) id: number) {
+  async convertToAppUser(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.convertToAppUser(id);
   }
 
   @Delete(':id/app-user')
   @RequiresPermission('employees.list:delete')
-  removeAppUser(@Param('id', ParseIntPipe) id: number) {
+  async removeAppUser(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    await this.inScope(user, id);
     return this.employees.removeAppUser(id);
   }
 }

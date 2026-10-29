@@ -14,6 +14,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtUser } from '../../common/types/jwt-user';
 import {
   ChangeGoodsReceiptStatusDto,
   ListGoodsReceiptsDto,
@@ -29,19 +30,19 @@ export class GoodsReceiptsController {
   constructor(private readonly service: GoodsReceiptsService) {}
 
   @Get()
-  list(@Query() query: ListGoodsReceiptsDto) {
-    return this.service.list(query);
+  list(@Query() query: ListGoodsReceiptsDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user);
   }
 
   @Post()
   @RequiresPermission('gym-sales.procurement:create')
-  create(@Body() body: UpsertGoodsReceiptDto, @CurrentUser('sub') userId: number) {
-    return this.service.create(body, userId);
+  create(@Body() body: UpsertGoodsReceiptDto, @CurrentUser() user: JwtUser) {
+    return this.service.create(body, user);
   }
 
   @Put(':id')
@@ -49,8 +50,9 @@ export class GoodsReceiptsController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertGoodsReceiptDto>,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.update(id, body);
+    return this.service.update(id, body, user);
   }
 
   @Patch(':id/status')
@@ -58,15 +60,15 @@ export class GoodsReceiptsController {
   changeStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: ChangeGoodsReceiptStatusDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
     @Query('dryRun') dryRun?: string,
   ) {
-    return this.service.changeStatus(id, body, userId, isDryRun(dryRun));
+    return this.service.changeStatus(id, body, user, isDryRun(dryRun));
   }
 
   @Delete(':id')
   @RequiresPermission('gym-sales.procurement:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.remove(id, user);
   }
 }

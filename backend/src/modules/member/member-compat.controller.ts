@@ -14,6 +14,8 @@ import { AmInvitationStatus } from '@prisma/client';
 import { Public } from '../../common/decorators/public.decorator';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentMember } from '../../common/decorators/current-member.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtUser } from '../../common/types/jwt-user';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { MemberJwtUser } from '../../common/types/member-jwt-user';
 import { AppManagementService } from '../app-management/app-management.service';
@@ -68,8 +70,8 @@ export class MemberCompatController {
   @UseGuards(JwtAuthGuard)
   @Get('invitations')
   @RequiresPermission('app-management.invitations:view')
-  adminListInvitations(@Query() query: ListInvitationsDto) {
-    return this.appManagement.listInvitations(query);
+  adminListInvitations(@Query() query: ListInvitationsDto, @CurrentUser() user: JwtUser) {
+    return this.appManagement.listInvitations(query, user);
   }
 
   /** PUT /api/invitations/:id/status — admin approve/reject. */
@@ -79,11 +81,12 @@ export class MemberCompatController {
   adminUpdateInvitationStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { status: AmInvitationStatus; rejectionReason?: string },
+    @CurrentUser() user: JwtUser,
   ) {
     const dto: UpdateInvitationDto = {
       status: body.status,
       rejectionReason: body.rejectionReason,
     };
-    return this.appManagement.updateInvitation(id, dto);
+    return this.appManagement.updateInvitation(id, dto, user.sub, user);
   }
 }

@@ -147,13 +147,16 @@ export class ClubEventRegistrationsService {
     };
   }
 
-  async list(q: ListClubEventRegistrationsDto) {
+  /** `eventBranch` / `memberGender` are the caller's resolved scope (undefined/null ⇒ unrestricted). */
+  async list(q: ListClubEventRegistrationsDto, eventBranch?: Prisma.IntFilter, memberGender?: 'male' | 'female' | null) {
     const and: Prisma.club_event_registrationsWhereInput[] = [{ is_deleted: false }];
 
     if (q.eventId) and.push({ event_id: Number(q.eventId) });
     if (q.status && q.status !== 'all') and.push({ status: q.status as never });
     if (q.registrantType) and.push({ registrant_type: q.registrantType as never });
     if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
+    if (eventBranch) and.push({ event: { branch_id: eventBranch } });
+    if (memberGender) and.push({ OR: [{ member_id: null }, { member: { gender: memberGender } }] });
     if (q.search?.trim()) {
       const s = q.search.trim();
       const memberIds = await searchMemberIds(this.prisma, s);

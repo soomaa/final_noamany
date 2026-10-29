@@ -16,6 +16,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { isDryRun } from '../../common/preview';
+import type { JwtUser } from '../../common/types/jwt-user';
 import {
   CloseShiftSessionDto,
   CreateDrawerMovementDto,
@@ -51,16 +52,17 @@ export class ShiftSessionsController {
 
   @Post('start')
   @RequiresPermission('gym-sales.sales:create')
-  start(@Body() body: StartShiftSessionDto, @CurrentUser('sub') userId: number) {
-    return this.service.start(body, userId);
+  start(@Body() body: StartShiftSessionDto, @CurrentUser() user: JwtUser) {
+    return this.service.start(body, user.sub, user);
   }
 
   @Get('current')
-  getCurrent(@Query() query: CurrentSessionQueryDto) {
+  getCurrent(@Query() query: CurrentSessionQueryDto, @CurrentUser() user: JwtUser) {
     // Branch-scoped: do NOT force the JWT userId. POS shows the open drawer for the
     // branch; start() also blocks on any open session in that branch. Filtering by
     // the current user made the UI say "no open shift" while start returned 400.
-    return this.service.getCurrent(query);
+    // Still defaults to the caller's allowed branches (Tanta main also sees Up/Down drawers).
+    return this.service.getCurrent(query, user);
   }
 
   @Post('switch')
@@ -83,33 +85,33 @@ export class ShiftSessionsController {
   }
 
   @Get('drawer-movements')
-  listDrawerMovements(@Query() query: ListDrawerMovementsDto) {
-    return this.service.listDrawerMovements(query);
+  listDrawerMovements(@Query() query: ListDrawerMovementsDto, @CurrentUser() user: JwtUser) {
+    return this.service.listDrawerMovements(query, user);
   }
 
   @Get('custodies/open')
-  openCustodies(@Query() query: OpenCustodiesQueryDto) {
-    return this.service.openCustodies(query);
+  openCustodies(@Query() query: OpenCustodiesQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.openCustodies(query, user);
   }
 
   @Get('report')
-  report(@Query() query: ShiftSessionsReportQueryDto) {
-    return this.service.report(query);
+  report(@Query() query: ShiftSessionsReportQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.report(query, user);
   }
 
   @Get('daily-report')
-  dailyReport(@Query() query: DailyReportQueryDto) {
-    return this.service.dailyReport(query);
+  dailyReport(@Query() query: DailyReportQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.dailyReport(query, user);
   }
 
   @Get()
-  list(@Query() query: ListShiftSessionsDto) {
-    return this.service.list(query);
+  list(@Query() query: ListShiftSessionsDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user);
   }
 
   @Put(':id/close')
@@ -117,9 +119,9 @@ export class ShiftSessionsController {
   close(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: CloseShiftSessionDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
     @Query('dryRun') dryRun?: string,
   ) {
-    return this.service.close(id, body, userId, isDryRun(dryRun));
+    return this.service.close(id, body, user.sub, isDryRun(dryRun), user);
   }
 }

@@ -24,18 +24,18 @@ export class RequestsController {
   constructor(private readonly requests: RequestsService) {}
 
   @Get()
-  list(@Query() query: ListRequestsDto) {
-    return this.requests.list(query);
+  list(@Query() query: ListRequestsDto, @CurrentUser() user: JwtUser) {
+    return this.requests.list(query, user);
   }
 
   @Post()
   create(@Body() dto: CreateRequestDto, @CurrentUser() user: JwtUser) {
-    return this.requests.create(dto, user.sub, user.name, user.emp_code);
+    return this.requests.create(dto, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.requests.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.requests.findOne(id, user);
   }
 
   @Patch(':id/approve')
@@ -45,12 +45,12 @@ export class RequestsController {
     @CurrentUser() user: JwtUser,
     @Query('dryRun') dryRun?: string,
   ) {
-    return this.requests.approve(id, user.sub, dryRun === 'true' || dryRun === '1');
+    return this.requests.approve(id, user, dryRun === 'true' || dryRun === '1');
   }
 
   @Patch(':id/reject')
   @RequiresPermission('leaves.requests:reject')
-  reject(@Param('id', ParseIntPipe) id: number) {
-    return this.requests.reject(id);
+  reject(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.requests.reject(id, user);
   }
 }

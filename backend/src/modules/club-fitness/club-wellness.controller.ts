@@ -117,36 +117,36 @@ export class ClubInbodyInvoicesController {
   constructor(private readonly service: ClubWellnessService) {}
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listInbodyInvoices(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listInbodyInvoices(query, user);
   }
 
   @Get('member-benefits/by-code')
-  benefits(@Query('memberCode') memberCode: string) {
-    return this.service.getMemberBenefits(memberCode);
+  benefits(@Query('memberCode') memberCode: string, @CurrentUser() user: JwtUser) {
+    return this.service.getMemberBenefits(memberCode, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findInbodyInvoice(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findInbodyInvoice(id, user);
   }
 
   @Post()
   @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>, @CurrentUser('sub') userId: number) {
-    return this.service.createInbodyInvoice(body, userId);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createInbodyInvoice(body, user.sub, user);
   }
 
   @Put(':id')
   @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateInbodyInvoice(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateInbodyInvoice(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeInbodyInvoice(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeInbodyInvoice(id, user);
   }
 }
 
@@ -197,31 +197,31 @@ export class ClubSpaBookingsController {
   constructor(private readonly service: ClubWellnessService) {}
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listSpaBookings(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listSpaBookings(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findSpaBooking(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findSpaBooking(id, user);
   }
 
   @Post()
   @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>) {
-    return this.service.createSpaBooking(body);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createSpaBooking(body, user);
   }
 
   @Put(':id')
   @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateSpaBooking(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateSpaBooking(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeSpaBooking(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeSpaBooking(id, user);
   }
 }
 
@@ -236,14 +236,14 @@ export class ClubSpaAttendanceController {
   constructor(private readonly service: ClubWellnessService) {}
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listSpaAttendance(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listSpaAttendance(query, user);
   }
 
   @Post('barcode-check-in')
   @RequiresPermission('club.fitness:create')
-  barcodeCheckIn(@Body('memberCode') memberCode: string, @CurrentUser('sub') userId: number) {
-    return this.service.checkInSpaByBarcode(memberCode, userId);
+  barcodeCheckIn(@Body('memberCode') memberCode: string, @CurrentUser() user: JwtUser) {
+    return this.service.checkInSpaByBarcode(memberCode, user.sub, user);
   }
 }
 
@@ -254,41 +254,41 @@ export class ClubSpaInvoicesController {
   constructor(private readonly service: ClubWellnessService) {}
 
   @Get()
-  list(@Query() query: ListClubFitnessDto) {
-    return this.service.listSpaInvoices(query);
+  list(@Query() query: ListClubFitnessDto, @CurrentUser() user: JwtUser) {
+    return this.service.listSpaInvoices(query, user);
   }
 
   @Get('member-benefits/by-code')
-  benefits(@Query('memberCode') memberCode: string) {
-    return this.service.getMemberBenefits(memberCode);
+  benefits(@Query('memberCode') memberCode: string, @CurrentUser() user: JwtUser) {
+    return this.service.getMemberBenefits(memberCode, user);
   }
 
   @Post('barcode-check-in')
   @RequiresPermission('club.fitness:create')
-  barcodeCheckIn(@Body('memberCode') memberCode: string, @CurrentUser('sub') userId: number) {
-    return this.service.checkInSpaByBarcode(memberCode, userId);
+  barcodeCheckIn(@Body('memberCode') memberCode: string, @CurrentUser() user: JwtUser) {
+    return this.service.checkInSpaByBarcode(memberCode, user.sub, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findSpaInvoice(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findSpaInvoice(id, user);
   }
 
   @Post()
   @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>, @CurrentUser('sub') userId: number) {
-    return this.service.createSpaInvoice(body, userId);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createSpaInvoice(body, user.sub, user);
   }
 
   @Put(':id')
   @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateSpaInvoice(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateSpaInvoice(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeSpaInvoice(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeSpaInvoice(id, user);
   }
 }

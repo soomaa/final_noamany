@@ -25,12 +25,15 @@ import {
 export class AppUsersController {
   constructor(private readonly appUsers: AppUsersService) {}
 
+  // Reads were reachable by any authenticated user; they now need the module's view key.
   @Get()
+  @RequiresPermission('app-management:view')
   list(@Query() query: ListAppUsersDto) {
     return this.appUsers.list(query);
   }
 
   @Get(':id')
+  @RequiresPermission('app-management:view')
   get(@Param('id', ParseIntPipe) id: number) {
     return this.appUsers.get(id);
   }

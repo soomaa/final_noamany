@@ -6,7 +6,7 @@ describe('purchase return original-invoice contract', () => {
     const create = jest.fn().mockImplementation(({data}) => ({id:1,created_at:new Date('2026-10-21T10:00:00Z'),...data,items:data.items.create}));
     const tx={prc_purchase_returns:{create},$queryRaw:jest.fn().mockResolvedValue([{maxNum:0}])};
     const prisma={prc_supplier_invoices:{findFirst:jest.fn().mockResolvedValue({id:8,supplier_id:3,branch_id:4,warehouse_id:5,is_opening_balance:false,subtotal:amount,total_amount:amount,items:[{product_id:7,product_name:'Water',quantity,base_quantity:quantity,total_amount:amount}]})},$transaction:jest.fn(async(fn)=>fn(tx))};
-    return {service:new PurchaseReturnsService(prisma as never,{} as never,{} as never),prisma,create};
+    return {service:new PurchaseReturnsService(prisma as never,{} as never,{} as never,{resolveSelection:jest.fn().mockResolvedValue({warehouseId:5,branchId:4})} as never),prisma,create};
   }
   const input={supplierInvoiceId:8,supplierId:3,branchId:4,warehouseId:5,items:[{productId:7,productName:'Forged',quantity:10,unitPrice:999,total:9999}]};
   it('resolves the product name and value from the purchased units',async()=>{

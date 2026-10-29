@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -16,6 +17,8 @@ import { WebhookService } from '../webhooks/webhook.service';
 import { assertEndTimeAfterStart, isActiveEnrollment, localDateString, toNum } from './club-fitness.utils';
 import { attachMemberBrief, loadMemberBriefMap } from '../club-members/club-member-brief.utils';
 import { ListClubClassesDto } from './dto/list-club-classes.dto';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 @Injectable()
 export class ClubClassesService {
@@ -28,7 +31,36 @@ export class ClubClassesService {
     private readonly branchGroups: Pick<ClubBranchGroupReader, 'siblingBranchIds'> = {
       siblingBranchIds: async (branchId) => [branchId],
     },
+    private readonly branchScope: BranchScopeService = new BranchScopeService(),
   ) {}
+
+  /** Branch filter for class lists: scoped users are pinned to their allowed branches. */
+  private branchFilter(user: JwtUser | undefined, requested?: string | number | null): Prisma.IntFilter | undefined {
+    const ids = this.branchScope.resolveListFilter(user, requested ?? null);
+    return ids === null ? undefined : { in: ids };
+  }
+
+  /** Load a class row (not deleted) and enforce the caller's branch scope. */
+  private async assertClassAccess(classId: number, user: JwtUser | undefined) {
+    if (!user) return;
+    const cls = await this.prisma.club_classes.findFirst({
+      where: { id: classId, is_deleted: false },
+      select: { branch_id: true },
+    });
+    if (!cls) throw new NotFoundException('الحصة غير موجودة');
+    this.branchScope.assertBranchAllowed(user, cls.branch_id, 'لا تملك صلاحية الوصول لحصص هذا الفرع');
+  }
+
+  private async assertMemberAccess(memberId: number, user: JwtUser | undefined) {
+    if (!user) return;
+    const member = await this.prisma.club_members.findFirst({
+      where: { id: memberId, is_deleted: false },
+      select: { gender: true },
+    });
+    if (member && !this.branchScope.isMemberGenderAllowed(user, member.gender)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لأعضاء هذا القسم');
+    }
+  }
 
   private async countActiveEnrollments(classId: number, tx?: Prisma.TransactionClient) {
     const db = tx ?? this.prisma;
@@ -98,13 +130,15 @@ export class ClubClassesService {
     };
   }
 
-  async list(q: ListClubClassesDto) {
+  async list(q: ListClubClassesDto, user?: JwtUser) {
     const and: Prisma.club_classesWhereInput[] = [{ is_deleted: false }];
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({ OR: [{ class_name: { contains: s } }, { description: { contains: s } }] });
     }
-    if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
+    const listBranch = user ? this.branchFilter(user, q.branch) : undefined;
+    if (listBranch) and.push({ branch_id: listBranch });
+    else if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
     if (q.trainer && q.trainer !== 'all') and.push({ trainer_id: Number(q.trainer) });
     if (q.status && q.status !== 'all') {
       and.push({ status: q.status as Prisma.EnumClubFitnessClassStatusFilter['equals'] });
@@ -146,9 +180,11 @@ export class ClubClassesService {
     );
   }
 
-  async statistics(query?: { branch?: string; trainer?: string; dateFrom?: string; dateTo?: string }) {
+  async statistics(query?: { branch?: string; trainer?: string; dateFrom?: string; dateTo?: string }, user?: JwtUser) {
     const and: Prisma.club_classesWhereInput[] = [{ is_deleted: false }];
-    if (query?.branch && query.branch !== 'all') and.push({ branch_id: Number(query.branch) });
+    const statsBranch = user ? this.branchFilter(user, query?.branch) : undefined;
+    if (statsBranch) and.push({ branch_id: statsBranch });
+    else if (query?.branch && query.branch !== 'all') and.push({ branch_id: Number(query.branch) });
     if (query?.trainer && query.trainer !== 'all') and.push({ trainer_id: Number(query.trainer) });
     if (query?.dateFrom && query?.dateTo) {
       and.push({ class_date: { gte: query.dateFrom, lte: query.dateTo } });
@@ -187,7 +223,7 @@ export class ClubClassesService {
     };
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.club_classes.findFirst({
       where: { id, is_deleted: false },
       include: {
@@ -198,6 +234,7 @@ export class ClubClassesService {
       },
     });
     if (!row) throw new NotFoundException('الحصة غير موجودة');
+    if (user) this.branchScope.assertBranchAllowed(user, row.branch_id, 'لا تملك صلاحية الوصول لحصص هذا الفرع');
     return this.enrichClass(this.mapClass(row));
   }
 
@@ -360,8 +397,11 @@ export class ClubClassesService {
     return this.findOne(created.id);
   }
 
-  async update(id: number, body: Record<string, unknown>) {
-    const existing = await this.findOne(id);
+  async update(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const existing = await this.findOne(id, user);
+    if (user && body.branchId != null) {
+      this.branchScope.assertBranchAllowed(user, Number(body.branchId), 'لا تملك صلاحية نقل الحصة لهذا الفرع');
+    }
     if (body.trainerId != null || body.branchId != null || body.hallId != null || body.classTypeId != null) {
       await this.validateReferences({
         trainerId: body.trainerId ?? existing.trainerId,
@@ -447,8 +487,8 @@ export class ClubClassesService {
     return this.findOne(id);
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, user?: JwtUser) {
+    await this.findOne(id, user);
     await this.prisma.club_classes.update({
       where: { id },
       data: { is_deleted: true, is_active: false },
@@ -460,11 +500,14 @@ export class ClubClassesService {
     classId: number,
     memberId: number,
     options?: { waitlistIfFull?: boolean; force?: boolean; bookingSource?: string; subscriptionId?: number },
+    user?: JwtUser,
   ) {
     const cls = await this.prisma.club_classes.findFirst({
       where: { id: classId, is_deleted: false },
     });
     if (!cls) throw new NotFoundException('الحصة غير موجودة');
+    if (user) this.branchScope.assertBranchAllowed(user, cls.branch_id, 'لا تملك صلاحية الوصول لحصص هذا الفرع');
+    await this.assertMemberAccess(memberId, user);
     assertNotPastDate(cls.class_date, 'لا يمكن التسجيل في حصة بتاريخ ماضٍ');
     const compatibleBranchIds = await this.branchGroups.siblingBranchIds(cls.branch_id);
 
@@ -630,7 +673,8 @@ export class ClubClassesService {
     return { waitlisted: true, position: row.position, classId, memberId };
   }
 
-  async listWaitlist(classId: number) {
+  async listWaitlist(classId: number, user?: JwtUser) {
+    await this.assertClassAccess(classId, user);
     const rows = await this.prisma.club_class_waitlist.findMany({
       where: { class_id: classId, status: 'waiting' },
       orderBy: { position: 'asc' },
@@ -653,7 +697,8 @@ export class ClubClassesService {
     }));
   }
 
-  async removeFromWaitlist(classId: number, memberId: number) {
+  async removeFromWaitlist(classId: number, memberId: number, user?: JwtUser) {
+    await this.assertClassAccess(classId, user);
     await this.prisma.club_class_waitlist.updateMany({
       where: { class_id: classId, member_id: memberId, status: 'waiting' },
       data: { status: 'cancelled' },
@@ -701,7 +746,8 @@ export class ClubClassesService {
     });
   }
 
-  async unenrollMember(classId: number, memberId: number) {
+  async unenrollMember(classId: number, memberId: number, user?: JwtUser) {
+    await this.assertClassAccess(classId, user);
     const enrollment = await this.prisma.club_class_enrollments.findUnique({
       where: { class_id_member_id: { class_id: classId, member_id: memberId } },
     });
@@ -736,7 +782,10 @@ export class ClubClassesService {
     classId: number,
     memberId: number,
     body: { attendanceStatus?: string; attendanceTime?: string },
+    user?: JwtUser,
   ) {
+    await this.assertClassAccess(classId, user);
+    await this.assertMemberAccess(memberId, user);
     const enrollment = await this.prisma.club_class_enrollments.findUnique({
       where: { class_id_member_id: { class_id: classId, member_id: memberId } },
     });
@@ -781,12 +830,14 @@ export class ClubClassesService {
     return this.findOne(classId);
   }
 
-  async receptionCheckIn(classId: number, memberId: number) {
+  async receptionCheckIn(classId: number, memberId: number, user?: JwtUser) {
+    await this.assertClassAccess(classId, user);
+    await this.assertMemberAccess(memberId, user);
     const existing = await this.prisma.club_class_enrollments.findUnique({
       where: { class_id_member_id: { class_id: classId, member_id: memberId } },
     });
     if (!existing || !isActiveEnrollment(existing.attendance_status)) {
-      await this.enrollMember(classId, memberId, { force: true, bookingSource: 'walk_in' });
+      await this.enrollMember(classId, memberId, { force: true, bookingSource: 'walk_in' }, user);
     }
     return this.updateAttendance(classId, memberId, {
       attendanceStatus: 'attended',
@@ -799,21 +850,25 @@ export class ClubClassesService {
     });
   }
 
-  async checkInByBarcode(classId: number, memberCode: string) {
+  async checkInByBarcode(classId: number, memberCode: string, user?: JwtUser) {
     const code = memberCode?.trim();
     if (!code) throw new BadRequestException('كود العضو مطلوب');
+    await this.assertClassAccess(classId, user);
     const member = await this.prisma.club_members.findFirst({
       where: { member_code: code, is_active: true, is_deleted: false },
-      select: { id: true },
+      select: { id: true, gender: true },
     });
     if (!member) throw new NotFoundException('لم يتم العثور على عضو بهذا الكود');
+    if (user && !this.branchScope.isMemberGenderAllowed(user, member.gender)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لأعضاء هذا القسم');
+    }
     const existing = await this.prisma.club_class_enrollments.findUnique({
       where: { class_id_member_id: { class_id: classId, member_id: member.id } },
     });
     if (!existing || !isActiveEnrollment(existing.attendance_status)) {
       // This is a walk-in, not a reservation.  enrollMember resolves and validates
       // the current eligible subscription before creating the attendance record.
-      await this.enrollMember(classId, member.id, { bookingSource: 'barcode' });
+      await this.enrollMember(classId, member.id, { bookingSource: 'barcode' }, user);
     } else {
       if (!existing.subscription_id) {
         throw new BadRequestException('لا يوجد اشتراك فعّال مرتبط بحضور هذه الحصة');
@@ -842,7 +897,7 @@ export class ClubClassesService {
   }
 
   /** Scanner flow: infer the single class currently running in the scanner user's branch. */
-  async checkInByCurrentBarcode(memberCode: string, userId: number) {
+  async checkInByCurrentBarcode(memberCode: string, userId: number, user?: JwtUser) {
     const code = memberCode?.trim();
     if (!code) throw new BadRequestException('كود العضو مطلوب');
 
@@ -879,12 +934,14 @@ export class ClubClassesService {
     });
     if (!running.length) throw new BadRequestException('لا توجد حصة جارية الآن في هذا الفرع');
     if (running.length > 1) throw new BadRequestException('توجد أكثر من حصة جارية الآن؛ يلزم فصل أجهزة المسح حسب القاعة');
-    return this.checkInByBarcode(running[0].id, code);
+    return this.checkInByBarcode(running[0].id, code, user);
   }
 
-  async listAttendanceReport(q: ListClubClassesDto) {
+  async listAttendanceReport(q: ListClubClassesDto, user?: JwtUser) {
     const classWhere: Prisma.club_classesWhereInput = { is_deleted: false };
-    if (q.branch && q.branch !== 'all') classWhere.branch_id = Number(q.branch);
+    const reportBranch = user ? this.branchFilter(user, q.branch) : undefined;
+    if (reportBranch) classWhere.branch_id = reportBranch;
+    else if (q.branch && q.branch !== 'all') classWhere.branch_id = Number(q.branch);
     if (q.dateFrom || q.dateTo) classWhere.class_date = { ...(q.dateFrom ? { gte: q.dateFrom } : {}), ...(q.dateTo ? { lte: q.dateTo } : {}) };
     if (q.classTypeId && q.classTypeId !== 'all') classWhere.class_type_id = Number(q.classTypeId);
 
@@ -915,7 +972,8 @@ export class ClubClassesService {
     })), total, q.page, q.pageSize);
   }
 
-  async generateFromDefault(body: { weekStart?: string; branchId?: number; classTypeId?: number }) {
+  async generateFromDefault(body: { weekStart?: string; branchId?: number; classTypeId?: number }, user?: JwtUser) {
+    const slotBranch = user ? this.branchFilter(user, body.branchId) : undefined;
     const weekStart = String(body.weekStart ?? '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(weekStart)) {
       throw new BadRequestException('تاريخ بداية الأسبوع غير صالح');
@@ -930,7 +988,7 @@ export class ClubClassesService {
         trainer_schedule_slots: {
           where: {
             is_active: true,
-            ...(body.branchId ? { branch_id: Number(body.branchId) } : {}),
+            ...(slotBranch ? { branch_id: slotBranch } : body.branchId ? { branch_id: Number(body.branchId) } : {}),
           },
           include: { trainer: true },
           orderBy: [{ weekday: 'asc' }, { start_time: 'asc' }],
@@ -1015,11 +1073,12 @@ export class ClubClassesService {
     branchId?: number;
     trainerId?: number;
     classTypeId?: number;
-  }) {
+  }, user?: JwtUser) {
+    const reportBranch = user ? this.branchFilter(user, query?.branchId) : undefined;
     const rows = await this.prisma.club_classes.findMany({
       where: {
         is_deleted: false,
-        ...(query?.branchId ? { branch_id: query.branchId } : {}),
+        ...(reportBranch ? { branch_id: reportBranch } : query?.branchId ? { branch_id: query.branchId } : {}),
         ...(query?.trainerId ? { trainer_id: query.trainerId } : {}),
         ...(query?.classTypeId ? { class_type_id: query.classTypeId } : {}),
         ...((query?.dateFrom || query?.dateTo)

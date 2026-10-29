@@ -45,7 +45,10 @@ export class InventoryTransactionsService {
   private async validateLocations(user: JwtUser, kind: string, branchId: number, source?: number | null, target?: number | null) {
     if (kind === 'transfer' && (!source || !target || source === target)) throw new BadRequestException('اختر مخزن مصدر ووجهة مختلفين للتحويل');
     if (source) await this.location.resolveSelection(user, source, branchId);
-    if (target) await this.location.resolveSelection(user, target, kind === 'transfer' ? undefined : branchId);
+    if (!target) return;
+    // Inter-branch transfers: only the source must be in scope; the receiving warehouse just has to exist and be active.
+    if (kind === 'transfer') await this.location.resolveTransferTarget(target);
+    else await this.location.resolveSelection(user, target, branchId);
   }
 
   private map(row: Prisma.inv_transactionsGetPayload<{ include: { items: true } }>) {
@@ -165,7 +168,14 @@ export class InventoryTransactionsService {
       throw new BadRequestException('استخدم شاشة المشتريات أو المرتجعات أو الجرد لهذه الحركة');
     }
 
-    const branchId = Number(dto.branchId ?? user.branch ?? 0);
+    // Without an explicit branch, the movement belongs to the selected (in-scope) warehouse's branch,
+    // so Tanta main staff can operate the Tanta Up/Down warehouses; fall back to the user's own branch.
+    const anchorWarehouseId = dto.sourceWarehouseId ?? (dto.txnType !== InventoryTxnType.transfer ? dto.targetWarehouseId : undefined);
+    const branchId = dto.branchId != null
+      ? Number(dto.branchId)
+      : anchorWarehouseId
+        ? (await this.location.resolveSelection(user, anchorWarehouseId)).branchId
+        : Number(user.branch ?? 0);
     if (!branchId) throw new BadRequestException('اختر الفرع قبل إنشاء حركة المخزون');
     this.assertBranchAccess(user, branchId);
     let sourceWarehouseId = dto.sourceWarehouseId;

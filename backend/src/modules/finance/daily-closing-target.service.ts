@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/com
 import { Prisma, QuickSaleStatus } from '@prisma/client';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import { JwtUser } from '../../common/types/jwt-user';
 import { localDateString } from '../sales/sales.utils';
 import { REFUND_EXPENSE_CATEGORY } from './finance.utils';
@@ -135,25 +136,20 @@ export class DailyClosingTargetService {
     if (requested != null && (!Number.isInteger(requested) || requested <= 0)) {
       throw new BadRequestException('معرف الفرع غير صالح');
     }
-    if (user.level === 1) {
-      const allowed = this.branchScope.resolveListFilter(user, requested ?? null);
-      if (requested != null && allowed !== null && !allowed.includes(requested)) {
-        throw new ForbiddenException('الفرع المحدد خارج نطاق الصلاحية');
-      }
-      return this.expandedBranchIds(requested == null ? allowed : [requested]);
-    }
-    if (!Number.isInteger(user.branch) || user.branch <= 0) {
+    // Staff are locked to their branch (Tanta main also covers Tanta Up/Down); admins choose.
+    const allowed = this.branchScope.allowedBranchIds(user);
+    if (allowed !== null && allowed.length === 0) {
       throw new ForbiddenException('لا يوجد فرع مرتبط بالمستخدم');
     }
-    if (requested != null && requested !== user.branch) {
+    if (requested != null && allowed !== null && !allowed.includes(requested)) {
       throw new ForbiddenException('الفرع المحدد خارج نطاق الصلاحية');
     }
-    return this.expandedBranchIds([user.branch]);
+    return this.expandedBranchIds(requested != null ? [requested] : allowed);
   }
 
   private effectiveDates(query: DailyClosingQuery, user: JwtUser): { fromDate: string; toDate: string } {
     const today = localDateString();
-    if (user.level === 2 || user.level === 3) return { fromDate: today, toDate: today };
+    if (!isSystemAdmin(user)) return { fromDate: today, toDate: today };
     const fromDate = query.fromDate ?? today;
     const toDate = query.toDate ?? fromDate;
     if (fromDate > toDate) throw new BadRequestException('تاريخ البداية يجب أن يسبق تاريخ النهاية');
@@ -328,23 +324,24 @@ export class DailyClosingTargetService {
     };
   }
 
+  /**
+   * The employee whose target is shown. A regular employee only ever sees their own target.
+   * Admins and branch managers pick an employee, or get every employee of the branch (null).
+   */
   private async targetEmployeeId(
     query: TargetReportQuery,
     user: JwtUser,
     branchIds: number[] | null,
-  ): Promise<number> {
-    if (user.level === 2) {
+  ): Promise<number | null> {
+    const requestedEmployeeId = query.employeeId ?? query.targetEmployeeId;
+    if (!isSystemAdmin(user) && user.level !== 3) {
       if (!user.emp_code) throw new ForbiddenException('لا يوجد موظف مرتبط بالمستخدم');
-      const requestedEmployeeId = query.employeeId ?? query.targetEmployeeId;
       if (requestedEmployeeId && requestedEmployeeId !== user.emp_code) {
         throw new ForbiddenException('الموظف المحدد خارج نطاق الصلاحية');
       }
       return user.emp_code;
     }
-    const requestedEmployeeId = query.employeeId ?? query.targetEmployeeId;
-    if (!requestedEmployeeId) {
-      throw new BadRequestException('يجب تحديد موظف التارجت');
-    }
+    if (!requestedEmployeeId) return null;
     const employee = await this.prisma.employees.findFirst({
       where: {
         id: requestedEmployeeId,
@@ -358,7 +355,7 @@ export class DailyClosingTargetService {
 
   private targetDates(query: TargetReportQuery, user: JwtUser): { fromDate: string; toDate: string } {
     const currentMonth = this.targetMonth();
-    if (user.level === 2 || user.level === 3) return currentMonth;
+    if (!isSystemAdmin(user)) return currentMonth;
     const fromDate = query.fromDate ?? currentMonth.fromDate;
     const toDate = query.toDate ?? currentMonth.toDate;
     if (fromDate > toDate) throw new BadRequestException('تاريخ البداية يجب أن يسبق تاريخ النهاية');
@@ -378,20 +375,23 @@ export class DailyClosingTargetService {
         : this.prisma.club_subscriptions.findMany({
             where: {
               ...range('registration_date'),
-              employee_id: employeeId,
+              ...(employeeId == null ? { employee_id: { not: null } } : { employee_id: employeeId }),
               ...(branchIds == null ? {} : { branch_id: branchWhere }),
             },
-            include: { type: { select: { name: true, is_part_of_target: true } } },
+            include: {
+              type: { select: { name: true, is_part_of_target: true } },
+              member: { select: { member_code: true } },
+            },
           }),
       operation === 'sales'
         ? Promise.resolve([])
         : this.prisma.club_locker_subscriptions.findMany({
             where: {
               ...range('subscription_start_date'),
-              recommended_employee_id: employeeId,
+              ...(employeeId == null ? { recommended_employee_id: { not: null } } : { recommended_employee_id: employeeId }),
               ...(branchIds == null ? {} : { sub_branch_id: branchWhere }),
             },
-            include: { type: { select: { name: true } } },
+            include: { type: { select: { name: true } }, member: { select: { member_code: true } } },
           }),
       operation === 'subscriptions'
         ? Promise.resolve([])
@@ -399,19 +399,22 @@ export class DailyClosingTargetService {
             where: {
               status: QuickSaleStatus.completed,
               ...range('sale_date'),
-              target_employee_id: employeeId,
+              ...(employeeId == null ? { target_employee_id: { not: null } } : { target_employee_id: employeeId }),
               ...(branchIds == null ? {} : { branch_id: branchWhere }),
             },
             include: { cafe_category: { select: { name_ar: true } } },
           }),
     ]);
 
-    const rows = [
+    const rawRows = [
       ...subscriptions
         .filter((row: any) => row.type?.is_part_of_target === true)
         .map((row: any) => ({
           operation: 'اشتراك نادي',
           kind: 'subscription' as const,
+          employeeId: row.employee_id as number | null,
+          customerName: row.customer_name ?? null,
+          memberCode: row.member?.member_code ?? null,
           type: row.type?.name ?? row.subscription_type ?? 'اشتراك',
           beforeDiscount: this.format(this.money(row.subscription_value)),
           discount: this.format(this.money(row.discount_value)),
@@ -422,6 +425,9 @@ export class DailyClosingTargetService {
       ...lockers.map((row: any) => ({
         operation: 'اشتراك لوكر',
         kind: 'locker' as const,
+        employeeId: row.recommended_employee_id as number | null,
+        customerName: row.customer_name ?? null,
+        memberCode: row.member?.member_code ?? null,
         type: row.type?.name ?? 'لوكر',
         beforeDiscount: this.format(this.money(row.subscription_value)),
         discount: this.format(new Prisma.Decimal(0)),
@@ -432,6 +438,9 @@ export class DailyClosingTargetService {
       ...sales.map((row: any) => ({
         operation: 'مبيعات كافيه',
         kind: 'sale' as const,
+        employeeId: row.target_employee_id as number | null,
+        customerName: row.customer_name ?? null,
+        memberCode: null as string | null,
         // The product category (بار / بروتين …) identifies a sale for target follow-up.
         type: row.cafe_category?.name_ar ?? 'مبيعات كافيه',
         beforeDiscount: this.format(this.money(row.subtotal)),
@@ -441,6 +450,12 @@ export class DailyClosingTargetService {
         date: row.sale_date,
       })),
     ].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    const employeeIds = [...new Set(rawRows.map((row) => row.employeeId).filter((id): id is number => id != null))];
+    const employeeNames = employeeIds.length
+      ? new Map((await this.prisma.employees.findMany({ where: { id: { in: employeeIds } }, select: { id: true, employee: true } }))
+          .map((employee) => [employee.id, employee.employee ?? null] as const))
+      : new Map<number, string | null>();
+    const rows = rawRows.map((row) => ({ ...row, employeeName: row.employeeId != null ? employeeNames.get(row.employeeId) ?? null : null }));
     const totals = rows.reduce(
       (sum, row) => ({
         beforeDiscount: sum.beforeDiscount.plus(row.beforeDiscount),

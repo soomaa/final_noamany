@@ -6,6 +6,8 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { assertNoOverlap } from "../../common/validators/validation.util";
+import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
+import { isSystemAdmin } from "../../common/utils/system-admin.util";
 import { PaginationDto } from "../../common/dto/pagination.dto";
 import { paginated } from "../../common/dto/list-result";
 import { PrismaService } from "../../common/prisma/prisma.service";
@@ -49,7 +51,45 @@ const AR_DAYS = [
 
 @Injectable()
 export class LeavesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // Stateless; defaulted so the existing unit specs can still construct the service.
+    private readonly scope: BranchScopeService = new BranchScopeService(),
+  ) {}
+
+  // ---- branch scope ---------------------------------------------------------------------
+
+  /** Employee ids inside the user's branch scope; `null` = unrestricted (system admin). */
+  private async scopedEmployeeIds(user: JwtUser): Promise<number[] | null> {
+    const branches = this.scope.allowedBranchIds(user);
+    if (branches === null) return null;
+    if (!branches.length) return [];
+    const rows = await this.prisma.employees.findMany({
+      where: { branch_id_fk: { in: branches } },
+      select: { id: true },
+    });
+    return rows.map((r) => r.id);
+  }
+
+  /** Throw 403 unless the employee is the user's own record or belongs to an allowed branch. */
+  private async assertEmployeeInScope(user: JwtUser, empId: number | null | undefined) {
+    if (isSystemAdmin(user)) return;
+    if (empId != null && user.emp_code != null && empId === user.emp_code) return;
+    const emp = empId
+      ? await this.prisma.employees.findUnique({ where: { id: empId }, select: { branch_id_fk: true } })
+      : null;
+    this.scope.assertBranchAllowed(user, emp?.branch_id_fk, "لا تملك صلاحية الوصول لإجازات هذا الموظف");
+  }
+
+  /** A leave row is in scope for its publisher, its current recipient, or same-branch staff. */
+  private async assertLeaveInScope(
+    user: JwtUser,
+    row: { emp_id_fk: number | null; publisher: number | null; current_to_user_id: number | null },
+  ) {
+    if (isSystemAdmin(user)) return;
+    if (row.publisher === user.sub || row.current_to_user_id === user.sub) return;
+    await this.assertEmployeeInScope(user, row.emp_id_fk);
+  }
 
   private arDayName(dateStr?: string | null): string | null {
     if (!dateStr) return null;
@@ -63,10 +103,10 @@ export class LeavesService {
 
   async list(
     q: ListLeavesDto,
-    actor?: number | Pick<JwtUser, "sub" | "level">,
+    actor?: number | JwtUser,
   ) {
     const userId = typeof actor === "number" ? actor : actor?.sub;
-    const isAdmin = typeof actor !== "number" && actor?.level === 1;
+    const isAdmin = typeof actor === "object" && isSystemAdmin(actor);
     const and: Prisma.hr_all_agzat_ordersWhereInput[] = [];
 
     // legacy tabs (get_datatables_agazat)
@@ -87,6 +127,16 @@ export class LeavesService {
       default:
         if (q.mode === "sader" && userId) and.push({ publisher: userId });
         break;
+    }
+
+    // The unfiltered board (no personal tab) defaults a web user to their branch scope.
+    // Personal tabs (wared/sader/accept/reject) are already limited to the caller.
+    const personal =
+      q.mode === "wared" ||
+      (userId != null && (q.mode === "sader" || q.mode === "accept" || q.mode === "reject"));
+    if (!personal && typeof actor === "object") {
+      const empIds = await this.scopedEmployeeIds(actor);
+      if (empIds) and.push({ emp_id_fk: { in: empIds } });
     }
 
     if (q.search?.trim()) {
@@ -166,6 +216,7 @@ export class LeavesService {
     currentUserId?: number,
     currentUserName?: string,
     options?: { enforceLegacyMobileBalance?: boolean },
+    actor?: JwtUser,
   ) {
     if (!body.leaveTypeId || !body.startDate || !body.endDate) {
       throw new BadRequestException("نوع الإجازة والتواريخ مطلوبة");
@@ -213,6 +264,9 @@ export class LeavesService {
 
     let empId = body.empId;
     let emp: WorkflowEmployee | null = null;
+    // Filing for someone else: web callers must have that employee in branch scope;
+    // callers without a JWT scope (mobile) may only name their own employee row.
+    if (empId) await this.assertCanFileFor(empId, currentUserId, actor);
     if (!empId && currentUserId) {
       const account = await this.prisma.users.findUnique({
         where: { user_id: currentUserId },
@@ -639,8 +693,21 @@ export class LeavesService {
     }
   }
 
+  private async assertCanFileFor(empId: number, currentUserId?: number, actor?: JwtUser) {
+    if (actor) return this.assertEmployeeInScope(actor, empId);
+    // No caller identity at all = an internal/system call, not an HTTP request.
+    if (currentUserId == null) return;
+    const account = await this.prisma.users.findUnique({
+      where: { user_id: currentUserId },
+      select: { emp_code: true, level: true },
+    });
+    if (account?.level === 1 || (account?.emp_code != null && account.emp_code === empId)) return;
+    throw new ForbiddenException("لا يمكنك تقديم إجازة لموظف آخر");
+  }
+
   /** Balance card used by the legacy add-agaza form (get_vacation_balance). */
-  async available(empId: number, leaveTypeId: number) {
+  async available(empId: number, leaveTypeId: number, actor?: JwtUser) {
+    if (actor) await this.assertEmployeeInScope(actor, empId);
     const emp = await this.prisma.employees.findUnique({
       where: { id: empId },
       select: { id: true, start_work_date_m: true },
@@ -687,19 +754,32 @@ export class LeavesService {
   }
 
   /** Backward-compatible single-step routes (delegate to chain). */
-  async approve(id: number, userId?: number, userName?: string) {
+  async approve(id: number, userId?: number, userName?: string, actor?: JwtUser) {
+    if (actor) await this.assertLeaveIdInScope(actor, id);
     return this.action(id, { action: "accept" }, userId, userName);
   }
 
-  async reject(id: number, userId?: number, userName?: string) {
+  async reject(id: number, userId?: number, userName?: string, actor?: JwtUser) {
+    if (actor) await this.assertLeaveIdInScope(actor, id);
     return this.action(id, { action: "reject" }, userId, userName);
   }
 
-  async cancel(id: number, userId?: number, userName?: string) {
+  private async assertLeaveIdInScope(actor: JwtUser, id: number) {
+    const row = await this.prisma.hr_all_agzat_orders.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("طلب الإجازة غير موجود");
+    await this.assertLeaveInScope(actor, row);
+  }
+
+  /**
+   * `actor` is passed by the web route, which checks branch scope here. The legacy mobile
+   * route checks ownership itself (MobileService.leave) before calling cancel.
+   */
+  async cancel(id: number, userId?: number, userName?: string, actor?: JwtUser) {
     const row = await this.prisma.hr_all_agzat_orders.findUnique({
       where: { id },
     });
     if (!row) throw new NotFoundException("طلب الإجازة غير موجود");
+    if (actor) await this.assertLeaveInScope(actor, row);
 
     await this.prisma.hr_all_agzat_orders.update({
       where: { id },
@@ -723,7 +803,7 @@ export class LeavesService {
     return { id, status: "rejected" };
   }
 
-  async remove(id: number, actor: Pick<JwtUser, "sub" | "level">) {
+  async remove(id: number, actor: Pick<JwtUser, "sub" | "level" | "is_super_admin">) {
     await this.findManageableLeave(id, actor);
     await this.prisma.$transaction([
       this.prisma.hr_all_agzat_attaches.deleteMany({
@@ -746,7 +826,7 @@ export class LeavesService {
       reason?: string;
       addressSinceAgaza?: string;
     },
-    actor: Pick<JwtUser, "sub" | "level">,
+    actor: Pick<JwtUser, "sub" | "level" | "is_super_admin">,
   ) {
     const row = await this.findManageableLeave(id, actor);
     const startDate = body.startDate ?? row.agaza_from_date_m;
@@ -788,7 +868,7 @@ export class LeavesService {
 
   private async findManageableLeave(
     id: number,
-    actor: Pick<JwtUser, "sub" | "level">,
+    actor: Pick<JwtUser, "sub" | "level" | "is_super_admin">,
   ) {
     const row = await this.prisma.hr_all_agzat_orders.findUnique({
       where: { id },
@@ -797,7 +877,7 @@ export class LeavesService {
     if (row.suspend !== SuspendStatus.INCOMING) {
       throw new BadRequestException("لا يمكن تعديل أو حذف طلب تمت مراجعته");
     }
-    if (actor.level !== 1 && row.publisher !== actor.sub) {
+    if (!isSystemAdmin(actor as JwtUser) && row.publisher !== actor.sub) {
       throw new ForbiddenException(
         "يمكن لصاحب الطلب أو المدير فقط تعديل أو حذف الطلب",
       );
@@ -989,12 +1069,16 @@ export class LeavesService {
     return 21;
   }
 
-  async balances(q: PaginationDto) {
+  async balances(q: PaginationDto, actor?: JwtUser) {
     const year = new Date().getFullYear();
+    const branches = actor ? this.scope.allowedBranchIds(actor) : null;
     const [contracts, emps, setting, types] = await Promise.all([
       this.prisma.contract_employe.findMany(),
       this.prisma.employees.findMany({
-        where: { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
+        where: {
+          OR: [{ leave_emp: null }, { leave_emp: 0 }],
+          ...(branches ? { branch_id_fk: { in: branches } } : {}),
+        },
         select: {
           id: true,
           emp_code: true,

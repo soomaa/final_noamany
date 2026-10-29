@@ -1,5 +1,6 @@
 import { ForbiddenException } from '@nestjs/common';
 import { ClubAttendanceService } from './club-attendance.service';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 
 function makeService() {
   const prisma = {
@@ -16,7 +17,7 @@ function makeService() {
     {} as never,
     {} as never,
     {} as never,
-    {} as never,
+    new BranchScopeService(),
   );
   return { service, prisma };
 }
@@ -31,7 +32,7 @@ const listQuery = {
 describe('club attendance operational branch isolation', () => {
   it('groups Tanta main, Up and Down for a user assigned to Tanta main', async () => {
     const { service, prisma } = makeService();
-    await service.list(listQuery as never, { sub: 10, level: 2, branch: 2 } as never);
+    await service.list(listQuery as never, { sub: 10, level: 2, branch: 2, man_women_type: 3 } as never);
 
     expect(prisma.club_attendance.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -46,6 +47,7 @@ describe('club attendance operational branch isolation', () => {
       sub: 10,
       level: 2,
       branch: branchId,
+      man_women_type: 3,
     } as never);
 
     expect(prisma.club_attendance.findMany).toHaveBeenCalledWith(
@@ -139,13 +141,13 @@ describe('club attendance operational branch isolation', () => {
       {} as never,
       {} as never,
       {} as never,
-      {} as never,
+      new BranchScopeService(),
       { siblingBranchIds: jest.fn(async (id: number) => [id]) } as never,
     );
 
     await expect(service.checkIn(
       { memberId: 10, branchId: 2 } as never,
-      { sub: 8, level: 2, branch: 2 } as never,
+      { sub: 8, level: 2, branch: 2, man_women_type: 3 } as never,
     )).rejects.toThrow('لا يمكن تسجيل الدخول');
     expect(validate).toHaveBeenCalledWith(expect.objectContaining({
       memberId: 10,
@@ -181,12 +183,12 @@ describe('club attendance operational branch isolation', () => {
       {} as never,
       {} as never,
       permissions as never,
-      {} as never,
+      new BranchScopeService(),
     );
 
     await expect(service.checkIn(
       { memberId: 15, branchId: 2, force: true, overrideReason: 'موافقة الإدارة' } as never,
-      { sub: 8, level: 2, branch: 2 } as never,
+      { sub: 8, level: 2, branch: 2, man_women_type: 3 } as never,
     )).rejects.toThrow('العضو محظور ولا يمكن تجاوز الحظر من شاشة الحضور');
     expect(permissions.canAny).not.toHaveBeenCalled();
   });

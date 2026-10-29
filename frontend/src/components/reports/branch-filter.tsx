@@ -1,6 +1,8 @@
 import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
 import { useLocale } from '@/store/locale';
+import { useAuth } from '@/store/auth';
+import { isSystemAdminUser } from '@/lib/user-scope';
 
 interface BranchFilterProps {
   value: string;
@@ -13,16 +15,21 @@ interface BranchFilterProps {
 export function BranchFilter({ value, onChange }: BranchFilterProps) {
   const { ui } = useLocale();
   const { data: branches } = useBranches();
+  const user = useAuth((state) => state.user);
+  // Staff are locked to their own branch (the server enforces it); "all" then means "my branch".
+  const scoped = !!user && !isSystemAdminUser(user);
+  const locked = scoped && (branches?.length ?? 0) <= 1;
 
   return (
     <div className="grid gap-1.5">
       <Label className="text-xs text-muted-foreground">{ui('الفرع')}</Label>
       <select
-        value={value}
+        value={locked ? 'all' : value}
+        disabled={locked}
         onChange={(e) => onChange(e.target.value)}
-        className="flex h-10 w-52 items-center rounded-md border border-input bg-background px-3 text-sm"
+        className="flex h-10 w-52 items-center rounded-md border border-input bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-90"
       >
-        <option value="all">{ui('كل الفروع')}</option>
+        <option value="all">{scoped ? (user?.branch_name ? `${ui('فرع')} ${user.branch_name}` : ui('فرعي')) : ui('كل الفروع')}</option>
         {(branches ?? []).map((b) => (
           <option key={b.id} value={String(b.id)}>
             {b.name}

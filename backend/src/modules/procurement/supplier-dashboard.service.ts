@@ -1,21 +1,31 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import type { JwtUser } from '../../common/types/jwt-user';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { SupplierDashboardQueryDto } from './dto/procurement-ext.dto';
 import { notDeletedFilter, toNumber } from './procurement.utils';
 
 @Injectable()
 export class SupplierDashboardService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  private poFilter(branchId?: string): Prisma.prc_purchase_ordersWhereInput {
-    const and: Prisma.prc_purchase_ordersWhereInput[] = [notDeletedFilter()];
-    if (branchId && branchId !== 'all') and.push({ branch_id: Number(branchId) });
-    return { AND: and };
+  /** `{ branch_id: { in } }` for the caller's scope (or the requested in-scope branch); `{}` for admins viewing all. */
+  private branchWhere(user: JwtUser | undefined, branchId?: string) {
+    const branches = this.branchScope.resolveListFilter(user, branchId ?? null);
+    return branches ? { branch_id: { in: branches } } : {};
   }
 
-  async stats(q: SupplierDashboardQueryDto) {
-    const poWhere = this.poFilter(q.branchId);
+  private poFilter(user: JwtUser | undefined, branchId?: string): Prisma.prc_purchase_ordersWhereInput {
+    return { AND: [notDeletedFilter(), this.branchWhere(user, branchId)] };
+  }
+
+  async stats(q: SupplierDashboardQueryDto, user?: JwtUser) {
+    const poWhere = this.poFilter(user, q.branchId);
+    const branch = this.branchWhere(user, q.branchId);
     const [
       totalSuppliers,
       activeContracts,
@@ -32,18 +42,19 @@ export class SupplierDashboardService {
       }),
       this.prisma.prc_purchase_orders.count({ where: poWhere }),
       this.prisma.prc_purchase_orders.aggregate({ where: poWhere, _sum: { total_amount: true } }),
-      this.prisma.prc_purchase_invoices.count({ where: { AND: [notDeletedFilter()] } }),
+      this.prisma.prc_purchase_invoices.count({ where: { AND: [notDeletedFilter(), branch] } }),
       this.prisma.prc_purchase_invoices.aggregate({
-        where: { AND: [notDeletedFilter()] },
+        where: { AND: [notDeletedFilter(), branch] },
         _sum: { invoice_amount: true },
       }),
       this.prisma.prc_supplier_payments.count({
-        where: { AND: [notDeletedFilter(), { status: { in: ['مسودة', 'معلق'] } }] },
+        where: { AND: [notDeletedFilter(), branch, { status: { in: ['مسودة', 'معلق'] } }] },
       }),
       this.prisma.prc_supplier_invoices.count({
         where: {
           AND: [
             notDeletedFilter(),
+            branch,
             { remaining_amount: { gt: 0 } },
             { status: { not: 'مدفوعة' } },
           ],
@@ -63,11 +74,11 @@ export class SupplierDashboardService {
     };
   }
 
-  async top(q: SupplierDashboardQueryDto) {
+  async top(q: SupplierDashboardQueryDto, user?: JwtUser) {
     const limit = q.limit && q.limit > 0 ? Math.min(q.limit, 50) : 10;
     const grouped = await this.prisma.prc_purchase_orders.groupBy({
       by: ['supplier_id'],
-      where: this.poFilter(q.branchId),
+      where: this.poFilter(user, q.branchId),
       _count: true,
       _sum: { total_amount: true },
       orderBy: { _sum: { total_amount: 'desc' } },
@@ -90,13 +101,14 @@ export class SupplierDashboardService {
     }));
   }
 
-  async activity(q: SupplierDashboardQueryDto) {
+  async activity(q: SupplierDashboardQueryDto, user?: JwtUser) {
+    const branch = this.branchWhere(user, q.branchId);
     const days = q.days && q.days > 0 ? q.days : 30;
     const since = new Date();
     since.setDate(since.getDate() - days);
 
     const poAnd: Prisma.prc_purchase_ordersWhereInput[] = [
-      this.poFilter(q.branchId),
+      this.poFilter(user, q.branchId),
       { created_at: { gte: since } },
     ];
     if (q.supplierId && q.supplierId !== 'all') {
@@ -119,13 +131,13 @@ export class SupplierDashboardService {
         },
       }),
       this.prisma.prc_goods_receipts.findMany({
-        where: { AND: [notDeletedFilter(), { created_at: { gte: since } }] },
+        where: { AND: [notDeletedFilter(), branch, { created_at: { gte: since } }] },
         orderBy: { created_at: 'desc' },
         take: 20,
         select: { id: true, grn_number: true, status: true, created_at: true },
       }),
       this.prisma.prc_purchase_invoices.findMany({
-        where: { AND: [notDeletedFilter(), { created_at: { gte: since } }] },
+        where: { AND: [notDeletedFilter(), branch, { created_at: { gte: since } }] },
         orderBy: { created_at: 'desc' },
         take: 20,
         select: {
@@ -138,7 +150,7 @@ export class SupplierDashboardService {
         },
       }),
       this.prisma.prc_supplier_payments.findMany({
-        where: { AND: [notDeletedFilter(), { created_at: { gte: since } }] },
+        where: { AND: [notDeletedFilter(), branch, { created_at: { gte: since } }] },
         orderBy: { created_at: 'desc' },
         take: 20,
         select: {
@@ -186,7 +198,8 @@ export class SupplierDashboardService {
     };
   }
 
-  async performance(q: SupplierDashboardQueryDto) {
+  async performance(q: SupplierDashboardQueryDto, user?: JwtUser) {
+    const branch = this.branchWhere(user, q.branchId);
     const period = q.period ?? 'month';
     const since = new Date();
     if (period === 'week') since.setDate(since.getDate() - 7);
@@ -195,10 +208,10 @@ export class SupplierDashboardService {
     else since.setFullYear(since.getFullYear() - 1);
 
     const poWhere: Prisma.prc_purchase_ordersWhereInput = {
-      AND: [this.poFilter(q.branchId), { created_at: { gte: since } }],
+      AND: [this.poFilter(user, q.branchId), { created_at: { gte: since } }],
     };
     const completedWhere: Prisma.prc_purchase_ordersWhereInput = {
-      AND: [this.poFilter(q.branchId), { created_at: { gte: since } }, { status: 'completed' }],
+      AND: [this.poFilter(user, q.branchId), { created_at: { gte: since } }, { status: 'completed' }],
     };
 
     const [totalOrders, completedOrders, totalValue, returnsCount] = await Promise.all([
@@ -206,7 +219,7 @@ export class SupplierDashboardService {
       this.prisma.prc_purchase_orders.count({ where: completedWhere }),
       this.prisma.prc_purchase_orders.aggregate({ where: poWhere, _sum: { total_amount: true } }),
       this.prisma.prc_purchase_returns.count({
-        where: { AND: [notDeletedFilter(), { created_at: { gte: since } }] },
+        where: { AND: [notDeletedFilter(), branch, { created_at: { gte: since } }] },
       }),
     ]);
 
@@ -224,7 +237,8 @@ export class SupplierDashboardService {
     };
   }
 
-  async alerts(q: SupplierDashboardQueryDto) {
+  async alerts(q: SupplierDashboardQueryDto, user?: JwtUser) {
+    const branch = this.branchWhere(user, q.branchId);
     const today = new Date().toISOString().slice(0, 10);
     const [expiringContracts, overdueInvoices, pendingApprovals, unmatchedInvoices] =
       await Promise.all([
@@ -244,6 +258,7 @@ export class SupplierDashboardService {
           where: {
             AND: [
               notDeletedFilter(),
+              branch,
               { remaining_amount: { gt: 0 } },
               { due_date: { lt: today } },
             ],
@@ -258,11 +273,11 @@ export class SupplierDashboardService {
           },
         }),
         this.prisma.prc_requisitions.count({
-          where: { AND: [notDeletedFilter(), { status: 'pending' }] },
+          where: { AND: [notDeletedFilter(), branch, { status: 'pending' }] },
         }),
         this.prisma.prc_purchase_invoices.count({
           where: {
-            AND: [notDeletedFilter(), { matching_status: 'غير مطابق' }],
+            AND: [notDeletedFilter(), branch, { matching_status: 'غير مطابق' }],
           },
         }),
       ]);

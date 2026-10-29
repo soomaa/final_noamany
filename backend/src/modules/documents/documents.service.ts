@@ -2,9 +2,12 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { assertExists } from '../../common/validators/validation.util';
 import { diffDaysFromToday, toIsoDate } from '../../common/utils/legacy-date.util';
+import { assertEmployeeInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 
 const DOC_TYPE_LABELS: Record<number, string> = {
   1: 'هوية',
@@ -16,10 +19,21 @@ const DOC_TYPE_LABELS: Record<number, string> = {
 
 @Injectable()
 export class DocumentsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  async list(q: PaginationDto & { expiry?: string }) {
+  /** Branch isolation: `{ emp_id: { in } }` for scoped users, `undefined` for admins. */
+  private async scopedWhere(user: JwtUser): Promise<Prisma.emp_filesWhereInput | undefined> {
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    return empIds === null ? undefined : { emp_id: { in: empIds } };
+  }
+
+  async list(q: PaginationDto & { expiry?: string }, user: JwtUser) {
     const and: Prisma.emp_filesWhereInput[] = [];
+    const scoped = await this.scopedWhere(user);
+    if (scoped) and.push(scoped);
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -55,9 +69,10 @@ export class DocumentsService {
     return paginated(page, total, q.page, q.pageSize);
   }
 
-  async expiring(days = 30) {
+  async expiring(days: number, user: JwtUser) {
+    const scoped = await this.scopedWhere(user);
     const rows = await this.prisma.emp_files.findMany({
-      where: { have_date: 1, to_date: { not: null } },
+      where: { have_date: 1, to_date: { not: null }, ...scoped },
       include: { employee: { select: { employee: true } } },
       orderBy: { to_date: 'asc' },
     });
@@ -75,11 +90,12 @@ export class DocumentsService {
     filePath?: string;
     docType?: number;
     expiryDate?: string;
-  }) {
+  }, user: JwtUser) {
     const emp = await assertExists(
       () => this.prisma.employees.findUnique({ where: { id: dto.empId }, select: { id: true, emp_code: true } }),
       'الموظف غير موجود',
     );
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, emp.id);
     const row = await this.prisma.emp_files.create({
       data: {
         emp_id: emp.id,
@@ -94,9 +110,10 @@ export class DocumentsService {
     return { id: row.id };
   }
 
-  async remove(id: number) {
+  async remove(id: number, user: JwtUser) {
     const row = await this.prisma.emp_files.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('المستند غير موجود');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, row.emp_id);
     await this.prisma.emp_files.delete({ where: { id } });
     return { id };
   }

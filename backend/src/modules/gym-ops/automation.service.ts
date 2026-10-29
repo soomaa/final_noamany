@@ -73,6 +73,8 @@ export class AutomationService {
     status?: StaffTaskStatus;
     memberId?: number;
     branchId?: number;
+    /** Caller's resolved branch scope; overrides `branchId` when present. */
+    branchIds?: number[] | null;
     page?: number;
     pageSize?: number;
   }) {
@@ -82,7 +84,8 @@ export class AutomationService {
     const and: Prisma.staff_tasksWhereInput[] = [];
     if (query.status) and.push({ status: query.status });
     if (query.memberId) and.push({ member_id: query.memberId });
-    if (query.branchId) and.push({ branch_id: query.branchId });
+    if (query.branchIds) and.push({ branch_id: { in: query.branchIds } });
+    else if (query.branchId) and.push({ branch_id: query.branchId });
     const where = and.length ? { AND: and } : {};
 
     const [rows, total] = await Promise.all([
@@ -115,6 +118,10 @@ export class AutomationService {
       page,
       pageSize,
     );
+  }
+
+  async findTaskBranch(id: number): Promise<{ branch_id: number | null } | null> {
+    return this.prisma.staff_tasks.findUnique({ where: { id }, select: { branch_id: true } });
   }
 
   async updateTaskStatus(id: number, status: StaffTaskStatus, userId?: number) {

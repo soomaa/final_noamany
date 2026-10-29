@@ -51,14 +51,14 @@ export class AppManagementController {
 
   @Get('invitations')
   @RequiresPermission('app-management.invitations:view')
-  listInvitations(@Query() query: ListInvitationsDto) {
-    return this.service.listInvitations(query);
+  listInvitations(@Query() query: ListInvitationsDto, @CurrentUser() user: import('../../common/types/jwt-user').JwtUser) {
+    return this.service.listInvitations(query, user);
   }
 
   @Get('invitations/status/:status')
   @RequiresPermission('app-management.invitations:view')
-  listByStatus(@Param('status') status: AmInvitationStatus) {
-    return this.service.listInvitationsByStatus(status);
+  listByStatus(@Param('status') status: AmInvitationStatus, @CurrentUser() user: import('../../common/types/jwt-user').JwtUser) {
+    return this.service.listInvitationsByStatus(status, user);
   }
 
   @Post('invitations')
@@ -70,7 +70,7 @@ export class AppManagementController {
   @Put('invitations/:id')
   @RequiresPermission('app-management.invitations:update')
   updateInvitation(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateInvitationDto, @CurrentUser() user: import('../../common/types/jwt-user').JwtUser) {
-    return this.service.updateInvitation(id, body, user.sub);
+    return this.service.updateInvitation(id, body, user.sub, user);
   }
 
   @Put('invitations/:id/status')
@@ -83,7 +83,7 @@ export class AppManagementController {
     return this.service.updateInvitation(id, {
       status: body.status,
       rejectionReason: body.rejectionReason,
-    }, user.sub);
+    }, user.sub, user);
   }
 
   @Get('offers')

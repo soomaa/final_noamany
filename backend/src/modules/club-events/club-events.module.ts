@@ -7,6 +7,7 @@ import { ClubEventCategoriesController } from './club-event-categories.controlle
 import { ClubEventCategoriesService } from './club-event-categories.service';
 import { ClubEventsController } from './club-events.controller';
 import { ClubEventsService } from './club-events.service';
+import { ClubEventScopeService } from './club-event-scope.service';
 import { ClubEventSessionsController } from './club-event-sessions.controller';
 import { ClubEventSessionsService } from './club-event-sessions.service';
 import { ClubEventRegistrationsController } from './club-event-registrations.controller';
@@ -34,6 +35,7 @@ import {
     ClubEventLiveController,
   ],
   providers: [
+    ClubEventScopeService,
     ClubEventCategoriesService,
     ClubEventsService,
     ClubEventSessionsService,

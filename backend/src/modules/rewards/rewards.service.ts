@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import {
   buildSuspendWhere,
   SUSPEND_APPROVED,
@@ -10,14 +12,34 @@ import {
 } from '../../common/utils/suspend-status.util';
 import { CreateRewardDto, UpdateRewardDto } from './dto/reward.dto';
 import { ListRewardsDto } from './dto/list-rewards.dto';
+import {
+  assertEmployeeCodesInScope,
+  assertEmployeesInScope,
+  scopedEmployees,
+} from '../reports/employee-branch-scope.util';
 
 @Injectable()
 export class RewardsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
   /** The legacy page lists one row per reward request (hr_mokafat), not one per employee. */
-  async list(q: ListRewardsDto) {
+  async list(q: ListRewardsDto, user: JwtUser) {
     const and: Prisma.hr_mokafatWhereInput[] = [];
+    // Branch isolation: a scoped user sees only requests that include at least one of their
+    // branch's employees, and only those employees' detail rows (details keyed by emp_code).
+    const scoped = await scopedEmployees(this.prisma, this.branchScope, user);
+    const scopedCodes = scoped ? new Set(scoped.codes) : null;
+    if (scoped) {
+      const visible = await this.prisma.hr_mokafat_details.findMany({
+        where: { emp_code: { in: scoped.codes }, mokafa_rkm_fk: { not: null } },
+        select: { mokafa_rkm_fk: true },
+        distinct: ['mokafa_rkm_fk'],
+      });
+      and.push({ mokafa_rkm: { in: visible.map((v) => v.mokafa_rkm_fk as number) } });
+    }
     const statusWhere = buildSuspendWhere(q.status);
     if (statusWhere?.suspend) and.push({ suspend: statusWhere.suspend });
     if (q.search?.trim()) {
@@ -46,7 +68,10 @@ export class RewardsService {
     const rewardNumbers = headers.map((header) => header.mokafa_rkm);
     const details = rewardNumbers.length
       ? await this.prisma.hr_mokafat_details.findMany({
-          where: { mokafa_rkm_fk: { in: rewardNumbers } },
+          where: {
+            mokafa_rkm_fk: { in: rewardNumbers },
+            ...(scopedCodes ? { emp_code: { in: [...scopedCodes] } } : {}),
+          },
           orderBy: { id: 'asc' },
         })
       : [];
@@ -112,8 +137,8 @@ export class RewardsService {
     return { value: (max._max.mokafa_rkm ?? 0) + 1 };
   }
 
-  async create(dto: CreateRewardDto, publisherId?: number) {
-    const selection = await this.resolveSelection(dto);
+  async create(dto: CreateRewardDto, publisherId: number | undefined, user: JwtUser) {
+    const selection = await this.resolveSelection(dto, [], user);
     const date = this.parseDate(dto.date);
     const rewardNumber = (await this.nextNumber()).value;
     const recipientType = this.recipientType(dto.recipientType ?? dto.mokafaType);
@@ -163,8 +188,8 @@ export class RewardsService {
     return { id: rewardNumber, mokafaRkm: rewardNumber };
   }
 
-  async update(rewardNumber: number, dto: UpdateRewardDto) {
-    const header = await this.findHeaderOrThrow(rewardNumber);
+  async update(rewardNumber: number, dto: UpdateRewardDto, user: JwtUser) {
+    const header = await this.findHeaderOrThrow(rewardNumber, user);
     if (SUSPEND_APPROVED.includes(header.suspend)) {
       throw new BadRequestException('لا يمكن تعديل مكافأة معتمدة');
     }
@@ -185,6 +210,7 @@ export class RewardsService {
         value: dto.value ?? Number(currentDetails[0]?.value ?? 0),
       },
       currentDetails,
+      user,
     );
     const date = this.parseDate(dto.date ?? header.mokafa_date_ar);
     const dateString = this.dateString(date, dto.date ?? header.mokafa_date_ar);
@@ -231,8 +257,8 @@ export class RewardsService {
     return { id: rewardNumber };
   }
 
-  async approve(rewardNumber: number) {
-    const header = await this.findHeaderOrThrow(rewardNumber);
+  async approve(rewardNumber: number, user: JwtUser) {
+    const header = await this.findHeaderOrThrow(rewardNumber, user);
     const detailCount = await this.prisma.hr_mokafat_details.count({
       where: { mokafa_rkm_fk: rewardNumber },
     });
@@ -251,8 +277,8 @@ export class RewardsService {
     return { id: rewardNumber, status: 'approved' };
   }
 
-  async reject(rewardNumber: number) {
-    const header = await this.findHeaderOrThrow(rewardNumber);
+  async reject(rewardNumber: number, user: JwtUser) {
+    const header = await this.findHeaderOrThrow(rewardNumber, user);
     await this.prisma.$transaction([
       this.prisma.hr_mokafat.update({
         where: { id: header.id },
@@ -266,8 +292,8 @@ export class RewardsService {
     return { id: rewardNumber, status: 'rejected' };
   }
 
-  async remove(rewardNumber: number) {
-    const header = await this.findHeaderOrThrow(rewardNumber);
+  async remove(rewardNumber: number, user: JwtUser) {
+    const header = await this.findHeaderOrThrow(rewardNumber, user);
     if (header.suspend !== SuspendStatus.INCOMING) {
       throw new BadRequestException('لا يمكن حذف مكافأة تم اتخاذ إجراء عليها');
     }
@@ -282,9 +308,20 @@ export class RewardsService {
     return { id: rewardNumber };
   }
 
-  private async findHeaderOrThrow(rewardNumber: number) {
+  /**
+   * Load a reward request. Scoped users may act on it only when EVERY employee in it
+   * belongs to their branches (a mixed-branch request is admin-only).
+   */
+  private async findHeaderOrThrow(rewardNumber: number, user: JwtUser) {
     const header = await this.prisma.hr_mokafat.findFirst({ where: { mokafa_rkm: rewardNumber } });
     if (!header) throw new NotFoundException('المكافأة غير موجودة');
+    if (this.branchScope.allowedBranchIds(user) !== null) {
+      const details = await this.prisma.hr_mokafat_details.findMany({
+        where: { mokafa_rkm_fk: rewardNumber },
+        select: { emp_code: true },
+      });
+      await assertEmployeeCodesInScope(this.prisma, this.branchScope, user, details.map((d) => d.emp_code));
+    }
     return header;
   }
 
@@ -315,12 +352,18 @@ export class RewardsService {
   private async resolveSelection(
     dto: CreateRewardDto,
     currentDetails: Array<{ emp_code: number | null; value: Prisma.Decimal | null }> = [],
+    user?: JwtUser,
   ) {
     const recipientType = this.recipientType(dto.recipientType ?? dto.mokafaType);
+    const allowedBranches = user ? this.branchScope.allowedBranchIds(user) : null;
     let employees;
     if (recipientType === 3) {
+      // "All employees" means all employees of the caller's branches for scoped users.
       employees = await this.prisma.employees.findMany({
-        where: { employee_type: 1 },
+        where: {
+          employee_type: 1,
+          ...(allowedBranches !== null ? { branch_id_fk: { in: allowedBranches } } : {}),
+        },
         orderBy: { employee: 'asc' },
       });
     } else if (dto.employeeIds?.length) {
@@ -338,6 +381,9 @@ export class RewardsService {
       throw new BadRequestException('يجب اختيار موظف واحد على الأقل');
     }
     if (!employees.length) throw new BadRequestException('لا يوجد موظفون لإضافة المكافأة');
+    if (user && recipientType !== 3) {
+      await assertEmployeesInScope(this.prisma, this.branchScope, user, employees.map((e) => e.id));
+    }
 
     const explicitByCode = new Map(dto.details?.map((detail) => [detail.empCode, detail.value ?? 0]) ?? []);
     const currentByCode = new Map(

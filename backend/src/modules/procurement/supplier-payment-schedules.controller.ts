@@ -12,6 +12,8 @@ import {
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { JwtUser } from '../../common/types/jwt-user';
 import {
   ListSupplierPaymentSchedulesDto,
   UpsertSupplierPaymentScheduleDto,
@@ -25,19 +27,19 @@ export class SupplierPaymentSchedulesController {
   constructor(private readonly service: SupplierPaymentSchedulesService) {}
 
   @Get()
-  list(@Query() query: ListSupplierPaymentSchedulesDto) {
-    return this.service.list(query);
+  list(@Query() query: ListSupplierPaymentSchedulesDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user);
   }
 
   @Post()
   @RequiresPermission('gym-sales.procurement:create')
-  create(@Body() body: UpsertSupplierPaymentScheduleDto) {
-    return this.service.create(body);
+  create(@Body() body: UpsertSupplierPaymentScheduleDto, @CurrentUser() user: JwtUser) {
+    return this.service.create(body, user);
   }
 
   @Put(':id')
@@ -45,13 +47,14 @@ export class SupplierPaymentSchedulesController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertSupplierPaymentScheduleDto>,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.update(id, body);
+    return this.service.update(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('gym-sales.procurement:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.remove(id, user);
   }
 }

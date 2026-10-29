@@ -6,6 +6,7 @@ import { paginated } from '../../common/dto/list-result';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { assertMemberExists, localDateString } from '../club-members/club-member.utils';
+import { isReceptionEmployee } from '../../common/utils/reception-user.util';
 import { ClubReceiptsService } from './club-receipts.service';
 import { ClubSubscriptionAccountingService } from './club-subscription-accounting.service';
 import {
@@ -143,6 +144,8 @@ export class ClubReceiptsCrudService {
         ...(q.endDate ? { lte: q.endDate } : {}),
       };
     }
+    // Reception sees only today's receipts, whatever range the screen sends.
+    if (isReceptionEmployee(user)) where.receipt_date = localDateString();
     and.push(where);
     const scopedWhere: Prisma.club_receiptsWhereInput = { AND: and };
 
@@ -316,6 +319,7 @@ export class ClubReceiptsCrudService {
   }
 
   async update(id: number, body: UpdateClubReceiptDto, user?: JwtUser) {
+    if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه تعديل الإيصالات');
     const existing = await this.findOne(id, user);
     // Only description/type/payment_method are mutable. Amount/date/subscription are immutable —
     // changing money on a posted receipt would desync the GL; cancel and re-issue instead.

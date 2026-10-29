@@ -1,3 +1,4 @@
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { DailyClosingTargetService } from './daily-closing-target.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
@@ -21,7 +22,7 @@ describe('DailyClosingTargetService daily closing', () => {
     const prisma = { club_subscriptions: empty(), club_locker_subscriptions: empty(), sales_quick_sales: empty(),
       prc_purchase_returns: empty(), prc_purchase_invoices: empty(), prc_supplier_payments: empty(),
       fin_expenses: { findMany: expenseQuery }, club_subscription_refunds: { findMany: refundQuery } };
-    const service = new DailyClosingTargetService(prisma as never, { resolveListFilter: jest.fn().mockReturnValue(null) } as never);
+    const service = new DailyClosingTargetService(prisma as never, new BranchScopeService());
     const result = await service.dailyClosing({ branchId: '3', fromDate: '2026-10-12', toDate: '2026-10-12' }, { sub: 1, level: 1, branch: 0 } as never);
     expect(result).toMatchObject({ expenses: { total: '60.00' }, subscriptionRefunds: { total: '150.00' }, totalOutflows: '210.00', netProfit: '-210.00' });
     const other = await service.dailyClosing({ branchId: '7', fromDate: '2026-10-12', toDate: '2026-10-12' }, { sub: 1, level: 1, branch: 0 } as never);
@@ -39,7 +40,7 @@ describe('DailyClosingTargetService daily closing', () => {
         { total_amount: dec('55'), payment_method: 'تحويل بنكي', category: 'نثريات' },
         { total_amount: dec('5'), payment_method: null, category: 'نثريات' },
       ]) } };
-    const service = new DailyClosingTargetService(prisma as never, { resolveListFilter: jest.fn().mockReturnValue(null) } as never);
+    const service = new DailyClosingTargetService(prisma as never, new BranchScopeService());
 
     const result = await service.dailyClosing({ fromDate: '2026-10-20', toDate: '2026-10-20' }, { sub: 1, level: 1, branch: 0 } as never);
 
@@ -73,7 +74,7 @@ describe('DailyClosingTargetService daily closing', () => {
     };
     const service = new DailyClosingTargetService(
       prisma as never,
-      { resolveListFilter: jest.fn().mockReturnValue(null) } as never,
+      new BranchScopeService(),
     );
 
     const result = await service.dailyClosing(
@@ -113,7 +114,7 @@ describe('DailyClosingTargetService daily closing', () => {
       prc_purchase_returns: empty(), prc_purchase_invoices: empty(), prc_supplier_payments: empty(),
       fin_expenses: empty(), club_subscription_refunds: empty(),
     };
-    const service = new DailyClosingTargetService(prisma as never, { resolveListFilter: jest.fn().mockReturnValue(null) } as never);
+    const service = new DailyClosingTargetService(prisma as never, new BranchScopeService());
 
     const result = await service.dailyClosing({ fromDate: '2026-10-20', toDate: '2026-10-20' }, { sub: 1, level: 1, branch: 0 } as never);
 
@@ -137,7 +138,7 @@ describe('DailyClosingTargetService daily closing', () => {
       fin_expenses: { findMany: jest.fn().mockResolvedValue([]) },
       club_subscription_refunds: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    const service = new DailyClosingTargetService(prisma as never, { resolveListFilter: jest.fn().mockReturnValue(null) } as never);
+    const service = new DailyClosingTargetService(prisma as never, new BranchScopeService());
 
     const result = await service.dailyClosing(
       { fromDate: '2026-09-30', toDate: '2026-09-30' },
@@ -167,7 +168,7 @@ describe('DailyClosingTargetService daily closing', () => {
       fin_expenses: { findMany: jest.fn().mockResolvedValue([]) },
       club_subscription_refunds: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    const service = new DailyClosingTargetService(prisma as never, { resolveListFilter: jest.fn().mockReturnValue(null) } as never);
+    const service = new DailyClosingTargetService(prisma as never, new BranchScopeService());
 
     const result = await service.dailyClosing(
       { fromDate: '2026-09-30', toDate: '2026-09-30' },
@@ -198,7 +199,7 @@ describe('DailyClosingTargetService daily closing', () => {
     };
     const service = new DailyClosingTargetService(
       prisma as never,
-      { resolveListFilter: jest.fn().mockReturnValue(null) } as never,
+      new BranchScopeService(),
     );
 
     const result = await service.targetReport(
@@ -227,7 +228,7 @@ describe('DailyClosingTargetService daily closing', () => {
         { sale_date: '2026-10-05', subtotal: dec('10'), discount_amount: dec('0'), collected_amount: dec('10'), sale_type: 'customer', cafe_category: null },
       ]) },
     };
-    const service = new DailyClosingTargetService(prisma as never, { resolveListFilter: jest.fn().mockReturnValue(null) } as never);
+    const service = new DailyClosingTargetService(prisma as never, new BranchScopeService());
 
     const result = await service.targetReport({ targetEmployeeId: 41 }, { sub: 1, level: 1, branch: 0 } as never);
 
@@ -248,7 +249,7 @@ describe('DailyClosingTargetService daily closing', () => {
       club_locker_subscriptions: { findMany: jest.fn().mockResolvedValue([]) },
       sales_quick_sales: { findMany: jest.fn().mockResolvedValue([]) },
     };
-    const service = new DailyClosingTargetService(prisma as never, { resolveListFilter: jest.fn() } as never);
+    const service = new DailyClosingTargetService(prisma as never, new BranchScopeService());
 
     const result = await service.targetReport(
       { operationType: 'sales' },
@@ -257,7 +258,7 @@ describe('DailyClosingTargetService daily closing', () => {
 
     expect(result.employeeId).toBe(77);
     expect(prisma.sales_quick_sales.findMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: expect.objectContaining({ target_employee_id: 77, branch_id: { in: [2] }, status: 'completed' }),
+      where: expect.objectContaining({ target_employee_id: 77, branch_id: { in: [2, 5, 6] }, status: 'completed' }),
     }));
   });
 });

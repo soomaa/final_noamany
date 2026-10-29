@@ -65,8 +65,8 @@ export class ClubQuickServicesController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user);
   }
 
   @Put(':id')
@@ -88,7 +88,7 @@ export class ClubQuickServicesController {
     'club.reception:delete',
     'club.reception.quick_services:delete',
   )
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.remove(id, user);
   }
 }

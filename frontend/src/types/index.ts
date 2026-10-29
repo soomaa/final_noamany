@@ -11,6 +11,8 @@ export interface AuthUser {
   job_title: string | null;
   is_trainer: boolean;
   trainer_id: number | null;
+  /** Level 1 or an active RBAC super-admin role (system-wide authority). */
+  is_super_admin?: boolean;
 }
 
 export interface MenuNode {

@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import {
   buildDefaultSessionPriceMatrix,
   toNum,
@@ -59,7 +60,7 @@ export class ClubSubscriptionTypesService {
     selection: { applyToAllBranches: boolean; branchIds: number[] } | null,
     legacyBranchId?: unknown,
   ) {
-    if (selection?.applyToAllBranches && user.level !== 1) {
+    if (selection?.applyToAllBranches && !isSystemAdmin(user)) {
       throw new ForbiddenException('إنشاء خطة متاحة لكل الفروع مسموح لمدير النظام فقط');
     }
     const ids = selection
@@ -387,8 +388,13 @@ export class ClubSubscriptionTypesService {
 
   async update(id: number, body: Record<string, unknown>, user: JwtUser) {
     const existing = await this.findOne(id, user);
-    if (existing.applyToAllBranches && user.level !== 1) {
+    if (existing.applyToAllBranches && !isSystemAdmin(user)) {
       throw new ForbiddenException('تعديل خطة متاحة لكل الفروع مسموح لمدير النظام فقط');
+    }
+    // A plan shared with several branches may only be edited by someone who manages ALL of them
+    // (findOne only proves that at least one of its branches is visible).
+    if (existing.branchIds.some((branchId) => !this.branchScope.isBranchAllowed(user, branchId))) {
+      throw new ForbiddenException('لا تملك صلاحية تعديل خطة مرتبطة بفروع أخرى');
     }
     const { data, branchSelection } = this.buildData(body);
     if (!branchSelection && body.branchId !== undefined && (body.branchId == null || body.branchId === '')) {
@@ -431,8 +437,14 @@ export class ClubSubscriptionTypesService {
     return this.findOne(id, user);
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, user?: JwtUser) {
+    // The controller restricts DELETE to system admins and does not forward the user; calling
+    // findOne(id) without a user would fail closed (no branches) and block every delete.
+    if (user) {
+      await this.findOne(id, user);
+    } else if (!(await this.prisma.club_subscription_types.findUnique({ where: { id }, select: { id: true } }))) {
+      throw new NotFoundException('نوع الاشتراك غير موجود');
+    }
     await this.prisma.club_subscription_types.delete({ where: { id } });
     return { success: true };
   }

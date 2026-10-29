@@ -298,12 +298,55 @@ export class ClubLockersService {
     };
   }
 
-  async getLockerDetails(id: number) {
+  /** Locker rows belong to `main_branch_id`; scoped users may only touch their branches. */
+  private async assertLockerAccess(id: number, user?: JwtUser) {
     const locker = await this.prisma.club_lockers.findUnique({ where: { id } });
     if (!locker) throw new NotFoundException('اللوكر غير موجود');
+    if (user) this.branchScope.assertBranchAllowed(user, locker.main_branch_id, 'لا تملك صلاحية الوصول للوكرات هذا الفرع');
+    return locker;
+  }
+
+  /** Locker subscriptions: branch = main_branch_id, section = subscription gender (and linked member gender). */
+  private async assertLockerSubscriptionAccess(
+    user: JwtUser | undefined,
+    sub: { main_branch_id: number; gender: string | null; member_id: number | null },
+  ) {
+    if (!user) return;
+    this.branchScope.assertBranchAllowed(user, sub.main_branch_id, 'لا تملك صلاحية الوصول للوكرات هذا الفرع');
+    if (sub.gender && !this.branchScope.isMemberGenderAllowed(user, sub.gender)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
+    }
+    await this.assertLockerMemberAccess(user, sub.member_id);
+  }
+
+  private async assertLockerMemberAccess(user: JwtUser | undefined, memberId: number | null | undefined) {
+    if (!user || memberId == null) return;
+    const member = await this.prisma.club_members.findUnique({ where: { id: memberId }, select: { branch_id: true, gender: true } });
+    if (!member) throw new NotFoundException('العضو غير موجود');
+    this.branchScope.assertBranchAllowed(user, member.branch_id, 'العضو تابع لفرع خارج صلاحياتك');
+    if (!this.branchScope.isMemberGenderAllowed(user, member.gender)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
+    }
+  }
+
+  /** Locker subscription types with branch_id null apply to all branches and are admin-managed. */
+  private assertLockerTypeWritable(user: JwtUser | undefined, branchId: number | null) {
+    if (!user) return;
+    if (branchId == null) {
+      if (this.branchScope.allowedBranchIds(user) !== null) {
+        throw new ForbiddenException('أنواع اشتراك اللوكر العامة لكل الفروع يديرها مدير النظام فقط');
+      }
+      return;
+    }
+    this.branchScope.assertBranchAllowed(user, branchId, 'لا تملك صلاحية الوصول للوكرات هذا الفرع');
+  }
+
+  async getLockerDetails(id: number, user?: JwtUser) {
+    const locker = await this.assertLockerAccess(id, user);
+    const category = user ? this.branchScope.memberGenderFilter(user) : null;
 
     const subs = await this.prisma.club_locker_subscriptions.findMany({
-      where: { locker_id: id },
+      where: { locker_id: id, ...(category ? { gender: category } : {}) },
       orderBy: { created_at: 'desc' },
       include: {
         type: { select: { name: true } },
@@ -353,7 +396,8 @@ export class ClubLockersService {
     };
   }
 
-  async createLocker(body: { lockerNumber: string; mainBranchId: number; subBranchId: number }) {
+  async createLocker(body: { lockerNumber: string; mainBranchId: number; subBranchId: number }, user?: JwtUser) {
+    if (user) this.branchScope.assertBranchAllowed(user, Number(body.mainBranchId), 'لا تملك صلاحية الوصول للوكرات هذا الفرع');
     return this.prisma.club_lockers.create({
       data: {
         locker_number: body.lockerNumber,
@@ -363,7 +407,9 @@ export class ClubLockersService {
     });
   }
 
-  async updateLocker(id: number, body: Partial<{ lockerNumber: string; mainBranchId: number; subBranchId: number; isAvailable: boolean }>) {
+  async updateLocker(id: number, body: Partial<{ lockerNumber: string; mainBranchId: number; subBranchId: number; isAvailable: boolean }>, user?: JwtUser) {
+    await this.assertLockerAccess(id, user);
+    if (user && body.mainBranchId != null) this.branchScope.assertBranchAllowed(user, Number(body.mainBranchId), 'لا تملك صلاحية الوصول للوكرات هذا الفرع');
     return this.prisma.club_lockers.update({
       where: { id },
       data: {
@@ -375,7 +421,8 @@ export class ClubLockersService {
     });
   }
 
-  async removeLocker(id: number) {
+  async removeLocker(id: number, user?: JwtUser) {
+    await this.assertLockerAccess(id, user);
     const subs = await this.prisma.club_locker_subscriptions.findMany({ where: { locker_id: id } });
     const today = localDateString();
     const hasActive = subs.some((s) => {
@@ -416,14 +463,19 @@ export class ClubLockersService {
     };
   }
 
-  async listTypes() {
+  async listTypes(user?: JwtUser) {
+    const allowed = user ? this.branchScope.allowedBranchIds(user) : null;
     return this.prisma.club_locker_subscription_types.findMany({
-      where: { is_active: true },
+      where: {
+        is_active: true,
+        ...(allowed === null ? {} : { OR: [{ branch_id: null }, { branch_id: { in: allowed } }] }),
+      },
       orderBy: { name: 'asc' },
     });
   }
 
-  async createType(body: Record<string, unknown>) {
+  async createType(body: Record<string, unknown>, user?: JwtUser) {
+    this.assertLockerTypeWritable(user, body.branchId != null && body.branchId !== '' ? Number(body.branchId) : null);
     return this.prisma.club_locker_subscription_types.create({
       data: {
         name: String(body.name),
@@ -439,7 +491,15 @@ export class ClubLockersService {
     });
   }
 
-  async updateType(id: number, body: Record<string, unknown>) {
+  async updateType(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    if (user) {
+      const existing = await this.prisma.club_locker_subscription_types.findUnique({ where: { id } });
+      if (!existing) throw new NotFoundException('نوع اشتراك اللوكر غير موجود');
+      this.assertLockerTypeWritable(user, existing.branch_id);
+      if (body.branchId !== undefined) {
+        this.assertLockerTypeWritable(user, body.branchId != null && body.branchId !== '' ? Number(body.branchId) : null);
+      }
+    }
     return this.prisma.club_locker_subscription_types.update({
       where: { id },
       data: {
@@ -456,7 +516,12 @@ export class ClubLockersService {
     });
   }
 
-  async removeType(id: number) {
+  async removeType(id: number, user?: JwtUser) {
+    if (user) {
+      const existing = await this.prisma.club_locker_subscription_types.findUnique({ where: { id } });
+      if (!existing) throw new NotFoundException('نوع اشتراك اللوكر غير موجود');
+      this.assertLockerTypeWritable(user, existing.branch_id);
+    }
     await this.prisma.club_locker_subscription_types.delete({ where: { id } });
     return { success: true };
   }
@@ -626,16 +691,25 @@ export class ClubLockersService {
     return true;
   }
 
-  async createSubscription(body: Record<string, unknown>, userId: number) {
+  async createSubscription(body: Record<string, unknown>, userId: number, user?: JwtUser) {
     const lockerId = Number(body.lockerId);
     const typeId = Number(body.subscriptionTypeId);
+    // The subscription's branch is the locker's branch — never the client-supplied branch ids.
+    const lockerRow = await this.assertLockerAccess(lockerId, user);
     const type = await this.prisma.club_locker_subscription_types.findUnique({ where: { id: typeId } });
     if (!type) throw new BadRequestException('نوع اشتراك اللوكر غير موجود');
+    if (type.branch_id != null && type.branch_id !== lockerRow.main_branch_id) {
+      throw new BadRequestException('نوع اشتراك اللوكر لا يخص فرع هذا اللوكر');
+    }
 
     const subscriptionValue = toNum(type.meta_value);
     const memberId = body.memberId == null || body.memberId === '' ? null : Number(body.memberId);
     const requestedPoints = body.pointsToRedeem == null || body.pointsToRedeem === '' ? null : Number(body.pointsToRedeem);
     const memberGrantId = body.memberDiscountGrantId == null || body.memberDiscountGrantId === '' ? null : Number(body.memberDiscountGrantId);
+    await this.assertLockerMemberAccess(user, memberId);
+    if (user && (body.gender === 'male' || body.gender === 'female') && !this.branchScope.isMemberGenderAllowed(user, body.gender)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
+    }
     if (body.discountCodeId != null && body.discountCodeId !== '') {
       throw new BadRequestException('كود خصم اللوكر يجب أن يكون ممنوحًا لعضو محدد');
     }
@@ -689,7 +763,7 @@ export class ClubLockersService {
               amount: paidAmount,
               memberName: String(body.customerName),
               memberId: body.memberId != null ? Number(body.memberId) : null,
-              branchId: Number(body.mainBranchId),
+              branchId: locker.main_branch_id,
               paymentMethod,
               registrationDate: start,
               createdBy: userId,
@@ -703,8 +777,8 @@ export class ClubLockersService {
       const row = await tx.club_locker_subscriptions.create({
         data: {
           subscription_number: subNumber,
-          main_branch_id: Number(body.mainBranchId),
-          sub_branch_id: Number(body.subBranchId),
+          main_branch_id: locker.main_branch_id,
+          sub_branch_id: locker.sub_branch_id,
           member_id: memberId,
           customer_name: String(body.customerName),
           subscription_type_id: typeId,
@@ -742,9 +816,14 @@ export class ClubLockersService {
     }, { maxWait: 10000, timeout: 15000 });
   }
 
-  async updateSubscription(id: number, body: Record<string, unknown>) {
+  async updateSubscription(id: number, body: Record<string, unknown>, user?: JwtUser) {
     const existing = await this.prisma.club_locker_subscriptions.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('اشتراك اللوكر غير موجود');
+    await this.assertLockerSubscriptionAccess(user, existing);
+    if (user && body.memberId != null && body.memberId !== '') await this.assertLockerMemberAccess(user, Number(body.memberId));
+    if (user && (body.gender === 'male' || body.gender === 'female') && !this.branchScope.isMemberGenderAllowed(user, body.gender)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
+    }
     if (body.customerName !== undefined && !String(body.customerName).trim()) {
       throw new BadRequestException('اسم العميل مطلوب');
     }
@@ -819,17 +898,19 @@ export class ClubLockersService {
     return this.mapSub(row);
   }
 
-  async removeSubscription(id: number) {
+  async removeSubscription(id: number, user?: JwtUser) {
     const sub = await this.prisma.club_locker_subscriptions.findUnique({ where: { id } });
     if (!sub) throw new NotFoundException('اشتراك اللوكر غير موجود');
+    await this.assertLockerSubscriptionAccess(user, sub);
     await this.prisma.club_locker_subscriptions.delete({ where: { id } });
     await this.freeLockerIfUnoccupied(sub.locker_id, id);
     return { success: true };
   }
 
-  async releaseSubscription(id: number) {
+  async releaseSubscription(id: number, user?: JwtUser) {
     const sub = await this.prisma.club_locker_subscriptions.findUnique({ where: { id } });
     if (!sub) throw new NotFoundException('اشتراك اللوكر غير موجود');
+    await this.assertLockerSubscriptionAccess(user, sub);
     await this.prisma.club_locker_subscriptions.update({
       where: { id },
       data: { status: 'expired', subscription_end_date: localDateString() },
@@ -852,12 +933,13 @@ export class ClubLockersService {
     return { subs: subs.length, lockers: lockerCount };
   }
 
-  async freezeSubscription(id: number, days: number, dryRun?: boolean) {
+  async freezeSubscription(id: number, days: number, dryRun?: boolean, user?: JwtUser) {
     const sub = await this.prisma.club_locker_subscriptions.findUnique({
       where: { id },
       include: { type: true },
     });
     if (!sub) throw new NotFoundException('اشتراك اللوكر غير موجود');
+    await this.assertLockerSubscriptionAccess(user, sub);
     if (!sub.type.has_stop) throw new BadRequestException('نوع اشتراك اللوكر لا يدعم التجميد');
     if (sub.status !== 'active') throw new BadRequestException('يمكن تجميد الاشتراك النشط فقط');
     if (!Number.isFinite(days) || days <= 0) throw new BadRequestException('عدد أيام التجميد غير صالح');
@@ -885,9 +967,10 @@ export class ClubLockersService {
     return this.mapSub(row);
   }
 
-  async unfreezeSubscription(id: number, dryRun?: boolean) {
+  async unfreezeSubscription(id: number, dryRun?: boolean, user?: JwtUser) {
     const sub = await this.prisma.club_locker_subscriptions.findUnique({ where: { id } });
     if (!sub) throw new NotFoundException('اشتراك اللوكر غير موجود');
+    await this.assertLockerSubscriptionAccess(user, sub);
     if (sub.status !== 'frozen') throw new BadRequestException('الاشتراك غير مجمد');
 
     const newStatus = deriveSubStatus(sub.subscription_start_date, sub.subscription_end_date);

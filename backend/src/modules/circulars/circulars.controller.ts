@@ -24,8 +24,8 @@ export class CircularsController {
   constructor(private readonly circulars: CircularsService) {}
 
   @Get()
-  list(@Query() query: ListCircularsDto) {
-    return this.circulars.list(query);
+  list(@Query() query: ListCircularsDto, @CurrentUser() user: JwtUser) {
+    return this.circulars.list(query, user);
   }
 
   @Get('recipients/departments')
@@ -34,14 +34,14 @@ export class CircularsController {
   }
 
   @Get(':id')
-  getOne(@Param('id', ParseIntPipe) id: number) {
-    return this.circulars.getOne(id);
+  getOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.circulars.getOne(id, user);
   }
 
   @Post()
   @RequiresPermission('affairs.circulars:create')
   create(@Body() dto: CreateCircularDto, @CurrentUser() user: JwtUser) {
-    return this.circulars.create(dto, user.sub, user.name);
+    return this.circulars.create(dto, user.sub, user.name, user);
   }
 
   @Patch(':id')
@@ -51,7 +51,7 @@ export class CircularsController {
     @Body() dto: UpdateCircularDto,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.circulars.update(id, dto, user.sub, user.name);
+    return this.circulars.update(id, dto, user.sub, user.name, user);
   }
 
   @Patch(':id/seen')
@@ -61,7 +61,7 @@ export class CircularsController {
 
   @Delete(':id')
   @RequiresPermission('affairs.circulars:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.circulars.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.circulars.remove(id, user);
   }
 }

@@ -48,27 +48,27 @@ export class ClubPointsController {
   // This literal route must precede `members/:id/history`; otherwise the
   // dynamic `:id` route interprets "code" as an integer member id.
   @Get('members/code/:memberCode/history')
-  historyByMemberCode(@Param('memberCode') memberCode: string) {
-    return this.service.memberHistoryByCode(memberCode);
+  historyByMemberCode(@Param('memberCode') memberCode: string, @CurrentUser() user: JwtUser) {
+    return this.service.memberHistoryByCode(memberCode, user);
   }
 
   @Get('members/:id')
-  account(@Param('id', ParseIntPipe) id: number) {
-    return this.service.memberAccount(id);
+  account(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.memberAccount(id, user);
   }
 
   @Get('members/:id/history')
-  history(@Param('id', ParseIntPipe) id: number) {
-    return this.service.history(id);
+  history(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.history(id, user);
   }
 
   @Get('reports/earned-members')
-  earnedMembersReport(@Query() query: PointsDateRangeQueryDto) {
-    return this.service.earnedMembersReport(query.fromDate, query.toDate);
+  earnedMembersReport(@Query() query: PointsDateRangeQueryDto, @CurrentUser() user: JwtUser) {
+    return this.service.earnedMembersReport(query.fromDate, query.toDate, user);
   }
 
   @Get('reports/active-members')
-  activeMembersReport() {
-    return this.service.activeMembersReport();
+  activeMembersReport(@CurrentUser() user: JwtUser) {
+    return this.service.activeMembersReport(user);
   }
 }

@@ -131,7 +131,7 @@ describe('PrivateSubscriptionsService package branch scope', () => {
         isSpecial: true,
         isLinkedToSessions: true,
       }),
-      7,
+      user,
       { privateEnrollment: true },
     );
   });

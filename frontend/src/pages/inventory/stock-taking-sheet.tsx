@@ -26,12 +26,14 @@ interface SheetProduct {
   availableQuantity: number;
 }
 
-const today = () => new Date().toISOString().slice(0, 10);
+/** Local (Cairo) calendar day — toISOString() would roll over to tomorrow after 22:00/21:00 UTC. */
+const today = () => new Date().toLocaleDateString('en-CA');
 
 export function StockTakingSheet() {
   const { ui } = useLocale();
   const user = useAuth((state) => state.user);
-  const { params, setParams } = useListQuery();
+  // Under the form only today's count sheets are listed; the report page covers other dates.
+  const { params, setParams } = useListQuery({ filters: { dateFrom: today(), dateTo: today() } });
   const { data, isLoading, isError, refetch } = usePaginatedList<CountSession>('stock-taking', params);
 
   // The count report form ("محضر الجرد"): create a new one or edit a draft.
@@ -263,8 +265,12 @@ export function StockTakingSheet() {
             <Label>{ui('تاريخ اليوم')}</Label>
             <Input readOnly value={editing ? editing.createdAt.slice(0, 10) : today()} className="nums bg-muted/50" />
           </div>
+          <div className="space-y-1.5">
+            <Label>{ui('الفرع')}</Label>
+            <Input readOnly value={user?.branch_name ?? ui('كل الفروع')} className="bg-muted/50" />
+          </div>
+          {/* The server lists only the user's warehouses (Tanta main also gets Tanta Up/Down). */}
           <WarehouseSelect
-            branchId={user?.branch || undefined}
             value={warehouseId}
             onChange={setWarehouseId}
             label="المخزن"
@@ -272,7 +278,7 @@ export function StockTakingSheet() {
             disabled={!!editing}
           />
           <div className="space-y-1.5">
-            <Label htmlFor="count-category">{ui('النوع')}</Label>
+            <Label htmlFor="count-category">{ui('نوع الجرد (بار / بروتين …)')}</Label>
             <select
               id="count-category"
               className="h-10 w-full rounded-md border bg-background px-3 text-sm"
@@ -372,7 +378,7 @@ export function StockTakingSheet() {
       </div>
 
       <div className="space-y-2">
-        <h2 className="text-lg font-bold">{ui('محاضر الجرد')}</h2>
+        <h2 className="text-lg font-bold">{ui('محاضر جرد اليوم')}</h2>
         <DataTable
           columns={columns}
           compact

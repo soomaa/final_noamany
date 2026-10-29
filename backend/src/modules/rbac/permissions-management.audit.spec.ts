@@ -946,16 +946,16 @@ describe('G. privilege-escalation controls', () => {
      * and including to themselves. This test pins the CURRENT behaviour; flip it to
      * `.rejects` once the gap is closed.
      */
-    it('KNOWN GAP: assigning a super-admin role is not blocked for a non-super-admin editor', async () => {
+    it('blocks a non-super-admin editor from assigning a super-admin role', async () => {
       const prisma = assignPrisma([{ id: 1 }]); // role 1 = super_admin
       const svc = new RbacUsersService(prisma, engineStub(['admin.roles:manage']), audit);
-      await expect(svc.setUserRoles(5, { roleIds: [1] }, 99)).resolves.toEqual({ userId: 5, roleIds: [1] });
+      await expect(svc.setUserRoles(5, { roleIds: [1] }, 99)).rejects.toBeDefined();
     });
 
-    it('KNOWN GAP: an admin can grant a role to their own account (self-escalation)', async () => {
+    it('blocks an editor from granting a role to their own account (self-escalation)', async () => {
       const prisma = assignPrisma([{ id: 1 }]);
       const svc = new RbacUsersService(prisma, engineStub(['admin.roles:manage']), audit);
-      await expect(svc.setUserRoles(99, { roleIds: [1] }, 99)).resolves.toEqual({ userId: 99, roleIds: [1] });
+      await expect(svc.setUserRoles(99, { roleIds: [1] }, 99)).rejects.toBeDefined();
     });
   });
 });

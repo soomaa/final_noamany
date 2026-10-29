@@ -173,7 +173,7 @@ export function DataTable<T>({
                 {hg.headers.map((header) => (
                   <TableHead
                     key={header.id}
-                    className={compact ? 'h-9 px-1 text-[10px] leading-4 tracking-normal' : undefined}
+                    className={compact ? 'h-9 px-1 text-[11px] leading-4 tracking-normal' : undefined}
                     style={compact ? { width: header.getSize() } : undefined}
                   >
                     {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}

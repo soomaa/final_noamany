@@ -30,13 +30,13 @@ export class PurchaseReturnsController {
   constructor(private readonly service: PurchaseReturnsService) {}
 
   @Get()
-  list(@Query() query: ListPurchaseReturnsDto) {
-    return this.service.list(query);
+  list(@Query() query: ListPurchaseReturnsDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user);
   }
 
   @Post()
@@ -50,8 +50,9 @@ export class PurchaseReturnsController {
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: Partial<UpsertPurchaseReturnDto>,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.update(id, body);
+    return this.service.update(id, body, user);
   }
 
   @Patch(':id/status')
@@ -67,7 +68,7 @@ export class PurchaseReturnsController {
 
   @Delete(':id')
   @RequiresPermission('gym-sales.procurement:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.remove(id, user);
   }
 }

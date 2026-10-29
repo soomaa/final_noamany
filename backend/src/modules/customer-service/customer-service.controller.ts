@@ -14,9 +14,9 @@ export class CustomerServiceController {
   @Post('questions') @RequiresPermission('customer-service.questions:create') createQuestion(@Body() dto: UpsertCustomerServiceQuestionDto) { return this.service.createQuestion(dto); }
   @Put('questions/:id') @RequiresPermission('customer-service.questions:update') updateQuestion(@Param('id', ParseIntPipe) id: number, @Body() dto: UpsertCustomerServiceQuestionDto) { return this.service.updateQuestion(id, dto); }
   @Delete('questions/:id') @RequiresPermission('customer-service.questions:delete') removeQuestion(@Param('id', ParseIntPipe) id: number) { return this.service.removeQuestion(id); }
-  @Get('branches') @RequiresPermission('customer-service.feedback:view') branches() { return this.service.branches(); }
-  @Get('subscriptions') @RequiresPermission('customer-service.feedback:view') subscriptions(@Query() query: CustomerServiceListDto) { return this.service.listSubscriptions(query); }
-  @Get('reports') @RequiresPermission('customer-service.reports:view') reports(@Query() query: CustomerServiceListDto) { return this.service.listSubscriptions(query); }
+  @Get('branches') @RequiresPermission('customer-service.feedback:view') branches(@CurrentUser() user: JwtUser) { return this.service.branches(user); }
+  @Get('subscriptions') @RequiresPermission('customer-service.feedback:view') subscriptions(@Query() query: CustomerServiceListDto, @CurrentUser() user: JwtUser) { return this.service.listSubscriptions(query, user); }
+  @Get('reports') @RequiresPermission('customer-service.reports:view') reports(@Query() query: CustomerServiceListDto, @CurrentUser() user: JwtUser) { return this.service.listSubscriptions(query, user); }
   @Post('feedback') @RequiresPermission('customer-service.feedback:create') createFeedback(@Body() dto: CreateCustomerServiceFeedbackDto, @CurrentUser() user: JwtUser) { return this.service.createFeedback(dto, user); }
-  @Get('feedback/:id') @RequiresPermission('customer-service.feedback:view') feedbackDetails(@Param('id', ParseIntPipe) id: number) { return this.service.feedbackDetails(id); }
+  @Get('feedback/:id') @RequiresPermission('customer-service.feedback:view') feedbackDetails(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) { return this.service.feedbackDetails(id, user); }
 }

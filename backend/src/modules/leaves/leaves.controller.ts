@@ -77,16 +77,17 @@ export class LeavesController {
   }
 
   @Get('balances')
-  balances(@Query() query: PaginationDto) {
-    return this.leaves.balances(query);
+  balances(@Query() query: PaginationDto, @CurrentUser() user: JwtUser) {
+    return this.leaves.balances(query, user);
   }
 
   @Get('available')
   available(
     @Query('empId', ParseIntPipe) empId: number,
     @Query('leaveTypeId', ParseIntPipe) leaveTypeId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.leaves.available(empId, leaveTypeId);
+    return this.leaves.available(empId, leaveTypeId, user);
   }
 
   @Get()
@@ -96,7 +97,7 @@ export class LeavesController {
 
   @Post()
   create(@Body() body: CreateLeaveDto, @CurrentUser() user: JwtUser) {
-    return this.leaves.create(body, user.sub, user.name ?? undefined);
+    return this.leaves.create(body, user.sub, user.name ?? undefined, undefined, user);
   }
 
   @Patch(':id')
@@ -116,17 +117,17 @@ export class LeavesController {
   @Post(':id/approve')
   @RequiresPermission('leaves.list:approve')
   approve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    return this.leaves.approve(id, user.sub, user.name ?? undefined);
+    return this.leaves.approve(id, user.sub, user.name ?? undefined, user);
   }
 
   @Post(':id/reject')
   @RequiresPermission('leaves.list:reject')
   reject(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    return this.leaves.reject(id, user.sub, user.name ?? undefined);
+    return this.leaves.reject(id, user.sub, user.name ?? undefined, user);
   }
 
   @Post(':id/cancel')
   cancel(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    return this.leaves.cancel(id, user.sub, user.name ?? undefined);
+    return this.leaves.cancel(id, user.sub, user.name ?? undefined, user);
   }
 }

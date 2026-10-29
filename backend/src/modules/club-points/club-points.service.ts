@@ -1,6 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 export type PointsConversion = {
   points: number;
@@ -18,7 +20,24 @@ type PointsDbClient = Pick<PrismaService, '$queryRaw' | '$executeRaw'>;
 
 @Injectable()
 export class ClubPointsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService = new BranchScopeService(),
+  ) {}
+
+  /** SQL fragment (alias `m` = club_members) limiting report rows to the user's branches and gender section. */
+  private memberScopeSql(user?: JwtUser): Prisma.Sql | null {
+    if (!user) return null;
+    const branches = this.branchScope.allowedBranchIds(user);
+    const gender = this.branchScope.memberGenderFilter(user);
+    if (branches === null && gender === null) return null;
+    const parts: Prisma.Sql[] = [];
+    if (branches !== null) {
+      parts.push(branches.length ? Prisma.sql`AND m.branch_id IN (${Prisma.join(branches)})` : Prisma.sql`AND 1=0`);
+    }
+    if (gender) parts.push(Prisma.sql`AND m.gender = ${gender}`);
+    return Prisma.join(parts, ' ');
+  }
 
   /**
    * The points balance is derived from valid, activated earn rows minus all
@@ -160,12 +179,18 @@ export class ClubPointsService {
     return { ok: true };
   }
 
-  async memberAccount(memberId: number) {
-    const members = await this.prisma.$queryRaw<Array<{ id: number; member_code: string | null }>>(
-      Prisma.sql`SELECT id, member_code FROM club_members WHERE id=${memberId} AND is_deleted=0 LIMIT 1`,
+  async memberAccount(memberId: number, user?: JwtUser) {
+    const members = await this.prisma.$queryRaw<Array<{ id: number; member_code: string | null; branch_id: number; gender: string | null }>>(
+      Prisma.sql`SELECT id, member_code, branch_id, gender FROM club_members WHERE id=${memberId} AND is_deleted=0 LIMIT 1`,
     );
     const member = members[0];
     if (!member) throw new NotFoundException('العضو غير موجود');
+    if (user) {
+      this.branchScope.assertBranchAllowed(user, Number(member.branch_id));
+      if (!this.branchScope.isMemberGenderAllowed(user, member.gender)) {
+        throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
+      }
+    }
     const today = this.today();
     const [earned, exhausted] = await Promise.all([
       this.prisma.$queryRaw<Array<{ points: number; is_active: boolean; deadline_date: string | null }>>(Prisma.sql`
@@ -189,8 +214,8 @@ export class ClubPointsService {
     return { memberId, memberCode: member.member_code, points: balance, value, conversion };
   }
 
-  async history(memberId: number) {
-    const account = await this.memberAccount(memberId);
+  async history(memberId: number, user?: JwtUser) {
+    const account = await this.memberAccount(memberId, user);
     const rows = await this.prisma.$queryRaw<Array<{
       id: number; direction: string; points: number; value: number | null; action: string | null;
       occurred_on: string | null; expires_on: string | null; subscription_id: number | null;
@@ -212,12 +237,15 @@ export class ClubPointsService {
     };
   }
 
-  async activeMembersReport() {
+  async activeMembersReport(user?: JwtUser) {
     const today = this.today();
+    const scope = this.memberScopeSql(user);
     const rows = await this.prisma.$queryRaw<Array<{ member_id: number; member_code: string | null; earned: number; exhausted: number }>>(Prisma.sql`
       SELECT h.member_id, MAX(h.member_code) AS member_code, SUM(h.points) AS earned,
         COALESCE((SELECT SUM(e.points) FROM tbl_points_exhausted_history e WHERE e.member_id=h.member_id AND e.deleted=0),0) AS exhausted
-      FROM tbl_points_history h WHERE h.deleted=0 AND h.is_active=1 AND h.deadline_date >= ${today}
+      FROM tbl_points_history h
+      ${scope ? Prisma.sql`JOIN club_members m ON m.id=h.member_id` : Prisma.empty}
+      WHERE h.deleted=0 AND h.is_active=1 AND h.deadline_date >= ${today} ${scope ?? Prisma.empty}
       GROUP BY h.member_id HAVING SUM(h.points) > COALESCE((SELECT SUM(e.points) FROM tbl_points_exhausted_history e WHERE e.member_id=h.member_id AND e.deleted=0),0)`);
     const conversion = await this.conversion();
     return rows.map((row) => {
@@ -226,23 +254,24 @@ export class ClubPointsService {
     });
   }
 
-  async memberHistoryByCode(memberCode: string) {
+  async memberHistoryByCode(memberCode: string, user?: JwtUser) {
     const members = await this.prisma.$queryRaw<Array<{ id: number }>>(
       Prisma.sql`SELECT id FROM club_members WHERE member_code=${memberCode.trim()} AND is_deleted=0 LIMIT 1`,
     );
     if (!members[0]) throw new NotFoundException('العضو غير موجود');
-    return this.history(members[0].id);
+    return this.history(members[0].id, user);
   }
 
-  async earnedMembersReport(fromDate: string, toDate: string) {
+  async earnedMembersReport(fromDate: string, toDate: string, user?: JwtUser) {
     this.assertDateRange(fromDate, toDate);
+    const scope = this.memberScopeSql(user);
     const rows = await this.prisma.$queryRaw<Array<{
       member_id: number | null; member_code: string | null; member_name: string | null; points: number;
     }>>(Prisma.sql`
       SELECT h.member_id, MAX(h.member_code) AS member_code, MAX(m.name) AS member_name, SUM(h.points) AS points
       FROM tbl_points_history h
       LEFT JOIN club_members m ON m.id=h.member_id
-      WHERE h.deleted=0 AND h.date >= ${fromDate} AND h.date <= ${toDate}
+      WHERE h.deleted=0 AND h.date >= ${fromDate} AND h.date <= ${toDate} ${scope ?? Prisma.empty}
       GROUP BY h.member_id
       ORDER BY member_name ASC, member_code ASC`);
     return rows.map((row) => ({

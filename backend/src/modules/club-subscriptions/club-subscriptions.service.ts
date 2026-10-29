@@ -1110,6 +1110,7 @@ export class ClubSubscriptionsService {
         });
     const discountEnabled = resolvedDiscount.discountEnabled;
     const discount = resolvedDiscount.discountValue;
+    const grantEmployeeId = 'employeeId' in resolvedDiscount ? (resolvedDiscount.employeeId as number | null) : null;
     const paid = data.paidAmount ?? 0;
 
     if (discountEnabled && discount > subValue) {
@@ -1166,7 +1167,8 @@ export class ClubSubscriptionsService {
           paid_amount: paid,
           remaining_amount: remaining,
           gender: data.gender ?? null,
-          employee_id: data.employeeId ?? null,
+          // A captain's member grant locks the sale to that captain, whatever the form sent.
+          employee_id: grantEmployeeId ?? data.employeeId ?? null,
           sales_id: data.salesId ?? null,
           payment_method: primaryClubPaymentMethod(paymentSplits) ?? data.paymentMethod ?? null,
           customer_source_id: data.customerSourceId ?? null,
@@ -1291,6 +1293,8 @@ export class ClubSubscriptionsService {
     const existing = await this.prisma.club_subscriptions.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الاشتراك غير موجود');
     this.assertBranchAccess(user, existing.branch_id);
+    // Reception sheet: subscriptions can be added, never edited or deleted, from the desk.
+    if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه تعديل أو حذف الاشتراكات');
 
     if (dto.pointsToRedeem !== undefined) {
       throw new BadRequestException('لا يمكن تعديل النقاط المستبدلة بعد إنشاء الاشتراك');
@@ -1561,6 +1565,8 @@ export class ClubSubscriptionsService {
     const existing = await this.prisma.club_subscriptions.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الاشتراك غير موجود');
     this.assertBranchAccess(user, existing.branch_id);
+    // Reception sheet: subscriptions can be added, never edited or deleted, from the desk.
+    if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه تعديل أو حذف الاشتراكات');
 
     // A subscription with financial history (receipts) or an active/completed refund must not be
     // hard-deleted — deleting would orphan GL entries and drop the audit trail. Direct to refund.
@@ -2468,6 +2474,8 @@ export class ClubSubscriptionsService {
     if (scope !== null) and.push({ branch_id: { in: scope } });
     const audience = this.subscriptionAudienceFilter(user);
     if (audience) and.push(audience);
+    // Reception sees only today's outstanding amounts.
+    if (isReceptionEmployee(user)) and.push({ registration_date: localDateString() });
     if (query.search?.trim()) {
       const s = query.search.trim();
       and.push({

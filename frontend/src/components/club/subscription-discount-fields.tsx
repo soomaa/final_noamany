@@ -44,6 +44,7 @@ export function SubscriptionDiscountFields({
   pointsToRedeem = '',
   pointsBalance = 0,
   pointsConversion = null,
+  lockedNote,
   onChange,
 }: {
   grossValue: number;
@@ -54,6 +55,8 @@ export function SubscriptionDiscountFields({
   pointsToRedeem?: string;
   pointsBalance?: number;
   pointsConversion?: { points: number; value: number } | null;
+  /** When set, a captain's member code is applied and the discount can't be changed here. */
+  lockedNote?: string | null;
   onChange: (next: {
     mode: SubscriptionDiscountMode;
     codeId: string;
@@ -81,6 +84,7 @@ export function SubscriptionDiscountFields({
               type="button"
               variant={mode === item.value ? 'brand' : 'outline'}
               className="justify-start"
+              disabled={!!lockedNote && mode !== item.value}
               onClick={() => onChange({ mode: item.value, codeId, fixedValue, pointsToRedeem })}
             >
               <Icon className="size-4" /> {item.label}
@@ -96,6 +100,7 @@ export function SubscriptionDiscountFields({
             id="subscription-discount-code"
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={codeId}
+            disabled={!!lockedNote}
             onChange={(event) => onChange({ mode, codeId: event.target.value, fixedValue, pointsToRedeem })}
           >
             <option value="">—</option>
@@ -108,6 +113,7 @@ export function SubscriptionDiscountFields({
           {!activeCodes.length ? (
             <p className="text-xs text-muted-foreground">لا توجد أكواد خصم فعّالة.</p>
           ) : null}
+          {lockedNote ? <p className="text-xs font-semibold text-foreground">{lockedNote}</p> : null}
         </div>
       ) : null}
 

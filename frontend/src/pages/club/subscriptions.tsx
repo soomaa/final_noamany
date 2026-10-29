@@ -559,9 +559,29 @@ export function ClubSubscriptionsPage({
   const { data: memberDiscountGrants = [] } = useQuery({
     queryKey: ['club-discount-codes', 'member-grants', selectedMember?.id],
     enabled: selectedMember?.id != null && dialogOpen,
-    queryFn: async () => (await api.get<Array<{ id: number; code: string | null; percentage: number; used: boolean; expiresOn: string | null }>>('/club-discount-codes/member-grants', { params: { memberId: selectedMember!.id } })).data
-      .filter((grant) => !grant.used && !!grant.code),
+    queryFn: async () => (await api.get<Array<{ id: number; code: string | null; percentage: number; used: boolean; expiresOn: string | null; employeeId: number | null; employeeName: string | null }>>('/club-discount-codes/member-grants', { params: { memberId: selectedMember!.id } })).data
+      .filter((grant) => !grant.used && !!grant.code && (!grant.expiresOn || grant.expiresOn >= new Date().toISOString().slice(0, 10))),
   });
+  // A captain's code for this member is applied automatically on a new subscription, and the
+  // subscription is credited to that captain (the server enforces the same on save).
+  const appliedGrant = form.discountMode === 'code'
+    ? memberDiscountGrants.find((grant) => String(grant.id) === form.memberDiscountGrantId) ?? null
+    : null;
+  useEffect(() => {
+    if (!dialogOpen || editSubId != null || subscriptionKind !== 'package') return;
+    const grant = memberDiscountGrants[0];
+    if (!grant || form.memberDiscountGrantId) return;
+    setForm((current) => ({
+      ...current,
+      discountMode: 'code',
+      discountEnabled: true,
+      discountCodeId: '',
+      memberDiscountGrantId: String(grant.id),
+      discountValue: '',
+      pointsToRedeem: '',
+      employeeId: grant.employeeId ? String(grant.employeeId) : current.employeeId,
+    }));
+  }, [dialogOpen, editSubId, subscriptionKind, memberDiscountGrants, form.memberDiscountGrantId]);
   const formDiscountValue = useMemo(
     () => calculateSubscriptionDiscount(
       Number(form.subscriptionValue) || 0,
@@ -2115,7 +2135,8 @@ export function ClubSubscriptionsPage({
                 {subscriptionKind === 'package' ? (
                   <FieldWrapper label="الموظف">
                     <Combobox
-                      value={form.employeeId}
+                      value={appliedGrant?.employeeId ? String(appliedGrant.employeeId) : form.employeeId}
+                      disabled={!!appliedGrant?.employeeId}
                       onValueChange={(val) => setForm((current) => ({ ...current, employeeId: val }))}
                       options={[
                         { value: '', label: 'بدون موظف' },
@@ -2429,6 +2450,7 @@ export function ClubSubscriptionsPage({
                     pointsToRedeem={form.pointsToRedeem}
                     pointsBalance={pointsAccount?.points ?? 0}
                     pointsConversion={pointsAccount?.conversion ?? null}
+                    lockedNote={appliedGrant ? `كود الكابتن ${appliedGrant.employeeName ?? ''} مطبق على هذا العضو` : null}
                     onChange={(discount) => setForm((current) => ({
                       ...current,
                       discountMode: discount.mode,

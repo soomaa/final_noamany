@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { JwtUser } from '../../common/types/jwt-user';
 import {
@@ -35,12 +36,16 @@ export class MessagingController {
     return this.messaging.sent(query, user);
   }
 
+  // Broadcast memos (hr_ta3mem_msg) are the HR circulars board (التعميمات): gate them with
+  // the circulars keys. Personal messages below stay self-service (sender/recipient checks).
   @Get('memos')
+  @RequiresPermission('affairs.circulars:view')
   memos(@Query() query: ListMessagesDto) {
     return this.messaging.listMemos(query);
   }
 
   @Post('memos')
+  @RequiresPermission('affairs.circulars:create')
   createMemo(@Body() dto: CreateMemoDto, @CurrentUser() user: JwtUser) {
     return this.messaging.createMemo(dto, user);
   }

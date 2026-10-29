@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
@@ -28,7 +29,10 @@ export interface MessageRow {
 
 @Injectable()
 export class MessagingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: BranchScopeService,
+  ) {}
 
   /** Now as legacy varchar date/time strings. */
   private now() {
@@ -220,7 +224,7 @@ export class MessagingService {
       },
     });
 
-    const recipients = await this.resolveRecipients(dto);
+    const recipients = await this.resolveRecipients(dto, user);
     if (recipients.length) {
       await this.prisma.hr_ta3mem_personal_msg_details.createMany({
         data: recipients.map((r) => ({
@@ -355,11 +359,15 @@ export class MessagingService {
 
   /**
    * Resolve a compose payload into concrete recipient detail rows.
-   * recipientEmpIds carry employees.id; sendAll expands to every active employee.
+   * recipientEmpIds carry employees.id; sendAll expands to every active employee
+   * inside the sender's branch scope (system admins: every branch).
    */
-  private async resolveRecipients(dto: { recipientEmpIds?: number[]; sendAll?: boolean }) {
+  private async resolveRecipients(dto: { recipientEmpIds?: number[]; sendAll?: boolean }, user: JwtUser) {
+    const branches = this.scope.allowedBranchIds(user);
     const employees = dto.sendAll
-      ? await this.prisma.employees.findMany({ where: { status: 1 } })
+      ? await this.prisma.employees.findMany({
+          where: { status: 1, ...(branches ? { branch_id_fk: { in: branches } } : {}) },
+        })
       : await this.prisma.employees.findMany({
           where: { id: { in: dto.recipientEmpIds ?? [] } },
         });

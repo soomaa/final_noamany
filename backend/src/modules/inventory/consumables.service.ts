@@ -4,10 +4,23 @@ import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { notDeletedFilter, toNumber } from './inventory.utils';
 import { ListConsumablesDto, SetConsumableStockDto, UpsertConsumableDto } from './dto/inventory.dto';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
+import type { JwtUser } from '../../common/types/jwt-user';
+import { InventoryLocationService } from './inventory-location.service';
 
 @Injectable()
 export class ConsumablesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+    private readonly location: InventoryLocationService,
+  ) {}
+
+  /** Consumables without a branch are shared; a branch-owned row is limited to that branch's scope. */
+  private assertRowAccess(user: JwtUser, branchId: number | null) {
+    if (branchId != null) this.branchScope.assertBranchAllowed(user, branchId);
+  }
 
   private map(row: Prisma.inv_consumablesGetPayload<object>) {
     return {
@@ -34,13 +47,15 @@ export class ConsumablesService {
     };
   }
 
-  async list(q: ListConsumablesDto) {
+  async list(q: ListConsumablesDto, user: JwtUser) {
     const and: Prisma.inv_consumablesWhereInput[] = [notDeletedFilter()];
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({ OR: [{ name_ar: { contains: s } }, { code: { contains: s } }] });
     }
-    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
+    const branches = this.branchScope.resolveListFilter(user, q.branchId ?? null);
+    const explicitBranch = q.branchId != null && q.branchId !== 'all' && q.branchId !== '';
+    if (branches) and.push(explicitBranch ? { branch_id: { in: branches } } : { OR: [{ branch_id: { in: branches } }, { branch_id: null }] });
     const where = { AND: and };
     let rows = await this.prisma.inv_consumables.findMany({
       where,
@@ -53,9 +68,10 @@ export class ConsumablesService {
     return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: JwtUser) {
     const row = await this.prisma.inv_consumables.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!row) throw new NotFoundException('المستهلكات غير موجودة');
+    this.assertRowAccess(user, row.branch_id);
     return this.map(row);
   }
 
@@ -67,8 +83,12 @@ export class ConsumablesService {
     return `CSM${String((rows[0]?.maxNum ?? 0) + 1).padStart(6, '0')}`;
   }
 
-  async create(dto: UpsertConsumableDto) {
+  async create(dto: UpsertConsumableDto, user: JwtUser) {
     if (!dto.nameAr?.trim()) throw new BadRequestException('اسم المستهلك مطلوب');
+    let branchId = dto.branchId ?? null;
+    if (branchId != null) this.branchScope.assertBranchAllowed(user, branchId);
+    else if (!isSystemAdmin(user)) branchId = this.location.requireUserBranch(user);
+    if (dto.warehouseId) branchId = (await this.location.resolveSelection(user, dto.warehouseId, branchId ?? undefined)).branchId;
     const row = await this.prisma.inv_consumables.create({
       data: {
         code: dto.code?.trim() || (await this.generateCode()),
@@ -77,7 +97,7 @@ export class ConsumablesService {
         category_id: dto.categoryId ?? null,
         warehouse_id: dto.warehouseId ?? null,
         supplier_id: dto.supplierId ?? null,
-        branch_id: dto.branchId ?? null,
+        branch_id: branchId,
         brand_id: dto.brandId ?? null,
         unit_template_id: dto.unitTemplateId ?? null,
         consumption_rate: dto.consumptionRate,
@@ -93,9 +113,10 @@ export class ConsumablesService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertConsumableDto>) {
+  async update(id: number, dto: Partial<UpsertConsumableDto>, user: JwtUser) {
     const existing = await this.prisma.inv_consumables.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!existing) throw new NotFoundException('المستهلكات غير موجودة');
+    this.assertRowAccess(user, existing.branch_id);
     const row = await this.prisma.inv_consumables.update({
       where: { id },
       data: {
@@ -110,8 +131,8 @@ export class ConsumablesService {
     return this.map(row);
   }
 
-  async setStock(id: number, dto: SetConsumableStockDto) {
-    await this.findOne(id);
+  async setStock(id: number, dto: SetConsumableStockDto, user: JwtUser) {
+    await this.findOne(id, user);
     const row = await this.prisma.inv_consumables.update({
       where: { id },
       data: { current_stock: dto.currentStock },
@@ -119,9 +140,10 @@ export class ConsumablesService {
     return this.map(row);
   }
 
-  async remove(id: number) {
+  async remove(id: number, user: JwtUser) {
     const existing = await this.prisma.inv_consumables.findFirst({ where: { id, ...notDeletedFilter() } });
     if (!existing) throw new NotFoundException('المستهلكات غير موجودة');
+    this.assertRowAccess(user, existing.branch_id);
     await this.prisma.inv_consumables.update({ where: { id }, data: { is_deleted: true } });
     return { success: true };
   }

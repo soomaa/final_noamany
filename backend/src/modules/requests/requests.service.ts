@@ -1,7 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import {
   fromDbRequestType,
   REQUEST_TYPE_LABELS,
@@ -12,6 +15,10 @@ import { hrRequestStatusToLabel, SUSPEND_APPROVED, SUSPEND_REJECTED, SuspendStat
 import { CreateRequestDto } from './dto/create-request.dto';
 import { ListRequestsDto } from './dto/list-requests.dto';
 import { LoansService } from '../loans/loans.service';
+import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
+
+/** Who may see which requests: `null` employee set = every request (system admin). */
+type RequestAudience = { empIds: number[] | null };
 
 export interface RequestRow {
   id: number;
@@ -29,11 +36,66 @@ export class RequestsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly loans: LoansService,
+    private readonly scope: BranchScopeService,
+    private readonly engine: PermissionEngineService,
   ) {}
 
-  async list(q: ListRequestsDto) {
-    const unified = await this.listHrRequests(q);
-    const legacy = await this.listTalabatOrders(q);
+  // ---- visibility -----------------------------------------------------------------------
+
+  /** Reviewers hold approve/reject; everyone else only files and follows their own requests. */
+  private async isReviewer(user: JwtUser): Promise<boolean> {
+    if (isSystemAdmin(user)) return true;
+    return this.engine.canAny(user.sub, ['leaves.requests:approve', 'leaves.requests:reject']);
+  }
+
+  /**
+   * Employee ids whose requests `user` may see: system admin → all; reviewer → employees of
+   * the allowed branches; anyone else → only their own employee row (users.emp_code).
+   */
+  private async audience(user: JwtUser): Promise<RequestAudience> {
+    if (isSystemAdmin(user)) return { empIds: null };
+    if (!(await this.isReviewer(user))) return { empIds: user.emp_code != null ? [user.emp_code] : [] };
+    const branches = this.scope.allowedBranchIds(user) ?? [];
+    const rows = branches.length
+      ? await this.prisma.employees.findMany({ where: { branch_id_fk: { in: branches } }, select: { id: true } })
+      : [];
+    return { empIds: rows.map((r) => r.id) };
+  }
+
+  /** The employee a request is about — same resolution routeToDomain uses on approval. */
+  private async requestEmployeeBranch(row: {
+    emp_id_fk: number | null;
+    emp_code_fk?: number | null;
+    payload?: string | null;
+  }): Promise<{ id: number | null; branch: number | null }> {
+    const payload = this.parsePayload(row.payload ?? null);
+    const empId = row.emp_id_fk ?? (Number(payload.empId) || null);
+    const emp = empId
+      ? await this.prisma.employees.findUnique({ where: { id: empId }, select: { id: true, branch_id_fk: true } })
+      : row.emp_code_fk
+        ? await this.prisma.employees.findFirst({ where: { emp_code: row.emp_code_fk }, select: { id: true, branch_id_fk: true } })
+        : null;
+    return { id: emp?.id ?? null, branch: emp?.branch_id_fk ?? null };
+  }
+
+  /** Own request (any user) or a reviewer whose branch scope covers the request's employee. */
+  private async assertCanSee(
+    user: JwtUser,
+    row: { emp_id_fk: number | null; emp_code_fk?: number | null; payload?: string | null },
+    reviewOnly = false,
+  ): Promise<void> {
+    if (isSystemAdmin(user)) return;
+    const emp = await this.requestEmployeeBranch(row);
+    const own = user.emp_code != null && emp.id === user.emp_code;
+    if (own && !reviewOnly) return;
+    if (!(await this.isReviewer(user))) throw new ForbiddenException('لا تملك صلاحية الوصول لهذا الطلب');
+    this.scope.assertBranchAllowed(user, emp.branch, 'لا تملك صلاحية الوصول لطلبات هذا الفرع');
+  }
+
+  async list(q: ListRequestsDto, user: JwtUser) {
+    const audience = await this.audience(user);
+    const unified = await this.listHrRequests(q, audience);
+    const legacy = await this.listTalabatOrders(q, audience);
     const merged = [...unified, ...legacy].sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
 
     const total = merged.length;
@@ -41,8 +103,9 @@ export class RequestsService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  private async listHrRequests(q: ListRequestsDto): Promise<RequestRow[]> {
+  private async listHrRequests(q: ListRequestsDto, audience: RequestAudience): Promise<RequestRow[]> {
     const and: Prisma.hr_requestsWhereInput[] = [];
+    if (audience.empIds) and.push({ emp_id_fk: { in: audience.empIds } });
     if (q.type && q.type !== 'all') and.push({ type: toDbRequestType(q.type) });
     if (q.status === 'approved') and.push({ status: { in: [1, 4] } });
     else if (q.status === 'rejected') and.push({ status: { in: [2, 5] } });
@@ -83,10 +146,11 @@ export class RequestsService {
     });
   }
 
-  private async listTalabatOrders(q: ListRequestsDto): Promise<RequestRow[]> {
+  private async listTalabatOrders(q: ListRequestsDto, audience: RequestAudience): Promise<RequestRow[]> {
     if (q.type && q.type !== 'all') return [];
 
     const and: Prisma.hr_talabat_ordersWhereInput[] = [];
+    if (audience.empIds) and.push({ emp_id_fk: { in: audience.empIds } });
     if (q.status === 'approved') and.push({ suspend: { in: SUSPEND_APPROVED } });
     else if (q.status === 'rejected') and.push({ suspend: { in: SUSPEND_REJECTED } });
     else if (q.status === 'pending') and.push({ suspend: SuspendStatus.INCOMING });
@@ -120,28 +184,48 @@ export class RequestsService {
     }));
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: JwtUser) {
     const row = await this.prisma.hr_requests.findUnique({ where: { id } });
     if (!row) {
       const legacy = await this.prisma.hr_talabat_orders.findUnique({ where: { id } });
       if (!legacy) throw new NotFoundException('الطلب غير موجود');
+      await this.assertCanSee(user, { emp_id_fk: legacy.emp_id_fk });
       return this.mapLegacyDetail(legacy);
     }
+    await this.assertCanSee(user, row);
     return this.mapRequestDetail(row);
   }
 
-  async create(dto: CreateRequestDto, userId?: number, userName?: string | null, empId?: number | null) {
+  /**
+   * The employee a new request is filed for. A staff login files for itself
+   * (users.emp_code = employees.id). Only a login with no employee link (e.g. an
+   * admin account) may name the employee, and that employee must be in scope.
+   * users.user_id is never treated as an employees.id.
+   */
+  private async resolveRequestEmployee(user: JwtUser, dto: CreateRequestDto) {
+    if (user.emp_code != null) return this.prisma.employees.findUnique({ where: { id: user.emp_code } });
+    const raw = dto.empId ?? dto.payload?.empId;
+    const requested = Number(raw);
+    if (raw == null || raw === '' || !Number.isInteger(requested) || requested <= 0) return null;
+    const emp = await this.prisma.employees.findUnique({ where: { id: requested } });
+    if (!emp) throw new BadRequestException('الموظف غير موجود');
+    this.scope.assertBranchAllowed(user, emp.branch_id_fk, 'لا يمكنك تقديم طلب لموظف خارج فرعك');
+    return emp;
+  }
+
+  async create(dto: CreateRequestDto, user: JwtUser) {
+    const userId = user.sub;
+    const userName = user.name;
     if (!REQUEST_TYPE_TO_DB[dto.type] && !Object.values(REQUEST_TYPE_TO_DB).includes(dto.type)) {
       throw new BadRequestException('نوع الطلب غير معروف');
     }
 
     const { type, notes, payload: explicitPayload, ...rest } = dto;
-    const payload = { ...(explicitPayload ?? {}), ...rest, notes };
-    const emp = empId
-      ? await this.prisma.employees.findUnique({ where: { id: empId } })
-      : userId
-        ? await this.prisma.employees.findFirst({ where: { id: userId } })
-        : null;
+    const emp = await this.resolveRequestEmployee(user, dto);
+    // Client-supplied employee ids never reach the stored payload: approval routes on
+    // emp_id_fk, and a stale `empId` must not be able to redirect it to someone else.
+    const payload: Record<string, unknown> = { ...(explicitPayload ?? {}), ...rest, notes };
+    delete payload.empId;
 
     const maxNo = await this.prisma.hr_requests.aggregate({ _max: { request_no: true } });
     const now = new Date().toISOString();
@@ -164,9 +248,11 @@ export class RequestsService {
     return { id: row.id };
   }
 
-  async approve(id: number, userId?: number, dryRun = false) {
+  async approve(id: number, user: JwtUser, dryRun = false) {
+    const userId = user.sub;
     const row = await this.prisma.hr_requests.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('الطلب غير موجود');
+    await this.assertCanSee(user, row, true);
     if ([1, 4].includes(row.status)) throw new BadRequestException('الطلب معتمد مسبقًا');
 
     const payload = this.parsePayload(row.payload);
@@ -198,9 +284,10 @@ export class RequestsService {
     return { id, status: 'approved' };
   }
 
-  async reject(id: number) {
+  async reject(id: number, user: JwtUser) {
     const row = await this.prisma.hr_requests.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('الطلب غير موجود');
+    await this.assertCanSee(user, row, true);
     await this.prisma.hr_requests.update({
       where: { id },
       data: { status: 2, reason_action: 'rejected' },

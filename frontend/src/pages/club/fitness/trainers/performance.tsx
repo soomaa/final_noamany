@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Plus, Save } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
 import { PageHeader } from '@/components/common/page-header';
@@ -9,7 +9,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Combobox } from '@/components/common/combobox';
 import { api, apiError } from '@/lib/api';
+import { isSystemAdminUser } from '@/lib/user-scope';
+import { useAuth } from '@/store/auth';
 import { toArabicDigits } from '@/lib/utils';
 
 type Trainer = { id: number; name: string };
@@ -17,21 +20,40 @@ type Criterion = { id: number; title: string; description: string | null; max_sc
 const currentMonth = () => new Date().toISOString().slice(0, 7);
 const number = (value: number) => toArabicDigits(value.toLocaleString('en-US', { maximumFractionDigits: 2 }));
 
-function TrainerSelect({ value, onChange, trainers }: { value: string; onChange: (value: string) => void; trainers: Trainer[] }) {
-  return <select value={value} onChange={(event) => onChange(event.target.value)} className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm">
-    <option value="">اختر المدرب</option>
-    {trainers.map((trainer) => <option key={trainer.id} value={trainer.id}>{trainer.name}</option>)}
-  </select>;
+function TrainerSelect({ value, onChange, trainers, locked = false }: { value: string; onChange: (value: string) => void; trainers: Trainer[]; locked?: boolean }) {
+  return <Combobox
+    value={value}
+    onValueChange={onChange}
+    disabled={locked}
+    options={trainers.map((trainer) => ({ value: String(trainer.id), label: trainer.name }))}
+    placeholder="اختر المدرب"
+    searchPlaceholder="ابحث باسم المدرب…"
+    emptyText="لا يوجد مدرب مطابق"
+  />;
 }
 
 function useTrainers() {
   return useQuery({ queryKey: ['trainer-performance-trainers'], queryFn: async () => (await api.get<Trainer[]>('/club-trainer-performance/trainers')).data });
 }
 
+/**
+ * A trainer signed in to their own account sees only themselves: the server returns just their
+ * row, so it is preselected and the picker is locked. Managers and admins choose freely.
+ */
+function useTrainerChoice(trainers: Trainer[]) {
+  const user = useAuth((state) => state.user);
+  const [trainerId, setTrainerId] = useState('');
+  const selfOnly = !isSystemAdminUser(user) && user?.trainer_id != null && trainers.length === 1 && trainers[0].id === user.trainer_id;
+  useEffect(() => {
+    if (selfOnly) setTrainerId(String(trainers[0].id));
+  }, [selfOnly, trainers]);
+  return { trainerId, setTrainerId, selfOnly };
+}
+
 export function FitnessTrainerTargetsPage() {
   const qc = useQueryClient();
   const { data: trainers = [] } = useTrainers();
-  const [trainerId, setTrainerId] = useState('');
+  const { trainerId, setTrainerId, selfOnly } = useTrainerChoice(trainers);
   const [month, setMonth] = useState('');
   const [privateSalesTarget, setPrivateSalesTarget] = useState('0');
   const [subscriptionsTarget, setSubscriptionsTarget] = useState('0');
@@ -40,11 +62,11 @@ export function FitnessTrainerTargetsPage() {
   return <div className="space-y-6">
     <PageHeader title="تارجت المدربين" description="تحديد تارجت ثابت لكل مدرب، أو تعديل استثنائي لشهر واحد مع الاحتفاظ بتاريخ الأشهر السابقة." />
     <Card className="max-w-3xl"><CardHeader><CardTitle>تارجت مدرب</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2">
-      <div className="space-y-2"><Label>المدرب</Label><TrainerSelect value={trainerId} onChange={setTrainerId} trainers={trainers} /></div>
+      <div className="space-y-2"><Label>المدرب</Label><TrainerSelect value={trainerId} onChange={setTrainerId} trainers={trainers} locked={selfOnly} /></div>
       <div className="space-y-2"><Label>تعديل لشهر محدد (اختياري)</Label><Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></div>
       <div className="space-y-2"><Label>تارجت مبيعات الخاص</Label><Input inputMode="decimal" value={privateSalesTarget} onChange={(event) => setPrivateSalesTarget(event.target.value)} /></div>
       <div className="space-y-2"><Label>تارجت عدد الاشتراكات</Label><Input type="number" min="0" value={subscriptionsTarget} onChange={(event) => setSubscriptionsTarget(event.target.value)} /></div>
-      <div className="md:col-span-2"><Button disabled={!trainerId || save.isPending} onClick={() => save.mutate()}><Save className="size-4" />حفظ التارجت</Button></div>
+      {selfOnly ? null : <div className="md:col-span-2"><Button disabled={!trainerId || save.isPending} onClick={() => save.mutate()}><Save className="size-4" />حفظ التارجت</Button></div>}
     </CardContent></Card>
   </div>;
 }
@@ -64,13 +86,13 @@ export function FitnessTrainerEvaluationCriteriaPage() {
 export function FitnessTrainerEvaluationsPage() {
   const qc = useQueryClient(); const { data: trainers = [] } = useTrainers();
   const { data: criteria = [] } = useQuery({ queryKey: ['trainer-performance-criteria'], queryFn: async () => (await api.get<Criterion[]>('/club-trainer-performance/criteria')).data });
-  const [trainerId, setTrainerId] = useState(''); const [month, setMonth] = useState(currentMonth); const [notes, setNotes] = useState(''); const [scores, setScores] = useState<Record<number, string>>({});
+  const { trainerId, setTrainerId, selfOnly } = useTrainerChoice(trainers); const [month, setMonth] = useState(currentMonth); const [notes, setNotes] = useState(''); const [scores, setScores] = useState<Record<number, string>>({});
   const save = useMutation({ mutationFn: () => api.post('/club-trainer-performance/evaluations', { trainerId: Number(trainerId), month, notes, items: criteria.filter((item) => item.is_active).map((item) => ({ criterionId: item.id, score: Number(scores[item.id] ?? 0) })) }), onSuccess: () => { toast.success('تم حفظ التقييم الشهري'); void qc.invalidateQueries({ queryKey: ['trainer-performance'] }); }, onError: (error) => toast.error(apiError(error)) });
   const activeCriteria = criteria.filter((item) => item.is_active); const total = activeCriteria.reduce((sum, item) => sum + Number(scores[item.id] ?? 0), 0); const max = activeCriteria.reduce((sum, item) => sum + item.max_score, 0);
   return <div className="space-y-6"><PageHeader title="تقييم المدربين الشهري" description="يدخل مدير الفرع الدرجات للمدربين التابعين لفرعه فقط وفق البنود التي حددتها الإدارة." />
-    <Card className="max-w-3xl"><CardContent className="grid gap-4 pt-5 md:grid-cols-2"><div className="space-y-2"><Label>المدرب</Label><TrainerSelect value={trainerId} onChange={setTrainerId} trainers={trainers} /></div><div className="space-y-2"><Label>الشهر</Label><Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></div>
+    <Card className="max-w-3xl"><CardContent className="grid gap-4 pt-5 md:grid-cols-2"><div className="space-y-2"><Label>المدرب</Label><TrainerSelect value={trainerId} onChange={setTrainerId} trainers={trainers} locked={selfOnly} /></div><div className="space-y-2"><Label>الشهر</Label><Input type="month" value={month} onChange={(event) => setMonth(event.target.value)} /></div>
       {activeCriteria.map((item) => <div key={item.id} className="space-y-2"><Label>{item.title} — من {number(item.max_score)}</Label><Input type="number" min="0" max={item.max_score} value={scores[item.id] ?? ''} onChange={(event) => setScores((old) => ({ ...old, [item.id]: event.target.value }))} /></div>)}
-      <div className="space-y-2 md:col-span-2"><Label>ملاحظات</Label><Input value={notes} onChange={(event) => setNotes(event.target.value)} /></div><p className="font-semibold md:col-span-2">إجمالي التقييم: {number(total)} من {number(max)}</p><Button className="w-fit" disabled={!trainerId || !activeCriteria.length || save.isPending} onClick={() => save.mutate()}><Save className="size-4" />حفظ التقييم</Button>
+      <div className="space-y-2 md:col-span-2"><Label>ملاحظات</Label><Input value={notes} onChange={(event) => setNotes(event.target.value)} /></div><p className="font-semibold md:col-span-2">إجمالي التقييم: {number(total)} من {number(max)}</p>{selfOnly ? null : <Button className="w-fit" disabled={!trainerId || !activeCriteria.length || save.isPending} onClick={() => save.mutate()}><Save className="size-4" />حفظ التقييم</Button>}
     </CardContent></Card>
   </div>;
 }

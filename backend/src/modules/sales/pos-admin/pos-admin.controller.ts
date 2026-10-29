@@ -24,14 +24,14 @@ const POS_VIEW = 'gym-sales.sales.new_receipt:view';
 export class PosDevicesController {
   constructor(private readonly service: PosDevicesService) {}
 
-  @Get() list(@Query() q: PosListQueryDto) { return this.service.list(q); }
-  @Get('stats') stats() { return this.service.stats(); }
-  @Get(':id') findOne(@Param('id', ParseIntPipe) id: number) { return this.service.findOne(id); }
-  @Post() @RequiresPermission(`${PERM}:create`) create(@Body() body: UpsertPosDeviceDto, @CurrentUser('sub') uid: number) { return this.service.create(body, uid); }
-  @Put(':id') @RequiresPermission(`${PERM}:update`) update(@Param('id', ParseIntPipe) id: number, @Body() body: UpsertPosDeviceDto, @CurrentUser('sub') uid: number) { return this.service.update(id, body, uid); }
-  @Delete(':id') @RequiresPermission(`${PERM}:delete`) remove(@Param('id', ParseIntPipe) id: number) { return this.service.remove(id); }
-  @Patch(':id/toggle-status') @RequiresPermission(`${PERM}:update`) toggle(@Param('id', ParseIntPipe) id: number, @CurrentUser('sub') uid: number) { return this.service.toggleStatus(id, uid); }
-  @Post('sync') @RequiresPermission(`${PERM}:update`) sync() { return this.service.syncAll(); }
+  @Get() list(@Query() q: PosListQueryDto, @CurrentUser() user: JwtUser) { return this.service.list(q, user); }
+  @Get('stats') stats(@CurrentUser() user: JwtUser) { return this.service.stats(user); }
+  @Get(':id') findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) { return this.service.findOne(id, user); }
+  @Post() @RequiresPermission(`${PERM}:create`) create(@Body() body: UpsertPosDeviceDto, @CurrentUser() user: JwtUser) { return this.service.create(body, user.sub, user); }
+  @Put(':id') @RequiresPermission(`${PERM}:update`) update(@Param('id', ParseIntPipe) id: number, @Body() body: UpsertPosDeviceDto, @CurrentUser() user: JwtUser) { return this.service.update(id, body, user.sub, user); }
+  @Delete(':id') @RequiresPermission(`${PERM}:delete`) remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) { return this.service.remove(id, user); }
+  @Patch(':id/toggle-status') @RequiresPermission(`${PERM}:update`) toggle(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) { return this.service.toggleStatus(id, user.sub, user); }
+  @Post('sync') @RequiresPermission(`${PERM}:update`) sync(@CurrentUser() user: JwtUser) { return this.service.syncAll(user); }
 }
 
 @UseGuards(JwtAuthGuard)

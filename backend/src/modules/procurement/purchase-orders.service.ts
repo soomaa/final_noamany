@@ -7,6 +7,8 @@ import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { InventoryLocationService } from '../inventory/inventory-location.service';
 import { SupplierInvoicesService } from './supplier-invoices.service';
 import {
   ListPurchaseOrdersDto,
@@ -26,7 +28,18 @@ export class PurchaseOrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly supplierInvoices: SupplierInvoicesService,
+    private readonly branchScope: BranchScopeService,
+    private readonly location: InventoryLocationService,
   ) {}
+
+  /** A PO is owned by its branch; legacy rows without a branch fall back to their warehouse's branch. */
+  private async assertPoAccess(user: JwtUser | undefined, row: { branch_id: number | null; warehouse_id: number | null }) {
+    if (row.branch_id == null && row.warehouse_id != null && user) {
+      await this.location.assertWarehouseInScope(user, row.warehouse_id);
+      return;
+    }
+    this.branchScope.assertBranchAllowed(user, row.branch_id, 'لا تملك صلاحية الوصول لأمر شراء هذا الفرع');
+  }
 
   private mapItem(item: Prisma.prc_purchase_order_itemsGetPayload<object>) {
     return {
@@ -105,15 +118,16 @@ export class PurchaseOrdersService {
     }
   }
 
-  async list(q: ListPurchaseOrdersDto) {
+  async list(q: ListPurchaseOrdersDto, user?: JwtUser) {
     const and: Prisma.prc_purchase_ordersWhereInput[] = [notDeletedFilter()];
+    const scoped = this.branchScope.resolveListFilter(user, q.branchId ?? null);
+    if (scoped) and.push({ branch_id: { in: scoped } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({ OR: [{ po_number: { contains: s } }, { notes: { contains: s } }] });
     }
     if (q.status && q.status !== 'all') and.push({ status: q.status });
     if (q.supplierId && q.supplierId !== 'all') and.push({ supplier_id: Number(q.supplierId) });
-    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
     const where = { AND: and };
     const [rows, total] = await Promise.all([
       this.prisma.prc_purchase_orders.findMany({
@@ -137,12 +151,13 @@ export class PurchaseOrdersService {
     return { poNumber, invoiceNumber };
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.prc_purchase_orders.findFirst({
       where: { id, ...notDeletedFilter() },
       include: { items: true },
     });
     if (!row) throw new NotFoundException('أمر الشراء غير موجود');
+    await this.assertPoAccess(user, row);
     const names = await this.supplierNames([row.supplier_id]);
     const invoice = row.supplier_invoice_id
       ? await this.prisma.prc_supplier_invoices.findUnique({
@@ -271,6 +286,7 @@ export class PurchaseOrdersService {
           status: dto.status ?? 'completed',
           supplier_invoice_id: invoice.id,
           warehouse_id: invoice.warehouseId,
+          branch_id: invoice.branchId,
           created_by: user.sub,
           items: { create: totals.builtItems },
         },
@@ -303,12 +319,13 @@ export class PurchaseOrdersService {
           ...this.directPurchaseData(dto, totals),
           supplier_invoice_id: invoice.id,
           warehouse_id: invoice.warehouseId,
+          branch_id: invoice.branchId,
           items: { create: totals.builtItems },
         },
       });
     }, { maxWait: 10000, timeout: 60000 });
     await this.applySalePrices(dto.items);
-    return this.findOne(existing.id);
+    return this.findOne(existing.id, user);
   }
 
   /** Create a draft PO from an approved requisition (idempotent). */
@@ -383,6 +400,7 @@ export class PurchaseOrdersService {
       include: { items: true },
     });
     if (!existing) throw new NotFoundException('أمر الشراء غير موجود');
+    await this.assertPoAccess(user, existing);
     if (dto.poNumber && dto.poNumber !== existing.po_number) {
       throw new BadRequestException('لا يمكن تغيير رقم أمر الشراء');
     }
@@ -396,6 +414,11 @@ export class PurchaseOrdersService {
     }
     if (dto.status && dto.status !== existing.status) {
       this.enforceTransition(existing.status, dto.status);
+    }
+    // Draft edits may move the PO only within the caller's scope; a warehouse must belong to the resulting branch.
+    if (dto.branchId != null) this.branchScope.assertBranchAllowed(user, dto.branchId);
+    if (dto.warehouseId != null) {
+      await this.location.resolveSelection(user, dto.warehouseId, dto.branchId ?? existing.branch_id ?? undefined);
     }
 
     const builtItems = dto.items ? this.buildItems(dto.items) : null;
@@ -436,6 +459,7 @@ export class PurchaseOrdersService {
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('أمر الشراء غير موجود');
+    await this.assertPoAccess(user, existing);
     if (existing.supplier_invoice_id) {
       await this.prisma.$transaction(async (tx) => {
         await this.supplierInvoices.voidPosted(

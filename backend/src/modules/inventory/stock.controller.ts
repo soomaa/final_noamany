@@ -4,6 +4,7 @@ import {
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import type { JwtUser } from '../../common/types/jwt-user';
 import { ListStockDto, StockSettingsDto, StockUpdateDto } from './dto/inventory.dto';
 import { StockService } from './stock.service';
 
@@ -14,26 +15,27 @@ export class StockController {
   constructor(private readonly service: StockService) {}
 
   @Get()
-  list(@Query() query: ListStockDto) {
-    return this.service.list(query);
+  list(@Query() query: ListStockDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(query, user);
   }
 
   @Get('low-stock')
-  lowStock(@Query('warehouseId') warehouseId?: string) {
-    return this.service.lowStock(warehouseId ? Number(warehouseId) : undefined);
+  lowStock(@CurrentUser() user: JwtUser, @Query('warehouseId') warehouseId?: string) {
+    return this.service.lowStock(user, warehouseId ? Number(warehouseId) : undefined);
   }
 
   @Get('levels/:warehouseId')
-  levels(@Param('warehouseId', ParseIntPipe) warehouseId: number) {
-    return this.service.levelsByWarehouse(warehouseId);
+  levels(@Param('warehouseId', ParseIntPipe) warehouseId: number, @CurrentUser() user: JwtUser) {
+    return this.service.levelsByWarehouse(warehouseId, user);
   }
 
   @Get('product/:productId/warehouse/:warehouseId')
   byProductWarehouse(
     @Param('productId', ParseIntPipe) productId: number,
     @Param('warehouseId', ParseIntPipe) warehouseId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.byProductWarehouse(productId, warehouseId);
+    return this.service.byProductWarehouse(productId, warehouseId, user);
   }
 
   @Put('product/:productId/warehouse/:warehouseId')
@@ -42,9 +44,9 @@ export class StockController {
     @Param('productId', ParseIntPipe) productId: number,
     @Param('warehouseId', ParseIntPipe) warehouseId: number,
     @Body() body: StockUpdateDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.updateProductWarehouse(productId, warehouseId, body, userId);
+    return this.service.updateProductWarehouse(productId, warehouseId, body, user);
   }
 
   @Put('product/:productId/warehouse/:warehouseId/settings')
@@ -53,7 +55,8 @@ export class StockController {
     @Param('productId', ParseIntPipe) productId: number,
     @Param('warehouseId', ParseIntPipe) warehouseId: number,
     @Body() body: StockSettingsDto,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.updateSettings(productId, warehouseId, body);
+    return this.service.updateSettings(productId, warehouseId, body, user);
   }
 }

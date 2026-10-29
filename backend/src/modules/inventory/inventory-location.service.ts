@@ -24,6 +24,39 @@ export class InventoryLocationService {
     return { warehouseId: location.id, branchId: location.branch_id };
   }
 
+  /**
+   * Resolve the receiving side of an inter-branch transfer. The source is validated
+   * against the caller's scope separately; the target only has to exist and be active,
+   * so stock can be sent to any branch's warehouse/bar.
+   */
+  async resolveTransferTarget(warehouseId: number, tx?: Prisma.TransactionClient) {
+    const location = await (tx ?? this.prisma).inv_warehouses.findFirst({
+      where: { id: warehouseId, status: 'active', ...notDeletedFilter() },
+    });
+    if (!location) throw new BadRequestException('مخزن الوجهة غير موجود أو غير نشط');
+    return { warehouseId: location.id, branchId: location.branch_id };
+  }
+
+  /** Throw 403 unless an existing warehouse belongs to an allowed branch (404/400 if missing). */
+  async assertWarehouseInScope(user: JwtUser, warehouseId: number, tx?: Prisma.TransactionClient) {
+    const location = await (tx ?? this.prisma).inv_warehouses.findFirst({
+      where: { id: warehouseId, ...notDeletedFilter() },
+      select: { id: true, branch_id: true },
+    });
+    if (!location) throw new BadRequestException('المخزن غير موجود');
+    if (!new BranchScopeService().isBranchAllowed(user, location.branch_id)) throw new ForbiddenException('المخزن خارج الفروع المسموح بها');
+    return { warehouseId: location.id, branchId: location.branch_id };
+  }
+
+  /** Warehouse ids the user may see; `null` ⇒ unrestricted. */
+  async scopedWarehouseIds(user: JwtUser | undefined | null): Promise<number[] | null> {
+    const allowed = new BranchScopeService().allowedBranchIds(user);
+    if (allowed === null) return null;
+    if (!allowed.length) return [];
+    const rows = await this.prisma.inv_warehouses.findMany({ where: { branch_id: { in: allowed } }, select: { id: true } });
+    return rows.map((r) => r.id);
+  }
+
   requireUserBranch(user: JwtUser): number {
     const branchId = Number(user.branch);
     if (!Number.isInteger(branchId) || branchId <= 0) {

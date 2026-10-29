@@ -1,11 +1,14 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { EmployeeType } from '../../common/constants/hr-codes';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { todayIso } from '../../common/utils/legacy-date.util';
 import { PushService } from '../push/push.service';
 import { CreateCircularDto, ListCircularsDto, UpdateCircularDto } from './dto/circular.dto';
+import { assertEmployeesInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 
 function stripHtml(html: string | null | undefined): string {
   if (!html) return '';
@@ -19,10 +22,33 @@ export class CircularsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly push: PushService,
+    private readonly branchScope: BranchScopeService,
   ) {}
 
-  async list(q: ListCircularsDto) {
+  /**
+   * Branch isolation for scoped users: a circular is visible when this account published it
+   * or at least one recipient is in the user's branches; recipient rows/counts are limited
+   * to in-scope employees. `null` = unrestricted.
+   */
+  private async visibleCircularWhere(
+    user: JwtUser,
+  ): Promise<{ where: Prisma.hr_ta3memWhereInput; empIds: number[] } | null> {
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    if (empIds === null) return null;
+    const hits = await this.prisma.hr_ta3mem_details.findMany({
+      where: { emp_id: { in: empIds }, ta3mem_id_fk: { not: null } },
+      select: { ta3mem_id_fk: true },
+      distinct: ['ta3mem_id_fk'],
+    });
+    const ids = hits.map((h) => h.ta3mem_id_fk as number);
+    return { where: { OR: [{ id: { in: ids } }, { publisher: user.sub }] }, empIds };
+  }
+
+  async list(q: ListCircularsDto, user: JwtUser) {
     const and: Prisma.hr_ta3memWhereInput[] = [];
+    const scoped = await this.visibleCircularWhere(user);
+    if (scoped) and.push(scoped.where);
+    const recipientFilter = scoped ? { emp_id: { in: scoped.empIds } } : {};
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -38,8 +64,10 @@ export class CircularsService {
 
     const counts = await Promise.all(
       rows.map(async (r) => ({
-        total: await this.prisma.hr_ta3mem_details.count({ where: { ta3mem_id_fk: r.id } }),
-        read: await this.prisma.hr_ta3mem_details.count({ where: { ta3mem_id_fk: r.id, seen: 1 } }),
+        total: await this.prisma.hr_ta3mem_details.count({ where: { ta3mem_id_fk: r.id, ...recipientFilter } }),
+        read: await this.prisma.hr_ta3mem_details.count({
+          where: { ta3mem_id_fk: r.id, seen: 1, ...recipientFilter },
+        }),
       })),
     );
 
@@ -57,11 +85,16 @@ export class CircularsService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async getOne(id: number) {
+  async getOne(id: number, user: JwtUser) {
     const row = await this.prisma.hr_ta3mem.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('التعميم غير موجود');
+    const scoped = await this.visibleCircularWhere(user);
+    if (scoped) {
+      const visible = await this.prisma.hr_ta3mem.count({ where: { AND: [{ id }, scoped.where] } });
+      if (!visible) throw new ForbiddenException('لا تملك صلاحية الوصول لهذا التعميم');
+    }
     const details = await this.prisma.hr_ta3mem_details.findMany({
-      where: { ta3mem_id_fk: id },
+      where: { ta3mem_id_fk: id, ...(scoped ? { emp_id: { in: scoped.empIds } } : {}) },
       orderBy: { id: 'asc' },
     });
     const attachments = await this.prisma.hr_ta3mem_attaches.findMany({
@@ -106,9 +139,14 @@ export class CircularsService {
     return rows.map((r) => ({ id: r.id, title: r.title }));
   }
 
-  async create(dto: CreateCircularDto, publisherId?: number, publisherName?: string | null) {
+  async create(
+    dto: CreateCircularDto,
+    publisherId: number | undefined,
+    publisherName: string | null | undefined,
+    user: JwtUser,
+  ) {
     const dateStr = dto.date ?? todayIso();
-    const empIds = await this.resolveRecipientEmpIds(dto);
+    const empIds = await this.resolveRecipientEmpIds(dto, user);
     if (!empIds.length) {
       throw new BadRequestException('يجب اختيار موظف أو إدارة واحدة على الأقل، أو اختيار جميع الموظفين');
     }
@@ -166,15 +204,17 @@ export class CircularsService {
   async update(
     id: number,
     dto: UpdateCircularDto,
-    publisherId?: number,
-    publisherName?: string | null,
+    publisherId: number | undefined,
+    publisherName: string | null | undefined,
+    user: JwtUser,
   ) {
     const existing = await this.prisma.hr_ta3mem.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('التعميم غير موجود');
+    await this.assertAllRecipientsInScope(id, user);
 
     const recipientsChanged = dto.sendToAll != null || dto.recipientType != null
       || dto.empIds != null || dto.edaraIds != null;
-    const empIds = recipientsChanged ? await this.resolveRecipientEmpIds(dto) : [];
+    const empIds = recipientsChanged ? await this.resolveRecipientEmpIds(dto, user) : [];
     if (recipientsChanged && !empIds.length) {
       throw new BadRequestException('يجب اختيار موظف أو إدارة واحدة على الأقل، أو اختيار جميع الموظفين');
     }
@@ -225,13 +265,18 @@ export class CircularsService {
    *    edara_id OR qsm_id falls under one of the targeted edarat.
    *  - recipientType 2 (default): the explicit empIds.
    */
-  private async resolveRecipientEmpIds(dto: Pick<CreateCircularDto,
-    'sendToAll' | 'recipientType' | 'empIds' | 'edaraIds'>): Promise<number[]> {
+  private async resolveRecipientEmpIds(
+    dto: Pick<CreateCircularDto, 'sendToAll' | 'recipientType' | 'empIds' | 'edaraIds'>,
+    user: JwtUser,
+  ): Promise<number[]> {
     const ids = new Set<number>();
+    // Scoped users broadcast only inside their own branches ("all" = all of their branches).
+    const allowed = this.branchScope.allowedBranchIds(user);
+    const branchWhere = allowed !== null ? { branch_id_fk: { in: allowed } } : {};
 
     if (dto.sendToAll) {
       const emps = await this.prisma.employees.findMany({
-        where: { employee_type: EmployeeType.ACTIVE },
+        where: { employee_type: EmployeeType.ACTIVE, ...branchWhere },
         select: { id: true },
       });
       for (const e of emps) ids.add(e.id);
@@ -243,6 +288,7 @@ export class CircularsService {
         const emps = await this.prisma.employees.findMany({
           where: {
             employee_type: EmployeeType.ACTIVE,
+            ...branchWhere,
             OR: [{ edara_id: { in: edaraIds } }, { qsm_id: { in: edaraIds } }],
           },
           select: { id: true },
@@ -252,6 +298,7 @@ export class CircularsService {
     }
 
     // Always honour explicitly-listed employees too (additive, like the legacy form).
+    if (dto.empIds?.length) await assertEmployeesInScope(this.prisma, this.branchScope, user, dto.empIds);
     for (const id of dto.empIds ?? []) ids.add(id);
 
     return [...ids];
@@ -281,12 +328,29 @@ export class CircularsService {
     return { id, seen: true };
   }
 
-  async remove(id: number) {
-    await this.getOne(id);
+  async remove(id: number, user: JwtUser) {
+    await this.getOne(id, user);
+    await this.assertAllRecipientsInScope(id, user);
     await this.prisma.hr_ta3mem_attaches.deleteMany({ where: { ta3mem_id_fk: id } });
     await this.prisma.hr_ta3mem_details.deleteMany({ where: { ta3mem_id_fk: id } });
     await this.prisma.hr_ta3mem.delete({ where: { id } });
     return { id };
+  }
+
+  /** Scoped users may only modify circulars whose every recipient is in their branches. */
+  private async assertAllRecipientsInScope(id: number, user: JwtUser) {
+    if (this.branchScope.allowedBranchIds(user) === null) return;
+    const details = await this.prisma.hr_ta3mem_details.findMany({
+      where: { ta3mem_id_fk: id },
+      select: { emp_id: true },
+    });
+    await assertEmployeesInScope(
+      this.prisma,
+      this.branchScope,
+      user,
+      details.map((d) => d.emp_id),
+      'لا يمكن تعديل تعميم موجّه لموظفين من فروع أخرى',
+    );
   }
 
   private async insertRecipients(ta3memId: number, empIds: number[]) {

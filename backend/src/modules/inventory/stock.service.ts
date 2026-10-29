@@ -5,13 +5,24 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { InventoryStockService } from './inventory-stock.service';
 import { toNumber } from './inventory.utils';
 import { ListStockDto, StockSettingsDto, StockUpdateDto } from './dto/inventory.dto';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { InventoryLocationService } from './inventory-location.service';
+import type { JwtUser } from '../../common/types/jwt-user';
 
 @Injectable()
 export class StockService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventoryStock: InventoryStockService,
+    private readonly branchScope: BranchScopeService,
+    private readonly location: InventoryLocationService,
   ) {}
+
+  /** Restrict balances to warehouses of the caller's allowed branches (null ⇒ unrestricted). */
+  private scopeWhere(user: JwtUser, requestedBranchId?: string | number | null): Prisma.inv_stock_balancesWhereInput | null {
+    const branches = this.branchScope.resolveListFilter(user, requestedBranchId ?? null);
+    return branches ? { warehouse: { branch_id: { in: branches }, is_deleted: false } } : null;
+  }
 
   private mapBalance(row: Prisma.inv_stock_balancesGetPayload<{ include: { product: true; warehouse: true } }>) {
     return {
@@ -29,13 +40,12 @@ export class StockService {
     };
   }
 
-  async list(q: ListStockDto) {
+  async list(q: ListStockDto, user: JwtUser) {
     const and: Prisma.inv_stock_balancesWhereInput[] = [];
     if (q.productId && q.productId !== 'all') and.push({ product_id: Number(q.productId) });
     if (q.warehouseId && q.warehouseId !== 'all') and.push({ warehouse_id: Number(q.warehouseId) });
-    if (q.branchId && q.branchId !== 'all') {
-      and.push({ warehouse: { branch_id: Number(q.branchId), is_deleted: false } });
-    }
+    const scoped = this.scopeWhere(user, q.branchId);
+    if (scoped) and.push(scoped);
     const where = and.length ? { AND: and } : {};
 
     let rows = await this.prisma.inv_stock_balances.findMany({
@@ -54,7 +64,8 @@ export class StockService {
     return paginated(rows.map((r) => this.mapBalance(r)), total, q.page, q.pageSize);
   }
 
-  async byProductWarehouse(productId: number, warehouseId: number) {
+  async byProductWarehouse(productId: number, warehouseId: number, user: JwtUser) {
+    await this.location.assertWarehouseInScope(user, warehouseId);
     const row = await this.prisma.inv_stock_balances.findUnique({
       where: { product_id_warehouse_id: { product_id: productId, warehouse_id: warehouseId } },
       include: { product: true, warehouse: true },
@@ -67,8 +78,9 @@ export class StockService {
     productId: number,
     warehouseId: number,
     dto: StockUpdateDto,
-    userId?: number,
+    user: JwtUser,
   ) {
+    const userId = user.sub;
     throw new BadRequestException('تعديل الرصيد المباشر موقوف؛ استخدم حركة مخزنية أو جلسة جرد حتى يُسجل الأثر المحاسبي');
     /* istanbul ignore next -- retained signature for API compatibility */
     const warehouse = await this.prisma.inv_warehouses.findFirst({
@@ -89,10 +101,11 @@ export class StockService {
       allowNegative: dto.allowNegative,
     });
 
-    return this.byProductWarehouse(productId, warehouseId);
+    return this.byProductWarehouse(productId, warehouseId, user);
   }
 
-  async updateSettings(productId: number, warehouseId: number, dto: StockSettingsDto) {
+  async updateSettings(productId: number, warehouseId: number, dto: StockSettingsDto, user: JwtUser) {
+    await this.location.assertWarehouseInScope(user, warehouseId);
     const row = await this.prisma.inv_stock_balances.findUnique({
       where: { product_id_warehouse_id: { product_id: productId, warehouse_id: warehouseId } },
     });
@@ -110,9 +123,11 @@ export class StockService {
     return this.mapBalance(updated);
   }
 
-  async lowStock(warehouseId?: number) {
+  async lowStock(user: JwtUser, warehouseId?: number) {
+    if (warehouseId) await this.location.assertWarehouseInScope(user, warehouseId);
+    const scoped = this.scopeWhere(user);
     const rows = await this.prisma.inv_stock_balances.findMany({
-      where: warehouseId ? { warehouse_id: warehouseId } : {},
+      where: { ...(warehouseId ? { warehouse_id: warehouseId } : {}), ...(scoped ?? {}) },
       include: { product: true, warehouse: true },
     });
     return rows
@@ -120,7 +135,8 @@ export class StockService {
       .map((r) => this.mapBalance(r));
   }
 
-  async levelsByWarehouse(warehouseId: number) {
+  async levelsByWarehouse(warehouseId: number, user: JwtUser) {
+    await this.location.assertWarehouseInScope(user, warehouseId);
     const rows = await this.prisma.inv_stock_balances.findMany({
       where: { warehouse_id: warehouseId },
       include: { product: true, warehouse: true },

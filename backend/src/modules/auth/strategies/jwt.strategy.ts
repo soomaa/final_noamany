@@ -4,7 +4,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { Request } from 'express';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { JwtUser } from '../../../common/types/jwt-user';
-import { INACTIVE_EMPLOYEE, isEmployeeInactive } from '../employee-status.util';
+import { inactiveEmployeeMessage, isEmployeeInactive } from '../employee-status.util';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 
 function cookieExtractor(req: Request): string | null {
@@ -76,11 +76,11 @@ export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
     if (currentLevel !== 1 && employeeId != null) {
       const employee = await store.employees.findUnique({
         where: { id: employeeId },
-        select: { emp_type: true, employee_type: true, leave_emp: true },
+        select: { emp_type: true, employee_type: true, leave_emp: true, employee: true, emp_code: true },
       });
       // Deactivating an employee locks their account out right away, not at token expiry.
       if (isEmployeeInactive(employee)) {
-        throw new UnauthorizedException(INACTIVE_EMPLOYEE);
+        throw new UnauthorizedException(inactiveEmployeeMessage(employee));
       }
       if (!hasSuperAdminRole && employee?.emp_type != null) currentEmployeeType = employee.emp_type;
     }

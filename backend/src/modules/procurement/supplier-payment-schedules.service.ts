@@ -2,6 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import type { JwtUser } from '../../common/types/jwt-user';
+import { ProcurementScopeService } from './procurement-scope.service';
 import {
   ListSupplierPaymentSchedulesDto,
   UpsertSupplierPaymentScheduleDto,
@@ -10,7 +12,20 @@ import { toNumber } from './procurement.utils';
 
 @Injectable()
 export class SupplierPaymentSchedulesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: ProcurementScopeService,
+  ) {}
+
+  /** Schedules have no branch of their own; they belong to their purchase invoice's branch. */
+  private async assertInvoice(user: JwtUser, purchaseInvoiceId: number) {
+    const invoice = await this.prisma.prc_purchase_invoices.findFirst({
+      where: { id: purchaseInvoiceId, is_deleted: false },
+      select: { branch_id: true, purchase_order_id: true },
+    });
+    if (!invoice) throw new NotFoundException('فاتورة الشراء غير موجودة');
+    await this.scope.assertDocument(user, invoice);
+  }
 
   private map(row: Prisma.prc_supplier_payment_schedulesGetPayload<object>) {
     return {
@@ -25,8 +40,10 @@ export class SupplierPaymentSchedulesService {
     };
   }
 
-  async list(q: ListSupplierPaymentSchedulesDto) {
+  async list(q: ListSupplierPaymentSchedulesDto, user?: JwtUser) {
     const and: Prisma.prc_supplier_payment_schedulesWhereInput[] = [];
+    const scoped = this.scope.listBranches(user);
+    if (scoped) and.push({ invoice: { branch_id: { in: scoped } } });
     if (q.purchaseInvoiceId && q.purchaseInvoiceId !== 'all') {
       and.push({ purchase_invoice_id: Number(q.purchaseInvoiceId) });
     }
@@ -44,13 +61,15 @@ export class SupplierPaymentSchedulesService {
     return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: JwtUser) {
     const row = await this.prisma.prc_supplier_payment_schedules.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('جدول الدفع غير موجود');
+    await this.assertInvoice(user, row.purchase_invoice_id);
     return this.map(row);
   }
 
-  async create(dto: UpsertSupplierPaymentScheduleDto) {
+  async create(dto: UpsertSupplierPaymentScheduleDto, user: JwtUser) {
+    await this.assertInvoice(user, dto.purchaseInvoiceId);
     const row = await this.prisma.prc_supplier_payment_schedules.create({
       data: {
         purchase_invoice_id: dto.purchaseInvoiceId,
@@ -63,8 +82,9 @@ export class SupplierPaymentSchedulesService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertSupplierPaymentScheduleDto>) {
-    await this.findOne(id);
+  async update(id: number, dto: Partial<UpsertSupplierPaymentScheduleDto>, user: JwtUser) {
+    await this.findOne(id, user);
+    if (dto.purchaseInvoiceId != null) await this.assertInvoice(user, dto.purchaseInvoiceId);
     const row = await this.prisma.prc_supplier_payment_schedules.update({
       where: { id },
       data: {
@@ -78,8 +98,8 @@ export class SupplierPaymentSchedulesService {
     return this.map(row);
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, user: JwtUser) {
+    await this.findOne(id, user);
     await this.prisma.prc_supplier_payment_schedules.delete({ where: { id } });
     return { success: true };
   }

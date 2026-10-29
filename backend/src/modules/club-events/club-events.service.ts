@@ -158,7 +158,8 @@ export class ClubEventsService {
     staff: true,
   };
 
-  async list(q: ListClubEventsDto) {
+  /** `branchFilter` is the caller's resolved branch scope (undefined ⇒ unrestricted). */
+  async list(q: ListClubEventsDto, branchFilter?: Prisma.IntFilter) {
     const and: Prisma.club_eventsWhereInput[] = [{ is_deleted: false }];
 
     if (q.search?.trim()) {
@@ -167,7 +168,8 @@ export class ClubEventsService {
         OR: [{ title: { contains: s } }, { event_number: { contains: s } }],
       });
     }
-    if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
+    if (branchFilter) and.push({ branch_id: branchFilter });
+    else if (q.branch && q.branch !== 'all') and.push({ branch_id: Number(q.branch) });
     if (q.kind) and.push({ kind: q.kind as never });
     if (q.categoryId) and.push({ category_id: Number(q.categoryId) });
     if (q.status && q.status !== 'all') and.push({ status: q.status as never });
@@ -535,8 +537,10 @@ export class ClubEventsService {
     return { success: true };
   }
 
-  async statistics() {
-    const rows = await this.prisma.club_events.findMany({ where: { is_deleted: false } });
+  async statistics(branchFilter?: Prisma.IntFilter) {
+    const rows = await this.prisma.club_events.findMany({
+      where: { is_deleted: false, ...(branchFilter ? { branch_id: branchFilter } : {}) },
+    });
     const byStatus: Record<string, number> = {};
     const byKind: Record<string, number> = {};
     let upcoming = 0;
@@ -555,6 +559,7 @@ export class ClubEventsService {
         status: 'completed',
         payment_date: { gte: `${monthStart}-01` },
         type: 'payment',
+        ...(branchFilter ? { event_id: { in: rows.map((r) => r.id) } } : {}),
       },
       select: { amount: true },
     });

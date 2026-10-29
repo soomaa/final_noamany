@@ -16,23 +16,23 @@ export class OpeningStocksController {
   constructor(private readonly service: OpeningStocksService) {}
 
   @Get()
-  list(@Query() query: ListOpeningStocksDto) {
-    return this.service.list(query);
+  list(@Query() query: ListOpeningStocksDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(query, user);
   }
 
   @Get('by-branch/:branchId')
-  byBranch(@Param('branchId', ParseIntPipe) branchId: number) {
-    return this.service.byBranch(branchId);
+  byBranch(@Param('branchId', ParseIntPipe) branchId: number, @CurrentUser() user: JwtUser) {
+    return this.service.byBranch(branchId, user);
   }
 
   @Get('by-warehouse/:warehouseId')
-  byWarehouse(@Param('warehouseId', ParseIntPipe) warehouseId: number) {
-    return this.service.byWarehouse(warehouseId);
+  byWarehouse(@Param('warehouseId', ParseIntPipe) warehouseId: number, @CurrentUser() user: JwtUser) {
+    return this.service.byWarehouse(warehouseId, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user);
   }
 
   @Post()
@@ -47,19 +47,19 @@ export class OpeningStocksController {
 
   @Put(':id')
   @RequiresPermission('gym-sales.inventory:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertOpeningStockDto>) {
-    return this.service.update(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertOpeningStockDto>, @CurrentUser() user: JwtUser) {
+    return this.service.update(id, body, user);
   }
 
   @Patch(':id')
   @RequiresPermission('gym-sales.inventory:update')
-  patch(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertOpeningStockDto>) {
-    return this.service.update(id, body);
+  patch(@Param('id', ParseIntPipe) id: number, @Body() body: Partial<UpsertOpeningStockDto>, @CurrentUser() user: JwtUser) {
+    return this.service.update(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('gym-sales.inventory:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.remove(id, user);
   }
 }

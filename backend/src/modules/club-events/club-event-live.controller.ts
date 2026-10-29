@@ -9,6 +9,8 @@ import {
   ClubEventLiveCheckinService,
   ClubEventProgramSegmentsService,
 } from './club-event-live.service';
+import { ClubEventScopeService } from './club-event-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import {
   CreateProgramSegmentDto,
   GuestByPhoneQuery,
@@ -25,6 +27,7 @@ export class ClubEventLiveController {
     private readonly settings: ClubEventDisplaySettingsService,
     private readonly segments: ClubEventProgramSegmentsService,
     private readonly liveCheckin: ClubEventLiveCheckinService,
+    private readonly scope: ClubEventScopeService,
   ) {}
 
   @Public()
@@ -35,12 +38,13 @@ export class ClubEventLiveController {
 
   @Put('display-settings')
   @RequiresPermission('club.events.list:update')
-  updateSettings(
+  async updateSettings(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Body() body: Record<string, unknown>,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.settings.update(eventId, body, userId);
+    await this.scope.assertEvent(user, eventId);
+    return this.settings.update(eventId, body, user.sub);
   }
 
   @Public()
@@ -50,39 +54,47 @@ export class ClubEventLiveController {
   }
 
   @Get('program-segments/:id')
-  getSegment(@Param('eventId', ParseIntPipe) eventId: number, @Param('id', ParseIntPipe) id: number) {
+  async getSegment(
+    @Param('eventId', ParseIntPipe) eventId: number,
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
+  ) {
+    await this.scope.assertEvent(user, eventId);
     return this.segments.get(eventId, id);
   }
 
   @Post('program-segments')
   @RequiresPermission('club.events.list:update')
-  createSegment(
+  async createSegment(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Body() body: CreateProgramSegmentDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.segments.create(eventId, body, userId);
+    await this.scope.assertEvent(user, eventId);
+    return this.segments.create(eventId, body, user.sub);
   }
 
   @Patch('program-segments/:id')
   @RequiresPermission('club.events.list:update')
-  updateSegment(
+  async updateSegment(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateProgramSegmentDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.segments.update(eventId, id, body, userId);
+    await this.scope.assertEvent(user, eventId);
+    return this.segments.update(eventId, id, body, user.sub);
   }
 
   @Delete('program-segments/:id')
   @RequiresPermission('club.events.list:update')
-  removeSegment(
+  async removeSegment(
     @Param('eventId', ParseIntPipe) eventId: number,
     @Param('id', ParseIntPipe) id: number,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.segments.remove(eventId, id, userId);
+    await this.scope.assertEvent(user, eventId);
+    return this.segments.remove(eventId, id, user.sub);
   }
 
   @Public()
@@ -107,7 +119,8 @@ export class ClubEventLiveController {
   }
 
   @Get('attendees/recent-private')
-  recentAttendeesPrivate(@Param('eventId', ParseIntPipe) eventId: number) {
+  async recentAttendeesPrivate(@Param('eventId', ParseIntPipe) eventId: number, @CurrentUser() user: JwtUser) {
+    await this.scope.assertEvent(user, eventId);
     return this.liveCheckin.recentCheckins(eventId);
   }
 

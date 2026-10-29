@@ -1,16 +1,25 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { CreateClearanceDto, ListClearanceDto, UpdateClearanceDto } from './dto/clearance.dto';
+import { assertEmployeeInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 
 @Injectable()
 export class ClearanceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  async list(q: ListClearanceDto) {
+  async list(q: ListClearanceDto, user: JwtUser) {
+    // Branch isolation (hr_disclaimers.emp_id_fk is a varchar holding employees.id).
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
     const groups = await this.prisma.hr_disclaimers.groupBy({
       by: ['disclaimer_id'],
+      ...(empIds !== null ? { where: { emp_id_fk: { in: empIds.map(String) } } } : {}),
       _count: { id: true },
       orderBy: { disclaimer_id: 'desc' },
     });
@@ -54,7 +63,7 @@ export class ClearanceService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async getGroup(groupId: number) {
+  async getGroup(groupId: number, user: JwtUser) {
     const rows = await this.prisma.hr_disclaimers.findMany({
       where: { disclaimer_id: groupId },
       orderBy: { id: 'asc' },
@@ -62,6 +71,7 @@ export class ClearanceService {
     if (!rows.length) throw new NotFoundException('إخلاء الطرف غير موجود');
 
     const empId = rows[0].emp_id_fk ? parseInt(rows[0].emp_id_fk, 10) : null;
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, empId);
     const emp = empId ? await this.prisma.employees.findUnique({ where: { id: empId } }) : null;
 
     return {
@@ -81,9 +91,10 @@ export class ClearanceService {
     };
   }
 
-  async create(dto: CreateClearanceDto) {
+  async create(dto: CreateClearanceDto, user: JwtUser) {
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, emp.id);
 
     const last = await this.prisma.hr_disclaimers.findFirst({
       orderBy: { disclaimer_id: 'desc' },
@@ -94,15 +105,16 @@ export class ClearanceService {
     return { id: groupId };
   }
 
-  async update(groupId: number, dto: UpdateClearanceDto) {
-    await this.getGroup(groupId);
+  async update(groupId: number, dto: UpdateClearanceDto, user: JwtUser) {
+    await this.getGroup(groupId, user);
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, dto.empId);
     await this.prisma.hr_disclaimers.deleteMany({ where: { disclaimer_id: groupId } });
     await this.insertLines(groupId, dto);
     return { id: groupId };
   }
 
-  async remove(groupId: number) {
-    await this.getGroup(groupId);
+  async remove(groupId: number, user: JwtUser) {
+    await this.getGroup(groupId, user);
     await this.prisma.hr_disclaimers.deleteMany({ where: { disclaimer_id: groupId } });
     return { id: groupId };
   }

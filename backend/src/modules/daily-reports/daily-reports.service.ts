@@ -2,7 +2,10 @@ import { SuspendStatus } from '../../common/utils/suspend-status.util';
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
+import { assertEmployeeInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 import {
   CreateDailyReportDto,
   ListDailyReportsDto,
@@ -12,10 +15,17 @@ import {
 
 @Injectable()
 export class DailyReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  async list(q: ListDailyReportsDto) {
+  async list(q: ListDailyReportsDto, user: JwtUser) {
     const and: Prisma.hr_dialy_reportsWhereInput[] = [];
+
+    // Branch isolation: scoped users only see reports of employees in their branches.
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    if (empIds !== null) and.push({ emp_id_fk: { in: empIds } });
 
     if (q.search?.trim()) {
       const s = q.search.trim();
@@ -66,8 +76,8 @@ export class DailyReportsService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async get(id: number) {
-    const row = await this.findOrThrow(id);
+  async get(id: number, user: JwtUser) {
+    const row = await this.findOrThrow(id, user);
     const emp = row.emp_id_fk
       ? await this.prisma.employees.findUnique({ where: { id: row.emp_id_fk } })
       : null;
@@ -87,9 +97,10 @@ export class DailyReportsService {
     };
   }
 
-  async create(dto: CreateDailyReportDto) {
+  async create(dto: CreateDailyReportDto, user: JwtUser) {
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, dto.empId);
 
     // legacy stamps send_date_ar / send_time at insert time.
     const now = new Date();
@@ -117,8 +128,9 @@ export class DailyReportsService {
     return { id: row.id };
   }
 
-  async update(id: number, dto: UpdateDailyReportDto) {
-    await this.findOrThrow(id);
+  async update(id: number, dto: UpdateDailyReportDto, user: JwtUser) {
+    await this.findOrThrow(id, user);
+    if (dto.empId != null) await assertEmployeeInScope(this.prisma, this.branchScope, user, dto.empId);
     await this.prisma.hr_dialy_reports.update({
       where: { id },
       data: {
@@ -133,15 +145,15 @@ export class DailyReportsService {
     return { id };
   }
 
-  async remove(id: number) {
-    await this.findOrThrow(id);
+  async remove(id: number, user: JwtUser) {
+    await this.findOrThrow(id, user);
     await this.prisma.hr_dialy_reports.delete({ where: { id } });
     return { id };
   }
 
   /** Approve a report: suspend → 4 and clear any prior rejection note. */
-  async approve(id: number) {
-    await this.findOrThrow(id);
+  async approve(id: number, user: JwtUser) {
+    await this.findOrThrow(id, user);
     await this.prisma.hr_dialy_reports.update({
       where: { id },
       data: { suspend: SuspendStatus.APPROVED, rad_notes: null },
@@ -150,8 +162,8 @@ export class DailyReportsService {
   }
 
   /** Reject a report: suspend → 2 and store the reviewer note in rad_notes. */
-  async reject(id: number, dto: RejectDailyReportDto) {
-    await this.findOrThrow(id);
+  async reject(id: number, dto: RejectDailyReportDto, user: JwtUser) {
+    await this.findOrThrow(id, user);
     await this.prisma.hr_dialy_reports.update({
       where: { id },
       data: { suspend: SuspendStatus.REJECTED, rad_notes: dto.radNotes ?? null },
@@ -159,9 +171,11 @@ export class DailyReportsService {
     return { id, suspend: SuspendStatus.REJECTED };
   }
 
-  private async findOrThrow(id: number) {
+  /** Load a report and enforce that its employee is inside the caller's branch scope. */
+  private async findOrThrow(id: number, user: JwtUser) {
     const row = await this.prisma.hr_dialy_reports.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('التقرير اليومي غير موجود');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, row.emp_id_fk);
     return row;
   }
 }

@@ -60,6 +60,7 @@ export class ClubSearchService {
     q: string,
     branchIds: number[] | null = null,
     limit = 10,
+    gender: 'male' | 'female' | null = null,
   ): Promise<ClubSearchHit[]> {
     const query = q.trim();
     if (!query || query.length < 2) return [];
@@ -81,6 +82,8 @@ export class ClubSearchService {
 
     const and: Prisma.club_membersWhereInput[] = [{ is_deleted: false }, { OR: or }];
     if (branchIds !== null) and.push({ branch_id: { in: branchIds } });
+    // Men/women section isolation: a single-section employee never sees the other section's members.
+    if (gender) and.push({ gender });
 
     const members = await this.prisma.club_members.findMany({
       where: { AND: and },
@@ -192,8 +195,8 @@ export class ClubSearchService {
     }));
   }
 
-  async searchWithEntitlement(q: string, branchIds: number[] | null = null) {
-    const hits = await this.universalSearch(q, branchIds, 10);
+  async searchWithEntitlement(q: string, branchIds: number[] | null = null, gender: 'male' | 'female' | null = null) {
+    const hits = await this.universalSearch(q, branchIds, 10, gender);
     const top = hits[0];
     if (!top) return { hits: [], entitlement: null };
 

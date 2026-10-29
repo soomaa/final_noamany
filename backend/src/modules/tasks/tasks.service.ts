@@ -1,9 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { PushService } from '../push/push.service';
+import { assertEmployeeInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 import {
   CreateTaskDto,
   ListTasksDto,
@@ -21,10 +23,16 @@ export class TasksService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly push: PushService,
+    private readonly branchScope: BranchScopeService,
   ) {}
 
-  async list(q: ListTasksDto) {
+  async list(q: ListTasksDto, user: JwtUser) {
     const and: Prisma.hr_mosalatWhereInput[] = [];
+    // Branch isolation: tasks addressed to in-scope employees, plus tasks this account published.
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    if (empIds !== null) {
+      and.push({ OR: [{ emp_name_id: { in: empIds } }, { publisher: user.sub }] });
+    }
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({ OR: [{ details: { contains: s } }, { emp_name: { contains: s } }] });
@@ -110,8 +118,8 @@ export class TasksService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async get(id: number) {
-    const task = await this.findOrThrow(id);
+  async get(id: number, user: JwtUser) {
+    const task = await this.findOrThrow(id, user);
     const mokalfat = await this.prisma.hr_mosalat_mokalfat.findMany({
       where: { mosala_id_fk: id },
       orderBy: { id: 'asc' },
@@ -148,6 +156,7 @@ export class TasksService {
    *  - persists each مكلّف row into hr_mosalat_mokalfat
    */
   async create(dto: CreateTaskDto, user: JwtUser) {
+    if (dto.empId != null) await assertEmployeeInScope(this.prisma, this.branchScope, user, dto.empId);
     const now = new Date();
     const dateAr = now.toISOString().slice(0, 10); // 'YYYY-MM-DD'
     const time = now.toTimeString().slice(0, 5); // 'HH:MM'
@@ -176,8 +185,9 @@ export class TasksService {
     return { id: task.id };
   }
 
-  async update(id: number, dto: UpdateTaskDto) {
-    await this.findOrThrow(id);
+  async update(id: number, dto: UpdateTaskDto, user: JwtUser) {
+    await this.findOrThrow(id, user);
+    if (dto.empId != null) await assertEmployeeInScope(this.prisma, this.branchScope, user, dto.empId);
     await this.prisma.hr_mosalat.update({
       where: { id },
       data: {
@@ -198,8 +208,8 @@ export class TasksService {
     return { id };
   }
 
-  async remove(id: number) {
-    await this.findOrThrow(id);
+  async remove(id: number, user: JwtUser) {
+    await this.findOrThrow(id, user);
     await this.prisma.hr_mosalat_mokalfat.deleteMany({ where: { mosala_id_fk: id } });
     await this.prisma.hr_mosalat.delete({ where: { id } });
     return { id };
@@ -209,8 +219,9 @@ export class TasksService {
    * Manager decision: set action_moder_rad to accepted/refused and stamp
    * action_moder_date/time/notes (mirrors legacy moder action endpoint).
    */
-  async action(id: number, dto: TaskActionDto, actorUserId?: number) {
-    const task = await this.findOrThrow(id);
+  async action(id: number, dto: TaskActionDto, user: JwtUser) {
+    const actorUserId = user.sub;
+    const task = await this.findOrThrow(id, user);
     const now = new Date();
     await this.prisma.hr_mosalat.update({
       where: { id },
@@ -248,9 +259,16 @@ export class TasksService {
     });
   }
 
-  private async findOrThrow(id: number) {
+  /**
+   * Load a task. Scoped users may access it when they published it or when its employee
+   * is inside their branch scope (an unassigned task is visible to its publisher only).
+   */
+  private async findOrThrow(id: number, user: JwtUser) {
     const row = await this.prisma.hr_mosalat.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('المهمة غير موجودة');
+    if (row.publisher == null || row.publisher !== user.sub) {
+      await assertEmployeeInScope(this.prisma, this.branchScope, user, row.emp_name_id);
+    }
     return row;
   }
 

@@ -24,31 +24,36 @@ export class ArchiveController {
   constructor(private readonly archive: ArchiveService) {}
 
   @Get()
-  list(@Query() query: ListArchiveDto) {
-    return this.archive.list(query);
+  list(@Query() query: ListArchiveDto, @CurrentUser() user: JwtUser) {
+    return this.archive.list(query, user);
   }
 
   @Get(':id')
-  getOne(@Param('id', ParseIntPipe) id: number) {
-    return this.archive.getOne(id);
+  getOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.archive.getOne(id, user);
   }
 
+  // termination.archive exposes only view/update/export/print/audit in the RBAC catalog,
+  // so every archive mutation requires :update.
   @Post()
+  @RequiresPermission('termination.archive:update')
   create(@Body() dto: CreateArchiveDto, @CurrentUser() user: JwtUser) {
-    return this.archive.create(dto, user.sub);
+    return this.archive.create(dto, user);
   }
 
   @Patch(':id')
+  @RequiresPermission('termination.archive:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateArchiveDto,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.archive.update(id, dto, user.sub);
+    return this.archive.update(id, dto, user);
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.archive.remove(id);
+  @RequiresPermission('termination.archive:update')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.archive.remove(id, user);
   }
 }

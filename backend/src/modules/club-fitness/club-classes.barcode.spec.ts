@@ -17,7 +17,7 @@ describe('ClubClassesService barcode attendance', () => {
     service.updateAttendance = jest.fn().mockResolvedValue({ memberId: 9 });
 
     await expect(service.checkInByBarcode(21, '1001')).resolves.toEqual({ memberId: 9 });
-    expect(service.enrollMember).toHaveBeenCalledWith(21, 9, { bookingSource: 'barcode' });
+    expect(service.enrollMember).toHaveBeenCalledWith(21, 9, { bookingSource: 'barcode' }, undefined);
     expect(service.updateAttendance).toHaveBeenCalledWith(21, 9, expect.objectContaining({ attendanceStatus: 'attended' }));
   });
 
@@ -37,6 +37,6 @@ describe('ClubClassesService barcode attendance', () => {
     expect(prisma.club_classes.findMany).toHaveBeenCalledWith(expect.objectContaining({
       where: expect.objectContaining({ branch_id: 2, is_deleted: false, is_active: true }),
     }));
-    expect(service.checkInByBarcode).toHaveBeenCalledWith(21, '1001');
+    expect(service.checkInByBarcode).toHaveBeenCalledWith(21, '1001', undefined);
   });
 });

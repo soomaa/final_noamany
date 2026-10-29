@@ -69,10 +69,8 @@ export class ProductsController {
   @Post()
   @RequiresPermission('gym-sales.inventory.raw_materials:create', 'club.cafe.products:create')
   create(@Body() body: UpsertProductDto, @CurrentUser() user: JwtUser) {
-    const openingBranchId = user.branch > 0 && user.level !== 1
-      ? user.branch
-      : body.openingBranchId ?? user.branch;
-    return this.service.create(body, user.sub, openingBranchId);
+    // The service only honours body.openingBranchId for admins or inside the caller's branch scope.
+    return this.service.create(body, user.sub, user.branch > 0 ? user.branch : undefined, user);
   }
 
   @Put(':id')

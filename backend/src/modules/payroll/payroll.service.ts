@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -12,6 +13,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
+import { scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 import { recordSystemExpense } from '../finance/system-expense.util';
 import {
   CreatePayComponentDto,
@@ -276,7 +278,7 @@ export class PayrollService {
 
   // ─── Payroll runs (hr_mosayer) ────────────────────────────────────────────
 
-  async createRun(dto: CreatePayrollRunDto) {
+  async createRun(dto: CreatePayrollRunDto, user?: JwtUser) {
     await this.assertAllActiveEmployeesHaveSalary();
     const existing = await this.prisma.hr_mosayer.findFirst({
       where: { mosayer_month: dto.month, mosayer_year: dto.year },
@@ -306,10 +308,10 @@ export class PayrollService {
     });
 
     await this.persistComputedSalaries(header.id, mosayerRkm, dto.month, dto.year);
-    return this.findRun(header.id);
+    return this.findRun(header.id, user);
   }
 
-  async listRuns(q: PaginationDto & { status?: string }) {
+  async listRuns(q: PaginationDto & { status?: string }, user?: JwtUser) {
     const rows = await this.prisma.hr_mosayer.findMany({
       orderBy: { id: 'desc' },
     });
@@ -328,25 +330,73 @@ export class PayrollService {
 
     const total = filtered.length;
     const pageRows = filtered.slice(q.skip, q.skip + q.take);
-    return paginated(pageRows.map((r) => this.toRunRow(r)), total, q.page, q.pageSize);
+    const scopedTotals = await this.scopedRunTotals(
+      pageRows.map((r) => r.mosayer_rkm).filter((v): v is number => v != null),
+      user,
+    );
+    return paginated(
+      pageRows.map((r) => this.withScopedTotal(this.toRunRow(r), r.mosayer_rkm, scopedTotals)),
+      total,
+      q.page,
+      q.pageSize,
+    );
   }
 
-  async findRun(id: number) {
-    const row = await this.getRunOrThrow(id);
-    const employeeCount = await this.prisma.hr_mosayer_details.count({
-      where: { mosayer_rkm_fk: row.mosayer_rkm ?? undefined },
+  /** Per-run net totals restricted to the user's branches; `null` = use the global header. */
+  private async scopedRunTotals(rkms: number[], user?: JwtUser): Promise<Map<number, number> | null> {
+    const scoped = await this.scopedLineWhere(user);
+    if (!Object.keys(scoped).length) return null;
+    if (!rkms.length) return new Map();
+    const sums = await this.prisma.hr_mosayer_details.groupBy({
+      by: ['mosayer_rkm_fk'],
+      where: { mosayer_rkm_fk: { in: rkms }, ...scoped },
+      _sum: { safi: true },
     });
+    return new Map(sums.map((s) => [s.mosayer_rkm_fk as number, decimal(s._sum.safi)]));
+  }
+
+  private withScopedTotal<T extends { totalAmount: number }>(
+    row: T,
+    rkm: number | null,
+    totals: Map<number, number> | null,
+  ): T {
+    return totals ? { ...row, totalAmount: rkm != null ? (totals.get(rkm) ?? 0) : 0 } : row;
+  }
+
+  /**
+   * Runs are global per month; a branch-scoped user only sees the lines (employees) of
+   * their branches. `undefined` user = internal call (unrestricted), `{}` = system admin.
+   */
+  private async scopedLineWhere(user?: JwtUser): Promise<Prisma.hr_mosayer_detailsWhereInput> {
+    if (!user) return {};
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    return empIds === null ? {} : { emp_id: { in: empIds } };
+  }
+
+  async findRun(id: number, user?: JwtUser) {
+    const row = await this.getRunOrThrow(id);
+    const scoped = await this.scopedLineWhere(user);
+    const where: Prisma.hr_mosayer_detailsWhereInput = {
+      mosayer_rkm_fk: row.mosayer_rkm ?? undefined,
+      ...scoped,
+    };
+    const employeeCount = await this.prisma.hr_mosayer_details.count({ where });
+    // Scoped users get the net total of their own branches' lines, not the global header.
+    const totalAmount = Object.keys(scoped).length
+      ? decimal((await this.prisma.hr_mosayer_details.aggregate({ where, _sum: { safi: true } }))._sum.safi)
+      : decimal(row.egmali_safi);
     return {
       ...this.toRunRow(row),
       employeeCount,
-      totalAmount: decimal(row.egmali_safi),
+      totalAmount,
     };
   }
 
-  async listRunLines(id: number, q: PaginationDto) {
+  async listRunLines(id: number, q: PaginationDto, user?: JwtUser) {
     const row = await this.getRunOrThrow(id);
     const where: Prisma.hr_mosayer_detailsWhereInput = {
       mosayer_rkm_fk: row.mosayer_rkm ?? undefined,
+      ...(await this.scopedLineWhere(user)),
     };
     if (q.search?.trim()) {
       const s = q.search.trim();
@@ -369,12 +419,13 @@ export class PayrollService {
     return paginated(lines.map((l) => this.toLineRow(l)), total, q.page, q.pageSize);
   }
 
-  async getSlip(runId: number, empLineId: number) {
+  async getSlip(runId: number, empLineId: number, user?: JwtUser) {
     const run = await this.getRunOrThrow(runId);
     const line = await this.prisma.hr_mosayer_details.findFirst({
       where: { id: empLineId, mosayer_rkm_fk: run.mosayer_rkm ?? undefined },
     });
     if (!line) throw new NotFoundException('بند الموظف غير موجود');
+    await this.assertLineInScope(line.emp_id, user);
     const manualRows = run.mosayer_rkm != null
       ? await this.prisma.hr_mosayer_egraat.findMany({
           where: {
@@ -405,7 +456,11 @@ export class PayrollService {
     }
 
     return {
-      run: this.toRunRow(run),
+      run: this.withScopedTotal(
+        this.toRunRow(run),
+        run.mosayer_rkm,
+        await this.scopedRunTotals(run.mosayer_rkm != null ? [run.mosayer_rkm] : [], user),
+      ),
       employee: {
         id: line.emp_id,
         empCode: line.emp_code,
@@ -463,6 +518,7 @@ export class PayrollService {
     empLineId: number,
     overrides: { privateBonus?: number; taqeemValue?: number; targetValue?: number },
     userId?: number,
+    user?: JwtUser,
   ) {
     const run = await this.getRunOrThrow(runId);
     // Block edits once the run has left the editable phase — overrides must not alter an
@@ -475,6 +531,7 @@ export class PayrollService {
       where: { id: empLineId, mosayer_rkm_fk: run.mosayer_rkm ?? undefined },
     });
     if (!line) throw new NotFoundException('بند الموظف غير موجود');
+    await this.assertLineInScope(line.emp_id, user);
     if (line.emp_id == null || run.mosayer_month == null || run.mosayer_year == null) {
       throw new BadRequestException('بيانات المسيرة غير مكتملة');
     }
@@ -538,7 +595,7 @@ export class PayrollService {
       });
       await this.recomputeHeaderTotals(tx, run.mosayer_rkm, run.id);
     });
-    return this.getSlip(runId, empLineId);
+    return this.getSlip(runId, empLineId, user);
   }
 
   async runAction(id: number, action: string, userId?: number) {
@@ -722,14 +779,14 @@ export class PayrollService {
    * Generate the bank transfer file as downloadable CSV: code, name, bank, account, net.
    * Mirrors the slip bank fields (emp_bank_id_fk / account / code / name-in-bank) per line.
    */
-  async generateBankFile(id: number): Promise<{ filename: string; content: string }> {
+  async generateBankFile(id: number, user?: JwtUser): Promise<{ filename: string; content: string }> {
     const run = await this.getRunOrThrow(id);
     const status = mapRunStatus(run);
     if (!['banked', 'completed'].includes(status)) {
       throw new BadRequestException('يجب تنفيذ التحويل البنكي قبل تنزيل الملف');
     }
     const lines = await this.prisma.hr_mosayer_details.findMany({
-      where: { mosayer_rkm_fk: run.mosayer_rkm ?? undefined },
+      where: { mosayer_rkm_fk: run.mosayer_rkm ?? undefined, ...(await this.scopedLineWhere(user)) },
       orderBy: { id: 'asc' },
     });
 
@@ -1130,6 +1187,15 @@ export class PayrollService {
       egmali_total_khsomat: sum((r) => r.totalKhsomat),
       egmali_safi: sum((r) => r.safi),
     };
+  }
+
+  /** 403 when a scoped user opens the slip of an employee outside their branches. */
+  private async assertLineInScope(empId: number | null, user?: JwtUser) {
+    if (!user) return;
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    if (empIds !== null && (empId == null || !empIds.includes(empId))) {
+      throw new ForbiddenException('لا تملك صلاحية عرض مسير موظف من فرع آخر');
+    }
   }
 
   private async getRunOrThrow(id: number) {

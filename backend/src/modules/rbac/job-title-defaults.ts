@@ -29,6 +29,57 @@ function normalizeJobTitle(value: string): string {
 }
 
 /**
+ * Reception desk, from the client's permissions sheet (الصلاحيات خاص الريسيبشن). "Today only"
+ * and "no edit/delete" are enforced server-side for reception staff; these cells only open
+ * the screens. Note: no `approve` — letting an expired member in stays a manager decision.
+ */
+function receptionCells(): JobTitlePermissionCell[] {
+  return [
+    ...grant(['club.reception', 'club.reception.quick_services'], VIEW_OPERATE),
+    // Members: full desk workflow; edits/deletes are limited to members added today.
+    ...grant(['club.members'], ['view', 'create', 'update', 'delete', 'print', 'export']),
+    ...grant(['club.members.attendance'], ['view', 'create', 'print']),
+    ...grant(['club.members.barcode_management'], ['view', 'create', 'print', 'export']),
+    // Subscriptions & payments: add only, no edit/delete; lists are today-only.
+    ...grant(['club.subscriptions.list', 'club.subscriptions.receipts', 'club.subscriptions.outstanding'], ['view', 'print']),
+    ...grant(['club.subscriptions.new', 'club.subscriptions.special', 'club.subscriptions.online', 'club.subscriptions.refunds'], ['view', 'create', 'print']),
+    // Points
+    ...grant(['club.points.member_history', 'club.points.earned_report', 'club.points.active_members_report'], ['view', 'print', 'export']),
+    // Discount codes
+    ...grant(['club.discount_codes.member_grants'], ['view', 'create']),
+    ...grant(['club.discount_codes.captain_codes', 'club.discount_codes.member_search'], ['view']),
+    // Lockers
+    ...grant(['club.lockers.list'], ['view']),
+    ...grant(['club.lockers.new', 'club.lockers.inventory'], ['view', 'create', 'print']),
+    ...grant(['club.lockers.inventory_reports'], ['view', 'print']),
+    // Financial reports: today only; target is the employee's own, monthly.
+    ...grant(['financial-reports.reports', 'financial-reports.daily_closing', 'financial-reports.target'], ['view', 'print']),
+    // HR: add an employee only.
+    ...grant(['employees.new'], ['view', 'create']),
+    // App invitations
+    ...grant(['app-management.invitations.accepted', 'app-management.invitations.attended', 'app-management.invitations.rejected'], ['view']),
+    // Own evaluations
+    ...grant(['evaluation-management.report'], ['view']),
+    // Cafe & stock
+    ...grant(['gym-sales.sales.new_receipt'], ['view', 'create', 'print']),
+    ...grant(['gym-sales.sales.shifts', 'gym-sales.sales.invoices'], ['view', 'print']),
+    ...grant(['gym-sales.sales.drawings'], ['view', 'create']),
+    ...grant(['gym-sales.inventory.stock_taking'], ['view', 'create', 'print']),
+    ...grant(['gym-sales.inventory.stock_taking_report'], ['view', 'print']),
+  ];
+}
+
+/** Captain, from the client's sheet: own discount codes, trainer evaluation/target, own target. */
+function captainCells(): JobTitlePermissionCell[] {
+  return [
+    ...grant(['club.discount_codes.member_grants'], ['view', 'create']),
+    ...grant(['club.discount_codes.member_search', 'club.discount_codes.captain_codes'], ['view']),
+    ...grant(['club.fitness.trainer_evaluations', 'club.fitness.trainer_targets'], ['view']),
+    ...grant(['financial-reports.target'], ['view', 'print']),
+  ];
+}
+
+/**
  * Conservative starter permissions for a newly-created job-title role.
  *
  * These cells are written only while the role matrix is empty. An administrator's
@@ -49,18 +100,11 @@ export function defaultPermissionCellsForJobTitle(name: string): JobTitlePermiss
       'print',
     ]);
   }
-  if (/(استقبال|ريسبشن)/.test(title)) {
-    // Note: no `approve` — allowing an expired member in stays a manager decision.
-    return grant(
-      [
-        'club.reception',
-        'club.reception.quick_services',
-        'club.members',
-        'club.members.attendance',
-        'club.subscriptions',
-      ],
-      VIEW_OPERATE,
-    );
+  if (/(استقبال|ريسبشن|ريسيبشن)/.test(title) && !/(مدير|مشرف|رئيس)/.test(title)) {
+    return receptionCells();
+  }
+  if (/كابتن/.test(title)) {
+    return captainCells();
   }
   if (/(لياقه|مشرف صاله|تغذيه)/.test(title)) {
     return grant(['club.fitness'], VIEW_OPERATE);

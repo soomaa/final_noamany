@@ -14,6 +14,12 @@ export class SupplierReportsService {
     private readonly branchScope: BranchScopeService,
   ) {}
 
+  /** Branch filter for the caller's scope (or a requested in-scope branch); empty list for admins viewing all. */
+  private branchAnd(user: JwtUser | undefined, q: SupplierReportsQueryDto) {
+    const branches = this.branchScope.resolveListFilter(user, q.branchId ?? null);
+    return branches ? [{ branch_id: { in: branches } }] : [];
+  }
+
   private dateFilter(q: SupplierReportsQueryDto): Prisma.DateTimeFilter | undefined {
     if (!q.dateFrom && !q.dateTo) return undefined;
     return {
@@ -22,8 +28,9 @@ export class SupplierReportsService {
     };
   }
 
-  async reports(q: SupplierReportsQueryDto) {
+  async reports(q: SupplierReportsQueryDto, user?: JwtUser) {
     const createdAt = this.dateFilter(q);
+    const branch = this.branchAnd(user, q);
     const and: Prisma.inv_suppliersWhereInput[] = [{ is_deleted: false }];
     if (q.search?.trim()) {
       const s = q.search.trim();
@@ -54,6 +61,7 @@ export class SupplierReportsService {
       where: {
         AND: [
           notDeletedFilter(),
+          ...branch,
           { supplier_id: { in: supplierIds } },
           ...(createdAt ? [{ created_at: createdAt }] : []),
         ],
@@ -77,27 +85,28 @@ export class SupplierReportsService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async stats(q: SupplierReportsQueryDto) {
+  async stats(q: SupplierReportsQueryDto, user?: JwtUser) {
     const createdAt = this.dateFilter(q);
+    const branch = this.branchAnd(user, q);
     const poWhere: Prisma.prc_purchase_ordersWhereInput = {
-      AND: [notDeletedFilter(), ...(createdAt ? [{ created_at: createdAt }] : [])],
+      AND: [notDeletedFilter(), ...branch, ...(createdAt ? [{ created_at: createdAt }] : [])],
     };
     const [suppliers, orders, orderValue, invoices, payments, returns] = await Promise.all([
       this.prisma.inv_suppliers.count({ where: { is_deleted: false } }),
       this.prisma.prc_purchase_orders.count({ where: poWhere }),
       this.prisma.prc_purchase_orders.aggregate({ where: poWhere, _sum: { total_amount: true } }),
       this.prisma.prc_purchase_invoices.aggregate({
-        where: { AND: [notDeletedFilter(), ...(createdAt ? [{ created_at: createdAt }] : [])] },
+        where: { AND: [notDeletedFilter(), ...branch, ...(createdAt ? [{ created_at: createdAt }] : [])] },
         _count: true,
         _sum: { invoice_amount: true },
       }),
       this.prisma.prc_supplier_payments.aggregate({
-        where: { AND: [notDeletedFilter(), ...(createdAt ? [{ created_at: createdAt }] : [])] },
+        where: { AND: [notDeletedFilter(), ...branch, ...(createdAt ? [{ created_at: createdAt }] : [])] },
         _count: true,
         _sum: { payment_amount: true },
       }),
       this.prisma.prc_purchase_returns.count({
-        where: { AND: [notDeletedFilter(), ...(createdAt ? [{ created_at: createdAt }] : [])] },
+        where: { AND: [notDeletedFilter(), ...branch, ...(createdAt ? [{ created_at: createdAt }] : [])] },
       }),
     ]);
 
@@ -113,12 +122,13 @@ export class SupplierReportsService {
     };
   }
 
-  async performance(q: SupplierReportsQueryDto) {
+  async performance(q: SupplierReportsQueryDto, user?: JwtUser) {
     const createdAt = this.dateFilter(q);
+    const branch = this.branchAnd(user, q);
     const grouped = await this.prisma.prc_purchase_orders.groupBy({
       by: ['supplier_id', 'status'],
       where: {
-        AND: [notDeletedFilter(), ...(createdAt ? [{ created_at: createdAt }] : [])],
+        AND: [notDeletedFilter(), ...branch, ...(createdAt ? [{ created_at: createdAt }] : [])],
       },
       _count: true,
       _sum: { total_amount: true },
@@ -160,12 +170,13 @@ export class SupplierReportsService {
     }));
   }
 
-  async payments(q: SupplierReportsQueryDto) {
+  async payments(q: SupplierReportsQueryDto, user?: JwtUser) {
     const createdAt = this.dateFilter(q);
+    const branch = this.branchAnd(user, q);
     const grouped = await this.prisma.prc_supplier_payments.groupBy({
       by: ['supplier_id', 'status'],
       where: {
-        AND: [notDeletedFilter(), ...(createdAt ? [{ created_at: createdAt }] : [])],
+        AND: [notDeletedFilter(), ...branch, ...(createdAt ? [{ created_at: createdAt }] : [])],
       },
       _count: true,
       _sum: { payment_amount: true },
@@ -218,12 +229,13 @@ export class SupplierReportsService {
     })).sort((a, b) => b.remaining - a.remaining);
   }
 
-  async orders(q: SupplierReportsQueryDto) {
+  async orders(q: SupplierReportsQueryDto, user?: JwtUser) {
     const createdAt = this.dateFilter(q);
+    const branch = this.branchAnd(user, q);
     const grouped = await this.prisma.prc_purchase_orders.groupBy({
       by: ['supplier_id', 'status'],
       where: {
-        AND: [notDeletedFilter(), ...(createdAt ? [{ created_at: createdAt }] : [])],
+        AND: [notDeletedFilter(), ...branch, ...(createdAt ? [{ created_at: createdAt }] : [])],
       },
       _count: true,
       _sum: { total_amount: true },
@@ -237,10 +249,10 @@ export class SupplierReportsService {
     }));
   }
 
-  async complaints(_q: SupplierReportsQueryDto) {
+  async complaints(q: SupplierReportsQueryDto, user?: JwtUser) {
     const returns = await this.prisma.prc_purchase_returns.groupBy({
       by: ['supplier_id'],
-      where: { AND: [notDeletedFilter()] },
+      where: { AND: [notDeletedFilter(), ...this.branchAnd(user, q)] },
       _count: true,
       _sum: { total_amount: true },
     });
@@ -252,13 +264,14 @@ export class SupplierReportsService {
     }));
   }
 
-  async risks(q: SupplierReportsQueryDto) {
+  async risks(q: SupplierReportsQueryDto, user?: JwtUser) {
     const today = new Date().toISOString().slice(0, 10);
     const overdue = await this.prisma.prc_supplier_invoices.groupBy({
       by: ['supplier_id'],
       where: {
         AND: [
           notDeletedFilter(),
+          ...this.branchAnd(user, q),
           { remaining_amount: { gt: 0 } },
           { due_date: { lt: today } },
         ],

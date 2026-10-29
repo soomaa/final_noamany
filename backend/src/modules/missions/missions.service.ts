@@ -1,11 +1,14 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { todayIso } from '../../common/utils/legacy-date.util';
 import { CreateMissionDto } from './dto/create-mission.dto';
 import { ListMissionsDto } from './dto/list-missions.dto';
 import { UpdateMissionDto } from './dto/update-mission.dto';
+import { assertEmployeeInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 
 /**
  * Work missions shown by the legacy `sites/Mohmt_3mal` screen.
@@ -14,10 +17,16 @@ import { UpdateMissionDto } from './dto/update-mission.dto';
  */
 @Injectable()
 export class MissionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  async list(q: ListMissionsDto) {
+  async list(q: ListMissionsDto, user: JwtUser) {
     const where: Prisma.tbl_mohmat_3malWhereInput = {};
+    // Branch isolation: scoped users only see missions of employees in their branches.
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    if (empIds !== null) where.emp_id_fk = { in: empIds };
     if (q.search?.trim()) {
       const s = q.search.trim();
       where.OR = [
@@ -55,8 +64,8 @@ export class MissionsService {
     );
   }
 
-  async get(id: number) {
-    const row = await this.findOrThrow(id);
+  async get(id: number, user: JwtUser) {
+    const row = await this.findOrThrow(id, user);
     return {
       id: row.id,
       name: row.mohma_name,
@@ -68,8 +77,9 @@ export class MissionsService {
     };
   }
 
-  async create(dto: CreateMissionDto, publisherId?: number) {
-    const employee = await this.resolveEmployee(dto.empId);
+  async create(dto: CreateMissionDto, user: JwtUser) {
+    const publisherId = user.sub;
+    const employee = await this.resolveEmployee(dto.empId, user);
     this.assertRequired(dto.name, dto.missionDate, dto.details);
     const today = todayIso();
     const row = await this.prisma.tbl_mohmat_3mal.create({
@@ -89,10 +99,11 @@ export class MissionsService {
     return { id: row.id };
   }
 
-  async update(id: number, dto: UpdateMissionDto, publisherId?: number) {
-    const old = await this.findOrThrow(id);
+  async update(id: number, dto: UpdateMissionDto, user: JwtUser) {
+    const publisherId = user.sub;
+    const old = await this.findOrThrow(id, user);
     const empId = dto.empId ?? old.emp_id_fk;
-    const employee = await this.resolveEmployee(empId);
+    const employee = await this.resolveEmployee(empId, user);
     const name = dto.name ?? old.mohma_name;
     const missionDate = dto.missionDate ?? old.mohma_date;
     const details = dto.details ?? old.details ?? '';
@@ -117,8 +128,8 @@ export class MissionsService {
     return { id };
   }
 
-  async remove(id: number) {
-    await this.findOrThrow(id);
+  async remove(id: number, user: JwtUser) {
+    await this.findOrThrow(id, user);
     await this.prisma.tbl_mohmat_3mal.delete({ where: { id } });
     return { id };
   }
@@ -131,15 +142,18 @@ export class MissionsService {
     if (!details?.trim()) throw new BadRequestException('تفاصيل المهمة مطلوبة');
   }
 
-  private async resolveEmployee(empId: number) {
+  private async resolveEmployee(empId: number, user: JwtUser) {
     const employee = await this.prisma.employees.findUnique({ where: { id: empId } });
     if (!employee) throw new NotFoundException('الموظف غير موجود');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, employee.id);
     return employee;
   }
 
-  private async findOrThrow(id: number) {
+  /** Load a mission and enforce that its employee is inside the caller's branch scope. */
+  private async findOrThrow(id: number, user: JwtUser) {
     const row = await this.prisma.tbl_mohmat_3mal.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('المهمة غير موجودة');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, row.emp_id_fk);
     return row;
   }
 }

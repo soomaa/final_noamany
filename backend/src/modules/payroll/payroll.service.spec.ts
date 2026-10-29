@@ -1,4 +1,5 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PayrollService } from './payroll.service';
 
 describe('PayrollService salary controls', () => {
@@ -99,5 +100,55 @@ describe('PayrollService salary increases', () => {
       }),
     });
     expect(result).toEqual(expect.objectContaining({ employeeId: 56, value: 500 }));
+  });
+});
+
+describe('PayrollService branch-scoped run access', () => {
+  const branchUser = { sub: 50, level: 3, emp_code: 500, branch: 2, man_women_type: 3 } as never;
+  const run = { id: 3, mosayer_rkm: 77, mosayer_month: 9, mosayer_year: 2026, egmali_safi: 99999 };
+
+  function setup(line: { id: number; emp_id: number }) {
+    const prisma = {
+      hr_mosayer: { findUnique: jest.fn().mockResolvedValue(run) },
+      hr_mosayer_details: {
+        findFirst: jest.fn().mockResolvedValue(line),
+        findMany: jest.fn().mockResolvedValue([]),
+        count: jest.fn().mockResolvedValue(1),
+        aggregate: jest.fn().mockResolvedValue({ _sum: { safi: 1200 } }),
+        groupBy: jest.fn().mockResolvedValue([{ mosayer_rkm_fk: 77, _sum: { safi: 1200 } }]),
+      },
+      hr_mosayer_egraat: { findMany: jest.fn().mockResolvedValue([]) },
+      // Employees of Tanta (2) and its sub-branches 5/6: ids 500 and 501.
+      employees: { findMany: jest.fn().mockResolvedValue([{ id: 500, emp_code: 1500 }, { id: 501, emp_code: 1501 }]) },
+    };
+    const engine = { computeOneById: jest.fn().mockResolvedValue(null) };
+    const service = new PayrollService(prisma as never, engine as never, {} as never, new BranchScopeService());
+    return { service, prisma };
+  }
+
+  it('forbids the slip of an employee outside the caller branches', async () => {
+    const { service } = setup({ id: 40, emp_id: 900 });
+    await expect(service.getSlip(3, 40, branchUser)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('returns the slip of an in-scope employee', async () => {
+    const { service } = setup({ id: 41, emp_id: 501 });
+    await expect(service.getSlip(3, 41, branchUser)).resolves.toEqual(
+      expect.objectContaining({ employee: expect.objectContaining({ id: 501 }) }),
+    );
+  });
+
+  it('limits run lines and the run total to in-scope employees', async () => {
+    const { service, prisma } = setup({ id: 41, emp_id: 501 });
+    await service.listRunLines(3, { skip: 0, take: 20, page: 1, pageSize: 20 } as never, branchUser);
+    expect(prisma.hr_mosayer_details.findMany.mock.calls[0][0].where).toEqual({
+      mosayer_rkm_fk: 77,
+      emp_id: { in: [500, 501] },
+    });
+    const found = await service.findRun(3, branchUser);
+    expect(found.totalAmount).toBe(1200);
+    expect(prisma.hr_mosayer_details.count).toHaveBeenLastCalledWith({
+      where: { mosayer_rkm_fk: 77, emp_id: { in: [500, 501] } },
+    });
   });
 });

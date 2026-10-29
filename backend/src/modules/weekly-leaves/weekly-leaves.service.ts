@@ -4,16 +4,31 @@ import { paginated } from '../../common/dto/list-result';
 import { isDryRun } from '../../common/preview/dry-run.util';
 import { previewResponse } from '../../common/preview/preview.types';
 import { assertValidWeekday } from '../../common/validators/validation.util';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { ListWeeklyLeavesDto } from './dto/list-weekly-leaves.dto';
+import { assertEmployeeInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 
 @Injectable()
 export class WeeklyLeavesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  async list(q: ListWeeklyLeavesDto) {
+  async list(q: ListWeeklyLeavesDto, user: JwtUser) {
     const where: Prisma.hr_emp_agazat_dayesWhereInput = {};
-    if (q.empId) where.emp_id_fk = q.empId;
+    // Branch isolation: scoped users only see weekly leaves of employees in their branches.
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    if (q.empId) {
+      if (empIds !== null && !empIds.includes(Number(q.empId))) {
+        return paginated([], 0, q.page, q.pageSize);
+      }
+      where.emp_id_fk = q.empId;
+    } else if (empIds !== null) {
+      where.emp_id_fk = { in: empIds };
+    }
     if (q.search?.trim()) {
       const s = q.search.trim();
       where.OR = [{ emp_name: { contains: s } }, { off_day: { contains: s } }];
@@ -35,12 +50,14 @@ export class WeeklyLeavesService {
 
   async create(
     body: { empId: number; offDay: string },
-    publisherId?: number,
+    user: JwtUser,
     dryRun = false,
   ) {
+    const publisherId = user.sub;
     assertValidWeekday(body.offDay);
     const emp = await this.prisma.employees.findUnique({ where: { id: body.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, emp.id);
 
     const existing = await this.prisma.hr_emp_agazat_dayes.findMany({
       where: { emp_id_fk: body.empId },
@@ -88,10 +105,12 @@ export class WeeklyLeavesService {
   async update(
     id: number,
     body: { empId?: number; offDay?: string },
-    publisherId?: number,
+    user: JwtUser,
     dryRun = false,
   ) {
-    const current = await this.findOrThrow(id);
+    const publisherId = user.sub;
+    const current = await this.findOrThrow(id, user);
+    if (body.empId != null) await assertEmployeeInScope(this.prisma, this.branchScope, user, body.empId);
     if (body.offDay != null) assertValidWeekday(body.offDay);
 
     if (isDryRun(dryRun)) {
@@ -128,15 +147,17 @@ export class WeeklyLeavesService {
     return { id };
   }
 
-  async remove(id: number) {
-    await this.findOrThrow(id);
+  async remove(id: number, user: JwtUser) {
+    await this.findOrThrow(id, user);
     await this.prisma.hr_emp_agazat_dayes.delete({ where: { id } });
     return { id };
   }
 
-  private async findOrThrow(id: number) {
+  /** Load a weekly-leave row and enforce that its employee is inside the caller's branch scope. */
+  private async findOrThrow(id: number, user: JwtUser) {
     const row = await this.prisma.hr_emp_agazat_dayes.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('إجازة الموظف الأسبوعية غير موجودة');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, row.emp_id_fk);
     return row;
   }
 }

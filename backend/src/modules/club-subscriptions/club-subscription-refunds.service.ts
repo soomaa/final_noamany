@@ -7,6 +7,7 @@ import { isDryRun, previewResponse, PreviewRow } from '../../common/preview';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { isSystemAdmin } from '../../common/utils/system-admin.util';
+import { isReceptionEmployee } from '../../common/utils/reception-user.util';
 import { localDateString, parseDateOnly } from '../club-members/club-member.utils';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
 import { EXPENSE_APPROVED, mapPaymentMethodToArabic, nextFinDocNumber, REVENUE_PAID, REFUND_EXPENSE_CATEGORY } from '../finance/finance.utils';
@@ -77,6 +78,7 @@ export class ClubSubscriptionRefundsService {
 
   async list(user?: JwtUser) {
     const rows = await this.prisma.club_subscription_refunds.findMany({
+      // Refund history stays visible to reception for past dates (the daily-only rule was withdrawn).
       where: { ...await this.branchWhere(user), status: { not: 'cancelled' } },
       include: {
         member: { select: { member_code: true, gender: true } },
@@ -470,6 +472,7 @@ export class ClubSubscriptionRefundsService {
     actorUserId?: number,
     user?: JwtUser,
   ) {
+    if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه حذف أو تعديل المرتجعات');
     const existing = await this.prisma.club_subscription_refunds.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الاسترداد غير موجود');
     await this.assertBranchAccess(user, existing.branch_id);
@@ -551,6 +554,7 @@ export class ClubSubscriptionRefundsService {
   }
 
   async edit(id: number, body: UpdateClubSubscriptionRefundDto, user: JwtUser) {
+    if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه حذف أو تعديل المرتجعات');
     const amount = roundMoney(Number(body.refundAmount));
     if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestException('مبلغ الاسترداد غير صالح');
     const validDate = (value: string) => {
@@ -660,6 +664,7 @@ export class ClubSubscriptionRefundsService {
   }
 
   async remove(id: number, user: JwtUser) {
+    if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه حذف أو تعديل المرتجعات');
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM club_subscription_refunds WHERE id = ${id} FOR UPDATE`;
       const refund = await tx.club_subscription_refunds.findUnique({ where: { id } });

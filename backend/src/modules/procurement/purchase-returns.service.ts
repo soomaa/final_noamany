@@ -12,6 +12,7 @@ import type { JwtUser } from '../../common/types/jwt-user';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { LedgerService } from '../accounting/ledger.service';
 import { InventoryStockService } from '../inventory/inventory-stock.service';
+import { InventoryLocationService } from '../inventory/inventory-location.service';
 import {
   ChangePurchaseReturnStatusDto,
   ListPurchaseReturnsDto,
@@ -31,7 +32,13 @@ export class PurchaseReturnsService {
     private readonly prisma: PrismaService,
     private readonly stock: InventoryStockService,
     private readonly ledger: LedgerService,
+    private readonly location: InventoryLocationService = new InventoryLocationService(prisma),
+    private readonly branchScope: BranchScopeService = new BranchScopeService(),
   ) {}
+
+  private assertReturnBranch(user: JwtUser, branchId: number) {
+    this.branchScope.assertBranchAllowed(user, branchId, 'المرتجع خارج صلاحيات المستخدم');
+  }
 
   private mapItem(item: Prisma.prc_purchase_return_itemsGetPayload<object>) {
     return {
@@ -192,8 +199,10 @@ export class PurchaseReturnsService {
     }
   }
 
-  async list(q: ListPurchaseReturnsDto) {
+  async list(q: ListPurchaseReturnsDto, user?: JwtUser) {
     const and: Prisma.prc_purchase_returnsWhereInput[] = [notDeletedFilter()];
+    const scoped = this.branchScope.resolveListFilter(user, q.branchId ?? null);
+    if (scoped) and.push({ branch_id: { in: scoped } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -201,7 +210,6 @@ export class PurchaseReturnsService {
       });
     }
     if (q.status && q.status !== 'all') and.push({ status: q.status });
-    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
     if (q.supplierId && q.supplierId !== 'all') and.push({ supplier_id: Number(q.supplierId) });
     const where = { AND: and };
     const [rows, total] = await Promise.all([
@@ -234,17 +242,20 @@ export class PurchaseReturnsService {
     }));
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: JwtUser) {
     const row = await this.prisma.prc_purchase_returns.findFirst({
       where: { id, ...notDeletedFilter() },
       include: { items: true },
     });
     if (!row) throw new NotFoundException('مرتجع المشتريات غير موجود');
+    this.assertReturnBranch(user, row.branch_id);
     return (await this.withNames([row]))[0];
   }
 
   async create(dto: UpsertPurchaseReturnDto, userId: number, user?: JwtUser) {
-    if (user && !new BranchScopeService().isBranchAllowed(user, dto.branchId)) throw new BadRequestException('الفرع خارج صلاحيات المستخدم');
+    if (user && !this.branchScope.isBranchAllowed(user, dto.branchId)) throw new BadRequestException('الفرع خارج صلاحيات المستخدم');
+    // The warehouse must be active, in scope and belong to the return's branch.
+    if (user) await this.location.resolveSelection(user, dto.warehouseId, dto.branchId);
     if (dto.status && dto.status !== 'مسودة') throw new BadRequestException('يبدأ المرتجع كمسودة ثم يتم اعتماده');
     if (!dto.items?.length) throw new BadRequestException('يجب إضافة بند واحد على الأقل');
     if (dto.supplierInvoiceId) dto = await this.resolveInvoiceItems(dto);
@@ -325,11 +336,12 @@ export class PurchaseReturnsService {
     await tx.prc_supplier_invoices.update({where:{id:invoice.id},data:{returned_amount:returned,remaining_amount:roundMoney(toNumber(invoice.total_amount)-toNumber(invoice.paid_amount)-returned)}});
   }
 
-  async update(id: number, dto: Partial<UpsertPurchaseReturnDto>) {
+  async update(id: number, dto: Partial<UpsertPurchaseReturnDto>, user: JwtUser) {
     const existing = await this.prisma.prc_purchase_returns.findFirst({
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('مرتجع المشتريات غير موجود');
+    this.assertReturnBranch(user, existing.branch_id);
     if (existing.status !== 'مسودة') {
       throw new BadRequestException('لا يمكن تعديل المرتجع إلا في حالة المسودة');
     }
@@ -346,6 +358,9 @@ export class PurchaseReturnsService {
         branchId: existing.branch_id,
       };
       if (dto.items) dto = await this.resolveInvoiceItems(dto as UpsertPurchaseReturnDto);
+    }
+    if (!existing.supplier_invoice_id && (dto.warehouseId != null || dto.branchId != null)) {
+      await this.location.resolveSelection(user, dto.warehouseId ?? existing.warehouse_id, dto.branchId ?? existing.branch_id);
     }
     const linked = !!existing.supplier_invoice_id;
     const itemTotal = (i: PurchaseReturnItemDto) => (linked ? i.total! : this.lineTotal(i));
@@ -387,11 +402,12 @@ export class PurchaseReturnsService {
     return (await this.withNames([row]))[0];
   }
 
-  async remove(id: number) {
+  async remove(id: number, user: JwtUser) {
     const existing = await this.prisma.prc_purchase_returns.findFirst({
       where: { id, ...notDeletedFilter() },
     });
     if (!existing) throw new NotFoundException('مرتجع المشتريات غير موجود');
+    this.assertReturnBranch(user, existing.branch_id);
     if (existing.status !== 'مسودة') {
       throw new BadRequestException('لا يمكن حذف المرتجع إلا في حالة المسودة');
     }
@@ -408,7 +424,7 @@ export class PurchaseReturnsService {
       include: { items: true },
     });
     if (!retPreview) throw new NotFoundException('مرتجع المشتريات غير موجود');
-    if (user && !new BranchScopeService().isBranchAllowed(user,retPreview.branch_id)) throw new BadRequestException('المرتجع خارج صلاحيات المستخدم');
+    if (user && !this.branchScope.isBranchAllowed(user,retPreview.branch_id)) throw new BadRequestException('المرتجع خارج صلاحيات المستخدم');
 
     const wouldPost =
       !retPreview.stock_posted &&

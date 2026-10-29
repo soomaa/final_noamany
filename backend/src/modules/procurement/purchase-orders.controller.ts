@@ -24,8 +24,8 @@ export class PurchaseOrdersController {
   constructor(private readonly service: PurchaseOrdersService) {}
 
   @Get()
-  list(@Query() query: ListPurchaseOrdersDto) {
-    return this.service.list(query);
+  list(@Query() query: ListPurchaseOrdersDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(query, user);
   }
 
   /** Preview of the numbers the next direct purchase will take (final numbers are assigned on save). */
@@ -35,8 +35,8 @@ export class PurchaseOrdersController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user);
   }
 
   @Post()

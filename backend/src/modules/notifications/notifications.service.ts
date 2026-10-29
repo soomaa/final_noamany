@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 
 export interface NotificationView {
   id: number;
@@ -43,7 +45,10 @@ function daysUntil(d: Date, today: Date): number {
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: BranchScopeService,
+  ) {}
 
   async list(userId: number): Promise<NotificationView[]> {
     const [rows, settings, messages] = await Promise.all([
@@ -119,14 +124,20 @@ export class NotificationsService {
   }
 
   /** Derived alerts from employee data (contracts, residency, insurance, birthdays, probation). */
-  async alerts() {
+  async alerts(user: JwtUser) {
+    // HR alerts expose other employees' contract/residency/birth dates: keep them to the
+    // caller's branch scope (admins: all branches).
+    const branches = this.scope.allowedBranchIds(user);
     const g = await this.prisma.global_settings.findFirst();
     const contractDays = g?.alert_days_contract ?? 30;
     const residencyDays = g?.alert_days_quest ?? 30;
     const today = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate()));
 
     const emps = await this.prisma.employees.findMany({
-      where: { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
+      where: {
+        OR: [{ leave_emp: null }, { leave_emp: 0 }],
+        ...(branches ? { branch_id_fk: { in: branches } } : {}),
+      },
       select: {
         id: true,
         emp_code: true,

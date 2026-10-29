@@ -190,7 +190,7 @@ describe('ProductsService opening stock total cost', () => {
       initialStock: 0.7,
       initialTotalCost: 480,
       openingBranchId: 1,
-    }, 1);
+    }, 1, undefined, { sub: 1, level: 1, branch: 0 } as never);
 
     expect(tx.inv_products.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ cost_price: 480 / 0.7 }),

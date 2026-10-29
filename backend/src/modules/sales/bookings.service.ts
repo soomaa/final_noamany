@@ -20,6 +20,8 @@ import { ModuleLedgerService } from "../accounting/module-ledger.service";
 import { recordSystemRevenue } from "../finance/system-revenue.util";
 import { ShiftSessionsService } from "./shift-sessions.service";
 import { retryOnUniqueViolation } from "../../common/retry-unique";
+import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
+import { JwtUser } from "../../common/types/jwt-user";
 
 const ACTIVE_BOOKING_STATUSES: SalesBookingStatus[] = [
   SalesBookingStatus.pending,
@@ -34,7 +36,12 @@ export class BookingsService {
     private readonly posSettings: PosSettingsService,
     private readonly moduleLedger: ModuleLedgerService,
     private readonly sessions: ShiftSessionsService,
+    private readonly branchScope: BranchScopeService,
   ) {}
+
+  private assertBookingBranch(user: JwtUser | undefined, branchId: number | null) {
+    if (user) this.branchScope.assertBranchAllowed(user, branchId, "لا تملك صلاحية الوصول لحجوزات فرع آخر");
+  }
 
   private map(
     row: Prisma.sales_bookingsGetPayload<{
@@ -200,7 +207,7 @@ export class BookingsService {
     return { timeSlots, totalTables, date: q.date, branchId: q.branchId };
   }
 
-  async list(q: ListBookingsDto) {
+  async list(q: ListBookingsDto, user?: JwtUser) {
     const and: Prisma.sales_bookingsWhereInput[] = [];
     if (q.search?.trim()) {
       const s = q.search.trim();
@@ -212,7 +219,10 @@ export class BookingsService {
         ],
       });
     }
-    if (q.branchId) and.push({ branch_id: q.branchId });
+    const branchIds = user
+      ? this.branchScope.resolveListFilter(user, q.branchId ?? null)
+      : (q.branchId ? [q.branchId] : null);
+    if (branchIds) and.push({ branch_id: { in: branchIds } });
     if (q.status && q.status !== "all") {
       and.push({ status: q.status as SalesBookingStatus });
     }
@@ -325,12 +335,13 @@ export class BookingsService {
     return this.map(row);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.sales_bookings.findUnique({
       where: { id },
       include: { service: true, payments: { orderBy: { id: "asc" } } },
     });
     if (!row) throw new NotFoundException("الحجز غير موجود");
+    this.assertBookingBranch(user, row.branch_id);
     return this.map(row);
   }
 
@@ -350,7 +361,7 @@ export class BookingsService {
     return `${prefix}${String((Number.isFinite(last) ? last : 0) + 1).padStart(6, "0")}`;
   }
 
-  async addPayment(id: number, dto: BookingPaymentDto, userId: number) {
+  async addPayment(id: number, dto: BookingPaymentDto, userId: number, user?: JwtUser) {
     await retryOnUniqueViolation(() =>
       this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw(Prisma.sql`
@@ -358,6 +369,7 @@ export class BookingsService {
       `);
         const booking = await tx.sales_bookings.findUnique({ where: { id } });
         if (!booking) throw new NotFoundException("الحجز غير موجود");
+        this.assertBookingBranch(user, booking.branch_id);
         if (booking.status === SalesBookingStatus.cancelled) {
           throw new BadRequestException("لا يمكن تحصيل دفعة على حجز ملغي");
         }
@@ -451,7 +463,7 @@ export class BookingsService {
     return this.findOne(id);
   }
 
-  async addRefund(id: number, dto: BookingPaymentDto, userId: number) {
+  async addRefund(id: number, dto: BookingPaymentDto, userId: number, user?: JwtUser) {
     await retryOnUniqueViolation(() =>
       this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw(Prisma.sql`
@@ -459,6 +471,7 @@ export class BookingsService {
       `);
         const booking = await tx.sales_bookings.findUnique({ where: { id } });
         if (!booking) throw new NotFoundException("الحجز غير موجود");
+        this.assertBookingBranch(user, booking.branch_id);
         const paid = toNumber(booking.paid_amount);
         const refunded = toNumber(booking.refunded_amount);
         const refundable = paid - refunded;
@@ -541,11 +554,12 @@ export class BookingsService {
     return this.findOne(id);
   }
 
-  async updateStatus(id: number, status: SalesBookingStatus) {
+  async updateStatus(id: number, status: SalesBookingStatus, user?: JwtUser) {
     const booking = await this.prisma.sales_bookings.findUnique({
       where: { id },
     });
     if (!booking) throw new NotFoundException("الحجز غير موجود");
+    this.assertBookingBranch(user, booking.branch_id);
     const net =
       toNumber(booking.paid_amount) - toNumber(booking.refunded_amount);
     if (status === SalesBookingStatus.cancelled && net > 0.001) {

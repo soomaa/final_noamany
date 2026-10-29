@@ -14,6 +14,9 @@ import {
 } from './dto/shifts.dto';
 import { ShiftWindowService, normalizeTime } from './shift-window.service';
 import { toNumber } from './sales.utils';
+import { BranchScopeService, SUB_BRANCH_IDS } from '../../common/branch-scope/branch-scope.service';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
+import type { JwtUser } from '../../common/types/jwt-user';
 
 type ShiftRow = Prisma.sales_shiftsGetPayload<object>;
 type ResponsibleUser = { user_id: number; name: string | null; username: string | null };
@@ -23,7 +26,24 @@ export class ShiftsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly window: ShiftWindowService,
+    private readonly branchScope: BranchScopeService,
   ) {}
+
+  /**
+   * Shift visibility for lists: the requested/allowed branches plus company-wide
+   * templates (branch_id = null). `null` ⇒ no restriction (admin without a request).
+   */
+  private shiftBranchWhere(user: JwtUser | undefined, requested?: number | null): Prisma.sales_shiftsWhereInput | null {
+    const ids = user ? this.branchScope.resolveListFilter(user, requested ?? null) : (requested != null ? [requested] : null);
+    return ids ? { OR: [{ branch_id: { in: ids } }, { branch_id: null }] } : null;
+  }
+
+  /** Branch-owned shifts need branch access; company-wide templates (null branch) are admin-only to change. */
+  private assertShiftAccess(user: JwtUser | undefined, branchId: number | null, write = false) {
+    if (!user) return;
+    if (branchId == null && !write) return;
+    this.branchScope.assertBranchAllowed(user, branchId, 'لا تملك صلاحية الوصول لورديات هذا الفرع');
+  }
 
   private mapShift(row: ShiftRow, responsible?: ResponsibleUser | null) {
     return {
@@ -68,13 +88,10 @@ export class ShiftsService {
     }
   }
 
-  async list(q: ListShiftsDto) {
-    const where: Prisma.sales_shiftsWhereInput = {};
+  async list(q: ListShiftsDto, user?: JwtUser) {
     // A branch can use its own shifts plus company-wide templates (branch_id = null),
     // matching the schedule-status endpoint and the POS handover workflow.
-    if (q.branchId !== undefined) {
-      where.OR = [{ branch_id: q.branchId }, { branch_id: null }];
-    }
+    const where: Prisma.sales_shiftsWhereInput = { ...(this.shiftBranchWhere(user, q.branchId) ?? {}) };
     if (q.isActive !== undefined) where.is_active = q.isActive;
     const rows = await this.prisma.sales_shifts.findMany({
       where,
@@ -91,9 +108,10 @@ export class ShiftsService {
     return rows.map((r) => this.mapShift(r, r.responsible_user_id ? byId.get(r.responsible_user_id) : null));
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.sales_shifts.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('الوردية غير موجودة');
+    this.assertShiftAccess(user, row.branch_id);
     const responsible = row.responsible_user_id
       ? await this.prisma.users.findUnique({
           where: { user_id: row.responsible_user_id },
@@ -103,11 +121,25 @@ export class ShiftsService {
     return this.mapShift(row, responsible);
   }
 
-  async eligibleUsers(branchId?: number) {
+  /**
+   * Users who may run a cafe POS shift. A single branch also admits staff of its parent
+   * branch (Tanta main staff operate the Tanta Up/Down POS). Without a branch, a scoped
+   * caller sees only users of their allowed branches.
+   */
+  async eligibleUsers(branchId?: number, caller?: JwtUser) {
+    let branchIds: number[] | null = null;
+    if (branchId) {
+      const parents = Object.entries(SUB_BRANCH_IDS)
+        .filter(([, subs]) => subs.includes(branchId))
+        .map(([parent]) => Number(parent));
+      branchIds = [branchId, ...parents];
+    } else if (caller) {
+      branchIds = this.branchScope.allowedBranchIds(caller);
+    }
     const users = await this.prisma.users.findMany({
       where: {
         approved: 1,
-        ...(branchId ? { OR: [{ branch_id_fk: branchId }, { branch_id_fk: null }] } : {}),
+        ...(branchIds ? { OR: [{ branch_id_fk: { in: branchIds } }, { branch_id_fk: null }] } : {}),
       },
       select: { user_id: true, username: true, name: true, level: true, emp_code: true, branch_id_fk: true },
       orderBy: { name: 'asc' },
@@ -150,21 +182,19 @@ export class ShiftsService {
           branchId: user.branch_id_fk,
           jobTitle,
           department,
-          isAdmin: user.level === 1,
-          eligible: user.level === 1 || isCafeManagement(jobTitle),
+          isAdmin: isSystemAdmin({ level: user.level } as JwtUser),
+          eligible: isSystemAdmin({ level: user.level } as JwtUser) || isCafeManagement(jobTitle),
         };
       })
       .filter((user) => user.eligible);
   }
 
-  async getScheduleStatus(q: CurrentShiftQueryDto) {
+  async getScheduleStatus(q: CurrentShiftQueryDto, user?: JwtUser) {
     const now = this.window.nowTime();
     const shifts = await this.prisma.sales_shifts.findMany({
       where: {
         is_active: true,
-        ...(q.branchId !== undefined
-          ? { OR: [{ branch_id: q.branchId }, { branch_id: null }] }
-          : {}),
+        ...(this.shiftBranchWhere(user, q.branchId) ?? {}),
       },
       orderBy: { start_time: 'asc' },
     });
@@ -194,14 +224,12 @@ export class ShiftsService {
     };
   }
 
-  async getCurrent(q: CurrentShiftQueryDto) {
+  async getCurrent(q: CurrentShiftQueryDto, user?: JwtUser) {
     const now = this.window.nowTime();
     const shifts = await this.prisma.sales_shifts.findMany({
       where: {
         is_active: true,
-        ...(q.branchId !== undefined
-          ? { OR: [{ branch_id: q.branchId }, { branch_id: null }] }
-          : {}),
+        ...(this.shiftBranchWhere(user, q.branchId) ?? {}),
       },
       orderBy: { start_time: 'asc' },
     });
@@ -212,14 +240,14 @@ export class ShiftsService {
   private async revenueForShift(
     shift: ShiftRow,
     date: string,
-    branchFilter?: number,
+    branchFilter?: number[] | null,
   ) {
     const saleWhere: Prisma.sales_quick_salesWhereInput = {
       sale_date: date,
       status: QuickSaleStatus.completed,
     };
     if (shift.branch_id) saleWhere.branch_id = shift.branch_id;
-    else if (branchFilter) saleWhere.branch_id = branchFilter;
+    else if (branchFilter) saleWhere.branch_id = { in: branchFilter };
 
     const bookingWhere: Prisma.sales_bookingsWhereInput = {
       booking_date: date,
@@ -227,7 +255,7 @@ export class ShiftsService {
       paid_amount: { gt: 0 },
     };
     if (shift.branch_id) bookingWhere.branch_id = shift.branch_id;
-    else if (branchFilter) bookingWhere.branch_id = branchFilter;
+    else if (branchFilter) bookingWhere.branch_id = { in: branchFilter };
 
     const [allSales, allBookings] = await Promise.all([
       this.prisma.sales_quick_sales.findMany({ where: saleWhere }),
@@ -299,21 +327,30 @@ export class ShiftsService {
     };
   }
 
-  async getShiftRevenue(id: number, q: ShiftRevenueQueryDto) {
+  async getShiftRevenue(id: number, q: ShiftRevenueQueryDto, user?: JwtUser) {
     const shift = await this.prisma.sales_shifts.findUnique({ where: { id } });
     if (!shift) throw new NotFoundException('الوردية غير موجودة');
-    return this.revenueForShift(shift, q.date);
+    this.assertShiftAccess(user, shift.branch_id);
+    // A company-wide template only sums the caller's allowed branches.
+    const branchFilter = user ? this.branchScope.resolveListFilter(user, q.branchId ?? null) : null;
+    return this.revenueForShift(shift, q.date, branchFilter);
   }
 
-  async getAllRevenue(q: ShiftRevenueQueryDto) {
+  async getAllRevenue(q: ShiftRevenueQueryDto, user?: JwtUser) {
+    const branchFilter = user
+      ? this.branchScope.resolveListFilter(user, q.branchId ?? null)
+      : (q.branchId ? [q.branchId] : null);
     const where: Prisma.sales_shiftsWhereInput = { is_active: true };
-    if (q.branchId) where.branch_id = q.branchId;
+    // Keep the original semantics: an explicit branch lists only that branch's shifts;
+    // a scoped default lists the allowed branches' shifts plus company-wide templates.
+    if (q.branchId && branchFilter) where.branch_id = { in: branchFilter };
+    else if (branchFilter) where.OR = [{ branch_id: { in: branchFilter } }, { branch_id: null }];
     const shifts = await this.prisma.sales_shifts.findMany({
       where,
       orderBy: { start_time: 'asc' },
     });
     const shiftsData = await Promise.all(
-      shifts.map((s) => this.revenueForShift(s, q.date, q.branchId)),
+      shifts.map((s) => this.revenueForShift(s, q.date, branchFilter)),
     );
     const grandTotal = shiftsData.reduce((sum, s) => sum + s.summary.totalRevenue, 0);
     return {
@@ -360,9 +397,11 @@ export class ShiftsService {
     return this.mapShift(row);
   }
 
-  async update(id: number, dto: UpdateShiftDto) {
+  async update(id: number, dto: UpdateShiftDto, user?: JwtUser) {
     const existing = await this.prisma.sales_shifts.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الوردية غير موجودة');
+    this.assertShiftAccess(user, existing.branch_id, true);
+    if (dto.branchId !== undefined) this.assertShiftAccess(user, dto.branchId, true);
 
     const startTime = dto.startTime ? normalizeTime(dto.startTime) : existing.start_time;
     const endTime = dto.endTime ? normalizeTime(dto.endTime) : existing.end_time;
@@ -403,9 +442,10 @@ export class ShiftsService {
     return this.mapShift(row);
   }
 
-  async remove(id: number) {
+  async remove(id: number, user?: JwtUser) {
     const existing = await this.prisma.sales_shifts.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الوردية غير موجودة');
+    this.assertShiftAccess(user, existing.branch_id, true);
     const row = await this.prisma.sales_shifts.update({
       where: { id },
       data: { is_active: false },

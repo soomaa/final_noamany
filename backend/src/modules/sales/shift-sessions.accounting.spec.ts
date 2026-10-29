@@ -3,6 +3,7 @@ import {
   SalesPaymentMethod,
   ShiftSessionStatus,
 } from "@prisma/client";
+import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
 import { ShiftSessionsService } from "./shift-sessions.service";
 
 describe("shift session financial attribution", () => {
@@ -55,6 +56,7 @@ describe("shift session financial attribution", () => {
       {} as never,
       {} as never,
       {} as never,
+      new BranchScopeService(),
     );
 
     const result = await service.calculateSessionSales({
@@ -99,13 +101,14 @@ describe("shift session financial attribution", () => {
       {} as never,
       {} as never,
       {} as never,
+      new BranchScopeService(),
     );
 
-    await service.getCurrent({ branchId: 1, userId: 9 });
+    await service.getCurrent({ branchId: 1, userId: 9 }, { sub: 9, level: 1 } as never);
 
     expect(findFirst).toHaveBeenCalledWith({
       where: {
-        branch_id: 1,
+        branch_id: { in: [1] },
         user_id: 9,
         status: "open",
       },
@@ -125,6 +128,7 @@ describe("shift session financial attribution", () => {
       {} as never,
       {} as never,
       {} as never,
+      new BranchScopeService(),
     );
 
     await expect(
@@ -158,6 +162,7 @@ describe("shift session financial attribution", () => {
       {} as never,
       {} as never,
       {} as never,
+      new BranchScopeService(),
     );
     service.calculateSessionSales = jest.fn().mockResolvedValue({
       totalSales: 50,

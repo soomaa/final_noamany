@@ -3,7 +3,10 @@ import { randomBytes } from 'crypto';
 import * as bcrypt from 'bcryptjs';
 import { Prisma } from '@prisma/client';
 import { parseShiftType, shiftTypeToLabel } from '../../common/constants/shift-type.util';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { paginated } from '../../common/dto/list-result';
 import { formToData, rowToForm } from './employees.fieldmap';
@@ -38,7 +41,51 @@ const METHOD_FROM_NUM: Record<number, string> = { 1: 'fixed', 2: 'percent', 3: '
 export class EmployeesService {
   private readonly logger = new Logger(EmployeesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // Stateless; defaulted so the existing unit specs can still construct the service.
+    private readonly scope: BranchScopeService = new BranchScopeService(),
+  ) {}
+
+  // ---- branch scope ---------------------------------------------------------------------
+
+  /**
+   * Every `/employees/:id` read/write goes through this: a non-system-admin may only touch
+   * employees of their own branch (Tanta main also covers its sub-branches).
+   */
+  async assertEmployeeInScope(user: JwtUser, id: number): Promise<void> {
+    if (isSystemAdmin(user)) return;
+    const emp = await this.prisma.employees.findUnique({ where: { id }, select: { branch_id_fk: true } });
+    if (!emp) throw new NotFoundException('الموظف غير موجود');
+    this.scope.assertBranchAllowed(user, emp.branch_id_fk, 'لا تملك صلاحية الوصول لبيانات هذا الموظف');
+  }
+
+  /**
+   * Create/update body: `branch_id_fk` must be in scope. A non-admin creating an employee
+   * without a branch gets their own branch rather than an unscoped (invisible) row.
+   */
+  assertEmployeeBodyInScope(user: JwtUser, body: Record<string, unknown>, isCreate: boolean): void {
+    if (isSystemAdmin(user)) return;
+    const raw = body.branch_id_fk;
+    if (raw == null || raw === '' || Number(raw) === 0) {
+      if (isCreate) body.branch_id_fk = user.branch;
+      return;
+    }
+    this.scope.assertBranchAllowed(user, Number(raw));
+  }
+
+  /** Weekly-schedule slots may only point at branches inside the editor's scope. */
+  assertScheduleInScope(user: JwtUser, dto: PutWeeklyScheduleDto): void {
+    for (const slot of dto.slots ?? []) {
+      if (slot.branchId != null) this.scope.assertBranchAllowed(user, Number(slot.branchId));
+    }
+  }
+
+  /** `branch_id_fk` filter for employee lists/pickers: the user's scope, or nothing for admins. */
+  private scopedBranchWhere(user: JwtUser, requested?: string | number | null): Prisma.employeesWhereInput {
+    const branches = this.scope.resolveListFilter(user, requested);
+    return branches ? { branch_id_fk: { in: branches } } : {};
+  }
 
   /** "hh:mm AM/PM" or "HH:mm" → minutes since midnight. */
   private shiftMinutes(raw?: string | null): number | null {
@@ -171,7 +218,10 @@ export class EmployeesService {
     return rows[0] ?? null;
   }
 
-  async list(q: PaginationDto & { branch?: string; edara?: string; gender?: string; emp_type?: string; status?: string }) {
+  async list(
+    q: PaginationDto & { branch?: string; edara?: string; gender?: string; emp_type?: string; status?: string },
+    user: JwtUser,
+  ) {
     const where: Prisma.employeesWhereInput = { OR: [{ leave_emp: null }, { leave_emp: 0 }] };
     const and: Prisma.employeesWhereInput[] = [];
 
@@ -186,7 +236,8 @@ export class EmployeesService {
         ],
       });
     }
-    if (q.branch && q.branch !== 'all') and.push({ branch_id_fk: Number(q.branch) });
+    // Branch filter is clamped to the caller's scope (admins: the requested branch or all).
+    and.push(this.scopedBranchWhere(user, q.branch));
     if (q.edara && q.edara !== 'all') and.push({ edara_id: Number(q.edara) });
     if (q.gender && q.gender !== 'all') and.push({ gender: Number(q.gender) });
     if (q.emp_type && q.emp_type !== 'all') and.push({ emp_type: Number(q.emp_type) });
@@ -221,11 +272,12 @@ export class EmployeesService {
   }
 
   /** Minimal active-employee directory for POS account sales; no HR-sensitive fields. */
-  async posOptions() {
+  async posOptions(user: JwtUser) {
     return this.prisma.employees.findMany({
       where: {
         employee_type: 1,
         OR: [{ leave_emp: null }, { leave_emp: 0 }],
+        ...this.scopedBranchWhere(user),
       },
       select: { id: true, employee: true, emp_code: true },
       orderBy: [{ employee: 'asc' }, { emp_code: 'asc' }],
@@ -233,11 +285,12 @@ export class EmployeesService {
   }
 
   /** Active employees that may be assigned to ordinary club subscriptions. */
-  async subscriptionOptions() {
+  async subscriptionOptions(user: JwtUser) {
     return this.prisma.employees.findMany({
       where: {
         employee_type: 1,
         OR: [{ leave_emp: null }, { leave_emp: 0 }],
+        ...this.scopedBranchWhere(user),
       },
       select: { id: true, employee: true, emp_code: true },
       orderBy: [{ employee: 'asc' }, { emp_code: 'asc' }],
@@ -544,7 +597,7 @@ export class EmployeesService {
   }
 
   /** Sales specialists (أخصائي مبيعات) for member registration dropdown. */
-  async salesReps() {
+  async salesReps(user: JwtUser) {
     const marketingJobs = await this.prisma.department_jobs.findMany({
       where: marketingRepJobTitleWhere,
       select: { id: true },
@@ -556,6 +609,7 @@ export class EmployeesService {
           { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
           { employee_type: 1 },
           marketingRepEmployeeWhere(jobIds),
+          this.scopedBranchWhere(user),
         ],
       },
       select: { id: true, employee: true, emp_code: true, branch_id_fk: true },

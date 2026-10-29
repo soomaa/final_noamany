@@ -15,7 +15,8 @@
     --secondary: 210 40% 96%;
     --secondary-foreground: 215 25% 27%;
     --muted: 210 40% 96%;
-    --muted-foreground: 215 16% 47%;
+    /* Darker than the stock grey: staff read these screens all day, often from a distance. */
+    --muted-foreground: 215 19% 33%;
     --accent: 356 100% 96%;
     --accent-foreground: 357 82% 38%;
     --destructive: 0 72% 51%;
@@ -48,7 +49,7 @@
     --secondary: 350 6% 14%;
     --secondary-foreground: 0 0% 94%;
     --muted: 350 5% 13%;
-    --muted-foreground: 213 17% 62%;
+    --muted-foreground: 213 22% 78%;
     --accent: 350 8% 16%;
     --accent-foreground: 0 0% 94%;
     --destructive: 4 72% 58%;
@@ -88,9 +89,14 @@
   #root {
     min-height: 100%;
   }
+  /* Tajawal renders small and thin; scale the Arabic UI up a step and use a medium weight. */
+  html[lang='ar'] {
+    font-size: 106.25%;
+  }
   html[lang='ar'] body,
   html[lang='ar'] #root {
     font-family: 'Tajawal', system-ui, sans-serif;
+    font-weight: 500;
   }
   html[lang='en'] body,
   html[lang='en'] #root {

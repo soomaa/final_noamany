@@ -3,7 +3,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { JwtUser } from '../../common/types/jwt-user';
-import { assertSystemAdmin } from '../../common/utils/system-admin.util';
+import { assertSystemAdmin, isSystemAdmin } from '../../common/utils/system-admin.util';
 import { ClubDiscountCodesService } from './club-discount-codes.service';
 import {
   CreateClubDiscountCodeDto,
@@ -44,10 +44,10 @@ export class ClubDiscountCodesController {
   }
 
   @Get('employee-assignments')
-  employeeAssignments(@Query('employeeId') employeeId?: string) {
+  employeeAssignments(@CurrentUser() user: JwtUser, @Query('employeeId') employeeId?: string) {
     const id = employeeId == null || employeeId === '' ? undefined : Number(employeeId);
     if (id !== undefined && (!Number.isInteger(id) || id < 1)) throw new BadRequestException('رقم الموظف غير صالح');
-    return this.service.employeeAssignments(id);
+    return this.service.employeeAssignments(id, user);
   }
 
   @Delete('employee-assignments/employee/:employeeId')
@@ -60,36 +60,36 @@ export class ClubDiscountCodesController {
   grantToMember(@Body() body: GrantDiscountCodeToMemberDto, @CurrentUser() user: JwtUser) {
     // An employee can only issue a code allocated to that same employee. The
     // administrator remains able to issue on behalf of a team member.
-    if (user.level !== 1 && (!user.emp_code || user.emp_code !== body.employeeId)) {
+    if (!isSystemAdmin(user) && (!user.emp_code || user.emp_code !== body.employeeId)) {
       throw new ForbiddenException('لا يمكنك منح كود باسم موظف آخر');
     }
-    return this.service.grantToMember(body, user.sub);
+    return this.service.grantToMember(body, user.sub, user);
   }
 
   @Get('member-grants')
-  memberGrants(@Query('memberId') memberId?: string) {
+  memberGrants(@CurrentUser() user: JwtUser, @Query('memberId') memberId?: string) {
     const id = memberId == null || memberId === '' ? undefined : Number(memberId);
     if (id !== undefined && (!Number.isInteger(id) || id < 1)) {
       throw new BadRequestException('رقم العضو غير صالح');
     }
-    return this.service.memberGrants(id);
+    return this.service.memberGrants(id, user);
   }
 
   @Get('member-grants/search')
-  memberGrantsByMemberCode(@Query('memberCode') memberCode?: string) {
+  memberGrantsByMemberCode(@CurrentUser() user: JwtUser, @Query('memberCode') memberCode?: string) {
     if (!memberCode?.trim()) throw new BadRequestException('كود العضوية مطلوب');
-    return this.service.memberGrantsByMemberCode(memberCode);
+    return this.service.memberGrantsByMemberCode(memberCode, user);
   }
 
   @Get('member-grants/member-lookup')
-  findMemberForGrant(@Query('term') term?: string) {
-    return this.service.findMemberForDiscountGrant(term ?? '');
+  findMemberForGrant(@CurrentUser() user: JwtUser, @Query('term') term?: string) {
+    return this.service.findMemberForDiscountGrant(term ?? '', user);
   }
 
   @Get('reports/usage')
-  usageReport(@Query('fromDate') fromDate?: string, @Query('toDate') toDate?: string, @Query('memberCode') memberCode?: string) {
+  usageReport(@CurrentUser() user: JwtUser, @Query('fromDate') fromDate?: string, @Query('toDate') toDate?: string, @Query('memberCode') memberCode?: string) {
     if (!fromDate || !toDate) throw new BadRequestException('يجب تحديد تاريخ البداية والنهاية');
-    return this.service.usageReport({ fromDate, toDate, memberCode });
+    return this.service.usageReport({ fromDate, toDate, memberCode }, user);
   }
 
   @Post()

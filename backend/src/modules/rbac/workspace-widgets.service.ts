@@ -6,6 +6,7 @@ import { WorkspaceService, WorkspaceConfig } from './workspace.service';
 import { PermissionEngineService } from './engine/permission-engine.service';
 import type { JwtUser } from '../../common/types/jwt-user';
 import { cairoDayRange } from '../../common/utils/cairo-day-range.util';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
 
 export type WidgetPayload = Record<string, unknown>;
 
@@ -20,13 +21,14 @@ export class WorkspaceWidgetsService {
   async getWidgets(user: JwtUser, requestedBranchId?: number): Promise<{ config: WorkspaceConfig; data: WidgetPayload }> {
     const config = await this.workspace.getWorkspace(user.sub);
     const data: WidgetPayload = {};
-    const currentUser = user.level === 1
+    const systemAdmin = isSystemAdmin(user);
+    const currentUser = systemAdmin
       ? null
       : await this.prisma.users.findUnique({
         where: { user_id: user.sub },
         select: { branch_id_fk: true },
       });
-    const branchIds = user.level === 1
+    const branchIds = systemAdmin
       ? (requestedBranchId != null && Number.isFinite(requestedBranchId) ? [requestedBranchId] : null)
       : (Number(currentUser?.branch_id_fk ?? 0) > 0 ? [Number(currentUser?.branch_id_fk)] : []);
 

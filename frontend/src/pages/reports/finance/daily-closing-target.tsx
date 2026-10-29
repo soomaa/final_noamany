@@ -11,6 +11,7 @@ import { api } from '@/lib/api';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
+import { isBranchManagerUser, isSystemAdminUser } from '@/lib/user-scope';
 
 type ReceiptTotals = { total: string; cash: string; knet: string };
 type AmountTotals = { total: string };
@@ -47,6 +48,9 @@ interface TargetRow {
   afterDiscount: string;
   paid: string;
   date: string;
+  employeeName?: string | null;
+  customerName?: string | null;
+  memberCode?: string | null;
 }
 
 interface TargetReportResponse {
@@ -127,11 +131,11 @@ export function DailyClosingReportPage() {
         <p className="nums text-sm">{toArabicDigits(date)}</p>
       </div>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <ClosingTile label={ui('إجمالي الإيرادات')} value={data?.totalRevenue} className="from-[#1e5aa8] to-[#2f86d6]" />
-        <ClosingTile label={ui('الإجمالي نقدي')} value={data?.totalCash} className="from-[#0f8a5f] to-[#22b07d]" />
-        <ClosingTile label={ui('الإجمالي KNET')} value={data?.totalKnet} className="from-[#5b3fb8] to-[#8a63e0]" />
-        <ClosingTile label={ui('إجمالي المصروفات')} value={data?.totalOutflows} className="from-[#c76a12] to-[#ef9a34]" />
-        <ClosingTile label={ui('صافي الربح')} value={data?.netProfit} className={net < 0 ? 'from-[#b42323] to-[#e5484d]' : 'from-[#0e7490] to-[#14a3c7]'} />
+        <ClosingTile label={ui('إجمالي الإيرادات')} value={data?.totalRevenue} />
+        <ClosingTile label={ui('الإجمالي نقدي')} value={data?.totalCash} />
+        <ClosingTile label={ui('الإجمالي KNET')} value={data?.totalKnet} />
+        <ClosingTile label={ui('إجمالي المصروفات')} value={data?.totalOutflows} />
+        <ClosingTile label={ui('صافي الربح')} value={data?.netProfit} tone={net < 0 ? 'negative' : 'positive'} />
       </div>
 
       {isLoading ? <p className="py-10 text-center text-muted-foreground">{ui('جارٍ التحميل…')}</p>
@@ -140,15 +144,15 @@ export function DailyClosingReportPage() {
           <ClosingSection title={ui('تقرير الإيرادات اليومية')} caption={ui('ملخص الإيرادات')}>
             <table className="w-full min-w-[980px] border-collapse text-center text-xs sm:text-sm">
               <thead>
-                <tr className="bg-[#1d3f73] text-white">
+                <tr className={HEAD}>
                   <th rowSpan={2} className="border border-white/20 px-2 py-2">{ui('التاريخ')}</th>
                   {revenueGroups.map((g) => (
-                    <th key={g.group} colSpan={g.cells.reduce((n, c) => n + (c.withTotal ? 3 : 2), 0)} className={cn('border border-white/20 px-2 py-2 text-base', g.cells[0].withTotal ? 'bg-[#1f4f8f]' : 'bg-[#16705a]')}>{g.group}</th>
+                    <th key={g.group} colSpan={g.cells.reduce((n, c) => n + (c.withTotal ? 3 : 2), 0)} className="border border-white/20 px-2 py-2 text-base">{g.group}</th>
                   ))}
                 </tr>
-                <tr className="text-white">
+                <tr className={SUB_HEAD}>
                   {subHeads.map((h) => (
-                    <th key={h.key} className={cn('border border-white/20 px-2 py-2 font-semibold', h.tone === 'total' ? 'bg-[#2a5ea8]' : h.tone === 'cash' ? 'bg-[#2c8a63]' : 'bg-[#6b4fc4]')}>{h.label}</th>
+                    <th key={h.key} className="border border-border px-2 py-2 font-bold">{h.label}</th>
                   ))}
                 </tr>
               </thead>
@@ -156,29 +160,29 @@ export function DailyClosingReportPage() {
                 <tr className="bg-card">
                   <td className="nums border border-border px-2 py-3 font-semibold">{toArabicDigits(date)}</td>
                   {revenueValues.map((value, i) => (
-                    <td key={subHeads[i].key} className={cn('nums border border-border px-2 py-3', subHeads[i].tone === 'total' ? 'bg-sky-50 font-bold text-sky-900 dark:bg-sky-950/40 dark:text-sky-200' : subHeads[i].tone === 'cash' ? 'bg-emerald-50/70 dark:bg-emerald-950/30' : 'bg-violet-50/70 dark:bg-violet-950/30')}>{amount(value)}</td>
+                    <td key={subHeads[i].key} className={cn('nums border border-border px-2 py-3 text-base', subHeads[i].tone === 'total' ? 'font-extrabold' : 'font-semibold')}>{amount(value)}</td>
                   ))}
                 </tr>
               </tbody>
             </table>
-            <ClosingTotal label={ui('إجمالي الإيرادات')} value={data?.totalRevenue} className="from-[#c62828] to-[#ef5350]" />
+            <ClosingTotal label={ui('إجمالي الإيرادات')} value={data?.totalRevenue} />
           </ClosingSection>
 
           <ClosingSection title={ui('تقرير المصروفات اليومية')} caption={ui('ملخص المصروفات')}>
             <table className="w-full min-w-[760px] border-collapse text-center text-xs sm:text-sm">
               <thead>
-                <tr className="bg-[#1d3f73] text-white">
-                  {expenseColumns.map((c) => <th key={c.label} className={cn('border border-white/20 px-2 py-3 font-semibold', c.credit && 'bg-[#16705a]')}>{c.label}</th>)}
+                <tr className={HEAD}>
+                  {expenseColumns.map((c) => <th key={c.label} className="border border-white/20 px-2 py-3 font-bold">{c.label}</th>)}
                 </tr>
               </thead>
               <tbody>
                 <tr className="bg-card">
-                  {expenseColumns.map((c) => <td key={c.label} className={cn('nums border border-border px-2 py-3', c.credit ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200' : 'bg-orange-50/60 dark:bg-orange-950/30')}>{c.credit && Number(c.value) > 0 ? '−' : ''}{amount(c.value)}</td>)}
+                  {expenseColumns.map((c) => <td key={c.label} className="nums border border-border px-2 py-3 text-base font-semibold">{c.credit && Number(c.value) > 0 ? '−' : ''}{amount(c.value)}</td>)}
                 </tr>
               </tbody>
             </table>
-            <ClosingTotal label={ui('إجمالي المصروفات')} value={data?.totalOutflows} className="from-[#b45309] to-[#f59e0b]" />
-            <ClosingTotal label={ui('صافي الربح')} value={data?.netProfit} className={net < 0 ? 'from-[#b42323] to-[#e5484d]' : 'from-[#0f766e] to-[#14b8a6]'} large />
+            <ClosingTotal label={ui('إجمالي المصروفات')} value={data?.totalOutflows} />
+            <ClosingTotal label={ui('صافي الربح')} value={data?.netProfit} tone={net < 0 ? 'negative' : 'positive'} large />
             <p className="px-4 pb-3 text-xs text-muted-foreground">
               {ui('مرتجع مبيعات (للعلم)')}: <span className="nums font-semibold">{amount(salesReturns.total)}</span>
               {' — '}{ui('نقدي')} <span className="nums">{amount(salesReturns.cash)}</span>{' · '}KNET <span className="nums">{amount(salesReturns.knet)}</span>
@@ -188,7 +192,7 @@ export function DailyClosingReportPage() {
         </>}
 
       <div className="no-print flex justify-start">
-        <Button onClick={() => window.print()} className="gap-2 bg-[#1d3f73] px-6 text-white hover:bg-[#16325c]">
+        <Button onClick={() => window.print()} className="gap-2 px-6">
           <Printer className="size-4" />{ui('طباعة التقرير')}
         </Button>
       </div>
@@ -196,11 +200,17 @@ export function DailyClosingReportPage() {
   </ReportShell>;
 }
 
-function ClosingTile({ label, value, className }: { label: string; value: string | undefined; className: string }) {
+/** One calm palette: a dark neutral header row, plain cells, colour only for profit/loss. */
+const HEAD = 'bg-slate-800 text-white dark:bg-slate-700';
+const SUB_HEAD = 'bg-muted text-foreground';
+const TONE_TEXT = { neutral: 'text-foreground', positive: 'text-emerald-700 dark:text-emerald-400', negative: 'text-red-700 dark:text-red-400' } as const;
+type Tone = keyof typeof TONE_TEXT;
+
+function ClosingTile({ label, value, tone = 'neutral' }: { label: string; value: string | undefined; tone?: Tone }) {
   return (
-    <div className={cn('rounded-2xl bg-gradient-to-l p-4 text-white shadow-sm', className)}>
-      <p className="text-sm opacity-90">{label}</p>
-      <p className="nums mt-2 text-2xl font-bold">{amount(value)}</p>
+    <div className="rounded-2xl border border-border bg-card p-4 shadow-sm">
+      <p className="text-sm font-bold text-muted-foreground">{label}</p>
+      <p className={cn('nums mt-2 text-3xl font-extrabold', TONE_TEXT[tone])}>{amount(value)}</p>
     </div>
   );
 }
@@ -208,20 +218,20 @@ function ClosingTile({ label, value, className }: { label: string; value: string
 function ClosingSection({ title, caption, children }: { title: string; caption: string; children: ReactNode }) {
   return (
     <section className="space-y-3">
-      <h3 className="mx-auto w-fit border-b-2 border-[#2f86d6] px-2 pb-1 text-center text-lg font-bold">{title}</h3>
+      <h3 className="mx-auto w-fit border-b-2 border-foreground/40 px-2 pb-1 text-center text-lg font-extrabold">{title}</h3>
       <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
-        <div className="bg-gradient-to-l from-[#0c2d57] to-[#1e6bb8] px-4 py-3 text-center text-base font-bold text-white">{caption}</div>
+        <div className="border-b border-border bg-muted px-4 py-3 text-center text-base font-extrabold">{caption}</div>
         <div className="overflow-x-auto">{children}</div>
       </div>
     </section>
   );
 }
 
-function ClosingTotal({ label, value, className, large }: { label: string; value: string | undefined; className: string; large?: boolean }) {
+function ClosingTotal({ label, value, tone = 'neutral', large }: { label: string; value: string | undefined; tone?: Tone; large?: boolean }) {
   return (
-    <div className={cn('grid grid-cols-[1fr_auto_1fr] items-center gap-3 bg-gradient-to-l px-4 font-bold text-white', large ? 'py-3 text-lg' : 'py-2 text-base', className)}>
+    <div className={cn('grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-t border-border bg-muted/60 px-4 font-extrabold', large ? 'py-3 text-lg' : 'py-2 text-base')}>
       <span>{label}</span>
-      <span className={cn('nums text-center font-extrabold tracking-wide', large ? 'text-2xl' : 'text-xl')}>{amount(value)}</span>
+      <span className={cn('nums text-center tracking-wide', large ? 'text-3xl' : 'text-2xl', TONE_TEXT[tone])}>{amount(value)}</span>
       <span aria-hidden="true" />
     </div>
   );
@@ -235,7 +245,9 @@ export function TargetReportPage() {
   const [operation, setOperation] = useState('all');
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
-  const employees = useQuery({ queryKey: ['target-report-employees'], queryFn: async () => (await api.get<{ data: Array<{ id: number; employee?: string }> }>('/employees', { params: { page: 1, pageSize: 200, status: 1 } })).data.data ?? [] });
+  // A regular employee only ever sees their own monthly target; admins and branch managers choose.
+  const canPickEmployee = isSystemAdminUser(user) || isBranchManagerUser(user);
+  const employees = useQuery({ enabled: canPickEmployee, queryKey: ['target-report-employees'], queryFn: async () => (await api.get<{ data: Array<{ id: number; employee?: string }> }>('/employees', { params: { page: 1, pageSize: 200, status: 1 } })).data.data ?? [] });
   const employeeOptions = useMemo(
     () => (employees.data ?? []).map((employee) => ({
       value: String(employee.id),
@@ -245,7 +257,7 @@ export function TargetReportPage() {
     [employees.data],
   );
   const report = useQuery({
-    queryKey: ['target-report', branch, employeeId, operation, startDate, endDate], enabled: employeeId !== '' || user?.level === 2,
+    queryKey: ['target-report', branch, employeeId, operation, startDate, endDate],
     queryFn: async () => (await api.get<TargetReportResponse>('/finance/target-report', { params: { ...(employeeId ? { employeeId } : {}), operationType: operation, fromDate: startDate, toDate: endDate, ...(normalizeBranchParam(branch) ? { branchId: branch } : {}) } })).data,
   });
   const rows = useMemo(() => report.data?.rows ?? [], [report.data?.rows]);
@@ -254,7 +266,7 @@ export function TargetReportPage() {
   const visibleRows = useMemo(() => {
     const term = search.trim().toLowerCase();
     const filtered = term
-      ? rows.filter((row) => [row.date, row.type, ui(TARGET_KIND[targetKind(row)].label), row.paid, row.beforeDiscount, row.afterDiscount, row.discount]
+      ? rows.filter((row) => [row.date, row.type, ui(TARGET_KIND[targetKind(row)].label), row.paid, row.beforeDiscount, row.afterDiscount, row.discount, row.employeeName, row.customerName, row.memberCode]
         .some((value) => String(value).toLowerCase().includes(term)))
       : rows;
     const column = TARGET_COLUMNS.find((c) => c.key === sort.key)!;
@@ -265,7 +277,7 @@ export function TargetReportPage() {
     });
   }, [rows, search, sort, ui]);
   const headers = TARGET_COLUMNS.map((column) => ui(column.label));
-  const exportRow = (row: TargetRow) => [row.date, row.discount, row.beforeDiscount, row.afterDiscount, row.paid, ui(TARGET_KIND[targetKind(row)].label), row.type];
+  const exportRow = (row: TargetRow) => [row.date, row.employeeName ?? '', row.customerName ?? '', row.memberCode ?? '', ui(TARGET_KIND[targetKind(row)].label), row.type, row.beforeDiscount, row.discount, row.afterDiscount, row.paid];
   const exportCsv = () => downloadCsv('target-report', [headers, ...visibleRows.map(exportRow)]);
   const copyReport = async () => navigator.clipboard.writeText([
     ui('تقرير التارجت'),
@@ -275,9 +287,12 @@ export function TargetReportPage() {
     `${ui('إجمالي المبيعات')}: ${report.data?.salesTotal ?? 0}`,
     `${ui('الإجمالي النهائي')}: ${report.data?.grandTotal ?? 0}`,
   ].join('\n'));
-  const empty = employeeId || user?.level === 2 ? ui('لا توجد عمليات تارجت') : ui('اختر موظفاً لعرض التقرير');
-  return <ReportShell title={ui('تقرير التارجت')} description={ui('حركة الشهر الحالي للمندوب المختار')}
-    filters={<DateRangeFilter startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} extra={<><BranchFilter value={branch} onChange={setBranch} /><label className="grid gap-1.5 text-xs text-muted-foreground">{ui('الموظف')}<Combobox value={employeeId} onValueChange={setEmployeeId} options={employeeOptions} className="h-10 min-w-56" placeholder={ui('اختر الموظف')} searchPlaceholder={ui('بحث باسم الموظف أو كوده…')} emptyText={ui('لا يوجد موظف مطابق')} aria-label={ui('بحث واختيار الموظف')} /></label><label className="grid gap-1.5 text-xs text-muted-foreground">{ui('نوع العملية')}<select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={operation} onChange={(e) => setOperation(e.target.value)}><option value="all">{ui('الكل')}</option><option value="subscriptions">{ui('اشتراكات')}</option><option value="sales">{ui('مبيعات')}</option></select></label></>} />}
+  const empty = ui('لا توجد عمليات تارجت');
+  const employeeField = canPickEmployee
+    ? <Combobox value={employeeId} onValueChange={setEmployeeId} options={[{ value: '', label: ui('كل الموظفين') }, ...employeeOptions]} className="h-10 min-w-56" placeholder={ui('كل الموظفين')} searchPlaceholder={ui('بحث باسم الموظف أو كوده…')} emptyText={ui('لا يوجد موظف مطابق')} aria-label={ui('بحث واختيار الموظف')} />
+    : <Input value={user?.name ?? ''} readOnly disabled className="h-10 min-w-56" aria-label={ui('الموظف')} />;
+  return <ReportShell title={ui('تقرير التارجت')} description={canPickEmployee ? ui('تارجت الموظفين بالتفصيل: العميل ونوع الاشتراك والمبلغ') : ui('تارجتك للشهر الحالي بالتفصيل')}
+    filters={<DateRangeFilter startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} extra={<><BranchFilter value={branch} onChange={setBranch} /><label className="grid gap-1.5 text-xs text-muted-foreground">{ui('الموظف')}{employeeField}</label><label className="grid gap-1.5 text-xs text-muted-foreground">{ui('نوع العملية')}<select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={operation} onChange={(e) => setOperation(e.target.value)}><option value="all">{ui('الكل')}</option><option value="subscriptions">{ui('اشتراكات')}</option><option value="sales">{ui('مبيعات')}</option></select></label></>} />}
     onExport={exportCsv} extraActions={<><Button variant="outline" onClick={() => void copyReport()}>{ui('نسخ')}</Button><Button variant="outline" onClick={() => window.print()}>{ui('طباعة')}</Button></>}>
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
@@ -288,9 +303,9 @@ export function TargetReportPage() {
         </label>
       </div>
       <div className="overflow-x-auto p-3">
-        <table className="w-full min-w-[720px] border-separate border-spacing-0 overflow-hidden rounded-xl text-center text-sm">
+        <table className="w-full min-w-[980px] border-separate border-spacing-0 overflow-hidden rounded-xl text-center text-sm">
           <thead>
-            <tr className="bg-gradient-to-l from-[#6a82e8] to-[#7a4fb0] text-white">
+            <tr className="bg-slate-800 text-white dark:bg-slate-700">
               {TARGET_COLUMNS.map((column) => (
                 <th key={column.key} className="px-3 py-3 font-semibold">
                   <button type="button" className="inline-flex items-center gap-1" onClick={() => setSort((current) => ({ key: column.key, dir: current.key === column.key ? (current.dir === 1 ? -1 : 1) : 1 }))}>
@@ -311,14 +326,17 @@ export function TargetReportPage() {
             ) : visibleRows.map((row, index) => {
               const kind = TARGET_KIND[targetKind(row)];
               return (
-                <tr key={`${row.date}-${index}`} className={cn('border-b border-white/60', kind.row)}>
+                <tr key={`${row.date}-${index}`} className="border-b border-border even:bg-muted/40">
                   <td className="nums px-3 py-3">{toArabicDigits(row.date)}</td>
-                  <td className="nums px-3 py-3">{money2(row.discount)}</td>
-                  <td className="nums px-3 py-3">{money2(row.beforeDiscount)}</td>
-                  <td className="nums px-3 py-3">{money2(row.afterDiscount)}</td>
-                  <td className="nums px-3 py-3 font-semibold">{money2(row.paid)}</td>
-                  <td className={cn('px-3 py-3 font-semibold', kind.text)}>{ui(kind.label)}</td>
+                  <td className="px-3 py-3">{row.employeeName ?? '—'}</td>
+                  <td className="px-3 py-3 font-semibold">{row.customerName ?? '—'}</td>
+                  <td className="nums px-3 py-3">{row.memberCode ? toArabicDigits(row.memberCode) : '—'}</td>
+                  <td className={cn('px-3 py-3 font-bold', kind.text)}>{ui(kind.label)}</td>
                   <td className="px-3 py-3">{row.type}</td>
+                  <td className="nums px-3 py-3">{money2(row.beforeDiscount)}</td>
+                  <td className="nums px-3 py-3">{money2(row.discount)}</td>
+                  <td className="nums px-3 py-3">{money2(row.afterDiscount)}</td>
+                  <td className="nums px-3 py-3 font-extrabold">{money2(row.paid)}</td>
                 </tr>
               );
             })}
@@ -336,20 +354,23 @@ export function TargetReportPage() {
   </ReportShell>;
 }
 
-type TargetColumnKey = 'date' | 'discount' | 'beforeDiscount' | 'afterDiscount' | 'paid' | 'kind' | 'type';
+type TargetColumnKey = 'date' | 'employeeName' | 'customerName' | 'memberCode' | 'kind' | 'type' | 'beforeDiscount' | 'discount' | 'afterDiscount' | 'paid';
 const TARGET_COLUMNS: Array<{ key: TargetColumnKey; label: string; numeric?: boolean }> = [
   { key: 'date', label: 'التاريخ' },
-  { key: 'discount', label: 'قيمة الخصم', numeric: true },
+  { key: 'employeeName', label: 'الموظف' },
+  { key: 'customerName', label: 'اسم العميل' },
+  { key: 'memberCode', label: 'كود العضو' },
+  { key: 'kind', label: 'نوع العملية' },
+  { key: 'type', label: 'نوع الاشتراك / الصنف' },
   { key: 'beforeDiscount', label: 'القيمة قبل الخصم', numeric: true },
+  { key: 'discount', label: 'قيمة الخصم', numeric: true },
   { key: 'afterDiscount', label: 'القيمة بعد الخصم', numeric: true },
   { key: 'paid', label: 'المدفوع', numeric: true },
-  { key: 'kind', label: 'نوع العملية' },
-  { key: 'type', label: 'النوع' },
 ];
 const TARGET_KIND = {
-  subscription: { label: 'إشتراكات', row: 'bg-sky-50 dark:bg-sky-950/40', text: 'text-sky-700 dark:text-sky-300' },
-  locker: { label: 'لوكر', row: 'bg-amber-50 dark:bg-amber-950/40', text: 'text-amber-700 dark:text-amber-300' },
-  sale: { label: 'مبيعات', row: 'bg-emerald-50 dark:bg-emerald-950/40', text: 'text-emerald-700 dark:text-emerald-300' },
+  subscription: { label: 'إشتراكات', text: 'text-foreground' },
+  locker: { label: 'لوكر', text: 'text-foreground' },
+  sale: { label: 'مبيعات', text: 'text-foreground' },
 } as const;
 function targetKind(row: TargetRow): keyof typeof TARGET_KIND {
   if (row.kind) return row.kind;
@@ -361,18 +382,18 @@ function sortText(row: TargetRow, key: TargetColumnKey, ui: (text: string) => st
 }
 const money2 = (value: string | number | undefined) => toArabicDigits(Number(value ?? 0).toFixed(2));
 
-/** Totals under the table: muted label cells beside pink→red value cells, as in the target sheet. */
+/** Totals under the table: a label cell beside its value, in the same calm palette as the report. */
 function TargetSummary({ rows }: { rows: Array<Array<{ label: string; value: string | undefined }>> }) {
   return (
     <div className="mt-3 overflow-hidden rounded-xl border border-border">
       {rows.map((cells, rowIndex) => (
-        <div key={rowIndex} className="grid grid-cols-4 border-b border-white/70 last:border-b-0 dark:border-white/10">
+        <div key={rowIndex} className="grid grid-cols-4 border-b border-border last:border-b-0">
           {cells.map((cell) => (
             <div key={cell.label} className="contents">
-              <div className={cn('flex items-center justify-center bg-gradient-to-l from-slate-200 to-slate-100 px-3 py-4 text-base font-bold text-rose-700 dark:from-slate-800 dark:to-slate-700 dark:text-rose-300', cells.length === 1 && 'col-span-3')}>
+              <div className={cn('flex items-center justify-center bg-muted px-3 py-4 text-base font-bold', cells.length === 1 && 'col-span-3')}>
                 {cell.label}
               </div>
-              <div className="nums flex items-center justify-center bg-gradient-to-l from-[#ff6b6b] to-[#e84393] px-3 py-4 text-lg font-bold text-white">
+              <div className="nums flex items-center justify-center bg-card px-3 py-4 text-xl font-extrabold">
                 {toArabicDigits(Number(cell.value ?? 0))}
               </div>
             </div>

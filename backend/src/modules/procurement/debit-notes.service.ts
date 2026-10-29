@@ -6,6 +6,8 @@ import {
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import type { JwtUser } from '../../common/types/jwt-user';
+import { ProcurementScopeService } from './procurement-scope.service';
 import {
   ChangeDebitNoteStatusDto,
   ListDebitNotesDto,
@@ -16,7 +18,17 @@ import { lineTotal, nextDocNumber, notDeletedFilter, toNumber } from './procurem
 
 @Injectable()
 export class DebitNotesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly scope: ProcurementScopeService,
+  ) {}
+
+  private async loadScoped(id: number, user: JwtUser) {
+    const existing = await this.prisma.prc_debit_notes.findFirst({ where: { id, ...notDeletedFilter() } });
+    if (!existing) throw new NotFoundException('إشعار الخصم غير موجود');
+    await this.scope.assertDocument(user, existing);
+    return existing;
+  }
 
   private mapItem(item: Prisma.prc_debit_note_itemsGetPayload<object>) {
     return {
@@ -51,9 +63,10 @@ export class DebitNotesService {
     };
   }
 
-  async stats(branchId?: string) {
+  async stats(branchId?: string, user?: JwtUser) {
     const and: Prisma.prc_debit_notesWhereInput[] = [notDeletedFilter()];
-    if (branchId && branchId !== 'all') and.push({ branch_id: Number(branchId) });
+    const scoped = this.scope.listBranches(user, branchId);
+    if (scoped) and.push({ branch_id: { in: scoped } });
     const where = { AND: and };
     const [total, aggregate, byStatus] = await Promise.all([
       this.prisma.prc_debit_notes.count({ where }),
@@ -76,8 +89,10 @@ export class DebitNotesService {
     };
   }
 
-  async list(q: ListDebitNotesDto) {
+  async list(q: ListDebitNotesDto, user?: JwtUser) {
     const and: Prisma.prc_debit_notesWhereInput[] = [notDeletedFilter()];
+    const scoped = this.scope.listBranches(user, q.branchId);
+    if (scoped) and.push({ branch_id: { in: scoped } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -86,7 +101,6 @@ export class DebitNotesService {
     }
     if (q.status && q.status !== 'all') and.push({ status: q.status });
     if (q.supplierId && q.supplierId !== 'all') and.push({ supplier_id: Number(q.supplierId) });
-    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
     if (q.dateFrom || q.dateTo) {
       and.push({
         created_at: {
@@ -109,16 +123,21 @@ export class DebitNotesService {
     return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: JwtUser) {
     const row = await this.prisma.prc_debit_notes.findFirst({
       where: { id, ...notDeletedFilter() },
       include: { items: true },
     });
     if (!row) throw new NotFoundException('إشعار الخصم غير موجود');
+    await this.scope.assertDocument(user, row);
     return this.map(row);
   }
 
-  async create(dto: UpsertDebitNoteDto, userId: number) {
+  async create(dto: UpsertDebitNoteDto, user: JwtUser) {
+    const userId = user.sub;
+    const po = dto.purchaseOrderId ? await this.scope.loadPurchaseOrder(user, dto.purchaseOrderId) : null;
+    const branchId = dto.branchId ?? po?.branch_id ?? this.scope.defaultBranch(user);
+    if (branchId != null) this.scope.assertBranch(user, branchId);
     const items = dto.items ?? [];
     const debitAmount =
       items.length > 0
@@ -140,7 +159,7 @@ export class DebitNotesService {
           debit_amount: debitAmount,
           status: dto.status ?? 'مسودة',
           notes: dto.notes?.trim() ?? null,
-          branch_id: dto.branchId ?? null,
+          branch_id: branchId,
           created_by: userId,
           items: items.length
             ? {
@@ -159,11 +178,10 @@ export class DebitNotesService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertDebitNoteDto>) {
-    const existing = await this.prisma.prc_debit_notes.findFirst({
-      where: { id, ...notDeletedFilter() },
-    });
-    if (!existing) throw new NotFoundException('إشعار الخصم غير موجود');
+  async update(id: number, dto: Partial<UpsertDebitNoteDto>, user: JwtUser) {
+    const existing = await this.loadScoped(id, user);
+    if (dto.branchId != null) this.scope.assertBranch(user, dto.branchId);
+    if (dto.purchaseOrderId) await this.scope.loadPurchaseOrder(user, dto.purchaseOrderId);
 
     const row = await this.prisma.$transaction(async (tx) => {
       if (dto.items) {
@@ -205,11 +223,8 @@ export class DebitNotesService {
     return this.map(row);
   }
 
-  async remove(id: number) {
-    const existing = await this.prisma.prc_debit_notes.findFirst({
-      where: { id, ...notDeletedFilter() },
-    });
-    if (!existing) throw new NotFoundException('إشعار الخصم غير موجود');
+  async remove(id: number, user: JwtUser) {
+    await this.loadScoped(id, user);
     await this.prisma.prc_debit_notes.update({
       where: { id },
       data: { is_deleted: true },
@@ -217,11 +232,9 @@ export class DebitNotesService {
     return { success: true };
   }
 
-  async changeStatus(id: number, dto: ChangeDebitNoteStatusDto, userId: number) {
-    const existing = await this.prisma.prc_debit_notes.findFirst({
-      where: { id, ...notDeletedFilter() },
-    });
-    if (!existing) throw new NotFoundException('إشعار الخصم غير موجود');
+  async changeStatus(id: number, dto: ChangeDebitNoteStatusDto, user: JwtUser) {
+    const userId = user.sub;
+    await this.loadScoped(id, user);
 
     const data: Prisma.prc_debit_notesUpdateInput = {
       status: dto.status,
@@ -240,11 +253,8 @@ export class DebitNotesService {
     return this.map(row);
   }
 
-  async send(id: number, _dto: SendDebitNoteDto) {
-    const existing = await this.prisma.prc_debit_notes.findFirst({
-      where: { id, ...notDeletedFilter() },
-    });
-    if (!existing) throw new NotFoundException('إشعار الخصم غير موجود');
+  async send(id: number, _dto: SendDebitNoteDto, user: JwtUser) {
+    const existing = await this.loadScoped(id, user);
     if (existing.status !== 'معتمد') {
       throw new BadRequestException('يجب اعتماد إشعار الخصم قبل الإرسال');
     }

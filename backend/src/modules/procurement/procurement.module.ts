@@ -39,6 +39,7 @@ import { SupplierReportsController } from './supplier-reports.controller';
 import { SupplierReportsService } from './supplier-reports.service';
 import { SupplierSettingsController } from './supplier-settings.controller';
 import { SupplierSettingsService } from './supplier-settings.service';
+import { ProcurementScopeService } from './procurement-scope.service';
 
 @Module({
   imports: [InventoryModule, AccountingModule],
@@ -64,6 +65,7 @@ import { SupplierSettingsService } from './supplier-settings.service';
     SupplierReportsController,
   ],
   providers: [
+    ProcurementScopeService,
     QuickPurchaseOrdersService,
     PurchaseReturnsService,
     ProcurementSettingsService,

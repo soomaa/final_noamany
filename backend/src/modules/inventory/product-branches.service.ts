@@ -8,10 +8,15 @@ import {
   UpdateProductBranchStockDto,
   UpsertProductBranchDto,
 } from './dto/inventory.dto';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import type { JwtUser } from '../../common/types/jwt-user';
 
 @Injectable()
 export class ProductBranchesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
   private map(row: Prisma.inv_product_branchesGetPayload<{ include: { product: true } }>) {
     return {
@@ -25,10 +30,11 @@ export class ProductBranchesService {
     };
   }
 
-  async list(q: ListProductBranchesDto) {
+  async list(q: ListProductBranchesDto, user: JwtUser) {
     const and: Prisma.inv_product_branchesWhereInput[] = [];
     if (q.productId && q.productId !== 'all') and.push({ product_id: Number(q.productId) });
-    if (q.branchId && q.branchId !== 'all') and.push({ branch_id: Number(q.branchId) });
+    const branches = this.branchScope.resolveListFilter(user, q.branchId ?? null);
+    if (branches) and.push({ branch_id: { in: branches } });
     const where = and.length ? { AND: and } : {};
     const [rows, total] = await Promise.all([
       this.prisma.inv_product_branches.findMany({
@@ -43,7 +49,8 @@ export class ProductBranchesService {
     return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
   }
 
-  async byBranchProducts(branchId: number) {
+  async byBranchProducts(branchId: number, user: JwtUser) {
+    this.branchScope.assertBranchAllowed(user, branchId);
     const rows = await this.prisma.inv_product_branches.findMany({
       where: { branch_id: branchId },
       include: { product: true },
@@ -51,29 +58,32 @@ export class ProductBranchesService {
     return rows.map((r) => this.map(r));
   }
 
-  async byBranchLowStock(branchId: number) {
-    const rows = await this.byBranchProducts(branchId);
+  async byBranchLowStock(branchId: number, user: JwtUser) {
+    const rows = await this.byBranchProducts(branchId, user);
     return rows.filter((r) => r.stockQuantity <= r.reorderPoint);
   }
 
-  async byProductBranches(productId: number) {
+  async byProductBranches(productId: number, user: JwtUser) {
+    const branches = this.branchScope.allowedBranchIds(user);
     const rows = await this.prisma.inv_product_branches.findMany({
-      where: { product_id: productId },
+      where: { product_id: productId, ...(branches ? { branch_id: { in: branches } } : {}) },
       include: { product: true },
     });
     return rows.map((r) => this.map(r));
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user: JwtUser) {
     const row = await this.prisma.inv_product_branches.findUnique({
       where: { id },
       include: { product: true },
     });
     if (!row) throw new NotFoundException('سجل الفرع غير موجود');
+    this.branchScope.assertBranchAllowed(user, row.branch_id);
     return this.map(row);
   }
 
-  async create(dto: UpsertProductBranchDto) {
+  async create(dto: UpsertProductBranchDto, user: JwtUser) {
+    this.branchScope.assertBranchAllowed(user, dto.branchId);
     const product = await this.prisma.inv_products.findFirst({
       where: { id: dto.productId, ...notDeletedFilter() },
     });
@@ -97,8 +107,8 @@ export class ProductBranchesService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertProductBranchDto>) {
-    await this.findOne(id);
+  async update(id: number, dto: Partial<UpsertProductBranchDto>, user: JwtUser) {
+    await this.findOne(id, user);
     const row = await this.prisma.inv_product_branches.update({
       where: { id },
       data: {
@@ -110,8 +120,8 @@ export class ProductBranchesService {
     return this.map(row);
   }
 
-  async updateStock(id: number, dto: UpdateProductBranchStockDto) {
-    await this.findOne(id);
+  async updateStock(id: number, dto: UpdateProductBranchStockDto, user: JwtUser) {
+    await this.findOne(id, user);
     const row = await this.prisma.inv_product_branches.update({
       where: { id },
       data: { stock_quantity: dto.stockQuantity },
@@ -120,8 +130,8 @@ export class ProductBranchesService {
     return this.map(row);
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, user: JwtUser) {
+    await this.findOne(id, user);
     await this.prisma.inv_product_branches.delete({ where: { id } });
     return { success: true };
   }

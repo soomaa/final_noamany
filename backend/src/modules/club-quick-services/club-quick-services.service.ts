@@ -4,6 +4,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { paginated } from '../../common/dto/list-result';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import { toNum } from '../club-subscriptions/club-subscription.utils';
 import { ClubReceiptsCrudService } from '../club-subscriptions/club-receipts-crud.service';
 import {
@@ -25,7 +26,7 @@ export class ClubQuickServicesService {
     user?: JwtUser,
     branchId?: number,
   ): Prisma.club_quick_servicesWhereInput | null {
-    if (!user || user.level === 1) {
+    if (!user || isSystemAdmin(user)) {
       return branchId != null ? { OR: [{ branch_id: null }, { branch_id: branchId }] } : null;
     }
     const ownBranch = Number(user.branch ?? 0);
@@ -105,14 +106,28 @@ export class ClubQuickServicesService {
     return paginated(rows.map((r) => this.mapRow(r)), total, q.page, q.pageSize);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.club_quick_services.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('الخدمة السريعة غير موجودة');
+    if (user && row.branch_id != null) this.branchScope.assertBranchAllowed(user, row.branch_id);
     return this.mapRow(row);
+  }
+
+  /**
+   * Writes: a branch-bound row must be in the user's scope; an "all branches" row
+   * (branch_id null) and setting a row to all branches are reserved for system admins.
+   */
+  private assertWritableBranch(user: JwtUser | undefined, branchId: number | null) {
+    if (!user || isSystemAdmin(user)) return;
+    if (branchId == null) {
+      throw new ForbiddenException('الخدمات السريعة لكل الفروع يديرها مدير النظام فقط');
+    }
+    this.branchScope.assertBranchAllowed(user, branchId);
   }
 
   async create(body: UpsertClubQuickServiceDto, user?: JwtUser) {
     const branchId = body.branchId ?? null;
+    this.assertWritableBranch(user, branchId);
     if (branchId != null && !this.branchScope.isBranchAllowed(user, branchId)) {
       throw new BadRequestException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
     }
@@ -131,8 +146,10 @@ export class ClubQuickServicesService {
   }
 
   async update(id: number, body: UpsertClubQuickServiceDto, user?: JwtUser) {
-    await this.findOne(id);
+    const existing = await this.findOne(id, user);
+    this.assertWritableBranch(user, existing.branchId);
     const branchId = body.branchId ?? null;
+    this.assertWritableBranch(user, branchId);
     if (branchId != null && !this.branchScope.isBranchAllowed(user, branchId)) {
       throw new BadRequestException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
     }
@@ -151,8 +168,9 @@ export class ClubQuickServicesService {
     return this.mapRow(row);
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, user?: JwtUser) {
+    const existing = await this.findOne(id, user);
+    this.assertWritableBranch(user, existing.branchId);
     await this.prisma.club_quick_services.update({
       where: { id },
       data: { is_active: false },

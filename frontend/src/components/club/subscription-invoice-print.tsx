@@ -149,42 +149,42 @@ export function SubscriptionInvoicePrint({
             <p className="receipt-heading text-center underline">إيصال استلام نقدية</p>
             <p className="receipt-number text-center text-lg font-extrabold">رقم الإيصال: <span className="nums">{invoiceDigits(displayReceiptNumbers || subscription.subscriptionNumber)}</span></p>
             <div className="logo-line flex items-center justify-center gap-2" style={{ direction: 'rtl' }}>
-              <span className="club-name whitespace-nowrap">نعماني فتنس سنتر</span>
+              <span className="club-name whitespace-nowrap text-sm font-extrabold">نعماني فتنس سنتر</span>
               {branchLetter ? <span className="club-mark inline-flex shrink-0 items-center justify-center rounded-full border-2 border-black" style={{ width: '10mm', height: '10mm', fontSize: '18px' }}>{branchLetter}</span> : null}
               <span className="logo-crop" style={{ width: '29mm', height: '11mm', overflow: 'hidden', position: 'relative', flex: '0 0 29mm' }}>
                 <img className="logo" src="/noamany-logo.png" alt="Noamany" style={{ width: '42mm', maxWidth: 'none', height: 'auto', position: 'absolute', top: '-15mm', right: '-6.5mm' }} />
               </span>
             </div>
-            {subscription.branchName ? <p className="branch-line text-center">فرع {subscription.branchName}</p> : null}
+            {subscription.branchName ? <p className="branch-line mb-2 text-center text-sm font-extrabold">فرع {subscription.branchName}</p> : null}
 
             <div className="amount-line flex justify-between items-end gap-2">
-              <div className="row flex flex-1 gap-2"><span className="lbl">التاريخ :</span><span className="val nums flex-1 text-center">{invoiceDigits(receiptDate(receipts[0]?.receiptDate || subscription.registrationDate))}</span></div>
-              <div className="money flex gap-3 text-center">
-                <div><small>قرش</small><b className="nums">{invoiceDigits(String(piasters).padStart(2, '0'))}</b></div>
-                <div><small>جنيه</small><b className="nums">{invoiceDigits(pounds)}</b></div>
+              <div className="row flex flex-1 items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">التاريخ :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(receiptDate(receipts[0]?.receiptDate || subscription.registrationDate))}</span></div>
+              <div className="money flex shrink-0 gap-3 text-center">
+                <div><small className="block text-[11px]">قرش</small><b className="nums">{invoiceDigits(String(piasters).padStart(2, '0'))}</b></div>
+                <div><small className="block text-[11px]">جنيه</small><b className="nums">{invoiceDigits(pounds)}</b></div>
               </div>
             </div>
 
-            <div className="row flex gap-2"><span className="lbl">استلمنا من المحترم :</span><span className="val flex-1 text-center">{subscription.customerName ?? '—'}</span></div>
-            <div className="row flex gap-2"><span className="lbl">رقم الكود :</span><span className="val nums flex-1 text-center">{invoiceDigits(subscription.memberCode)}</span></div>
-            <div className="row flex gap-2"><span className="lbl">رقم الموبايل :</span><span className="val nums flex-1 text-center">{invoiceDigits(subscription.memberPhone)}</span></div>
-            <div className="row flex gap-2"><span className="lbl">طريقة الدفع :</span><span className="val flex-1 text-center">{clubPaymentMethodsLabel(ct, tenderLines, subscription.paymentMethod)}</span></div>
-            <div className="row flex gap-2"><span className="lbl">مبلغ وقدره :</span><span className="val nums flex-1 text-center">{invoiceDigits(received.toFixed(2))}</span></div>
+            <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">استلمنا من المحترم :</span><span className="val flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{subscription.customerName ?? '—'}</span></div>
+            <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">رقم الكود :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(subscription.memberCode)}</span></div>
+            <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">رقم الموبايل :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(subscription.memberPhone)}</span></div>
+            <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">طريقة الدفع :</span><span className="val flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{clubPaymentMethodsLabel(ct, tenderLines, subscription.paymentMethod)}</span></div>
+            <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">مبلغ وقدره :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(received.toFixed(2))}</span></div>
             {tenderLines.length > 1 ? tenderLines.map((line) => (
-              <div key={line.method} className="row flex gap-2"><span className="lbl">{clubPaymentMethodLabel(ct, line.method)} :</span><span className="val nums flex-1 text-center">{invoiceDigits(line.amount.toFixed(2))}</span></div>
+              <div key={line.method} className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">{clubPaymentMethodLabel(ct, line.method)} :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(line.amount.toFixed(2))}</span></div>
             )) : null}
-            {subscription.remainingAmount > 0 ? <div className="row flex gap-2"><span className="lbl">المتبقي :</span><span className="val nums flex-1 text-center">{invoiceDigits(subscription.remainingAmount.toFixed(2))}</span></div> : null}
-            {subscription.discountEnabled && subscription.discountValue > 0 ? <div className="row flex gap-2"><span className="lbl">الخصم :</span><span className="val nums flex-1 text-center">{invoiceDigits(subscription.discountValue.toFixed(2))}</span></div> : null}
-            <div className="row flex gap-2"><span className="lbl">اسم الكابتن :</span><span className="val flex-1 text-center">{captainName || '—'}</span></div>
-            <p className="period text-center nums">وذلك عن اشتراك للفترة من {invoiceDigits(receiptDate(subscription.subscriptionStartDate))} حتى {invoiceDigits(receiptDate(subscription.subscriptionEndDate))}</p>
-            <div className="row flex gap-2"><span className="lbl">نوع الاشتراك :</span><span className="val flex-1 text-center">{subscription.subscriptionType ?? '—'}</span></div>
+            {subscription.remainingAmount > 0 ? <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">المتبقي :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(subscription.remainingAmount.toFixed(2))}</span></div> : null}
+            {subscription.discountEnabled && subscription.discountValue > 0 ? <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">الخصم :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(subscription.discountValue.toFixed(2))}</span></div> : null}
+            <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">اسم الكابتن :</span><span className="val flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{captainName || '—'}</span></div>
+            <p className="period my-1 text-center text-xs nums">وذلك عن اشتراك للفترة من {invoiceDigits(receiptDate(subscription.subscriptionStartDate))} حتى {invoiceDigits(receiptDate(subscription.subscriptionEndDate))}</p>
+            <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">نوع الاشتراك :</span><span className="val flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{subscription.subscriptionType ?? '—'}</span></div>
 
-            <p className="no-refund text-center border-y border-black py-1">الاشتراك لا يسترد ولا يستبدل</p>
+            <p className="no-refund my-2 border-y border-black py-1 text-center text-sm font-extrabold">الاشتراك لا يسترد ولا يستبدل</p>
 
-            <div className="sign-grid grid grid-cols-3 text-center">
-              <div><small>الموظف</small><b>{staffName || '—'}</b></div>
-              <div><small>الوقت</small><b className="nums" dir="ltr">{printTime}</b></div>
-              <div><small>الختم</small><b>&nbsp;</b></div>
+            <div className="sign-grid my-2 grid grid-cols-3 gap-1 text-center">
+              <div><small className="block text-[11px]">الموظف</small><b className="block text-xs">{staffName || '—'}</b></div>
+              <div><small className="block text-[11px]">الوقت</small><b className="nums block text-xs" dir="ltr">{printTime}</b></div>
+              <div><small className="block text-[11px]">الختم</small><b className="block text-xs">&nbsp;</b></div>
             </div>
 
             <div className="qr-grid grid grid-cols-2 gap-3 justify-items-center" aria-label="رموز الإيصال">

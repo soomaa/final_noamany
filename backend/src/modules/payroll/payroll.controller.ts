@@ -95,26 +95,31 @@ export class PayrollController {
 
   @Post('runs')
   @RequiresPermission('payroll:create')
-  createRun(@Body() dto: CreatePayrollRunDto) {
-    return this.payroll.createRun(dto);
+  createRun(@Body() dto: CreatePayrollRunDto, @CurrentUser() user: JwtUser) {
+    return this.payroll.createRun(dto, user);
   }
 
   @Get('runs')
-  listRuns(@Query() q: ListPayrollRunsDto) {
-    return this.payroll.listRuns(q);
+  listRuns(@Query() q: ListPayrollRunsDto, @CurrentUser() user: JwtUser) {
+    return this.payroll.listRuns(q, user);
   }
 
   @Get('runs/:id/lines')
-  listRunLines(@Param('id', ParseIntPipe) id: number, @Query() q: PaginationDto) {
-    return this.payroll.listRunLines(id, q);
+  listRunLines(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() q: PaginationDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.payroll.listRunLines(id, q, user);
   }
 
   @Get('runs/:id/slip/:empId')
   getSlip(
     @Param('id', ParseIntPipe) id: number,
     @Param('empId', ParseIntPipe) empId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.payroll.getSlip(id, empId);
+    return this.payroll.getSlip(id, empId, user);
   }
 
   @Patch('runs/:id/slip/:empId/overrides')
@@ -123,14 +128,14 @@ export class PayrollController {
     @Param('id', ParseIntPipe) id: number,
     @Param('empId', ParseIntPipe) empId: number,
     @Body() dto: ApplySalaryOverridesDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.payroll.applySlipOverrides(id, empId, dto, userId);
+    return this.payroll.applySlipOverrides(id, empId, dto, user.sub, user);
   }
 
   @Get('runs/:id/bank-file')
-  getBankFile(@Param('id', ParseIntPipe) id: number) {
-    return this.payroll.generateBankFile(id);
+  getBankFile(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.payroll.generateBankFile(id, user);
   }
 
   @Post('runs/:id/:action')
@@ -144,8 +149,8 @@ export class PayrollController {
   }
 
   @Get('runs/:id')
-  findRun(@Param('id', ParseIntPipe) id: number) {
-    return this.payroll.findRun(id);
+  findRun(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.payroll.findRun(id, user);
   }
 
   @Delete('runs/:id')

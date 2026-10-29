@@ -1,12 +1,64 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
+import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
 import { CreateCategoryDto, CreateEvaluationDto, CreateItemDto, ListEvaluationQueryDto, UpdateCategoryDto, UpdateEvaluationDto, UpdateItemDto } from './dto/evaluation-management.dto';
+
+/**
+ * Holding any of these means the user manages evaluations (sees every in-branch evaluation).
+ * Anyone else with report access sees only their OWN evaluations
+ * (client requirement: "يظهر لكل موظف تقرير تقييماته").
+ */
+export const EVALUATION_MANAGER_KEYS = [
+  'evaluation-management.add_evaluation:create',
+  'evaluation-management.report:update',
+  'evaluation-management.report:delete',
+];
 
 @Injectable()
 export class EvaluationManagementService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+    private readonly permissions: PermissionEngineService,
+  ) {}
+
+  private async isEvaluationManager(user: JwtUser) {
+    return isSystemAdmin(user) || this.permissions.canAny(user.sub, EVALUATION_MANAGER_KEYS);
+  }
+
+  /**
+   * Visibility filter for evaluation rows: branch-scoped for managers, own rows only for
+   * plain employees. Returns `{}` for an unrestricted system admin.
+   */
+  private async evaluationScope(
+    user: JwtUser,
+    requestedBranchId?: number,
+  ): Promise<Prisma.employee_evaluationsWhereInput> {
+    const branchIds = this.branchScope.resolveListFilter(user, requestedBranchId);
+    const where: Prisma.employee_evaluationsWhereInput = branchIds ? { branch_id: { in: branchIds } } : {};
+    if (await this.isEvaluationManager(user)) return where;
+    // Self-service: an unlinked account (no employee) sees nothing.
+    return { ...where, employee_id: user.emp_code != null ? Number(user.emp_code) : -1 };
+  }
+
+  /** Load an evaluation the user may access, or throw 404/403. */
+  private async assertEvaluationVisible(id: number, user: JwtUser) {
+    const row = await this.prisma.employee_evaluations.findUnique({
+      where: { id },
+      select: { id: true, branch_id: true, employee_id: true },
+    });
+    if (!row) throw new NotFoundException('التقييم غير موجود');
+    this.branchScope.assertBranchAllowed(user, row.branch_id);
+    if (!(await this.isEvaluationManager(user)) && row.employee_id !== Number(user.emp_code)) {
+      throw new ForbiddenException('لا يمكنك عرض تقييمات موظف آخر');
+    }
+    return row;
+  }
 
   private score(value: string, label: string) {
     try {
@@ -35,8 +87,12 @@ export class EvaluationManagementService {
     return rows.map((row) => ({ id: row.id, name: row.name, code: row.dep_code }));
   }
 
-  async branches() {
-    const rows = await this.prisma.tbl_branches.findMany({ orderBy: { branch_id: 'asc' } });
+  async branches(user: JwtUser) {
+    const allowed = this.branchScope.allowedBranchIds(user);
+    const rows = await this.prisma.tbl_branches.findMany({
+      where: allowed === null ? undefined : { branch_id: { in: allowed } },
+      orderBy: { branch_id: 'asc' },
+    });
     return rows.map((row) => ({ id: row.branch_id, name: row.branch_name }));
   }
 
@@ -122,16 +178,19 @@ export class EvaluationManagementService {
     return { id };
   }
 
-  async employees(categoryId: number, branchId?: number) {
+  async employees(categoryId: number, user: JwtUser, branchId?: number) {
     const category = await this.category(categoryId);
     const job = await this.prisma.department_jobs.findUnique({ where: { id: category.job_title_id } });
     if (!job?.dep_code) return [];
     if (branchId && !(await this.prisma.tbl_branches.findUnique({ where: { branch_id: branchId } }))) throw new NotFoundException('الفرع غير موجود');
-    const rows = await this.prisma.employees.findMany({ where: { mosma_wazefy_code: job.dep_code, ...(branchId ? { branch_id_fk: branchId } : {}) }, select: { id: true, employee: true, emp_code: true, branch_id_fk: true }, orderBy: { employee: 'asc' } });
+    // Without a branchId a scoped user still only gets employees of their own branches.
+    const branchIds = this.branchScope.resolveListFilter(user, branchId);
+    const rows = await this.prisma.employees.findMany({ where: { mosma_wazefy_code: job.dep_code, ...(branchIds ? { branch_id_fk: { in: branchIds } } : {}) }, select: { id: true, employee: true, emp_code: true, branch_id_fk: true }, orderBy: { employee: 'asc' } });
     return rows.map((row) => ({ id: row.id, name: row.employee ?? '—', code: row.emp_code, branchId: row.branch_id_fk }));
   }
 
-  async createEvaluation(dto: CreateEvaluationDto, actor: number) {
+  async createEvaluation(dto: CreateEvaluationDto, actor: number, user: JwtUser) {
+    this.branchScope.assertBranchAllowed(user, dto.branchId);
     const [category, employee, branch, items] = await Promise.all([
       this.category(dto.categoryId),
       this.prisma.employees.findUnique({ where: { id: dto.employeeId }, select: { mosma_wazefy_code: true, branch_id_fk: true } }),
@@ -155,13 +214,18 @@ export class EvaluationManagementService {
     });
   }
 
-  async listEvaluations(query: ListEvaluationQueryDto) {
+  async listEvaluations(query: ListEvaluationQueryDto, user: JwtUser) {
+    const scope = await this.evaluationScope(user, query.branchId);
     const where: Prisma.employee_evaluationsWhereInput = {
       ...(query.categoryId ? { category_id: query.categoryId } : {}),
       ...(query.employeeId ? { employee_id: query.employeeId } : {}),
-      ...(query.branchId ? { branch_id: query.branchId } : {}),
       ...(query.dateFrom || query.dateTo ? { evaluation_date: { ...(query.dateFrom ? { gte: new Date(query.dateFrom) } : {}), ...(query.dateTo ? { lte: new Date(`${query.dateTo}T23:59:59.999Z`) } : {}) } } : {}),
     };
+    // Scope last so a requested employeeId/branchId can never widen the visible set.
+    Object.assign(where, scope);
+    if (query.employeeId && scope.employee_id != null && scope.employee_id !== query.employeeId) {
+      return paginated([], 0, query.page, query.pageSize);
+    }
     const [rows, total] = await Promise.all([
       this.prisma.employee_evaluations.findMany({ where, include: { category: true }, orderBy: { id: 'desc' }, skip: query.skip, take: query.take }),
       this.prisma.employee_evaluations.count({ where }),
@@ -188,7 +252,8 @@ export class EvaluationManagementService {
     })), total, query.page, query.pageSize);
   }
 
-  async getEvaluation(id: number) {
+  async getEvaluation(id: number, user: JwtUser) {
+    await this.assertEvaluationVisible(id, user);
     const row = await this.prisma.employee_evaluations.findUnique({ where: { id }, include: { category: true, details: { orderBy: { id: 'asc' } } } });
     if (!row) throw new NotFoundException('التقييم غير موجود');
     const [employee, creator] = await Promise.all([
@@ -208,7 +273,8 @@ export class EvaluationManagementService {
     };
   }
 
-  async updateEvaluation(id: number, dto: UpdateEvaluationDto, actor: number) {
+  async updateEvaluation(id: number, dto: UpdateEvaluationDto, actor: number, user: JwtUser) {
+    await this.assertEvaluationVisible(id, user);
     const evaluation = await this.prisma.employee_evaluations.findUnique({ where: { id }, include: { details: true } });
     if (!evaluation) throw new NotFoundException('التقييم غير موجود');
     const posted = new Map<number, Prisma.Decimal>();
@@ -225,9 +291,8 @@ export class EvaluationManagementService {
     });
   }
 
-  async removeEvaluation(id: number) {
-    const exists = await this.prisma.employee_evaluations.findUnique({ where: { id }, select: { id: true } });
-    if (!exists) throw new NotFoundException('التقييم غير موجود');
+  async removeEvaluation(id: number, user: JwtUser) {
+    await this.assertEvaluationVisible(id, user);
     await this.prisma.$transaction(async (tx) => {
       await tx.employee_evaluation_details.deleteMany({ where: { evaluation_id: id } });
       await tx.employee_evaluations.delete({ where: { id } });

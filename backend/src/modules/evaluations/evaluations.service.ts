@@ -1,16 +1,25 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { todayIso } from '../../common/utils/legacy-date.util';
 import { CreateEvaluationDto, ListEvaluationsDto } from './dto/evaluation.dto';
+import { assertEmployeeInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 
 @Injectable()
 export class EvaluationsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  async list(q: ListEvaluationsDto) {
+  async list(q: ListEvaluationsDto, user: JwtUser) {
     const and: Prisma.hr_ta3en_moaqt_evaluationWhereInput[] = [];
+    // Branch isolation (emp_id_fk is a varchar holding employees.id).
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    if (empIds !== null) and.push({ emp_id_fk: { in: empIds.map(String) } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -45,22 +54,19 @@ export class EvaluationsService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async getOne(id: number) {
+  async getOne(id: number, user: JwtUser) {
     const row = await this.prisma.hr_ta3en_moaqt_evaluation.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('التقييم غير موجود');
 
     const empId = row.emp_id_fk ? parseInt(row.emp_id_fk, 10) : null;
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, empId);
     const emp = empId ? await this.prisma.employees.findUnique({ where: { id: empId } }) : null;
 
     const details = await this.prisma.hr_ta3en_moaqt_evaluation_details.findMany({
       where: { evaluation_order_id: String(id) },
     });
 
-    const points = empId
-      ? await this.prisma.hr_ta3en_moaqt_evaluation_points.findMany({
-          where: { emp_id_fk: empId },
-        })
-      : [];
+    const points = empId ? await this.pointsFor(id, empId, row.emp_id_fk) : [];
 
     const criteriaSettings = await this.getCriteriaTree();
     const criteriaTitles = new Map(
@@ -113,9 +119,15 @@ export class EvaluationsService {
     }));
   }
 
-  async create(dto: CreateEvaluationDto, publisherId?: number, publisherName?: string | null) {
+  async create(
+    dto: CreateEvaluationDto,
+    publisherId: number | undefined,
+    publisherName: string | null | undefined,
+    user: JwtUser,
+  ) {
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, emp.id);
 
     // Legacy stores total_degree as posted from the grid; when the client
     // does not supply it, compute it as the sum of the per-criterion emp scores
@@ -159,39 +171,67 @@ export class EvaluationsService {
       });
     }
 
+    // Strength/weakness points are now linked to THIS evaluation (evaluate_id_fk = evaluation id),
+    // so other evaluations of the same employee keep their own points. Legacy-layout rows
+    // (evaluate_id_fk = emp id) were "replaced by the next evaluation" — keep that contract.
     await this.prisma.hr_ta3en_moaqt_evaluation_points.deleteMany({
-      where: { emp_id_fk: dto.empId },
+      where: { emp_id_fk: dto.empId, evaluate_id_fk: dto.empId },
     });
 
     for (const title of dto.positive ?? []) {
       if (!title.trim()) continue;
       await this.prisma.hr_ta3en_moaqt_evaluation_points.create({
-        data: { emp_id_fk: dto.empId, evaluate_id_fk: dto.empId, title, type: 1, type_n: 'قوه' },
+        data: { emp_id_fk: dto.empId, evaluate_id_fk: row.id, title, type: 1, type_n: 'قوه' },
       });
     }
     for (const title of dto.negative ?? []) {
       if (!title.trim()) continue;
       await this.prisma.hr_ta3en_moaqt_evaluation_points.create({
-        data: { emp_id_fk: dto.empId, evaluate_id_fk: dto.empId, title, type: 2, type_n: 'ضعف' },
+        data: { emp_id_fk: dto.empId, evaluate_id_fk: row.id, title, type: 2, type_n: 'ضعف' },
       });
     }
 
     return { id: row.id };
   }
 
-  async remove(id: number) {
+  async remove(id: number, user: JwtUser) {
     const row = await this.prisma.hr_ta3en_moaqt_evaluation.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('التقييم غير موجود');
+    const empId = row.emp_id_fk ? parseInt(row.emp_id_fk, 10) : null;
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, empId);
 
     await this.prisma.hr_ta3en_moaqt_evaluation_details.deleteMany({
       where: { evaluation_order_id: String(id) },
     });
-    if (row.emp_id_fk) {
+    if (empId) {
+      // Only this evaluation's points — never the employee's other evaluations.
+      const evaluateIds = (await this.isLatestEvaluation(id, row.emp_id_fk!)) ? [id, empId] : [id];
       await this.prisma.hr_ta3en_moaqt_evaluation_points.deleteMany({
-        where: { emp_id_fk: parseInt(row.emp_id_fk, 10) },
+        where: { emp_id_fk: empId, evaluate_id_fk: { in: evaluateIds } },
       });
     }
     await this.prisma.hr_ta3en_moaqt_evaluation.delete({ where: { id } });
     return { id };
+  }
+
+  /**
+   * Points of one evaluation. New rows carry evaluate_id_fk = evaluation id; legacy rows
+   * carry evaluate_id_fk = emp id and always belonged to the employee's latest evaluation.
+   */
+  private async pointsFor(evaluationId: number, empId: number, empIdRaw: string | null) {
+    const own = await this.prisma.hr_ta3en_moaqt_evaluation_points.findMany({
+      where: { emp_id_fk: empId, evaluate_id_fk: evaluationId },
+    });
+    if (own.length || !empIdRaw || !(await this.isLatestEvaluation(evaluationId, empIdRaw))) return own;
+    return this.prisma.hr_ta3en_moaqt_evaluation_points.findMany({
+      where: { emp_id_fk: empId, evaluate_id_fk: empId },
+    });
+  }
+
+  private async isLatestEvaluation(evaluationId: number, empIdRaw: string) {
+    const newer = await this.prisma.hr_ta3en_moaqt_evaluation.count({
+      where: { emp_id_fk: empIdRaw, id: { gt: evaluationId } },
+    });
+    return newer === 0;
   }
 }

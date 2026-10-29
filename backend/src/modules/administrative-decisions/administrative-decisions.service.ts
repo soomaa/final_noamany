@@ -1,20 +1,48 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { todayIso } from '../../common/utils/legacy-date.util';
 import {
   CreateAdministrativeDecisionDto,
   ListAdministrativeDecisionsDto,
   UpdateAdministrativeDecisionDto,
 } from './dto/administrative-decision.dto';
+import { assertEmployeeInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 
 @Injectable()
 export class AdministrativeDecisionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  async list(q: ListAdministrativeDecisionsDto) {
-    const where: Prisma.hr_ta3en_moaqtWhereInput = q.search?.trim()
+  /**
+   * Branch isolation. A temporary-appointment decision has no employee row yet (free-text
+   * emp_name), so it belongs to its direct manager's branch, or — when no manager is set —
+   * to the branch of the account that published it. Own publications are always visible.
+   * `undefined` = unrestricted.
+   */
+  private async scopedWhere(user: JwtUser): Promise<Prisma.hr_ta3en_moaqtWhereInput | undefined> {
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    if (empIds === null) return undefined;
+    const publishers = empIds.length
+      ? await this.prisma.users.findMany({ where: { emp_code: { in: empIds } }, select: { user_id: true } })
+      : [];
+    return {
+      OR: [
+        { publisher: user.sub },
+        { direct_manager_id_fk: { in: empIds } },
+        { direct_manager_id_fk: 0, publisher: { in: publishers.map((p) => p.user_id) } },
+      ],
+    };
+  }
+
+  async list(q: ListAdministrativeDecisionsDto, user: JwtUser) {
+    const scoped = await this.scopedWhere(user);
+    const search: Prisma.hr_ta3en_moaqtWhereInput = q.search?.trim()
       ? {
           OR: [
             { emp_name: { contains: q.search.trim() } },
@@ -24,6 +52,7 @@ export class AdministrativeDecisionsService {
           ],
         }
       : {};
+    const where: Prisma.hr_ta3en_moaqtWhereInput = scoped ? { AND: [search, scoped] } : search;
     const [rows, total] = await Promise.all([
       this.prisma.hr_ta3en_moaqt.findMany({ where, orderBy: { id: 'desc' }, skip: q.skip, take: q.take }),
       this.prisma.hr_ta3en_moaqt.count({ where }),
@@ -31,12 +60,20 @@ export class AdministrativeDecisionsService {
     return paginated(rows.map((row) => this.toResponse(row)), total, q.page, q.pageSize);
   }
 
-  async getOne(id: number) {
-    return this.toResponse(await this.findOrThrow(id));
+  async getOne(id: number, user: JwtUser) {
+    return this.toResponse(await this.findOrThrow(id, user));
   }
 
-  async create(dto: CreateAdministrativeDecisionDto, publisherId: number, publisherName?: string | null) {
+  async create(
+    dto: CreateAdministrativeDecisionDto,
+    publisherId: number,
+    publisherName: string | null | undefined,
+    user: JwtUser,
+  ) {
     this.assertPeriod(dto.periodFrom, dto.periodTo);
+    if (dto.directManagerId) {
+      await assertEmployeeInScope(this.prisma, this.branchScope, user, dto.directManagerId);
+    }
     const refs = await this.resolveReferences(dto.edaraId, dto.qsmId, dto.directManagerId, dto.jobTitleId);
     const row = await this.prisma.hr_ta3en_moaqt.create({
       data: {
@@ -72,9 +109,13 @@ export class AdministrativeDecisionsService {
     id: number,
     dto: UpdateAdministrativeDecisionDto,
     publisherId: number,
-    publisherName?: string | null,
+    publisherName: string | null | undefined,
+    user: JwtUser,
   ) {
-    const existing = await this.findOrThrow(id);
+    const existing = await this.findOrThrow(id, user);
+    if (dto.directManagerId) {
+      await assertEmployeeInScope(this.prisma, this.branchScope, user, dto.directManagerId);
+    }
     const periodFrom = dto.periodFrom ?? existing.date_from_m ?? '';
     const periodTo = dto.periodTo ?? existing.date_to_m ?? '';
     this.assertPeriod(periodFrom, periodTo);
@@ -118,8 +159,8 @@ export class AdministrativeDecisionsService {
     return this.toResponse(row);
   }
 
-  async remove(id: number) {
-    await this.findOrThrow(id);
+  async remove(id: number, user: JwtUser) {
+    await this.findOrThrow(id, user);
     await this.prisma.hr_ta3en_moaqt.delete({ where: { id } });
     return { id };
   }
@@ -168,9 +209,13 @@ export class AdministrativeDecisionsService {
     }
   }
 
-  private async findOrThrow(id: number) {
+  private async findOrThrow(id: number, user: JwtUser) {
     const row = await this.prisma.hr_ta3en_moaqt.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('قرار التعيين المؤقت غير موجود');
+    const scoped = await this.scopedWhere(user);
+    if (scoped && !(await this.prisma.hr_ta3en_moaqt.count({ where: { AND: [{ id }, scoped] } }))) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لقرار من فرع آخر');
+    }
     return row;
   }
 

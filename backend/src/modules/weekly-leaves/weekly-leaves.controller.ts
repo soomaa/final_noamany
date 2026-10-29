@@ -14,31 +14,34 @@ export class WeeklyLeavesController {
   constructor(private readonly service: WeeklyLeavesService) {}
 
   @Get()
-  list(@Query() q: ListWeeklyLeavesDto) {
-    return this.service.list(q);
+  list(@Query() q: ListWeeklyLeavesDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(q, user);
   }
 
   @Post()
+  @RequiresPermission('employees.weekly_leaves:create')
   create(
     @Body() body: { empId: number; offDay: string },
     @CurrentUser() user: JwtUser,
     @Query('dryRun') dryRun?: string,
   ) {
-    return this.service.create(body, user.sub, isDryRun(dryRun));
+    return this.service.create(body, user, isDryRun(dryRun));
   }
 
   @Patch(':id')
+  @RequiresPermission('employees.weekly_leaves:update')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { empId?: number; offDay?: string },
     @CurrentUser() user: JwtUser,
     @Query('dryRun') dryRun?: string,
   ) {
-    return this.service.update(id, body, user.sub, isDryRun(dryRun));
+    return this.service.update(id, body, user, isDryRun(dryRun));
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.remove(id);
+  @RequiresPermission('employees.weekly_leaves:delete')
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.remove(id, user);
   }
 }

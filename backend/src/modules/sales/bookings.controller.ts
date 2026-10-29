@@ -2,6 +2,7 @@ import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuar
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import type { JwtUser } from '../../common/types/jwt-user';
 import {
   BookingAvailabilityQueryDto,
   BookingTimeSlotsQueryDto,
@@ -34,13 +35,13 @@ export class BookingsController {
   }
 
   @Get()
-  list(@Query() query: ListBookingsDto) {
-    return this.service.list(query);
+  list(@Query() query: ListBookingsDto, @CurrentUser() user: JwtUser) {
+    return this.service.list(query, user);
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.service.findOne(id);
+  findOne(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.findOne(id, user);
   }
 
   @Post()
@@ -54,9 +55,9 @@ export class BookingsController {
   addPayment(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: BookingPaymentDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.addPayment(id, body, userId);
+    return this.service.addPayment(id, body, user.sub, user);
   }
 
   @Post(':id/refunds')
@@ -64,14 +65,14 @@ export class BookingsController {
   addRefund(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: BookingPaymentDto,
-    @CurrentUser('sub') userId: number,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.service.addRefund(id, body, userId);
+    return this.service.addRefund(id, body, user.sub, user);
   }
 
   @Patch(':id/status')
   @RequiresPermission('gym-sales.sales:update')
-  updateStatus(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateBookingStatusDto) {
-    return this.service.updateStatus(id, body.status);
+  updateStatus(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateBookingStatusDto, @CurrentUser() user: JwtUser) {
+    return this.service.updateStatus(id, body.status, user);
   }
 }

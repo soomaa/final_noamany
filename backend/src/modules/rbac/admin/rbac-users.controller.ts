@@ -12,6 +12,7 @@ import {
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { RequiresPermission } from '../../../common/decorators/requires-permission.decorator';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
+import { JwtUser } from '../../../common/types/jwt-user';
 import { RbacUsersService } from './rbac-users.service';
 import { AssignRolesDto, SaveMatrixDto } from './dto/role.dto';
 import { AssignOperationalScopeDto, SetSectionExceptionDto } from './dto/operational-scope.dto';
@@ -39,9 +40,9 @@ export class RbacUsersController {
   setRoles(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AssignRolesDto,
-    @CurrentUser('sub') actor: number,
+    @CurrentUser() actor: JwtUser,
   ) {
-    return this.users.setUserRoles(id, dto, actor);
+    return this.users.setUserRoles(id, dto, actor.sub, actor);
   }
 
   @Get(':id/operational-scope')
@@ -55,9 +56,9 @@ export class RbacUsersController {
   setOperationalScope(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: AssignOperationalScopeDto,
-    @CurrentUser('sub') actor: number,
+    @CurrentUser() actor: JwtUser,
   ) {
-    return this.users.setOperationalScope(id, dto, actor);
+    return this.users.setOperationalScope(id, dto, actor.sub, actor);
   }
 
   @Put(':id/section-exception')
@@ -65,9 +66,9 @@ export class RbacUsersController {
   setSectionException(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SetSectionExceptionDto,
-    @CurrentUser('sub') actor: number,
+    @CurrentUser() actor: JwtUser,
   ) {
-    return this.users.setSectionException(id, dto, actor);
+    return this.users.setSectionException(id, dto, actor.sub, actor);
   }
 
   @Delete(':id/section-exception/:branchId/:section')
@@ -76,9 +77,9 @@ export class RbacUsersController {
     @Param('id', ParseIntPipe) id: number,
     @Param('branchId', ParseIntPipe) branchId: number,
     @Param('section') section: 'female' | 'male',
-    @CurrentUser('sub') actor: number,
+    @CurrentUser() actor: JwtUser,
   ) {
-    return this.users.clearSectionException(id, branchId, section, actor);
+    return this.users.clearSectionException(id, branchId, section, actor.sub, actor);
   }
 
   @Get(':id/exceptions')
@@ -92,14 +93,14 @@ export class RbacUsersController {
   setExceptions(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: SaveMatrixDto,
-    @CurrentUser('sub') actor: number,
+    @CurrentUser() actor: JwtUser,
   ) {
-    return this.users.setExceptions(id, dto, actor);
+    return this.users.setExceptions(id, dto, actor.sub, actor);
   }
 
   @Delete(':id/exceptions')
   @RequiresPermission('admin.exceptions:manage')
-  clearExceptions(@Param('id', ParseIntPipe) id: number, @CurrentUser('sub') actor: number) {
-    return this.users.clearExceptions(id, actor);
+  clearExceptions(@Param('id', ParseIntPipe) id: number, @CurrentUser() actor: JwtUser) {
+    return this.users.clearExceptions(id, actor.sub, actor);
   }
 }

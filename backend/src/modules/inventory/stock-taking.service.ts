@@ -198,19 +198,25 @@ export class StockTakingService {
     return this.findSession(id);
   }
 
-  async updateSession(id: number, dto: Partial<UpsertCountSessionDto>) {
-    const session = await this.findSession(id);
+  async updateSession(id: number, dto: Partial<UpsertCountSessionDto>, user: JwtUser) {
+    const session = await this.findSession(id, user);
     if (session.status !== 'draft') throw new BadRequestException('لا يمكن تعديل جلسة بعد إرسالها للاعتماد');
+    // Never write a client-supplied location blindly: it must resolve to an active warehouse in the
+    // caller's branch scope, and an existing count session cannot be moved to another location.
+    if (dto.warehouseId != null || dto.branchId != null) {
+      const selected = await this.location.resolveSelection(user, dto.warehouseId ?? session.warehouseId, dto.branchId ?? undefined);
+      if (selected.warehouseId !== session.warehouseId || (session.branchId != null && selected.branchId !== session.branchId)) {
+        throw new BadRequestException('لا يمكن تغيير موقع جلسة جرد قائمة');
+      }
+    }
     await this.prisma.$transaction(async (tx) => {
       await tx.inv_count_sessions.update({
         where: { id },
         data: {
-          ...(dto.warehouseId != null ? { warehouse_id: dto.warehouseId } : {}),
-          ...(dto.branchId !== undefined ? { branch_id: dto.branchId ?? null } : {}),
           ...(dto.notes !== undefined ? { notes: dto.notes ?? null } : {}),
         },
       });
-      if (dto.items) await this.writeSheet(tx, id, dto.warehouseId ?? session.warehouseId, dto.items);
+      if (dto.items) await this.writeSheet(tx, id, session.warehouseId, dto.items);
     });
     return this.findSession(id);
   }

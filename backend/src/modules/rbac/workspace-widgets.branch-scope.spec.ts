@@ -45,6 +45,17 @@ describe('workspace widget branch isolation', () => {
     });
   });
 
+  it('treats an RBAC super admin (non level-1) as a system admin', async () => {
+    const { service, prisma } = makeService();
+
+    await service.getWidgets({ sub: 3, level: 2, branch: 2, is_super_admin: true } as never, 7);
+
+    expect(prisma.users.findUnique).not.toHaveBeenCalled();
+    expect(prisma.club_members.count).toHaveBeenCalledWith({
+      where: { is_deleted: false, branch_id: { in: [7] } },
+    });
+  });
+
   it('uses the employee current branch from the database instead of a stale token claim', async () => {
     const { service, prisma } = makeService();
     prisma.users.findUnique.mockResolvedValue({ branch_id_fk: 3 });
@@ -59,7 +70,7 @@ describe('workspace widget branch isolation', () => {
   it('returns the current user daily net after subtracting their expenses', async () => {
     const prisma = {
       club_receipts: {
-        findMany: jest.fn().mockResolvedValue([{ amount: 1000 }, { amount: 250 }]),
+        findMany: jest.fn().mockResolvedValue([{ amount: 1000, payments: [] }, { amount: 250, payments: [] }]),
       },
       fin_expenses: {
         findMany: jest.fn().mockResolvedValue([{ total_amount: 300 }]),

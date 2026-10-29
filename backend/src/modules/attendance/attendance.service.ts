@@ -6,6 +6,8 @@ import { Prisma } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import { legacyDateMatchValues, todayIso } from '../../common/utils/legacy-date.util';
 import { UpsertShiftDto } from './dto/shift.dto';
 import { CheckPunchDto } from './dto/check.dto';
@@ -189,18 +191,36 @@ export class AttendanceService {
   private readonly edafiForbiddenMessage =
     'غير مسموح: أنت لست المدير المباشر لهذا الموظف ولا مسؤول الموارد البشرية المعيّن';
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // Stateless; defaulted so the existing unit specs can still construct the service.
+    private readonly scope: BranchScopeService = new BranchScopeService(),
+  ) {}
+
+  /**
+   * `branch_id_fk` filter for the board and reports. Web callers pass their JWT and are
+   * clamped to their branch scope (admins: the requested branch or all). Callers that
+   * pass no user (mobile own-record queries, already filtered by empCode) keep the
+   * legacy explicit-branch behaviour. `undefined` = no branch filter.
+   */
+  private reportBranchFilter(user: JwtUser | undefined, requested?: string): number | { in: number[] } | undefined {
+    if (!user) return requested && requested !== 'all' ? parseInt(requested, 10) || 0 : undefined;
+    const branches = this.scope.resolveListFilter(user, requested);
+    return branches ? { in: branches } : undefined;
+  }
 
   // -------------------------------------------------------------------------
   // BOARD
   // -------------------------------------------------------------------------
-  async board(q: PaginationDto & { date?: string; source?: string; status?: string; branchId?: string }) {
+  async board(
+    q: PaginationDto & { date?: string; source?: string; status?: string; branchId?: string },
+    user?: JwtUser,
+  ) {
     const date = q.date?.slice(0, 10) ?? todayIso();
     const matches = legacyDateMatchValues(date);
     const where: Prisma.tbl_hdoor_empsWhereInput = { action_date_s: { in: matches } };
-    if (q.branchId && q.branchId !== 'all') {
-      where.branch_id_fk = parseInt(q.branchId, 10) || 0;
-    }
+    const branchFilter = this.reportBranchFilter(user, q.branchId);
+    if (branchFilter !== undefined) where.branch_id_fk = branchFilter;
 
     const rows = await this.prisma.tbl_hdoor_emps.findMany({
       where,
@@ -672,7 +692,7 @@ export class AttendanceService {
       throw new BadRequestException('الفرع المحدد غير صحيح');
     }
 
-    if (user.level === 1) {
+    if (isSystemAdmin(user)) {
       return {
         branchId: requested,
         where: requested ? ({ branch_id_fk: requested } satisfies Prisma.employeesWhereInput) : {},
@@ -724,7 +744,7 @@ export class AttendanceService {
     });
     return {
       branchId: scope.branchId ?? null,
-      branchLocked: user.level !== 1,
+      branchLocked: !isSystemAdmin(user),
       employees: employees.map((employee) => ({
         id: employee.id,
         empCode: employee.emp_code,
@@ -1606,10 +1626,11 @@ export class AttendanceService {
     };
   }
 
-  async listShiftSwaps(q: ListEdafiDto) {
+  async listShiftSwaps(q: ListEdafiDto, user?: JwtUser) {
     const where: Prisma.tbl_emps_shef_edafiWhereInput = {};
     if (q.empCode && q.empCode !== 'all') where.emp_code_fk = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') where.branch_id_fk = parseInt(q.branchId, 10) || 0;
+    const branchFilter = this.reportBranchFilter(user, q.branchId);
+    if (branchFilter !== undefined) where.branch_id_fk = branchFilter;
     if (q.dateFrom && q.dateTo) {
       where.sheft_date = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
     }
@@ -1693,10 +1714,11 @@ export class AttendanceService {
     return { id: row.id, message: 'تمت تسجيل الساعات الإضافية بنجاح' };
   }
 
-  async listExtraHours(q: ListEdafiDto) {
+  async listExtraHours(q: ListEdafiDto, user?: JwtUser) {
     const where: Prisma.tbl_emps_hours_edafiWhereInput = {};
     if (q.empCode && q.empCode !== 'all') where.emp_code_fk = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') where.branch_id_fk = parseInt(q.branchId, 10) || 0;
+    const branchFilter = this.reportBranchFilter(user, q.branchId);
+    if (branchFilter !== undefined) where.branch_id_fk = branchFilter;
     if (q.dateFrom && q.dateTo) {
       where.edafa_date = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
     }
@@ -1734,7 +1756,7 @@ export class AttendanceService {
   // -------------------------------------------------------------------------
 
   /** R1 — Basma report (Hdoor_m::get_hdoor_actions): in/out per emp/branch over a range. */
-  async basmaReport(q: AttendanceReportDto) {
+  async basmaReport(q: AttendanceReportDto, user?: JwtUser) {
     const where: Prisma.tbl_hdoor_empsWhereInput = {};
     if (q.dateFrom && q.dateTo) {
       where.action_date = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
@@ -1742,7 +1764,8 @@ export class AttendanceService {
       where.action_date = todayIso();
     }
     if (q.empCode && q.empCode !== 'all') where.member_code = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') where.branch_id_fk = parseInt(q.branchId, 10) || 0;
+    const branchFilter = this.reportBranchFilter(user, q.branchId);
+    if (branchFilter !== undefined) where.branch_id_fk = branchFilter;
     if (q.search?.trim()) {
       const search = q.search.trim();
       const code = Number(search);
@@ -1798,7 +1821,7 @@ export class AttendanceService {
    * on agaza_date is a swapped weekly leave; all other approved leave ranges are
    * regular leave; a day with no punch or leave is absence.
    */
-  async fullAttendanceSheet(q: AttendanceReportDto) {
+  async fullAttendanceSheet(q: AttendanceReportDto, user?: JwtUser) {
     const from = (q.dateFrom || todayIso()).slice(0, 10);
     const to = (q.dateTo || from).slice(0, 10);
     const start = new Date(`${from}T12:00:00`);
@@ -1814,7 +1837,8 @@ export class AttendanceService {
       OR: [{ leave_emp: null }, { leave_emp: 0 }],
     };
     if (q.empCode && q.empCode !== 'all') employeeWhere.emp_code = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') employeeWhere.branch_id_fk = parseInt(q.branchId, 10) || 0;
+    const branchFilter = this.reportBranchFilter(user, q.branchId);
+    if (branchFilter !== undefined) employeeWhere.branch_id_fk = branchFilter;
     if (q.search?.trim()) {
       const search = q.search.trim();
       const code = Number(search);
@@ -2004,10 +2028,11 @@ export class AttendanceService {
    * permission split + total. Permission = an approved ozonat order (suspend ∈ {1,4})
    * whose ezn_date_ar equals the punch action_date.
    */
-  async lateReport(q: AttendanceReportDto) {
+  async lateReport(q: AttendanceReportDto, user?: JwtUser) {
     const empWhere: Prisma.employeesWhereInput = {};
     if (q.empCode && q.empCode !== 'all') empWhere.emp_code = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') empWhere.branch_id_fk = parseInt(q.branchId, 10) || 0;
+    const branchFilter = this.reportBranchFilter(user, q.branchId);
+    if (branchFilter !== undefined) empWhere.branch_id_fk = branchFilter;
     if (q.search?.trim()) {
       const search = q.search.trim();
       const code = Number(search);
@@ -2108,7 +2133,7 @@ export class AttendanceService {
   }
 
   /** R4 — Extra-hours report from tbl_emps_hours_edafi (Hdoor_m::get_hours_edafi_data). */
-  async overtimeReport(q: AttendanceReportDto) {
+  async overtimeReport(q: AttendanceReportDto, user?: JwtUser) {
     const where: Prisma.tbl_emps_hours_edafiWhereInput = {};
     if (q.dateFrom && q.dateTo) {
       where.edafa_date = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
@@ -2116,7 +2141,8 @@ export class AttendanceService {
       where.edafa_date = todayIso();
     }
     if (q.empCode && q.empCode !== 'all') where.emp_code_fk = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') where.branch_id_fk = parseInt(q.branchId, 10) || 0;
+    const branchFilter = this.reportBranchFilter(user, q.branchId);
+    if (branchFilter !== undefined) where.branch_id_fk = branchFilter;
 
     const [rows, total] = await Promise.all([
       this.prisma.tbl_emps_hours_edafi.findMany({
@@ -2149,8 +2175,8 @@ export class AttendanceService {
   }
 
   /** R5 — Shift-swap report from tbl_emps_shef_edafi (Hdoor_m::get_datatables_sheft). */
-  async shiftSwapReport(q: AttendanceReportDto) {
-    return this.listShiftSwaps(q as unknown as ListEdafiDto);
+  async shiftSwapReport(q: AttendanceReportDto, user?: JwtUser) {
+    return this.listShiftSwaps(q as unknown as ListEdafiDto, user);
   }
 
   /**
@@ -2158,14 +2184,15 @@ export class AttendanceService {
    * separately, employee official/off dates are excluded, and any remaining day
    * without a main attendance row is unexcused absence.
    */
-  async absenceReport(q: AttendanceReportDto) {
+  async absenceReport(q: AttendanceReportDto, user?: JwtUser) {
     const from = (q.dateFrom || todayIso()).slice(0, 10);
     const to = (q.dateTo || from).slice(0, 10);
     if (to < from) throw new BadRequestException('تاريخ النهاية يجب أن يساوي أو يلي تاريخ البداية');
 
     const empWhere: Prisma.employeesWhereInput = { employee_type: 1 };
     if (q.empCode && q.empCode !== 'all') empWhere.emp_code = parseInt(q.empCode, 10) || 0;
-    if (q.branchId && q.branchId !== 'all') empWhere.branch_id_fk = parseInt(q.branchId, 10) || 0;
+    const branchFilter = this.reportBranchFilter(user, q.branchId);
+    if (branchFilter !== undefined) empWhere.branch_id_fk = branchFilter;
     if (q.search?.trim()) {
       const search = q.search.trim();
       const code = Number(search);

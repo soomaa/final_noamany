@@ -38,7 +38,9 @@ import { UpsertClubMemberDto } from './dto/upsert-club-member.dto';
 import { ClubSubscriptionRefundsService, RefundPreview } from '../club-subscriptions/club-subscription-refunds.service';
 import { toNum } from '../club-subscriptions/club-subscription.utils';
 import { normalizeMembershipDocumentType } from './membership-document.utils';
-import { assertSystemAdmin } from '../../common/utils/system-admin.util';
+import { assertSystemAdmin, isSystemAdmin } from '../../common/utils/system-admin.util';
+import { isReceptionEmployee } from '../../common/utils/reception-user.util';
+import { cairoDayRange } from '../../common/utils/cairo-day-range.util';
 import { MemberDocumentStorageService } from './member-document-storage.service';
 import { canonicalClubMemberBranchId, clubMemberIdentityBranchIds, shareClubMemberIdentity } from './club-branch-groups';
 
@@ -77,15 +79,28 @@ export class ClubMembersService {
     if (!this.branchScope.isMemberGenderAllowed(user, member.gender)) {
       throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
     }
-    const receptionOnly = user?.level !== 1 && /(reception|ريسيبشن|استقبال)/i.test(user?.job_title ?? '');
+    const receptionOnly = !isSystemAdmin(user) && /(reception|ريسيبشن|استقبال)/i.test(user?.job_title ?? '');
     if (receptionOnly && (!member.created_at || localDateString(member.created_at) !== localDateString())) {
       throw new ForbiddenException('موظف الاستقبال يمكنه الوصول إلى أعضاء اليوم فقط');
     }
   }
 
+  /**
+   * Reception desk employees may edit or delete only members registered today (Cairo day).
+   * Admins and manager titles are excluded by isReceptionEmployee.
+   */
+  private assertReceptionCanModify(user: JwtUser | undefined, member: { created_at?: Date | null }) {
+    if (!isReceptionEmployee(user)) return;
+    const today = cairoDayRange();
+    const createdAt = member.created_at ? new Date(member.created_at) : null;
+    if (!createdAt || createdAt < today.gte || createdAt >= today.lt) {
+      throw new ForbiddenException('موظف الاستقبال يمكنه تعديل أو حذف الأعضاء المضافين اليوم فقط');
+    }
+  }
+
   /** Reception is a desk role: member lists are limited to registrations made today. */
   private receptionTodayRange(user?: JwtUser): { gte: Date; lt: Date } | null {
-    if (!user || user.level === 1 || user.level === 3) return null;
+    if (!user || isSystemAdmin(user) || user.level === 3) return null;
     const title = user.job_title?.normalize('NFKD').toLowerCase() ?? '';
     if (!/(استقبال|ريسيبشن|ريسبشن|reception)/i.test(title)) return null;
     if (/(مدير|مشرف|رئيس|manager|supervisor|head)/i.test(title)) return null;
@@ -913,7 +928,7 @@ export class ClubMembersService {
     if (!this.branchScope.isMemberGenderAllowed(user, row.gender)) {
       throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
     }
-    const receptionOnly = user?.level !== 1 && /(reception|ريسيبشن|استقبال)/i.test(user?.job_title ?? '');
+    const receptionOnly = !isSystemAdmin(user) && /(reception|ريسيبشن|استقبال)/i.test(user?.job_title ?? '');
     if (!forMembershipOperation && !forRefundTransfer && receptionOnly && localDateString(row.created_at) !== localDateString()) {
       throw new ForbiddenException('موظف الاستقبال يمكنه الوصول إلى أعضاء اليوم فقط');
     }
@@ -1255,6 +1270,8 @@ export class ClubMembersService {
   async update(id: number, dto: Partial<UpsertClubMemberDto>, user?: JwtUser) {
     const existing = await this.prisma.club_members.findFirst({ where: { id, is_deleted: false } });
     if (!existing) throw new NotFoundException('العضو غير موجود');
+    // Edit/delete rule first so the receptionist gets the specific "added today only" message.
+    this.assertReceptionCanModify(user, existing);
     this.assertMemberAccess(user, existing);
     if (dto.gender && !this.branchScope.isMemberGenderAllowed(user, dto.gender)) {
       throw new ForbiddenException('لا تملك صلاحية نقل العضو إلى هذا القسم');
@@ -1655,6 +1672,8 @@ export class ClubMembersService {
   async remove(id: number, user?: JwtUser) {
     const existing = await this.prisma.club_members.findFirst({ where: { id, is_deleted: false } });
     if (!existing) throw new NotFoundException('العضو غير موجود');
+    // Edit/delete rule first so the receptionist gets the specific "added today only" message.
+    this.assertReceptionCanModify(user, existing);
     this.assertMemberAccess(user, existing);
 
     const preview = await this.deletionPreview(id, user);

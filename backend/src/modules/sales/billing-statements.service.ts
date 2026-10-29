@@ -14,17 +14,28 @@ import {
   SettleBillingStatementDto,
 } from "./dto/billing-statements.dto";
 import { localDateString, toDecimal, toNumber } from "./sales.utils";
+import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
+import { JwtUser } from "../../common/types/jwt-user";
 
 @Injectable()
 export class BillingStatementsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledger: ModuleLedgerService,
+    private readonly branchScope: BranchScopeService,
   ) {}
+
+  /** Branch ids to aggregate for this caller; `null` ⇒ all branches (admin, no request). */
+  private branchIds(q: { branchId?: number }, user?: JwtUser): number[] | null {
+    if (!user) return q.branchId ? [q.branchId] : null;
+    return this.branchScope.resolveListFilter(user, q.branchId ?? null);
+  }
 
   private salesWhere(
     q: BillingPreviewQueryDto,
+    user?: JwtUser,
   ): Prisma.sales_quick_salesWhereInput {
+    const branchIds = this.branchIds(q, user);
     return {
       sale_type: q.accountType,
       ...(q.accountType === "employee"
@@ -34,15 +45,15 @@ export class BillingStatementsService {
       billing_status: "unbilled",
       ...(q.billingCycle ? { billing_cycle: q.billingCycle } : {}),
       sale_date: { gte: q.periodStart, lte: q.periodEnd },
-      ...(q.branchId ? { branch_id: q.branchId } : {}),
+      ...(branchIds ? { branch_id: { in: branchIds } } : {}),
     };
   }
 
-  async preview(q: BillingPreviewQueryDto) {
+  async preview(q: BillingPreviewQueryDto, user?: JwtUser) {
     if (q.periodStart > q.periodEnd)
       throw new BadRequestException("بداية الفترة يجب أن تسبق نهايتها");
     const sales = await this.prisma.sales_quick_sales.findMany({
-      where: this.salesWhere(q),
+      where: this.salesWhere(q, user),
       include: { items: true },
       orderBy: [{ sale_date: "asc" }, { daily_number: "asc" }],
     });
@@ -88,8 +99,11 @@ export class BillingStatementsService {
     };
   }
 
-  async create(dto: CreateBillingStatementDto, userId: number) {
-    const preview = await this.preview(dto);
+  async create(dto: CreateBillingStatementDto, userId: number, user?: JwtUser) {
+    const preview = await this.preview(dto, user);
+    // A scoped user's statement belongs to their own (first allowed) branch so settle can authorize it.
+    const scopedBranches = this.branchIds(dto, user);
+    const statementBranchId = dto.branchId ?? scopedBranches?.[0] ?? null;
     const selected = dto.saleIds?.length
       ? preview.sales.filter((sale) => dto.saleIds!.includes(sale.id))
       : preview.sales;
@@ -113,7 +127,7 @@ export class BillingStatementsService {
           period_start: dto.periodStart,
           period_end: dto.periodEnd,
           total_amount: toDecimal(total),
-          branch_id: dto.branchId ?? null,
+          branch_id: statementBranchId,
           notes: dto.notes?.trim() || null,
           created_by: userId,
           items: {
@@ -145,12 +159,13 @@ export class BillingStatementsService {
     return this.map(row);
   }
 
-  async settle(id: number, dto: SettleBillingStatementDto, userId: number) {
+  async settle(id: number, dto: SettleBillingStatementDto, userId: number, user?: JwtUser) {
     const statement = await this.prisma.sales_billing_statements.findUnique({
       where: { id },
       include: { items: true },
     });
     if (!statement) throw new NotFoundException("كشف الحساب غير موجود");
+    if (user) this.branchScope.assertBranchAllowed(user, statement.branch_id, "لا تملك صلاحية تسوية كشف حساب فرع آخر");
     if (statement.status !== "issued")
       throw new BadRequestException("تمت تسوية هذا الكشف بالفعل");
     if (
@@ -214,7 +229,7 @@ export class BillingStatementsService {
     return this.map(row);
   }
 
-  async list(q: ListBillingStatementsDto) {
+  async list(q: ListBillingStatementsDto, user?: JwtUser) {
     const where: Prisma.sales_billing_statementsWhereInput = {};
     if (q.accountType) where.account_type = q.accountType;
     if (q.accountId != null) {
@@ -224,7 +239,8 @@ export class BillingStatementsService {
         where.OR = [{ employee_id: q.accountId }, { partner_id: q.accountId }];
     }
     if (q.status && q.status !== "all") where.status = q.status;
-    if (q.branchId) where.branch_id = q.branchId;
+    const branchIds = this.branchIds(q, user);
+    if (branchIds) where.branch_id = { in: branchIds };
     if (q.dateFrom || q.dateTo)
       where.period_start = {
         ...(q.dateFrom ? { gte: q.dateFrom } : {}),

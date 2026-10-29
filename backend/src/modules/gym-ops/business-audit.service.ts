@@ -127,9 +127,14 @@ export class BusinessAuditService {
     );
   }
 
-  async forEntity(entityType: string, entityId: string | number, limit = 50) {
+  /** `branchIds` null ⇒ unrestricted (system admin); otherwise only rows logged for those branches. */
+  async forEntity(entityType: string, entityId: string | number, limit = 50, branchIds: number[] | null = null) {
     const rows = await this.prisma.business_audit_log.findMany({
-      where: { entity_type: entityType, entity_id: String(entityId) },
+      where: {
+        entity_type: entityType,
+        entity_id: String(entityId),
+        ...(branchIds !== null ? { branch_id: { in: branchIds } } : {}),
+      },
       orderBy: { id: 'desc' },
       take: limit,
     });

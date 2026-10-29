@@ -6,6 +6,8 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { AmInvitationStatus, AmNewsType, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertDateOrder } from '../../common/validators/validation.util';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
@@ -41,7 +43,15 @@ export class AppManagementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly branchScope: BranchScopeService = new BranchScopeService(),
   ) {}
+
+  /** Invitations belong to `branch_id`; scoped staff only see/act on their own branches. */
+  private invitationBranchWhere(user?: JwtUser, requested?: number | null): Prisma.am_invitationsWhereInput {
+    if (!user) return requested != null ? { branch_id: requested } : {};
+    const ids = this.branchScope.resolveListFilter(user, requested ?? null);
+    return ids === null ? {} : { branch_id: { in: ids } };
+  }
 
   private publicBase(): string {
     return this.config.get<string>('publicUploadBase') ?? '/uploads';
@@ -126,10 +136,9 @@ export class AppManagementService {
 
   // ── Invitations ────────────────────────────────────────────────────────────
 
-  async listInvitations(q: ListInvitationsDto) {
-    const where: Prisma.am_invitationsWhereInput = {};
+  async listInvitations(q: ListInvitationsDto, user?: JwtUser) {
+    const where: Prisma.am_invitationsWhereInput = { ...this.invitationBranchWhere(user, q.branchId ?? null) };
     if (q.status) where.status = q.status;
-    if (q.branchId != null) where.branch_id = q.branchId;
     if (q.search?.trim()) {
       const s = q.search.trim();
       where.OR = [
@@ -152,9 +161,9 @@ export class AppManagementService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async listInvitationsByStatus(status: AmInvitationStatus) {
+  async listInvitationsByStatus(status: AmInvitationStatus, user?: JwtUser) {
     const rows = await this.prisma.am_invitations.findMany({
-      where: { status },
+      where: { status, ...this.invitationBranchWhere(user) },
       orderBy: { created_at: 'desc' },
     });
     return Promise.all(rows.map((r) => this.mapInvitation(r)));
@@ -188,9 +197,13 @@ export class AppManagementService {
     return this.mapInvitation(row);
   }
 
-  async updateInvitation(id: number, dto: UpdateInvitationDto, actorUserId?: number) {
+  async updateInvitation(id: number, dto: UpdateInvitationDto, actorUserId?: number, user?: JwtUser) {
     const existing = await this.prisma.am_invitations.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الدعوة غير موجودة');
+    if (user) {
+      this.branchScope.assertBranchAllowed(user, existing.branch_id);
+      if (dto.branchId != null) this.branchScope.assertBranchAllowed(user, dto.branchId);
+    }
 
     const data: Prisma.am_invitationsUpdateInput = {
       recipient_name: dto.recipientName,

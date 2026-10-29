@@ -229,7 +229,8 @@ export class PrivateSubscriptionsService {
       isLinkedToSessions: packageRow.kind === 'sessions',
       sessionsCount: packageRow.sessions_count ?? undefined,
       allowMultipleDailyEntries: true,
-    }, user.sub, { privateEnrollment: true });
+    // Pass the full JwtUser: a bare user id makes create() run without a user and fail its branch check.
+    }, user, { privateEnrollment: true });
     return this.findEnrollment(Number(created.id), user);
   }
 

@@ -4,6 +4,10 @@ import * as net from 'net';
 import { paginated } from '../../../common/dto/list-result';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { PosListQueryDto, UpsertPosDeviceDto } from './dto/pos-admin.dto';
+import { BranchScopeService } from '../../../common/branch-scope/branch-scope.service';
+import type { JwtUser } from '../../../common/types/jwt-user';
+import { isSystemAdmin } from '../../../common/utils/system-admin.util';
+import { InventoryLocationService } from '../../inventory/inventory-location.service';
 
 export interface SyncDeviceResult {
   id: number;
@@ -17,7 +21,31 @@ export interface SyncDeviceResult {
 export class PosDevicesService {
   private readonly log = new Logger(PosDevicesService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+    private readonly location: InventoryLocationService,
+  ) {}
+
+  private scopeWhere(user?: JwtUser, requested?: number | null): Prisma.sales_pos_devicesWhereInput {
+    const ids = user ? this.branchScope.resolveListFilter(user, requested ?? null) : (requested != null ? [requested] : null);
+    return ids ? { branch_id: { in: ids } } : {};
+  }
+
+  /**
+   * Validate the device's branch/warehouse pair: the branch must be in scope and the
+   * warehouse must be an active location of an allowed branch (Tanta main may assign
+   * Tanta Up/Down warehouses). Returns the branch to store.
+   */
+  private async resolveDeviceLocation(user: JwtUser | undefined, branchId: number | null | undefined, warehouseId: number | null | undefined) {
+    if (!user) return branchId;
+    if (branchId != null) this.branchScope.assertBranchAllowed(user, branchId, 'الفرع خارج الفروع المسموح بها');
+    if (warehouseId != null) {
+      const selected = await this.location.resolveSelection(user, warehouseId, branchId ?? undefined);
+      return branchId ?? selected.branchId;
+    }
+    return branchId;
+  }
 
   private map(row: {
     id: number; name: string; serial_number: string | null; device_type: string;
@@ -50,9 +78,8 @@ export class PosDevicesService {
     });
   }
 
-  async list(q: PosListQueryDto) {
-    const where: Prisma.sales_pos_devicesWhereInput = {};
-    if (q.branchId != null) where.branch_id = q.branchId;
+  async list(q: PosListQueryDto, user?: JwtUser) {
+    const where: Prisma.sales_pos_devicesWhereInput = { ...this.scopeWhere(user, q.branchId) };
     if (q.isActive != null) where.is_active = q.isActive;
     if (q.search?.trim()) {
       const s = q.search.trim();
@@ -65,19 +92,23 @@ export class PosDevicesService {
     return paginated(rows.map((r) => this.map(r)), total, q.page, q.pageSize);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.sales_pos_devices.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('الجهاز غير موجود');
+    if (user) this.branchScope.assertBranchAllowed(user, row.branch_id, 'لا تملك صلاحية الوصول لأجهزة فرع آخر');
     return this.map(row);
   }
 
-  async create(dto: UpsertPosDeviceDto, userId: number) {
+  async create(dto: UpsertPosDeviceDto, userId: number, user?: JwtUser) {
+    // A scoped user's device defaults to their own branch (or the chosen warehouse's branch).
+    const defaultBranch = user && !isSystemAdmin(user) && dto.warehouseId == null ? Number(user.branch) || null : null;
+    const branchId = await this.resolveDeviceLocation(user, dto.branchId ?? defaultBranch, dto.warehouseId);
     const row = await this.prisma.sales_pos_devices.create({
       data: {
         name: dto.name,
         serial_number: dto.serialNumber,
         device_type: (dto.deviceType as 'terminal') ?? 'terminal',
-        branch_id: dto.branchId,
+        branch_id: branchId ?? undefined,
         warehouse_id: dto.warehouseId,
         cash_drawer_id: dto.cashDrawerId,
         ip_address: dto.ipAddress,
@@ -93,8 +124,15 @@ export class PosDevicesService {
     return this.map(row);
   }
 
-  async update(id: number, dto: Partial<UpsertPosDeviceDto>, userId: number) {
-    await this.findOne(id);
+  async update(id: number, dto: Partial<UpsertPosDeviceDto>, userId: number, user?: JwtUser) {
+    const existing = await this.findOne(id, user);
+    if (dto.branchId !== undefined || dto.warehouseId !== undefined) {
+      await this.resolveDeviceLocation(
+        user,
+        dto.branchId !== undefined ? dto.branchId : existing.branchId,
+        dto.warehouseId !== undefined ? dto.warehouseId : existing.warehouseId,
+      );
+    }
     const row = await this.prisma.sales_pos_devices.update({
       where: { id },
       data: {
@@ -117,20 +155,20 @@ export class PosDevicesService {
     return this.map(row);
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, user?: JwtUser) {
+    await this.findOne(id, user);
     await this.prisma.sales_pos_devices.delete({ where: { id } });
     return { ok: true };
   }
 
-  async toggleStatus(id: number, userId: number) {
-    const row = await this.findOne(id);
-    return this.update(id, { isActive: !row.isActive }, userId);
+  async toggleStatus(id: number, userId: number, user?: JwtUser) {
+    const row = await this.findOne(id, user);
+    return this.update(id, { isActive: !row.isActive }, userId, user);
   }
 
-  async syncAll() {
+  async syncAll(user?: JwtUser) {
     const devices = await this.prisma.sales_pos_devices.findMany({
-      where: { is_active: true },
+      where: { is_active: true, ...this.scopeWhere(user) },
       orderBy: { name: 'asc' },
     });
 
@@ -178,11 +216,12 @@ export class PosDevicesService {
     return { synced, failed: devices.length - synced, total: devices.length, results, at: new Date() };
   }
 
-  async stats() {
+  async stats(user?: JwtUser) {
+    const scope = this.scopeWhere(user);
     const [total, active, byType] = await Promise.all([
-      this.prisma.sales_pos_devices.count(),
-      this.prisma.sales_pos_devices.count({ where: { is_active: true } }),
-      this.prisma.sales_pos_devices.groupBy({ by: ['device_type'], _count: true }),
+      this.prisma.sales_pos_devices.count({ where: scope }),
+      this.prisma.sales_pos_devices.count({ where: { is_active: true, ...scope } }),
+      this.prisma.sales_pos_devices.groupBy({ by: ['device_type'], where: scope, _count: true }),
     ]);
     return { total, active, inactive: total - active, byType: Object.fromEntries(byType.map((b) => [b.device_type, b._count])) };
   }

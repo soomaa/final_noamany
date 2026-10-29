@@ -2,16 +2,25 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { assertDateOrder } from '../../common/validators/validation.util';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import { todayIso } from '../../common/utils/legacy-date.util';
 import { CreateArchiveDto, ListArchiveDto, UpdateArchiveDto } from './dto/archive.dto';
+import { assertEmployeeInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 
 @Injectable()
 export class ArchiveService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  async list(q: ListArchiveDto) {
+  async list(q: ListArchiveDto, user: JwtUser) {
     const and: Prisma.hr_tayi_qyedWhereInput[] = [];
+    // Branch isolation (hr_tayi_qyed.emp_id is a varchar holding employees.id).
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    if (empIds !== null) and.push({ emp_id: { in: empIds.map(String) } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -41,10 +50,11 @@ export class ArchiveService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async getOne(id: number) {
+  async getOne(id: number, user: JwtUser) {
     const row = await this.prisma.hr_tayi_qyed.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('طي القيد غير موجود');
     const empId = row.emp_id ? parseInt(row.emp_id, 10) : null;
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, empId);
     const emp = empId ? await this.prisma.employees.findUnique({ where: { id: empId } }) : null;
     return {
       id: row.id,
@@ -58,9 +68,11 @@ export class ArchiveService {
     };
   }
 
-  async create(dto: CreateArchiveDto, publisherId?: number) {
+  async create(dto: CreateArchiveDto, user: JwtUser) {
+    const publisherId = user.sub;
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, emp.id);
     assertDateOrder(dto.fromDate, dto.toDate);
 
     const dateStr = todayIso();
@@ -82,8 +94,10 @@ export class ArchiveService {
     return { id: row.id };
   }
 
-  async update(id: number, dto: UpdateArchiveDto, publisherId?: number) {
-    const existing = await this.getOne(id);
+  async update(id: number, dto: UpdateArchiveDto, user: JwtUser) {
+    const publisherId = user.sub;
+    const existing = await this.getOne(id, user);
+    if (dto.empId != null) await assertEmployeeInScope(this.prisma, this.branchScope, user, dto.empId);
     const fromDate = dto.fromDate ?? existing.fromDate;
     const toDate = dto.toDate ?? existing.toDate;
     if (fromDate && toDate) assertDateOrder(fromDate, toDate);
@@ -107,8 +121,8 @@ export class ArchiveService {
     return { id };
   }
 
-  async remove(id: number) {
-    await this.getOne(id);
+  async remove(id: number, user: JwtUser) {
+    await this.getOne(id, user);
     await this.prisma.hr_tayi_qyed.delete({ where: { id } });
     return { id };
   }

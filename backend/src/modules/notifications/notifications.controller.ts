@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { JwtUser } from '../../common/types/jwt-user';
 import { NotificationsService } from './notifications.service';
 
 @UseGuards(JwtAuthGuard)
@@ -27,8 +28,8 @@ export class NotificationsController {
   }
 
   @Get('alerts')
-  alerts() {
-    return this.notifications.alerts();
+  alerts(@CurrentUser() user: JwtUser) {
+    return this.notifications.alerts(user);
   }
 
   @Patch('read-all')

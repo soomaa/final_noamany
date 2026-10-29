@@ -12,6 +12,7 @@ import { InventoryStockService } from './inventory-stock.service';
 import { notDeletedFilter, toNumber } from './inventory.utils';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import type { JwtUser } from '../../common/types/jwt-user';
 import {
   ListProductsDto,
@@ -163,6 +164,14 @@ export class ProductsService {
       inventorySection: row.ingredient.inventory_section,
       isArchived: row.ingredient.is_deleted || row.ingredient.status !== 'active',
     }));
+  }
+
+  private scopedOpeningBranchId(requested: number | null | undefined, ownBranchId?: number, user?: JwtUser): number | undefined {
+    if (requested == null) return ownBranchId;
+    if (!user) return ownBranchId; // never trust a client branch without a caller to scope it
+    if (isSystemAdmin(user)) return requested;
+    this.branchScope.assertBranchAllowed(user, requested, 'فرع الرصيد الافتتاحي خارج الفروع المسموح بها');
+    return requested;
   }
 
   private async resolveOpeningStockBranchId(preferred?: number | null): Promise<number> {
@@ -498,7 +507,11 @@ export class ProductsService {
     );
   }
 
-  async create(dto: UpsertProductDto, userId: number, branchId?: number) {
+  /**
+   * `branchId` is the caller's own (server-derived) branch. A client `openingBranchId` is honoured
+   * for system admins, and for scoped users only inside their branch scope (e.g. Tanta main → Up/Down).
+   */
+  async create(dto: UpsertProductDto, userId: number, branchId?: number, user?: JwtUser) {
     if (!dto.nameAr?.trim()) throw new BadRequestException('اسم المنتج مطلوب');
 
     const productCode = dto.productCode?.trim() || (await this.generateProductCode());
@@ -542,7 +555,7 @@ export class ProductsService {
       throw new BadRequestException('تكلفة رصيد أول المدة يجب أن تكون أكبر من صفر');
     }
     const openingBranchId = initialStock > 0
-      ? await this.resolveOpeningStockBranchId(dto.openingBranchId ?? branchId)
+      ? await this.resolveOpeningStockBranchId(this.scopedOpeningBranchId(dto.openingBranchId, branchId, user))
       : null;
     if (initialStockValue > 0) await this.moduleLedger.ensureChart();
 

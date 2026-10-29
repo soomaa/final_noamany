@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { CreateCustomerServiceFeedbackDto, CustomerServiceCallStatus, CustomerServiceListDto, UpsertCustomerServiceQuestionDto } from './dto/customer-service.dto';
 
 const questions = (prisma: PrismaService) => (prisma as any).cs_questions;
@@ -8,7 +9,24 @@ const feedbacks = (prisma: PrismaService) => (prisma as any).cs_feedbacks;
 
 @Injectable()
 export class CustomerServiceService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService = new BranchScopeService(),
+  ) {}
+
+  /** A subscription (and its member) must be inside the caller's branches and gender section. */
+  private async assertSubscriptionAccess(subscriptionId: number, user?: JwtUser) {
+    if (!user) return;
+    const subscription = await this.prisma.club_subscriptions.findFirst({
+      where: { id: subscriptionId },
+      select: { branch_id: true, member: { select: { gender: true } } },
+    });
+    if (!subscription) throw new NotFoundException('الاشتراك غير موجود');
+    this.branchScope.assertBranchAllowed(user, subscription.branch_id);
+    if (subscription.member && !this.branchScope.isMemberGenderAllowed(user, subscription.member.gender)) {
+      throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
+    }
+  }
 
   listQuestions() { return questions(this.prisma).findMany({ orderBy: { id: 'asc' } }); }
   async createQuestion(dto: UpsertCustomerServiceQuestionDto) {
@@ -21,9 +39,14 @@ export class CustomerServiceService {
   }
   async removeQuestion(id: number) { await this.ensureQuestion(id); return questions(this.prisma).delete({ where: { id } }); }
 
-  async listSubscriptions(query: CustomerServiceListDto) {
+  async listSubscriptions(query: CustomerServiceListDto, user?: JwtUser) {
     const where: any = { member_id: { not: null } };
-    if (query.branchId) where.branch_id = query.branchId;
+    if (user) {
+      const branchIds = this.branchScope.resolveListFilter(user, query.branchId);
+      if (branchIds !== null) where.branch_id = { in: branchIds };
+      const gender = this.branchScope.memberGenderFilter(user);
+      if (gender) where.member = { gender };
+    } else if (query.branchId) where.branch_id = query.branchId;
     if (query.subscriptionStatus === 'active') where.status = 'active';
     if (query.subscriptionStatus === 'expired') where.status = 'expired';
     if (query.category) where.gender = query.category === 'women' ? 'female' : 'male';
@@ -49,6 +72,7 @@ export class CustomerServiceService {
   async createFeedback(dto: CreateCustomerServiceFeedbackDto, user: JwtUser) {
     const subscription = await this.prisma.club_subscriptions.findFirst({ where: { id: dto.subscriptionId, member_id: dto.clientId } });
     if (!subscription) throw new BadRequestException('العميل أو الاشتراك غير صحيح');
+    await this.assertSubscriptionAccess(subscription.id, user);
     const configured = await this.listQuestions();
     if (dto.callStatus === CustomerServiceCallStatus.answered) {
       const given = new Map(dto.answers.map((answer) => [answer.questionId, answer.answerText?.trim() ?? '']));
@@ -62,13 +86,21 @@ export class CustomerServiceService {
     });
   }
 
-  async feedbackDetails(id: number) {
+  async feedbackDetails(id: number, user?: JwtUser) {
     const feedback = await feedbacks(this.prisma).findUnique({ where: { id }, include: { answers: { include: { question: true } } } });
     if (!feedback) throw new NotFoundException('الرأي غير موجود');
+    await this.assertSubscriptionAccess(Number(feedback.subscription_id), user);
     return feedback;
   }
 
-  async branches() { return this.prisma.tbl_branches.findMany({ orderBy: { branch_name: 'asc' }, select: { branch_id: true, branch_name: true } }); }
+  async branches(user?: JwtUser) {
+    const allowed = user ? this.branchScope.allowedBranchIds(user) : null;
+    return this.prisma.tbl_branches.findMany({
+      where: allowed === null ? undefined : { branch_id: { in: allowed } },
+      orderBy: { branch_name: 'asc' },
+      select: { branch_id: true, branch_name: true },
+    });
+  }
   private normaliseOptions(dto: UpsertCustomerServiceQuestionDto) {
     if (dto.questionType !== 'multiple_choice') return null;
     const options = (dto.options ?? []).map((option) => option.trim()).filter(Boolean);

@@ -13,6 +13,8 @@ import { paginated } from "../../common/dto/list-result";
 import { isDryRun, previewResponse, PreviewRow } from "../../common/preview";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { JwtUser } from "../../common/types/jwt-user";
+import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
+import { isSystemAdmin } from "../../common/utils/system-admin.util";
 import { AuthService } from "../auth/auth.service";
 import { ModuleLedgerService } from "../accounting/module-ledger.service";
 import { roundMoney } from "../accounting/accounting.utils";
@@ -57,7 +59,31 @@ export class ShiftSessionsService {
     private readonly auth: AuthService,
     private readonly shifts: ShiftsService,
     private readonly moduleLedger: ModuleLedgerService,
+    private readonly branchScope: BranchScopeService = new BranchScopeService(),
   ) {}
+
+  /** Branch filter for list/report endpoints: defaults a scoped user to their allowed branches. */
+  private scopedBranchWhere(
+    user: JwtUser | undefined,
+    requested?: number | null,
+  ): { branch_id?: { in: number[] } } {
+    const ids = this.branchScope.resolveListFilter(user, requested ?? null);
+    return ids ? { branch_id: { in: ids } } : {};
+  }
+
+  /** By-id access: the caller's own session, or a session in an allowed branch. */
+  private assertSessionAccess(
+    user: JwtUser | undefined,
+    session: { user_id: number | null; branch_id: number | null },
+  ) {
+    if (!user) return;
+    if (session.user_id != null && session.user_id === user.sub) return;
+    this.branchScope.assertBranchAllowed(
+      user,
+      session.branch_id,
+      "لا تملك صلاحية الوصول لجلسة وردية في فرع آخر",
+    );
+  }
 
   private mapSession(row: SessionRow) {
     return {
@@ -504,7 +530,7 @@ export class ShiftSessionsService {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
   }
 
-  async start(dto: StartShiftSessionDto, userId: number) {
+  async start(dto: StartShiftSessionDto, userId: number, user?: JwtUser) {
     const shift = await this.prisma.sales_shifts.findUnique({
       where: { id: dto.shiftId },
     });
@@ -515,6 +541,9 @@ export class ShiftSessionsService {
     const branchId = dto.branchId ?? shift.branch_id ?? null;
     if (!branchId)
       throw new BadRequestException("حدد فرع الوردية قبل فتح الدرج");
+    // The branch may come from the shift template; it still has to be in the caller's scope.
+    if (user)
+      this.branchScope.assertBranchAllowed(user, branchId, "لا تملك صلاحية فتح وردية في هذا الفرع");
     const eligible = await this.shifts.eligibleUsers(branchId ?? undefined);
     if (!eligible.some((user) => user.id === userId)) {
       throw new BadRequestException("المستخدم الحالي غير مرتبط بإدارة الكافيه");
@@ -602,11 +631,11 @@ export class ShiftSessionsService {
     }
   }
 
-  async getCurrent(q: CurrentSessionQueryDto) {
+  async getCurrent(q: CurrentSessionQueryDto, user?: JwtUser) {
     const where: Prisma.sales_shift_sessionsWhereInput = {
       status: ShiftSessionStatus.open,
+      ...this.scopedBranchWhere(user, q.branchId),
     };
-    if (q.branchId !== undefined) where.branch_id = q.branchId;
     if (q.userId !== undefined) where.user_id = q.userId;
 
     const row = await this.prisma.sales_shift_sessions.findFirst({
@@ -631,9 +660,10 @@ export class ShiftSessionsService {
     };
   }
 
-  async list(q: ListShiftSessionsDto) {
+  async list(q: ListShiftSessionsDto, user?: JwtUser) {
     const and: Prisma.sales_shift_sessionsWhereInput[] = [];
-    if (q.branchId) and.push({ branch_id: q.branchId });
+    const branchWhere = this.scopedBranchWhere(user, q.branchId);
+    if (branchWhere.branch_id) and.push(branchWhere);
     if (q.shiftId) and.push({ shift_id: q.shiftId });
     if (q.status && q.status !== "all") {
       and.push({ status: q.status as ShiftSessionStatus });
@@ -683,12 +713,13 @@ export class ShiftSessionsService {
     return paginated(hydrated, total, q.page, q.pageSize);
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
     const row = await this.prisma.sales_shift_sessions.findUnique({
       where: { id },
       include: { shift: true },
     });
     if (!row) throw new NotFoundException("الجلسة غير موجودة");
+    this.assertSessionAccess(user, row);
     return this.mapSession(row);
   }
 
@@ -697,12 +728,14 @@ export class ShiftSessionsService {
     dto: CloseShiftSessionDto,
     userId: number,
     dryRun = false,
+    user?: JwtUser,
   ) {
     const session = await this.prisma.sales_shift_sessions.findUnique({
       where: { id },
       include: { shift: true },
     });
     if (!session) throw new NotFoundException("الجلسة غير موجودة");
+    this.assertSessionAccess(user, session);
     if (session.status !== ShiftSessionStatus.open) {
       throw new BadRequestException("الجلسة مغلقة بالفعل");
     }
@@ -858,9 +891,9 @@ export class ShiftSessionsService {
     const branchId = dto.branchId ?? targetShift.branch_id ?? nextUser.branch;
     if (!branchId) throw new BadRequestException("حدد فرع الوردية");
     if (
-      nextUser.level !== 1 &&
+      !isSystemAdmin(nextUser) &&
       nextUser.branch &&
-      nextUser.branch !== branchId
+      !this.branchScope.isBranchAllowed(nextUser, branchId)
     ) {
       throw new BadRequestException("المستخدم الجديد غير مرتبط بهذا الفرع");
     }
@@ -1160,10 +1193,11 @@ export class ShiftSessionsService {
     return { ...row, amount: toNumber(row.amount) };
   }
 
-  async listDrawerMovements(q: ListDrawerMovementsDto) {
-    const where: Prisma.sales_cash_drawer_transactionsWhereInput = {};
+  async listDrawerMovements(q: ListDrawerMovementsDto, user?: JwtUser) {
+    const where: Prisma.sales_cash_drawer_transactionsWhereInput = {
+      ...this.scopedBranchWhere(user, q.branchId),
+    };
     if (q.sessionId) where.shift_session_id = q.sessionId;
-    if (q.branchId) where.branch_id = q.branchId;
     if (q.dateFrom || q.dateTo)
       where.created_at = {
         ...(q.dateFrom ? { gte: new Date(`${q.dateFrom}T00:00:00`) } : {}),
@@ -1227,12 +1261,12 @@ export class ShiftSessionsService {
     );
   }
 
-  async openCustodies(q: OpenCustodiesQueryDto) {
+  async openCustodies(q: OpenCustodiesQueryDto, user?: JwtUser) {
     const issues = await this.prisma.sales_cash_drawer_transactions.findMany({
       where: {
         movement_type: "custody_issue",
         status: "posted",
-        ...(q.branchId ? { branch_id: q.branchId } : {}),
+        ...this.scopedBranchWhere(user, q.branchId),
         ...(q.employeeId ? { employee_id: q.employeeId } : {}),
       },
       orderBy: { created_at: "asc" },
@@ -1305,9 +1339,9 @@ export class ShiftSessionsService {
     };
   }
 
-  async report(q: ShiftSessionsReportQueryDto) {
+  async report(q: ShiftSessionsReportQueryDto, user?: JwtUser) {
     const where: Prisma.sales_shift_sessionsWhereInput = {
-      ...(q.branchId ? { branch_id: q.branchId } : {}),
+      ...this.scopedBranchWhere(user, q.branchId),
       ...(q.shiftId ? { shift_id: q.shiftId } : {}),
       ...(q.userId ? { user_id: q.userId } : {}),
       ...(q.status && q.status !== "all"
@@ -1471,12 +1505,12 @@ export class ShiftSessionsService {
     return { summary, insights, rows };
   }
 
-  async dailyReport(q: DailyReportQueryDto) {
+  async dailyReport(q: DailyReportQueryDto, user?: JwtUser) {
     const targetDate = q.date ?? localDateString();
     const where: Prisma.sales_shift_sessionsWhereInput = {
       session_date: targetDate,
+      ...this.scopedBranchWhere(user, q.branchId),
     };
-    if (q.branchId) where.branch_id = q.branchId;
 
     const sessions = await this.prisma.sales_shift_sessions.findMany({
       where,

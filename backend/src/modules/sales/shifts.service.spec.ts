@@ -1,3 +1,4 @@
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { ShiftsService } from './shifts.service';
 
 describe('ShiftsService last shift of day', () => {
@@ -26,7 +27,7 @@ describe('ShiftsService last shift of day', () => {
       })),
     };
     const window = { rangesOverlap: jest.fn().mockReturnValue(false) };
-    const service = new ShiftsService(prisma as never, window as never);
+    const service = new ShiftsService(prisma as never, window as never, new BranchScopeService());
 
     const result = await service.create({
       shiftName: 'المسائية',

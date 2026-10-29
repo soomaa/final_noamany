@@ -1,7 +1,9 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { JwtUser } from '../../common/types/jwt-user';
 import {
   SUSPEND_INVESTIGATING,
   buildSuspendWhere,
@@ -10,13 +12,20 @@ import {
 } from '../../common/utils/suspend-status.util';
 import { CreateBylawDto, CreatePenaltyDto, UpdateBylawDto, UpdatePenaltyDto } from './dto/penalty.dto';
 import { ListPenaltiesDto } from './dto/list-penalties.dto';
+import { assertEmployeeInScope, scopedEmployeeIds } from '../reports/employee-branch-scope.util';
 
 @Injectable()
 export class PenaltiesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly branchScope: BranchScopeService,
+  ) {}
 
-  async list(q: ListPenaltiesDto) {
+  async list(q: ListPenaltiesDto, user: JwtUser) {
     const and: Prisma.hr_gezaatWhereInput[] = [];
+    // Branch isolation: scoped users only see penalties of employees in their branches.
+    const empIds = await scopedEmployeeIds(this.prisma, this.branchScope, user);
+    if (empIds !== null) and.push({ emp_id: { in: empIds } });
     const statusWhere = buildSuspendWhere(q.status);
     if (statusWhere?.suspend) and.push({ suspend: statusWhere.suspend });
     if (q.search?.trim()) {
@@ -47,9 +56,15 @@ export class PenaltiesService {
     return paginated(data, total, q.page, q.pageSize);
   }
 
-  async create(dto: CreatePenaltyDto, publisherId?: number, publisherName?: string | null) {
+  async create(
+    dto: CreatePenaltyDto,
+    publisherId: number | undefined,
+    publisherName: string | null | undefined,
+    user: JwtUser,
+  ) {
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new NotFoundException('الموظف غير موجود');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, emp.id);
     const dateStr = dto.date ?? new Date().toISOString().slice(0, 10);
     const date = new Date(`${dateStr}T00:00:00`);
     if (Number.isNaN(date.getTime())) throw new BadRequestException('تاريخ الجزاء غير صحيح');
@@ -89,8 +104,8 @@ export class PenaltiesService {
     return { id: row.id };
   }
 
-  async update(id: number, dto: UpdatePenaltyDto) {
-    const existing = await this.findPenaltyOrThrow(id);
+  async update(id: number, dto: UpdatePenaltyDto, user: JwtUser) {
+    const existing = await this.findPenaltyOrThrow(id, user);
     // Legacy allows editing an approved penalty. Lock only after payroll has consumed it.
     if (existing.mosayer_rkm_fk != null && (dto.empId != null || dto.amount != null || dto.date != null || dto.gezaType != null)) {
       throw new BadRequestException('لا يمكن تعديل بيانات جزاء تم ترحيله لمسير الرواتب');
@@ -100,6 +115,7 @@ export class PenaltiesService {
     if (dto.empId != null) {
       const employee = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
       if (!employee) throw new NotFoundException('الموظف غير موجود');
+      await assertEmployeeInScope(this.prisma, this.branchScope, user, employee.id);
       data.emp_id = employee.id;
       data.emp_code = employee.emp_code;
       data.emp_name = employee.employee;
@@ -124,26 +140,26 @@ export class PenaltiesService {
     return { id };
   }
 
-  async investigate(id: number) {
-    await this.findPenaltyOrThrow(id);
+  async investigate(id: number, user: JwtUser) {
+    await this.findPenaltyOrThrow(id, user);
     await this.prisma.hr_gezaat.update({ where: { id }, data: { suspend: SUSPEND_INVESTIGATING } });
     return { id, status: 'investigating' };
   }
 
-  async approve(id: number) {
-    await this.findPenaltyOrThrow(id);
+  async approve(id: number, user: JwtUser) {
+    await this.findPenaltyOrThrow(id, user);
     await this.prisma.hr_gezaat.update({ where: { id }, data: { suspend: SuspendStatus.APPROVED } });
     return { id, status: 'approved' };
   }
 
-  async reject(id: number) {
-    await this.findPenaltyOrThrow(id);
+  async reject(id: number, user: JwtUser) {
+    await this.findPenaltyOrThrow(id, user);
     await this.prisma.hr_gezaat.update({ where: { id }, data: { suspend: SuspendStatus.REJECTED } });
     return { id, status: 'rejected' };
   }
 
-  async remove(id: number) {
-    const existing = await this.findPenaltyOrThrow(id);
+  async remove(id: number, user: JwtUser) {
+    const existing = await this.findPenaltyOrThrow(id, user);
     if (existing.mosayer_rkm_fk != null) {
       throw new BadRequestException('لا يمكن حذف جزاء تم ترحيله لمسير الرواتب');
     }
@@ -220,9 +236,11 @@ export class PenaltiesService {
     return { id };
   }
 
-  private async findPenaltyOrThrow(id: number) {
+  /** Load a penalty and enforce that its employee is inside the caller's branch scope. */
+  private async findPenaltyOrThrow(id: number, user: JwtUser) {
     const row = await this.prisma.hr_gezaat.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('الجزاء غير موجود');
+    await assertEmployeeInScope(this.prisma, this.branchScope, user, row.emp_id);
     return row;
   }
 

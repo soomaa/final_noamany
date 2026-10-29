@@ -25,14 +25,14 @@ export class PenaltiesController {
   constructor(private readonly penalties: PenaltiesService) {}
 
   @Get()
-  list(@Query() query: ListPenaltiesDto) {
-    return this.penalties.list(query);
+  list(@Query() query: ListPenaltiesDto, @CurrentUser() user: JwtUser) {
+    return this.penalties.list(query, user);
   }
 
   @Post()
   @RequiresPermission('finance.penalties:create')
   create(@Body() dto: CreatePenaltyDto, @CurrentUser() user: JwtUser) {
-    return this.penalties.create(dto, user.sub, user.name);
+    return this.penalties.create(dto, user.sub, user.name, user);
   }
 
   @Get('bylaw')
@@ -60,31 +60,35 @@ export class PenaltiesController {
 
   @Patch(':id')
   @RequiresPermission('finance.penalties:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePenaltyDto) {
-    return this.penalties.update(id, dto);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdatePenaltyDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.penalties.update(id, dto, user);
   }
 
   @Patch(':id/investigate')
   @RequiresPermission('finance.penalties:update')
-  investigate(@Param('id', ParseIntPipe) id: number) {
-    return this.penalties.investigate(id);
+  investigate(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.penalties.investigate(id, user);
   }
 
   @Patch(':id/approve')
   @RequiresPermission('finance.penalties:approve')
-  approve(@Param('id', ParseIntPipe) id: number) {
-    return this.penalties.approve(id);
+  approve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.penalties.approve(id, user);
   }
 
   @Patch(':id/reject')
   @RequiresPermission('finance.penalties:reject')
-  reject(@Param('id', ParseIntPipe) id: number) {
-    return this.penalties.reject(id);
+  reject(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.penalties.reject(id, user);
   }
 
   @Delete(':id')
   @RequiresPermission('finance.penalties:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.penalties.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.penalties.remove(id, user);
   }
 }
