@@ -249,12 +249,15 @@ export function TargetReportPage() {
   const canPickEmployee = isSystemAdminUser(user) || isBranchManagerUser(user);
   const employees = useQuery({ enabled: canPickEmployee, queryKey: ['target-report-employees'], queryFn: async () => (await api.get<{ data: Array<{ id: number; employee?: string }> }>('/employees', { params: { page: 1, pageSize: 200, status: 1 } })).data.data ?? [] });
   const employeeOptions = useMemo(
-    () => (employees.data ?? []).map((employee) => ({
-      value: String(employee.id),
-      label: employee.employee ?? String(employee.id),
-      searchText: String(employee.id),
-    })),
-    [employees.data],
+    () => [
+      { value: '', label: ui('كل الموظفين') },
+      ...(employees.data ?? []).map((employee) => ({
+        value: String(employee.id),
+        label: employee.employee ?? String(employee.id),
+        searchText: String(employee.id),
+      })),
+    ],
+    [employees.data, ui],
   );
   const report = useQuery({
     queryKey: ['target-report', branch, employeeId, operation, startDate, endDate],
@@ -289,7 +292,7 @@ export function TargetReportPage() {
   ].join('\n'));
   const empty = ui('لا توجد عمليات تارجت');
   const employeeField = canPickEmployee
-    ? <Combobox value={employeeId} onValueChange={setEmployeeId} options={[{ value: '', label: ui('كل الموظفين') }, ...employeeOptions]} className="h-10 min-w-56" placeholder={ui('كل الموظفين')} searchPlaceholder={ui('بحث باسم الموظف أو كوده…')} emptyText={ui('لا يوجد موظف مطابق')} aria-label={ui('بحث واختيار الموظف')} />
+    ? <Combobox value={employeeId} onValueChange={setEmployeeId} options={employeeOptions} className="h-10 min-w-56" placeholder={ui('كل الموظفين')} searchPlaceholder={ui('بحث باسم الموظف أو كوده…')} emptyText={ui('لا يوجد موظف مطابق')} aria-label={ui('بحث واختيار الموظف')} />
     : <Input value={user?.name ?? ''} readOnly disabled className="h-10 min-w-56" aria-label={ui('الموظف')} />;
   return <ReportShell title={ui('تقرير التارجت')} description={canPickEmployee ? ui('تارجت الموظفين بالتفصيل: العميل ونوع الاشتراك والمبلغ') : ui('تارجتك للشهر الحالي بالتفصيل')}
     filters={<DateRangeFilter startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} extra={<><BranchFilter value={branch} onChange={setBranch} /><label className="grid gap-1.5 text-xs text-muted-foreground">{ui('الموظف')}{employeeField}</label><label className="grid gap-1.5 text-xs text-muted-foreground">{ui('نوع العملية')}<select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={operation} onChange={(e) => setOperation(e.target.value)}><option value="all">{ui('الكل')}</option><option value="subscriptions">{ui('اشتراكات')}</option><option value="sales">{ui('مبيعات')}</option></select></label></>} />}
