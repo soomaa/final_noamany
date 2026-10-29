@@ -144,8 +144,11 @@ export class ClubReceiptsCrudService {
         ...(q.endDate ? { lte: q.endDate } : {}),
       };
     }
-    // Reception sees only today's receipts, whatever range the screen sends.
-    if (isReceptionEmployee(user)) where.receipt_date = localDateString();
+    // Reception's receipts list is today-only. A single subscription's or member's history
+    // (payment dialog, renewal) stays complete; it is already branch-scoped.
+    if (isReceptionEmployee(user) && q.subscriptionId == null && q.memberId == null) {
+      where.receipt_date = localDateString();
+    }
     and.push(where);
     const scopedWhere: Prisma.club_receiptsWhereInput = { AND: and };
 

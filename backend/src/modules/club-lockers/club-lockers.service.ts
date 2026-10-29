@@ -323,7 +323,9 @@ export class ClubLockersService {
     if (!user || memberId == null) return;
     const member = await this.prisma.club_members.findUnique({ where: { id: memberId }, select: { branch_id: true, gender: true } });
     if (!member) throw new NotFoundException('العضو غير موجود');
-    this.branchScope.assertBranchAllowed(user, member.branch_id, 'العضو تابع لفرع خارج صلاحياتك');
+    if (!this.branchScope.isMemberBranchAllowed(user, member.branch_id)) {
+      throw new ForbiddenException('العضو تابع لفرع خارج صلاحياتك');
+    }
     if (!this.branchScope.isMemberGenderAllowed(user, member.gender)) {
       throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
     }

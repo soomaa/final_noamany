@@ -21,7 +21,7 @@ export class ClubWorkoutsService {
    */
   private async scopedMemberIds(user?: JwtUser): Promise<number[] | null> {
     if (!user) return null;
-    const branches = this.branchScope.allowedBranchIds(user);
+    const branches = this.branchScope.memberBranchIds(user);
     const gender = this.branchScope.memberGenderFilter(user);
     if (branches === null && gender === null) return null;
     const members = await this.prisma.club_members.findMany({
@@ -42,7 +42,7 @@ export class ClubWorkoutsService {
       select: { branch_id: true, gender: true },
     });
     if (!member) return;
-    if (!this.branchScope.isBranchAllowed(user, member.branch_id) || !this.branchScope.isMemberGenderAllowed(user, member.gender)) {
+    if (!this.branchScope.isMemberBranchAllowed(user, member.branch_id) || !this.branchScope.isMemberGenderAllowed(user, member.gender)) {
       throw new ForbiddenException('العضو خارج الفروع أو الأقسام المسموح بها');
     }
   }

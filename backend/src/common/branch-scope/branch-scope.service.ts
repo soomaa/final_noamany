@@ -53,6 +53,26 @@ export class BranchScopeService {
     return [base, ...(SUB_BRANCH_IDS[base] ?? [])];
   }
 
+  /**
+   * Branches whose MEMBERS (and shared staff) the user may serve. Tanta members are all stored
+   * under Tanta main, so a Tanta Up/Down employee must reach the whole Tanta family (2, 5, 6) for
+   * member lookups, points, discount codes, lockers and staff pickers — not for branch data.
+   */
+  memberBranchIds(user: JwtUser | undefined | null): number[] | null {
+    const allowed = this.allowedBranchIds(user);
+    if (allowed === null) return null;
+    const family = (id: number) => {
+      const parent = Object.entries(SUB_BRANCH_IDS).find(([p, kids]) => Number(p) === id || kids.includes(id));
+      return parent ? [Number(parent[0]), ...parent[1]] : [id];
+    };
+    return [...new Set(allowed.flatMap(family))];
+  }
+
+  isMemberBranchAllowed(user: JwtUser | undefined | null, branchId: number | null | undefined): boolean {
+    const allowed = this.memberBranchIds(user);
+    return allowed === null || (branchId != null && allowed.includes(Number(branchId)));
+  }
+
   /** True if the user may access data for `branchId`. Unrestricted users may access any. */
   isBranchAllowed(user: JwtUser | undefined | null, branchId: number): boolean {
     const allowed = this.allowedBranchIds(user);

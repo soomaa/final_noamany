@@ -348,7 +348,8 @@ export class ClubSubscriptionsService {
     ];
     // Reception desk staff may review only subscriptions registered on the current Cairo day.
     // Keep this server-side so query-string filters cannot expose historical subscriptions.
-    if (isReceptionEmployee(user)) and.push({ registration_date: localDateString() });
+    // A member's own subscriptions stay visible so the desk can renew or collect what is due.
+    if (isReceptionEmployee(user) && q.memberId == null) and.push({ registration_date: localDateString() });
     if (refundSources) and.push({ member_id: { not: null }, paid_amount: { gt: 0 } });
 
     if (transferSources) {

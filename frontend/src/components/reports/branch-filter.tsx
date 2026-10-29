@@ -29,7 +29,7 @@ export function BranchFilter({ value, onChange }: BranchFilterProps) {
         onChange={(e) => onChange(e.target.value)}
         className="flex h-10 w-52 items-center rounded-md border border-input bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-90"
       >
-        <option value="all">{scoped ? (user?.branch_name ? `${ui('فرع')} ${user.branch_name}` : ui('فرعي')) : ui('كل الفروع')}</option>
+        <option value="all">{scoped ? ((branches?.length ?? 0) > 1 ? ui('كل فروعي') : user?.branch_name ? `${ui('فرع')} ${user.branch_name}` : ui('فرعي')) : ui('كل الفروع')}</option>
         {(branches ?? []).map((b) => (
           <option key={b.id} value={String(b.id)}>
             {b.name}

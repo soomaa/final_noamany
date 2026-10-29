@@ -28,7 +28,7 @@ export class ClubPointsService {
   /** SQL fragment (alias `m` = club_members) limiting report rows to the user's branches and gender section. */
   private memberScopeSql(user?: JwtUser): Prisma.Sql | null {
     if (!user) return null;
-    const branches = this.branchScope.allowedBranchIds(user);
+    const branches = this.branchScope.memberBranchIds(user);
     const gender = this.branchScope.memberGenderFilter(user);
     if (branches === null && gender === null) return null;
     const parts: Prisma.Sql[] = [];
@@ -186,7 +186,9 @@ export class ClubPointsService {
     const member = members[0];
     if (!member) throw new NotFoundException('العضو غير موجود');
     if (user) {
-      this.branchScope.assertBranchAllowed(user, Number(member.branch_id));
+      if (!this.branchScope.isMemberBranchAllowed(user, Number(member.branch_id))) {
+        throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
+      }
       if (!this.branchScope.isMemberGenderAllowed(user, member.gender)) {
         throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
       }

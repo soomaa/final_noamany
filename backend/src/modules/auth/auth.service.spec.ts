@@ -74,6 +74,8 @@ describe('AuthService password security', () => {
         }),
         update: jest.fn().mockResolvedValue({}),
       },
+      // The session user reports whether an active super-admin role exists.
+      rbac_user_roles: { findFirst: jest.fn().mockResolvedValue(null) },
     };
     const jwt = { signAsync: jest.fn().mockResolvedValue('signed-token') };
     const config = {

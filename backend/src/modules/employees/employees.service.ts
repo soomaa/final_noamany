@@ -87,6 +87,12 @@ export class EmployeesService {
     return branches ? { branch_id_fk: { in: branches } } : {};
   }
 
+  /** Staff pickers: a Tanta Up/Down desk also picks Tanta main staff (captains work across them). */
+  private pickerBranchWhere(user: JwtUser): Prisma.employeesWhereInput {
+    const branches = this.scope.memberBranchIds(user);
+    return branches ? { branch_id_fk: { in: branches } } : {};
+  }
+
   /** "hh:mm AM/PM" or "HH:mm" → minutes since midnight. */
   private shiftMinutes(raw?: string | null): number | null {
     const value = raw?.trim() ?? '';
@@ -277,7 +283,7 @@ export class EmployeesService {
       where: {
         employee_type: 1,
         OR: [{ leave_emp: null }, { leave_emp: 0 }],
-        ...this.scopedBranchWhere(user),
+        ...this.pickerBranchWhere(user),
       },
       select: { id: true, employee: true, emp_code: true },
       orderBy: [{ employee: 'asc' }, { emp_code: 'asc' }],
@@ -290,7 +296,7 @@ export class EmployeesService {
       where: {
         employee_type: 1,
         OR: [{ leave_emp: null }, { leave_emp: 0 }],
-        ...this.scopedBranchWhere(user),
+        ...this.pickerBranchWhere(user),
       },
       select: { id: true, employee: true, emp_code: true },
       orderBy: [{ employee: 'asc' }, { emp_code: 'asc' }],
@@ -609,7 +615,7 @@ export class EmployeesService {
           { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
           { employee_type: 1 },
           marketingRepEmployeeWhere(jobIds),
-          this.scopedBranchWhere(user),
+          this.pickerBranchWhere(user),
         ],
       },
       select: { id: true, employee: true, emp_code: true, branch_id_fk: true },

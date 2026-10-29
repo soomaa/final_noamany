@@ -69,4 +69,13 @@ describe("BranchScopeService", () => {
     expect(service.isMemberGenderAllowed(user, 'female')).toBe(true);
     expect(service.resolveListFilter(user, null)).toEqual([2, 5, 6]);
   });
+
+  it("lets Tanta Up/Down staff serve Tanta members stored under Tanta main", () => {
+    const up = { level: 2, branch: 5 } as never;
+    expect(service.memberBranchIds(up)).toEqual([2, 5, 6]);
+    expect(service.isMemberBranchAllowed(up, 2)).toBe(true);
+    expect(service.isMemberBranchAllowed(up, 4)).toBe(false);
+    expect(service.memberBranchIds({ level: 2, branch: 4 } as never)).toEqual([4]);
+    expect(service.memberBranchIds({ level: 1 } as never)).toBeNull();
+  });
 });

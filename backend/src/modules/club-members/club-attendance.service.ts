@@ -7,7 +7,7 @@ import {
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../common/prisma/prisma.service";
-import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
+import { BranchScopeService, SUB_BRANCH_IDS } from "../../common/branch-scope/branch-scope.service";
 import {
   ClubBranchGroupReader,
   ClubBranchGroupService,
@@ -125,11 +125,15 @@ export class ClubAttendanceService {
     if (
       requestedNumber != null &&
       Number.isFinite(requestedNumber) &&
-      requestedNumber !== ownBranchId
+      requestedNumber !== ownBranchId &&
+      !(SUB_BRANCH_IDS[ownBranchId] ?? []).includes(requestedNumber)
     ) {
       throw new ForbiddenException("لا تملك صلاحية الوصول لحضور فرع آخر");
     }
-    return expandClubReportBranchIds([ownBranchId]);
+    // Tanta main staff may narrow to Tanta Up/Down; otherwise their whole scope is shown.
+    return requestedNumber != null && Number.isFinite(requestedNumber) && requestedNumber !== ownBranchId
+      ? [requestedNumber]
+      : expandClubReportBranchIds([ownBranchId]);
   }
 
   private async canOperateAttendanceBranch(
@@ -141,7 +145,8 @@ export class ClubAttendanceService {
     const operatorBranchId = Number(user.branch ?? 0);
     if (!Number.isInteger(operatorBranchId) || operatorBranchId <= 0) return false;
     const target = Number(branchId);
-    if (operatorBranchId === target) return true;
+    // Own branch, or one of its built-in sub-branches (Tanta main → Tanta Up/Down).
+    if (operatorBranchId === target || (SUB_BRANCH_IDS[operatorBranchId] ?? []).includes(target)) return true;
     // Bidirectional check: group data is supposed to be symmetric, but if only one
     // side has a membership row (or the operator row is missing) the single-direction
     // lookup fails closed even though the branches share a group. Accept either direction.

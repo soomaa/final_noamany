@@ -73,7 +73,7 @@ export class ClubDiscountCodesService {
   private memberScope(user?: JwtUser): Prisma.club_membersWhereInput {
     // No user = an internal call (e.g. from subscription create), which scopes on its own.
     if (!user) return {};
-    const branches = this.branchScope.allowedBranchIds(user);
+    const branches = this.branchScope.memberBranchIds(user);
     const gender = this.branchScope.memberGenderFilter(user);
     return {
       ...(branches === null ? {} : { branch_id: { in: branches } }),

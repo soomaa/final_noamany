@@ -28,10 +28,10 @@ describe('EmployeesService branch scoping', () => {
     expect(where.AND).toContainEqual({ branch_id_fk: { in: [2, 5, 6] } });
   });
 
-  it('keeps a sub-branch user to the sub-branch', async () => {
+  it('lets a Tanta Up desk pick Tanta main staff (shared captains)', async () => {
     const { prisma, service } = build();
     await service.posOptions(tantaUp);
-    expect(prisma.employees.findMany.mock.calls[0][0].where.branch_id_fk).toEqual({ in: [5] });
+    expect(prisma.employees.findMany.mock.calls[0][0].where.branch_id_fk).toEqual({ in: [2, 5, 6] });
   });
 
   it('leaves admins unrestricted, or on the branch they ask for', async () => {
