@@ -38,12 +38,12 @@ describe("BranchScopeGuard strict isolation", () => {
     ).resolves.toBe(true);
   });
 
-  it("rejects a foreign branch even if it was previously a fanout child", async () => {
+  it("rejects a foreign branch outside the user's branch and sub-branches", async () => {
     await expect(
       guard.canActivate(
         context({
           user: { level: 2, branch: 2 },
-          query: { branchId: 5 },
+          query: { branchId: 4 },
           body: {},
         }),
       ),
@@ -54,6 +54,19 @@ describe("BranchScopeGuard strict isolation", () => {
     await expect(
       guard.canActivate(
         context({ user: { level: 2, branch: 0 }, query: {}, body: {} }),
+      ),
+    ).rejects.toThrow(ForbiddenException);
+  });
+
+  it("rejects a foreign branch passed as a route parameter", async () => {
+    await expect(
+      guard.canActivate(
+        context({
+          user: { level: 2, branch: 2 },
+          params: { branchId: "4" },
+          query: {},
+          body: {},
+        }),
       ),
     ).rejects.toThrow(ForbiddenException);
   });

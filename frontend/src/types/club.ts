@@ -243,6 +243,8 @@ export interface ClubSubscriptionListItem {
   registrationDate: string;
   branchId: number;
   branchName?: string | null;
+  /** tbl_branches.br_code — the branch letter printed on receipts (A/B/C). */
+  branchCode?: string | null;
   memberId: number | null;
   memberCode?: string | null;
   memberPhone?: string | null;

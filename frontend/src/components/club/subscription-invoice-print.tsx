@@ -69,106 +69,72 @@ export function SubscriptionInvoicePrint({
     if (!w) return;
     w.document.write(`<!DOCTYPE html><html dir="rtl" lang="ar"><head>
       <meta charset="UTF-8">
-      <title>فاتورة اشتراك - ${subscription.subscriptionNumber}</title>
+      <title>إيصال اشتراك - ${subscription.subscriptionNumber}</title>
       <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: Tahoma, Arial, sans-serif; padding: 0; font-size: 11px; color: #111; background: #fff; direction: rtl; }
-        .invoice-wrapper {
-          width: 76mm;
-          max-width: 76mm;
-          margin: 0 auto;
-          border: 0;
-          border-radius: 0;
-        }
-        .header {
-          background: #fff;
-          color: #111;
-          text-align: center;
-          padding: 1mm 0;
-          border-bottom: 1px solid #111;
-        }
-        .header .brand { font-size: 16px; font-weight: 800; letter-spacing: .3px; margin-bottom: 1px; }
-        .header .subtitle { font-size: 9px; color: #333; margin-bottom: 2px; }
-        .logo-crop { width: 29mm; height: 11mm; overflow: hidden; position: relative; flex: 0 0 29mm; }
-        .header .logo { width: 42mm; max-width: none; height: auto; object-fit: initial; display: block; position: absolute; top: -15mm; right: -6.5mm; margin: 0; }
-        .header .inv-num {
-          display: inline-block; border: 1px solid #111; border-radius: 0; padding: 1px 12px; font-size: 10px; font-weight: 700;
-        }
-        .receipt-number { text-align: center; font-size: 10px; font-weight: 700; margin: 1mm 0 2mm; }
+        /* Thermal printers fade grey and thin strokes: print everything solid black and bold. */
+        body { font-family: Tahoma, Arial, sans-serif; font-size: 13px; font-weight: 700; color: #000; background: #fff; direction: rtl; }
+        .invoice-wrapper { width: 76mm; max-width: 76mm; margin: 0 auto; }
+        .receipt-heading { font-size: 14px; font-weight: 800; text-align: center; text-decoration: underline; margin-bottom: 1mm; }
+        .receipt-number { text-align: center; font-size: 17px; font-weight: 800; margin: 1mm 0 2mm; }
         .logo-line { display: flex; align-items: center; justify-content: center; gap: 2mm; margin: 1mm 0 2mm; direction: rtl; }
-        .club-mark { border: 1px solid #111; border-radius: 50%; width: 8mm; height: 8mm; flex: 0 0 8mm; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; }
-        .receipt-heading { font-size: 10px; font-weight: 700; text-align: center; text-decoration: underline; margin-bottom: 1mm; }
-        .body { padding: 1mm 1mm 0; }
-        .section-title {
-          font-size: 10px;
-          font-weight: 700;
-          color: #111; text-transform: none; letter-spacing: 0; margin: .5mm 0; padding-bottom: .5mm; border-bottom: 1px solid #111;
-        }
-        .info-grid {
-          display: grid;
-          grid-template-columns: auto 1fr;
-          gap: 0; margin-bottom: 2mm;
-        }
-        .info-grid .lbl {
-          color: #333; padding: 1mm 0; border-bottom: 1px dashed #bbb; font-size: 9px;
-        }
-        .info-grid .val {
-          color: #111; padding: 1mm 0 1mm 1mm; border-bottom: 1px dashed #bbb; font-size: 9px; font-weight: 700; text-align: start;
-        }
-        .divider {
-          border: none;
-          border-top: 1px dashed #d1d5db;
-          margin: 12px 0;
-        }
-        .totals-block { background: #fff; border: 1px solid #ddd; border-radius: 0; padding: .5mm 2mm; margin: 1mm 0; }
-        .totals-row {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          padding: 1mm 0; font-size: 9px; color: #111; border-bottom: 1px dashed #bbb;
-        }
-        .totals-row:last-child { border-bottom: none; }
-        .totals-row.highlight { font-weight: 700; font-size: 11px; color: #111; padding-top: 2mm; margin-top: 1mm; }
-        .totals-row.discount { color: #dc2626; }
-        .totals-row.remaining { color: #d97706; }
-        .payment-badge { display: inline-block; color: #111; border: 1px solid #111; border-radius: 0; padding: 1px 6px; font-size: 10px; font-weight: 700; margin-top: 1px; }
-        .split-line {
-          display: flex;
-          justify-content: space-between;
-          padding: 1mm 0 1mm 2mm; font-size: 9px; color: #333;
-        }
-        .footer-strip {
-          background: #fff;
-          text-align: center;
-          padding: 2mm 0; font-size: 9px; color: #111; border-top: 1px solid #111;
-        }
-        .staff-block { margin: 1.5mm 0; font-size: 9px; line-height: 1.7; }
-        .staff-line { display: flex; justify-content: space-between; gap: 2mm; white-space: nowrap; }
+        .club-name { font-size: 13px; font-weight: 800; white-space: nowrap; }
+        .club-mark { border: 2px solid #000; border-radius: 50%; width: 10mm; height: 10mm; flex: 0 0 10mm; display: inline-flex; align-items: center; justify-content: center; font-size: 18px; font-weight: 800; }
+        .logo-crop { width: 29mm; height: 11mm; overflow: hidden; position: relative; flex: 0 0 29mm; }
+        .logo { width: 42mm; max-width: none; height: auto; display: block; position: absolute; top: -15mm; right: -6.5mm; }
+        .branch-line { text-align: center; font-size: 13px; font-weight: 800; margin-bottom: 2mm; }
+        .amount-line { display: flex; justify-content: space-between; align-items: flex-end; gap: 2mm; margin: 2mm 0; }
+        .money { display: flex; gap: 4mm; text-align: center; }
+        .money small { display: block; font-size: 11px; }
+        .money b { font-size: 16px; }
+        .row { display: flex; align-items: baseline; gap: 2mm; padding: 1.2mm 0; }
+        .row .lbl { white-space: nowrap; font-size: 12px; }
+        .row .val { flex: 1; font-size: 14px; font-weight: 800; text-align: center; border-bottom: 1px dotted #000; min-height: 5mm; }
+        .period { font-size: 12px; text-align: center; margin: 1.5mm 0; }
+        .no-refund { text-align: center; font-size: 14px; font-weight: 800; margin: 2mm 0; padding: 1mm 0; border-top: 1px solid #000; border-bottom: 1px solid #000; }
+        .sign-grid { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; margin: 2mm 0; }
+        .sign-grid small { display: block; font-size: 11px; }
+        .sign-grid b { font-size: 13px; }
         .qr-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 2mm 5mm; justify-items: center; padding: 2mm 8mm 1mm; }
-        .qr-grid svg { width: 15mm; height: 15mm; }
+        .qr-grid svg { width: 17mm; height: 17mm; }
+        .footer-strip { text-align: center; padding: 2mm 0; font-size: 12px; border-top: 1px solid #000; }
         .nums { font-variant-numeric: tabular-nums; }
         @media print {
           @page { size: 80mm auto; margin: 3mm; }
           body { width: 76mm; }
-          .invoice-wrapper { width: 76mm; max-width: 76mm; }
         }
       </style>
       </head><body>${printRef.current.innerHTML}</body></html>`);
     w.document.close();
     w.focus();
-    w.print();
-    w.close();
+    // Wait for the logo so it is not missing from the printed copy.
+    const printNow = () => { w.print(); w.close(); };
+    const images = Array.from(w.document.images);
+    const pending = images.filter((img) => !img.complete);
+    if (pending.length === 0) printNow();
+    else {
+      let left = pending.length;
+      const done = () => { left -= 1; if (left <= 0) printNow(); };
+      pending.forEach((img) => { img.onload = done; img.onerror = done; });
+    }
   };
 
   if (!subscription) return null;
 
-  const net = subscription.subscriptionValue - (subscription.discountEnabled ? subscription.discountValue : 0);
   const tenderLines = collectTenderLines(receipts);
-  const splitTender = tenderLines.length > 1;
   const displayReceiptNumbers = receipts.length > 0
     ? [...new Set(receipts.map((r) => r.receiptNumber).filter(Boolean))].join(' / ')
     : (subscription.receiptNumber ?? '');
   const printTime = new Intl.DateTimeFormat('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }).format(new Date());
+  // The amount received on this receipt; split into pounds and piasters like the old paper receipt.
+  const received = receipts.length > 0
+    ? Math.round(receipts.reduce((sum, r) => sum + (r.amount ?? 0), 0) * 100) / 100
+    : subscription.paidAmount;
+  const pounds = Math.trunc(received);
+  const piasters = Math.round((received - pounds) * 100);
+  const branchLetter = (subscription.branchCode ?? '').trim();
+  const captainName = subscription.assignedStaffName || subscription.salesName || '';
+  const staffName = subscription.createdByName || '';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -179,63 +145,58 @@ export function SubscriptionInvoicePrint({
 
         {/* ── printable area ── */}
         <div ref={printRef} dir="rtl">
-          <div className="invoice-wrapper mx-auto w-[76mm] max-w-full overflow-hidden text-sm">
+          <div className="invoice-wrapper mx-auto w-[76mm] max-w-full overflow-hidden text-sm font-bold text-black bg-white p-2">
+            <p className="receipt-heading text-center underline">إيصال استلام نقدية</p>
+            <p className="receipt-number text-center text-lg font-extrabold">رقم الإيصال: <span className="nums">{invoiceDigits(displayReceiptNumbers || subscription.subscriptionNumber)}</span></p>
+            <div className="logo-line flex items-center justify-center gap-2" style={{ direction: 'rtl' }}>
+              <span className="club-name whitespace-nowrap">نعماني فتنس سنتر</span>
+              {branchLetter ? <span className="club-mark inline-flex shrink-0 items-center justify-center rounded-full border-2 border-black" style={{ width: '10mm', height: '10mm', fontSize: '18px' }}>{branchLetter}</span> : null}
+              <span className="logo-crop" style={{ width: '29mm', height: '11mm', overflow: 'hidden', position: 'relative', flex: '0 0 29mm' }}>
+                <img className="logo" src="/noamany-logo.png" alt="Noamany" style={{ width: '42mm', maxWidth: 'none', height: 'auto', position: 'absolute', top: '-15mm', right: '-6.5mm' }} />
+              </span>
+            </div>
+            {subscription.branchName ? <p className="branch-line text-center">فرع {subscription.branchName}</p> : null}
 
-            {/* Header */}
-            <div className="header bg-white text-foreground text-center px-2 py-2">
-              <p className="receipt-heading">إيصال اشتراك</p>
-              <p className="receipt-number">رقم الإيصال: {invoiceDigits(displayReceiptNumbers || subscription.subscriptionNumber)}</p>
-              <div className="logo-line flex items-center justify-center gap-2" style={{ direction: 'rtl' }}>
-                <span className="subtitle whitespace-nowrap" style={{ fontSize: '9px', margin: 0 }}>نادي فتنس سنتر</span>
-                <span className="club-mark inline-flex shrink-0 items-center justify-center rounded-full border border-foreground font-bold" style={{ width: '8mm', height: '8mm', fontSize: '13px' }}>C</span>
-                <span className="logo-crop" style={{ width: '29mm', height: '11mm', overflow: 'hidden', position: 'relative', flex: '0 0 29mm' }}>
-                  <img className="logo" src="/noamany-logo.png" alt="Noamany" style={{ width: '42mm', maxWidth: 'none', height: 'auto', position: 'absolute', top: '-15mm', right: '-6.5mm' }} />
-                </span>
+            <div className="amount-line flex justify-between items-end gap-2">
+              <div className="row flex flex-1 gap-2"><span className="lbl">التاريخ :</span><span className="val nums flex-1 text-center">{invoiceDigits(receiptDate(receipts[0]?.receiptDate || subscription.registrationDate))}</span></div>
+              <div className="money flex gap-3 text-center">
+                <div><small>قرش</small><b className="nums">{invoiceDigits(String(piasters).padStart(2, '0'))}</b></div>
+                <div><small>جنيه</small><b className="nums">{invoiceDigits(pounds)}</b></div>
               </div>
             </div>
 
-            <div className="body p-2 space-y-2">
+            <div className="row flex gap-2"><span className="lbl">استلمنا من المحترم :</span><span className="val flex-1 text-center">{subscription.customerName ?? '—'}</span></div>
+            <div className="row flex gap-2"><span className="lbl">رقم الكود :</span><span className="val nums flex-1 text-center">{invoiceDigits(subscription.memberCode)}</span></div>
+            <div className="row flex gap-2"><span className="lbl">رقم الموبايل :</span><span className="val nums flex-1 text-center">{invoiceDigits(subscription.memberPhone)}</span></div>
+            <div className="row flex gap-2"><span className="lbl">طريقة الدفع :</span><span className="val flex-1 text-center">{clubPaymentMethodsLabel(ct, tenderLines, subscription.paymentMethod)}</span></div>
+            <div className="row flex gap-2"><span className="lbl">مبلغ وقدره :</span><span className="val nums flex-1 text-center">{invoiceDigits(received.toFixed(2))}</span></div>
+            {tenderLines.length > 1 ? tenderLines.map((line) => (
+              <div key={line.method} className="row flex gap-2"><span className="lbl">{clubPaymentMethodLabel(ct, line.method)} :</span><span className="val nums flex-1 text-center">{invoiceDigits(line.amount.toFixed(2))}</span></div>
+            )) : null}
+            {subscription.remainingAmount > 0 ? <div className="row flex gap-2"><span className="lbl">المتبقي :</span><span className="val nums flex-1 text-center">{invoiceDigits(subscription.remainingAmount.toFixed(2))}</span></div> : null}
+            {subscription.discountEnabled && subscription.discountValue > 0 ? <div className="row flex gap-2"><span className="lbl">الخصم :</span><span className="val nums flex-1 text-center">{invoiceDigits(subscription.discountValue.toFixed(2))}</span></div> : null}
+            <div className="row flex gap-2"><span className="lbl">اسم الكابتن :</span><span className="val flex-1 text-center">{captainName || '—'}</span></div>
+            <p className="period text-center nums">وذلك عن اشتراك للفترة من {invoiceDigits(receiptDate(subscription.subscriptionStartDate))} حتى {invoiceDigits(receiptDate(subscription.subscriptionEndDate))}</p>
+            <div className="row flex gap-2"><span className="lbl">نوع الاشتراك :</span><span className="val flex-1 text-center">{subscription.subscriptionType ?? '—'}</span></div>
 
-              <p className="section-title text-[10px] font-bold border-b pb-1 mb-2">بيانات الاشتراك</p>
-              <div className="info-grid grid grid-cols-[auto_1fr] text-xs">
-                {displayReceiptNumbers ? <><span className="lbl">{ct('subscriptions.receiptNumber')}</span><span className="val nums">{invoiceDigits(displayReceiptNumbers)}</span></> : null}
-                <span className="lbl">{ct('subscriptions.customerName')}</span><span className="val">{subscription.customerName ?? '—'}</span>
-                <span className="lbl">رقم العضوية</span><span className="val nums">{invoiceDigits(subscription.memberCode)}</span>
-                <span className="lbl">رقم الهاتف</span><span className="val nums">{invoiceDigits(subscription.memberPhone)}</span>
-                <span className="lbl">{ct('subscriptions.subscriptionType')}</span><span className="val">{subscription.subscriptionType ?? '—'}</span>
-                <span className="lbl">{ct('subscriptions.startDate')}</span><span className="val nums">{invoiceDigits(receiptDate(subscription.subscriptionStartDate))}</span>
-                <span className="lbl">{ct('subscriptions.endDate')}</span><span className="val nums">{invoiceDigits(receiptDate(subscription.subscriptionEndDate))}</span>
-                <span className="lbl">{ct('subscriptions.registrationDate')}</span><span className="val nums">{invoiceDigits(receiptDate(subscription.registrationDate))}</span>
-              </div>
+            <p className="no-refund text-center border-y border-black py-1">الاشتراك لا يسترد ولا يستبدل</p>
 
-              <div className="totals-block">
-                <div className="totals-row"><span>{ct('subscriptions.subscriptionValue')}</span><span className="nums">{invoiceDigits(subscription.subscriptionValue.toFixed(2))}</span></div>
-                <div className="totals-row discount"><span>{ct('subscriptions.discount')}</span><span className="nums">-{invoiceDigits((subscription.discountEnabled ? subscription.discountValue : 0).toFixed(2))}</span></div>
-                <div className="totals-row highlight"><span>{ct('subscriptions.netValue')}</span><span className="nums">{invoiceDigits(net.toFixed(2))}</span></div>
-                <div className="totals-row"><span>{ct('subscriptions.paidAmount')}</span><span className="nums">{invoiceDigits(subscription.paidAmount.toFixed(2))}</span></div>
-                <div className="totals-row remaining"><span>{ct('subscriptions.remainingAmount')}</span><span className="nums">{invoiceDigits(subscription.remainingAmount.toFixed(2))}</span></div>
-              </div>
-
-              {(tenderLines.length > 0 || subscription.paymentMethod) && <div className="flex justify-between items-start text-xs"><span>{ct('subscriptions.paymentMethod')}</span><div className="text-end"><span className="payment-badge">{clubPaymentMethodsLabel(ct, tenderLines, subscription.paymentMethod)}</span>{splitTender ? tenderLines.map((line) => <div key={line.method} className="split-line"><span>{clubPaymentMethodLabel(ct, line.method)}</span><span className="nums">{invoiceDigits(line.amount.toFixed(2))}</span></div>) : null}</div></div>}
-
-              <div className="staff-block">
-                <div className="staff-line"><span>الموظف</span><b>{subscription.assignedStaffName || subscription.salesName || '—'}</b></div>
-                <div className="staff-line"><span>التاريخ</span><b className="nums">{invoiceDigits(receiptDate(receipts[0]?.receiptDate || subscription.registrationDate))}</b></div>
-                <div className="staff-line"><span>الوقت</span><b className="nums" dir="ltr">{printTime}</b></div>
-              </div>
-
-              <div className="qr-grid grid grid-cols-2 gap-3 justify-items-center" aria-label="رموز الفاتورة">
-                {[
-                  subscription.memberCode || String(subscription.memberId ?? subscription.id),
-                  subscription.subscriptionNumber,
-                  displayReceiptNumbers || String(subscription.id),
-                  subscription.memberPhone || String(subscription.memberId ?? subscription.id),
-                ].map((value, index) => <QRCodeSVG key={`${value}-${index}`} value={String(value)} level="M" includeMargin className="h-[18mm] w-[18mm]" />)}
-              </div>
+            <div className="sign-grid grid grid-cols-3 text-center">
+              <div><small>الموظف</small><b>{staffName || '—'}</b></div>
+              <div><small>الوقت</small><b className="nums" dir="ltr">{printTime}</b></div>
+              <div><small>الختم</small><b>&nbsp;</b></div>
             </div>
 
-            {/* Footer */}
-            <div className="footer-strip bg-white text-center py-2 text-xs border-t border-foreground">
+            <div className="qr-grid grid grid-cols-2 gap-3 justify-items-center" aria-label="رموز الإيصال">
+              {[
+                subscription.memberCode || String(subscription.memberId ?? subscription.id),
+                subscription.subscriptionNumber,
+                displayReceiptNumbers || String(subscription.id),
+                subscription.memberPhone || String(subscription.memberId ?? subscription.id),
+              ].map((value, index) => <QRCodeSVG key={`${value}-${index}`} value={String(value)} level="M" includeMargin className="h-[18mm] w-[18mm]" />)}
+            </div>
+
+            <div className="footer-strip text-center py-2 border-t border-black">
               {ct('subscriptions.invoiceFooter')}
             </div>
           </div>

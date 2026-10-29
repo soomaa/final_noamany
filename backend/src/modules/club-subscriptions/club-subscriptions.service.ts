@@ -81,6 +81,7 @@ export class ClubSubscriptionsService {
       createdByName?: string | null;
       freezeCreatedByName?: string | null;
       branchName?: string | null;
+      branchCode?: string | null;
     },
   ) {
     const start = row.subscription_start_date as string;
@@ -113,6 +114,7 @@ export class ClubSubscriptionsService {
       registrationDate: row.registration_date,
       branchId: row.branch_id,
       branchName: extras?.branchName ?? null,
+      branchCode: extras?.branchCode ?? null,
       memberId: row.member_id,
       memberCode: (row.member as { member_code?: string } | undefined)?.member_code ?? null,
       memberPhone: (row.member as { phone?: string | null } | undefined)?.phone ?? null,
@@ -461,16 +463,27 @@ export class ClubSubscriptionsService {
       this.prisma.club_subscriptions.count({ where }),
     ]);
 
+    const data = await this.mapSubsWithNames(rows);
+    return paginated(data, total, q.page, q.pageSize);
+  }
+
+  /** Map rows with the display names a list row or a printed receipt needs (branch, staff, creator). */
+  private async mapSubsWithNames(rows: Array<Parameters<ClubSubscriptionsService['enrichSubNames']>[0][number] & {
+    id: number;
+    branch_id: number;
+    created_by: number | null;
+    freezes?: Array<{ created_by: number | null }>;
+  } & Record<string, unknown>>) {
     const branchIds = [...new Set(rows.map((row) => row.branch_id))];
     const branches = branchIds.length
       ? await this.prisma.tbl_branches.findMany({
           where: { branch_id: { in: branchIds } },
-          select: { branch_id: true, branch_name: true },
+          select: { branch_id: true, branch_name: true, br_code: true },
         })
       : [];
-    const branchNameById = new Map(branches.map((branch) => [branch.branch_id, branch.branch_name ?? null] as const));
+    const branchById = new Map(branches.map((branch) => [branch.branch_id, branch] as const));
     const { employeeNameById, trainerNameById, userNameById, legacyStaffBySubId } = await this.enrichSubNames(rows);
-    const data = rows.map((r) =>
+    return rows.map((r) =>
       this.mapSub(r, {
         salesName: r.sales_id ? employeeNameById.get(r.sales_id) ?? null : null,
         assignedStaffName: (r.private_trainer_id
@@ -479,20 +492,27 @@ export class ClubSubscriptionsService {
             ? employeeNameById.get(r.employee_id) ?? null
             : null) ?? legacyStaffBySubId.get(r.id)?.employeeName ?? null,
         createdByName: (r.created_by ? userNameById.get(r.created_by) ?? null : null) ?? legacyStaffBySubId.get(r.id)?.creatorName ?? null,
-        branchName: branchNameById.get(r.branch_id) ?? null,
-        freezeCreatedByName: r.freezes[0]?.created_by
+        branchName: branchById.get(r.branch_id)?.branch_name ?? null,
+        branchCode: branchById.get(r.branch_id)?.br_code || null,
+        freezeCreatedByName: r.freezes?.[0]?.created_by
           ? userNameById.get(r.freezes[0].created_by) ?? null
           : null,
       }),
     );
-    return paginated(data, total, q.page, q.pageSize);
   }
 
   async findOne(id: number, user?: JwtUser) {
-    const row = await this.prisma.club_subscriptions.findUnique({ where: { id } });
+    const row = await this.prisma.club_subscriptions.findUnique({
+      where: { id },
+      include: {
+        member: { select: { gender: true, member_code: true, phone: true } },
+        freezes: { where: { is_active: true }, orderBy: { id: 'desc' }, take: 1 },
+      },
+    });
     if (!row) throw new NotFoundException('الاشتراك غير موجود');
     this.assertBranchAccess(user, row.branch_id);
-    return this.mapSub(row);
+    const [mapped] = await this.mapSubsWithNames([row]);
+    return mapped;
   }
 
   /**

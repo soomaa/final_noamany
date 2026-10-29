@@ -35,6 +35,8 @@ export class BranchScopeGuard implements CanActivate {
     "subBranchId",
     "sub_branch_id",
     "branch",
+    "branch_id_fk",
+    "branchIdFk",
   ];
 
   constructor(
@@ -66,7 +68,8 @@ export class BranchScopeGuard implements CanActivate {
     }
 
     for (const key of BranchScopeGuard.BRANCH_KEYS) {
-      for (const bag of [req.query, req.body]) {
+      // Route params count too: `/by-branch/:branchId` must not bypass the scope check.
+      for (const bag of [req.params, req.query, req.body]) {
         if (!bag || typeof bag !== "object") continue;
         const raw = bag[key];
         if (raw == null || raw === "" || raw === "all") continue;

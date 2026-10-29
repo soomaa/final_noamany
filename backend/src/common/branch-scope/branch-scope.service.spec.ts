@@ -20,15 +20,30 @@ describe("BranchScopeService", () => {
 
   it("locks a non-admin to exactly their assigned branch", () => {
     expect(
-      service.resolveListFilter({ level: 2, branch: 2 } as never, null),
-    ).toEqual([2]);
+      service.resolveListFilter({ level: 2, branch: 4 } as never, null),
+    ).toEqual([4]);
+  });
+
+  it("gives a Tanta main employee the Tanta Up and Down sub-branches", () => {
+    const user = { level: 2, branch: 2 } as never;
+    expect(service.resolveListFilter(user, null)).toEqual([2, 5, 6]);
+    expect(service.resolveListFilter(user, 5)).toEqual([5]);
+    expect(service.isBranchAllowed(user, 6)).toBe(true);
+    expect(service.isBranchAllowed(user, 4)).toBe(false);
+  });
+
+  it("keeps a sub-branch employee inside the sub-branch", () => {
+    const user = { level: 2, branch: 5 } as never;
+    expect(service.allowedBranchIds(user)).toEqual([5]);
+    expect(service.isBranchAllowed(user, 2)).toBe(false);
+    expect(service.isBranchAllowed(user, 6)).toBe(false);
   });
 
   it("does not honour a non-admin's foreign branch selection", () => {
     expect(
-      service.resolveListFilter({ level: 2, branch: 2 } as never, 5),
-    ).toEqual([2]);
-    expect(service.isBranchAllowed({ level: 2, branch: 2 } as never, 5)).toBe(
+      service.resolveListFilter({ level: 2, branch: 2 } as never, 4),
+    ).toEqual([2, 5, 6]);
+    expect(service.isBranchAllowed({ level: 2, branch: 2 } as never, 4)).toBe(
       false,
     );
   });
@@ -52,6 +67,6 @@ describe("BranchScopeService", () => {
     expect(service.memberGenderFilter(user)).toBeNull();
     expect(service.isMemberGenderAllowed(user, 'male')).toBe(true);
     expect(service.isMemberGenderAllowed(user, 'female')).toBe(true);
-    expect(service.resolveListFilter(user, null)).toEqual([2]);
+    expect(service.resolveListFilter(user, null)).toEqual([2, 5, 6]);
   });
 });

@@ -83,8 +83,10 @@ export class ClubLockersService {
         is_available: true,
         subscriptions: {
           orderBy: [{ subscription_start_date: 'desc' }, { created_at: 'desc' }, { id: 'desc' }],
-          take: 2,
+          // Renewals by the same member stack up, so look further back for the previous customer.
+          take: 25,
           select: {
+            member_id: true,
             customer_name: true,
             subscription_start_date: true,
             subscription_end_date: true,
@@ -97,7 +99,12 @@ export class ClubLockersService {
     const numberCollator = new Intl.Collator('ar', { numeric: true, sensitivity: 'base' });
     return lockers.map((locker) => {
       const latest: (typeof locker.subscriptions)[number] | undefined = locker.subscriptions[0];
-      const previous: (typeof locker.subscriptions)[number] | undefined = locker.subscriptions[1];
+      // "Previous customer" is the last OTHER person on this locker, not the same member's renewal.
+      const customerKey = (row: (typeof locker.subscriptions)[number]) =>
+        row.member_id != null ? `m:${row.member_id}` : `n:${row.customer_name.trim()}`;
+      const previous: (typeof locker.subscriptions)[number] | undefined = latest
+        ? locker.subscriptions.find((row) => customerKey(row) !== customerKey(latest))
+        : undefined;
       return {
         id: locker.id,
         lockerNumber: locker.locker_number,

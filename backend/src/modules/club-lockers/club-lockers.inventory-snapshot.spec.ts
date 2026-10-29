@@ -4,15 +4,16 @@ import { ClubLockersService } from './club-lockers.service';
 describe('ClubLockersService inventory snapshot', () => {
   const user = { sub: 5 } as any;
 
-  it('returns the latest two subscriptions and their member phones for lockers in the chosen branch', async () => {
+  it('returns the latest subscription and the last different customer for lockers in the chosen branch', async () => {
     const findMany = jest.fn().mockResolvedValue([
       {
         id: 11,
         locker_number: '10',
         is_available: false,
         subscriptions: [
-          { customer_name: 'العميل الحالي', subscription_start_date: '2026-10-01', subscription_end_date: '2026-11-01', member: { phone: '01011111111' } },
-          { customer_name: 'العميل السابق', subscription_start_date: '2026-08-01', subscription_end_date: '2026-09-01', member: { phone: '01022222222' } },
+          { member_id: 1, customer_name: 'العميل الحالي', subscription_start_date: '2026-10-01', subscription_end_date: '2026-11-01', member: { phone: '01011111111' } },
+          { member_id: 1, customer_name: 'العميل الحالي', subscription_start_date: '2026-09-01', subscription_end_date: '2026-10-01', member: { phone: '01011111111' } },
+          { member_id: 2, customer_name: 'العميل السابق', subscription_start_date: '2026-08-01', subscription_end_date: '2026-09-01', member: { phone: '01022222222' } },
         ],
       },
       { id: 12, locker_number: '11', is_available: true, subscriptions: [] },
@@ -27,7 +28,7 @@ describe('ClubLockersService inventory snapshot', () => {
       where: { main_branch_id: 3 },
       select: expect.objectContaining({
         subscriptions: expect.objectContaining({
-          take: 2,
+          take: 25,
           orderBy: [{ subscription_start_date: 'desc' }, { created_at: 'desc' }, { id: 'desc' }],
           select: expect.objectContaining({ member: { select: { phone: true } } }),
         }),

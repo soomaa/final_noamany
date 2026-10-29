@@ -8,10 +8,15 @@ import { isSystemAdmin } from '../utils/system-admin.util';
  * Strict isolation rules:
  *  - level === 1 or an active RBAC super-admin role → ALL branches (no restriction).
  *  - a non-admin with no branch assigned (branch 0/null) → NO branches (fail closed).
- *  - every other non-admin → exactly the branch stored in their JWT.
+ *  - every other non-admin → exactly the branch stored in their JWT, plus that branch's
+ *    built-in sub-branches (Tanta main → Tanta Up / Tanta Down). A sub-branch user stays
+ *    limited to the sub-branch.
  *
  * `null` from allowedBranchIds() means "ALL / unrestricted".
  */
+/** Parent branch → its sub-branches. Tanta Up (5) and Tanta Down (6) belong to Tanta main (2). */
+export const SUB_BRANCH_IDS: Readonly<Record<number, readonly number[]>> = { 2: [5, 6] };
+
 @Injectable()
 export class BranchScopeService {
   /**
@@ -45,7 +50,7 @@ export class BranchScopeService {
     const base = Number(user.branch ?? 0);
     if (!Number.isInteger(base) || base <= 0) return [];
 
-    return [base];
+    return [base, ...(SUB_BRANCH_IDS[base] ?? [])];
   }
 
   /** True if the user may access data for `branchId`. Unrestricted users may access any. */
@@ -53,6 +58,17 @@ export class BranchScopeService {
     const allowed = this.allowedBranchIds(user);
     if (allowed === null) return true;
     return allowed.includes(Number(branchId));
+  }
+
+  /** Throw 403 unless the user may access `branchId`. A null/0 branch is treated as foreign for non-admins. */
+  assertBranchAllowed(
+    user: JwtUser | undefined | null,
+    branchId: number | null | undefined,
+    message = 'لا تملك صلاحية الوصول لبيانات هذا الفرع',
+  ): void {
+    const allowed = this.allowedBranchIds(user);
+    if (allowed === null) return;
+    if (branchId == null || !allowed.includes(Number(branchId))) throw new ForbiddenException(message);
   }
 
   /**
