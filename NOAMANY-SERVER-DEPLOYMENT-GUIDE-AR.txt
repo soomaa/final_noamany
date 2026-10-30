@@ -454,3 +454,11 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - أمر الرجوع لهذا التثبيت فقط:
   bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261029-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/oct29-r2-update-backup.QQcQZn
 - المرجع للرفع القادم: 27-r1 + payload 29-r2.
+
+آخر تثبيت مؤكد — 20261030-r1 (تطبيق قابل للتثبيت)، يوم 30 أكتوبر 2026
+--------------------------------------------------------------------
+- واجهة الإدارة بس: system.webmanifest، وأيقونات noamany-app-icon-*، وnoamany-apple-touch-icon.png، وتاجات manifest في system.html.
+- اسم الـ manifest هو system.webmanifest، عشان مايتعارضش مع الموقع العام على "/". التطبيق بيفتح على /workspace.
+- اتأكد على السيرفر الحقيقي: الـ manifest بيرجع 200 (application/manifest+json)، والأيقونات الأربعة بترجع 200.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct30-r1-update-backup.bbVdqP
+- المرجع للرفع القادم: 29-r2 + payload 30-r1. system.html الحالي = payload 30-r1.
