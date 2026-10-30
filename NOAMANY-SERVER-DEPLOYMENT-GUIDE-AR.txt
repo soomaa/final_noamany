@@ -462,3 +462,11 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - اتأكد على السيرفر الحقيقي: الـ manifest بيرجع 200 (application/manifest+json)، والأيقونات الأربعة بترجع 200.
 - النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct30-r1-update-backup.bbVdqP
 - المرجع للرفع القادم: 29-r2 + payload 30-r1. system.html الحالي = payload 30-r1.
+
+آخر تثبيت مؤكد: 20261030-r2 (صفحة الدخول بتصميم SWAT)، 30 أكتوبر 2026
+--------------------------------------------------------------------
+- المحتوى: واجهة الإدارة بس.
+  - بانر جانبي غامق بأحمر نعماني بدل البانر الأحمر الكبير.
+  - كارت الدخول في نص الشاشة.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct30-r2-update-backup.4k4JqZ
+- المرجع للرفع القادم: system.html الحالي = payload 30-r2.
