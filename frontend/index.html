@@ -8,6 +8,13 @@
     <meta name="description" content="Noamany Fitness Center — منصة متكاملة لإدارة النادي واللياقة والموظفين." />
     <title>Noamany Fitness Center — إدارة متكاملة</title>
     <script src="/theme-init.js"></script>
+    <!-- Installable app: Chrome/Edge offer "Install"; opens the management system at /workspace.
+         Named system.webmanifest so it never collides with the public website at "/". -->
+    <link rel="manifest" href="/system.webmanifest" />
+    <link rel="apple-touch-icon" href="/noamany-apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Noamany" />
   </head>
   <body>
     <div id="root"></div>
