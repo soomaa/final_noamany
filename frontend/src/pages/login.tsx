@@ -19,7 +19,6 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { z } from 'zod';
 import { GymoraSideBadge } from '@/components/brand/gymora-side-badge';
-import { LOGO_SRC } from '@/components/brand/logo';
 import { PreferenceToggles } from '@/components/layout/preference-toggles';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -109,7 +108,7 @@ export function LoginPage() {
             >
               <div className="flex items-center gap-3">
                 <div className="noamany-login-logo overflow-hidden rounded-2xl bg-white p-2 ring-1 ring-white/70">
-                  <img src={LOGO_SRC} alt="Noamany Fitness Center" className="h-14 w-20 object-contain sm:h-16 sm:w-24" />
+                  <img src="/noamany-logo-clean.png" alt="Noamany Fitness Center" className="h-14 w-20 object-contain sm:h-16 sm:w-24" />
                 </div>
                 <div className="leading-tight">
                   <p className="text-lg font-black tracking-wide">NOAMANY</p>
