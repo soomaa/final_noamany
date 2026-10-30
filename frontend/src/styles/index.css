@@ -606,101 +606,33 @@ html[dir='rtl'] .login-feature-card:hover {
   }
 }
 
-/* Noamany split-screen login — mirrors the supplied reference composition. */
+/* Noamany login — same composition as SWAT: a slim dark brand panel beside a centered card. */
 .noamany-login-shell {
   background: #0c1116;
-  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.42);
 }
 
-.noamany-login-showcase {
-  background:
-    linear-gradient(145deg, rgba(80, 8, 13, 0.92) 0%, rgba(147, 18, 27, 0.94) 47%, rgba(238, 43, 58, 0.98) 100%);
-}
-
-.noamany-login-showcase-pattern {
-  opacity: 0.62;
+/* One continuous brand surface built from the Noamany red, no photography (SWAT uses its cyan). */
+.noamany-login-hero {
+  background-color: #1a0507;
   background-image:
-    radial-gradient(circle at 18% 78%, transparent 0 7rem, rgba(255, 182, 174, 0.1) 7.05rem 7.12rem, transparent 7.18rem 10.5rem, rgba(255, 182, 174, 0.075) 10.55rem 10.62rem, transparent 10.68rem),
-    linear-gradient(125deg, transparent 0 38%, rgba(255, 255, 255, 0.105) 38.2%, transparent 38.5%),
-    repeating-linear-gradient(35deg, rgba(255, 255, 255, 0.052) 0 1px, transparent 1px 8px);
+    radial-gradient(ellipse 70% 55% at 12% 8%, rgba(237, 28, 36, 0.32), transparent 60%),
+    radial-gradient(ellipse 60% 50% at 88% 88%, rgba(140, 12, 20, 0.42), transparent 62%),
+    linear-gradient(160deg, #2a080b 0%, #1a0507 55%, #0f0304 100%);
+  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.06);
 }
-
-.noamany-login-showcase-glow {
-  background:
-    radial-gradient(circle at 90% 15%, rgba(255, 145, 137, 0.47), transparent 36%),
-    radial-gradient(circle at 12% 80%, rgba(111, 0, 8, 0.62), transparent 42%),
-    linear-gradient(145deg, transparent 15%, rgba(255, 255, 255, 0.045) 48%, transparent 70%);
-}
-
-.noamany-login-split-edge {
-  background:
-    radial-gradient(ellipse 10px 90px at 50% 0%, rgba(255, 239, 228, 0.72), rgba(255, 71, 76, 0.25) 46%, transparent 76%),
-    radial-gradient(ellipse 10px 90px at 50% 100%, rgba(255, 229, 216, 0.62), rgba(255, 67, 73, 0.22) 48%, transparent 78%),
-    linear-gradient(90deg, transparent 0%, rgba(133, 14, 20, 0.2) 28%, #ff4249 43%, #fff0e7 50%, #ff555a 58%, rgba(120, 7, 15, 0.18) 74%, transparent 100%);
-  filter: drop-shadow(0 0 3px rgba(255, 55, 62, 0.5));
-}
-
-.noamany-login-split-aura {
-  filter: blur(8px);
-  opacity: 0.4;
-}
-
-.noamany-login-split-edge::before,
-.noamany-login-split-edge::after {
+.noamany-login-hero::before {
   content: '';
   position: absolute;
-  inset-block: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  border-radius: 999px;
+  inset: 0;
+  background: repeating-linear-gradient(115deg, rgba(255, 90, 96, 0.07) 0 2px, transparent 2px 132px);
+  mask-image: linear-gradient(to bottom, transparent, #000 42%);
+  pointer-events: none;
 }
-
-.noamany-login-split-edge::before {
-  width: 2px;
-  background: linear-gradient(180deg, #fff4ec 0%, #ff6d64 3%, #f22b35 15%, #e81b27 50%, #fa3b43 87%, #ff7e6d 97%, #fff0e5 100%);
-  box-shadow: 0 0 4px rgba(255, 44, 53, 0.72), 0 0 10px rgba(255, 44, 53, 0.34);
-}
-
-.noamany-login-split-edge::after {
-  width: 7px;
-  background: linear-gradient(180deg, rgba(255, 226, 211, 0.38), rgba(255, 48, 56, 0.08) 14% 86%, rgba(255, 219, 203, 0.34));
-  filter: blur(4px);
-}
-
-html[dir='rtl'] .noamany-login-split-edge {
-  right: calc(45% - 6px);
-  left: auto;
-  box-shadow: -5px 0 12px rgba(210, 224, 230, 0.05), 5px 0 12px rgba(255, 38, 47, 0.12);
-}
-
-html[dir='ltr'] .noamany-login-split-edge {
-  left: calc(45% - 6px);
-  right: auto;
-  box-shadow: 5px 0 12px rgba(210, 224, 230, 0.05), -5px 0 12px rgba(255, 38, 47, 0.12);
-}
-
-html[dir='rtl'] .noamany-login-split-aura {
-  right: calc(45% - 1.75rem);
-  left: auto;
-  background:
-    radial-gradient(ellipse 26px 110px at 48% 0%, rgba(225, 235, 239, 0.13), transparent 72%),
-    radial-gradient(ellipse 26px 110px at 48% 100%, rgba(225, 235, 239, 0.11), transparent 74%),
-    linear-gradient(90deg, transparent, rgba(221, 232, 237, 0.07) 38%, rgba(255, 78, 79, 0.08) 54%, rgba(255, 39, 48, 0.17) 70%, transparent);
-}
-
-html[dir='ltr'] .noamany-login-split-aura {
-  left: calc(45% - 1.75rem);
-  right: auto;
-  background:
-    radial-gradient(ellipse 26px 110px at 52% 0%, rgba(225, 235, 239, 0.13), transparent 72%),
-    radial-gradient(ellipse 26px 110px at 52% 100%, rgba(225, 235, 239, 0.11), transparent 74%),
-    linear-gradient(90deg, transparent, rgba(255, 39, 48, 0.17) 30%, rgba(255, 78, 79, 0.08) 46%, rgba(221, 232, 237, 0.07) 62%, transparent);
+.noamany-login-logo {
+  box-shadow: 0 12px 30px rgba(52, 0, 0, 0.45);
 }
 
 .noamany-login-auth {
-  align-items: flex-start;
-  padding-top: 5.25rem;
-  padding-bottom: 2.25rem;
   background: linear-gradient(145deg, #171d22 0%, #0d1217 56%, #080c10 100%);
 }
 
@@ -868,9 +800,7 @@ html:not(.dark) .noamany-login-page {
 }
 
 html:not(.dark) .noamany-login-shell {
-  border-color: rgba(105, 54, 53, 0.24);
   background: #f5eeee;
-  box-shadow: 0 28px 80px rgba(91, 39, 40, 0.2);
 }
 
 html:not(.dark) .noamany-login-auth {
@@ -962,8 +892,9 @@ html:not(.dark) .noamany-login-auth .text-white\/25 {
 }
 
 @media (max-width: 1023px) {
-  .noamany-login-showcase {
+  .noamany-login-hero {
     border-bottom: 1px solid rgba(255, 107, 107, 0.38);
+    box-shadow: none;
   }
 }
 
@@ -1025,8 +956,7 @@ html:not(.dark) .noamany-login-auth .text-white\/25 {
 .gymora-whatsapp-icon { width: 24px; height: 24px; flex: none; color: #59dc84; }
 
 @media (min-width: 1024px) {
-  .noamany-login-showcase { justify-content: center; }
-  .noamany-login-auth { padding-top: 4.5rem; padding-bottom: 1.25rem; }
+  .noamany-login-auth { padding-block: 4.5rem 2rem; }
   .noamany-login-card { padding-block: 1.75rem; }
   .noamany-login-card > div:first-child { margin-bottom: 1.5rem; }
   .noamany-login-edition { margin-top: .75rem; }

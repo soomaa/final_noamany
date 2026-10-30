@@ -94,44 +94,39 @@ export function LoginPage() {
   const copyright = t('login.copyright', { year: new Date().getFullYear() });
 
   return (
-    <div className="noamany-login-page min-h-screen bg-[#080d11] p-2 sm:p-3">
-      <main className="noamany-login-shell relative flex min-h-[calc(100vh-1rem)] flex-col overflow-hidden rounded-[22px] border border-white/20 lg:min-h-[calc(100vh-1.5rem)]">
+    <div className="noamany-login-page flex h-dvh min-h-0 flex-col overflow-y-auto overscroll-y-contain bg-[#080d11]">
+      <main className="noamany-login-shell relative flex min-h-0 flex-1 flex-col">
+        {/* Same composition as SWAT: a slim dark brand panel beside a centered sign-in card. */}
         <div className="noamany-login-panels relative flex flex-1 flex-col lg:flex-row">
-          <div className="noamany-login-split-aura pointer-events-none absolute inset-y-0 z-20 hidden w-14 lg:block" />
-          <div className="noamany-login-split-edge pointer-events-none absolute inset-y-0 z-30 hidden w-3 lg:block" />
-          <section className="noamany-login-showcase relative flex min-h-[430px] shrink-0 flex-col overflow-hidden text-white lg:min-h-0 lg:w-[45%]">
-            <div className="noamany-login-showcase-pattern pointer-events-none absolute inset-0" />
-            <div className="noamany-login-showcase-glow pointer-events-none absolute inset-0" />
-            <Dumbbell className="pointer-events-none absolute -start-12 top-[26%] size-56 rotate-[-18deg] text-white opacity-[0.1]" strokeWidth={1.2} />
-            <Dumbbell className="pointer-events-none absolute -end-16 bottom-[5%] size-64 rotate-[20deg] text-[#ffb0a5] opacity-[0.13]" strokeWidth={1.1} />
+          <section className="noamany-login-hero relative flex shrink-0 flex-col overflow-hidden text-white lg:w-[min(42%,520px)]">
             <div
               className={cn(
-                'relative z-10 flex w-full flex-col px-7 py-6 transition-all duration-700 sm:px-10 lg:px-12 lg:py-6 xl:px-16',
+                'relative z-10 flex flex-1 flex-col justify-between gap-8 p-6 sm:p-8 lg:p-10 xl:p-12',
+                'transition-all duration-700 ease-out',
                 mounted ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0',
               )}
             >
-              <div className="noamany-login-brand flex w-fit flex-col items-center gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="overflow-hidden rounded-2xl bg-white p-2 shadow-[0_12px_30px_rgba(52,0,0,.28)] ring-1 ring-white/70">
-                    <img src={LOGO_SRC} alt="Noamany Fitness Center" className="h-14 w-20 object-contain sm:h-[4.4rem] sm:w-[6.5rem]" />
-                  </div>
-                  <div className="hidden leading-tight sm:block">
-                    <p className="text-lg font-black tracking-wide">NOAMANY</p>
-                    <p className="text-[9px] font-semibold tracking-[0.24em] text-white/65">FITNESS CENTER</p>
-                  </div>
+              <div className="flex items-center gap-3">
+                <div className="noamany-login-logo overflow-hidden rounded-2xl bg-white p-2 ring-1 ring-white/70">
+                  <img src={LOGO_SRC} alt="Noamany Fitness Center" className="h-14 w-20 object-contain sm:h-16 sm:w-24" />
                 </div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-[#581016]/45 px-3.5 py-2 text-xs font-semibold text-white/85 shadow-lg backdrop-blur-sm">
-                  <Sparkles className="size-3.5 text-[#ffd2c4]" />
-                  {t('login.badge')}
+                <div className="leading-tight">
+                  <p className="text-lg font-black tracking-wide">NOAMANY</p>
+                  <p className="text-[10px] font-semibold tracking-[0.24em] text-white/65">FITNESS CENTER</p>
                 </div>
               </div>
 
-              <div className="mt-6 pb-4 lg:mt-5">
-                <h1 className="max-w-2xl text-3xl font-black leading-[1.35] tracking-tight sm:text-4xl xl:text-[2.55rem]">
+              {/* Hero copy — desktop only, like SWAT. */}
+              <div className="hidden max-w-xl space-y-6 lg:block">
+                <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-white/90 backdrop-blur-sm">
+                  <Sparkles className="size-3.5 text-[#ffd2c4]" />
+                  {t('login.badge')}
+                </div>
+                <h1 className="text-[1.85rem] font-black leading-snug tracking-tight xl:text-[2.25rem]">
                   {t('login.titlePrefix')}{' '}
                   <RotatingText
                     texts={rotatingTexts}
-                    mainClassName="noamany-login-rotate align-middle"
+                    mainClassName="noamany-login-rotate align-baseline"
                     staggerFrom="last"
                     initial={{ y: '100%', opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
@@ -146,37 +141,37 @@ export function LoginPage() {
                     loop
                   />
                 </h1>
-                <p className="mt-3 max-w-xl text-sm leading-7 text-white/65 sm:text-[15px]">{t('login.subtitle')}</p>
-
-                <div className="mt-5 grid gap-2.5">
+                <p className="text-base leading-relaxed text-white/75">{t('login.subtitle')}</p>
+                <div className="grid gap-3 pt-1">
                   {FEATURES.map(({ icon: Icon, key }) => (
-                    <div key={key} className="noamany-login-feature flex min-h-14 items-center gap-4 rounded-2xl border px-4 py-2.5 backdrop-blur-sm">
-                      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-[#f0a17b]/40 bg-[#5c1a18]/75 text-[#ffe8df] shadow-inner">
-                        <Icon className="size-5" strokeWidth={1.8} />
+                    <div key={key} className="noamany-login-feature flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 backdrop-blur-md">
+                      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white">
+                        <Icon className="size-[18px]" strokeWidth={2} />
                       </span>
-                      <span className="text-sm font-semibold text-white/88">{t(key)}</span>
+                      <span className="text-sm font-semibold leading-snug text-white/90">{t(key)}</span>
                     </div>
                   ))}
                 </div>
               </div>
-            </div>
 
+              <p className="text-sm font-semibold text-white/80 lg:hidden">{t('login.badge')}</p>
+            </div>
           </section>
 
-          <section className="noamany-login-auth relative flex min-h-[620px] flex-1 items-center justify-center overflow-hidden px-6 py-20 sm:px-10 lg:min-h-0 lg:px-14 xl:px-20">
+          <section className="noamany-login-auth relative flex flex-1 items-center justify-center overflow-hidden px-6 pb-12 pt-20 sm:px-10 lg:px-14 xl:px-20">
             <div className="noamany-login-auth-pattern pointer-events-none absolute inset-0" />
-            <div className="absolute left-5 top-5 z-20 sm:left-7 sm:top-7">
+            <div className="absolute end-4 top-4 z-20 sm:end-6 sm:top-6">
               <PreferenceToggles variant={theme === 'dark' ? 'on-dark' : 'default'} />
             </div>
 
             <div
               className={cn(
-                'relative z-10 w-full max-w-[500px] transition-all delay-100 duration-700',
+                'relative z-10 w-full max-w-[480px] transition-all delay-100 duration-700',
                 mounted ? 'translate-y-0 opacity-100' : 'translate-y-5 opacity-0',
               )}
             >
               <div className="noamany-login-card rounded-[24px] border border-[#a36a4c] bg-[#11161b]/92 px-7 py-10 shadow-[0_32px_70px_rgba(0,0,0,.42)] backdrop-blur-sm sm:px-10 sm:py-11 lg:px-11">
-                <div className="mb-9 text-center lg:text-start">
+                <div className="mb-9 text-center">
                   <h2 className="noamany-login-heading text-3xl font-black tracking-tight text-white sm:text-[2.15rem]">{t('login.formTitle')}</h2>
                   <p className="noamany-login-subtitle mt-3 text-sm leading-7 text-white/45">{t('login.formSubtitle')}</p>
                 </div>
