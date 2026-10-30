@@ -470,3 +470,9 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   - كارت الدخول في نص الشاشة.
 - النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct30-r2-update-backup.4k4JqZ
 - المرجع للرفع القادم: system.html الحالي = payload 30-r2.
+
+آخر تثبيت مؤكد: 20261030-r3 (بانر Gymora في البانر الجانبي زي SWAT)، 30 أكتوبر 2026
+---------------------------------------------------------------------------
+- واجهة الإدارة بس: شيلنا الشريط اللي كان تحت الصفحة، وبانر Gymora بقى تحت البانر الجانبي.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct30-r3-update-backup.auc6GH
+- المرجع للرفع القادم: system.html الحالي = payload 30-r3.
