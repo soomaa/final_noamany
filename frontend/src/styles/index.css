@@ -913,6 +913,101 @@ html:not(.dark) .noamany-login-auth .text-white\/25 {
   font-display: swap;
 }
 
+/* Gymora vendor block inside the login side panel — same artwork as SWAT. */
+.gymora-side {
+  --gymora-gold: #d4af37;
+  container-type: inline-size;
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  overflow: hidden;
+  color: #fff;
+}
+.gymora-side-layout {
+  display: grid;
+  grid-template-columns: 29% minmax(0, 1fr);
+  align-items: center;
+  gap: 4%;
+  min-height: 34cqw;
+  padding: 3cqw 0 2cqw;
+}
+.gymora-side a:focus-visible { outline: 2px solid var(--gymora-gold); outline-offset: 3px; }
+.gymora-side a { transition: filter 180ms ease, color 180ms ease; }
+.gymora-side a:hover { filter: brightness(1.18); }
+.gymora-side-logo img { display: block; width: 100%; height: auto; filter: drop-shadow(0 5px 8px #000); }
+.gymora-side-copy {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 2.5cqw;
+}
+.gymora-side-copy::before {
+  content: '';
+  position: absolute;
+  left: -3cqw;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: linear-gradient(transparent, var(--gymora-gold), transparent);
+}
+.gymora-side-title {
+  display: block;
+  white-space: nowrap;
+  font-family: 'Russo One', sans-serif;
+  font-size: 4.1cqw;
+  font-weight: 400;
+  line-height: 1.15;
+  text-shadow: 0 2px 1px #34382c, 0 5px 12px #000;
+}
+.gymora-side-title span { color: var(--gymora-gold); }
+.gymora-side-description {
+  font-size: 3.3cqw;
+  font-weight: 700;
+  line-height: 1.5;
+  text-align: center;
+  text-shadow: 0 2px 5px #000;
+}
+.gymora-side-credit { display: flex; align-items: center; justify-content: center; gap: 1.5cqw; width: 100%; }
+.gymora-side-rule { height: 1px; flex: 1; background: var(--gymora-gold); }
+.gymora-side-maker { display: flex; flex-direction: column; align-items: center; gap: .5cqw; }
+.gymora-side-maker img { width: 6cqw; height: 7.2cqw; object-fit: contain; }
+.gymora-side-maker span { font-size: 1.65cqw; line-height: 1.2; white-space: nowrap; }
+.gymora-side-byline { display: flex; align-items: center; gap: 1.5cqw; min-height: 44px; white-space: nowrap; font-size: 2.3cqw; }
+.gymora-side-powered { color: #c7c9c3; }
+.gymora-side-phone {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: fit-content;
+  min-height: 44px;
+  gap: 10px;
+  margin: 6px auto 0;
+  padding: 0 12px;
+  color: #e5e8da;
+  font-size: clamp(17px, 4cqw, 21px);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-underline-offset: 4px;
+}
+.gymora-side-phone:hover,
+.gymora-side-byline:hover { color: var(--gymora-gold); text-decoration: underline; }
+@container (max-width: 370px) {
+  .gymora-side-layout { grid-template-columns: 25% minmax(0, 1fr); padding-inline: 4cqw; min-height: 46cqw; }
+  .gymora-side-title { font-size: 4.6cqw; }
+  .gymora-side-description { font-size: 4cqw; }
+  .gymora-side-credit { flex-wrap: wrap; }
+  .gymora-side-byline { font-size: 3.2cqw; gap: 2cqw; }
+  .gymora-side-maker img { width: 8cqw; height: 9.6cqw; }
+  .gymora-side-maker span { display: none; }
+  .gymora-side-rule { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gymora-side a { transition: none; }
+}
+
 /* Shared brand footer sits below both login panels. */
 .gymora-promo {
   --gymora-lime: #d1e800;

@@ -18,6 +18,7 @@ import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { z } from 'zod';
+import { GymoraSideBadge } from '@/components/brand/gymora-side-badge';
 import { LOGO_SRC } from '@/components/brand/logo';
 import { PreferenceToggles } from '@/components/layout/preference-toggles';
 import { Button } from '@/components/ui/button';
@@ -101,7 +102,7 @@ export function LoginPage() {
           <section className="noamany-login-hero relative flex shrink-0 flex-col overflow-hidden text-white lg:w-[min(42%,520px)]">
             <div
               className={cn(
-                'relative z-10 flex flex-1 flex-col justify-between gap-8 p-6 sm:p-8 lg:p-10 xl:p-12',
+                'relative z-10 flex flex-1 flex-col justify-between gap-6 p-6 sm:p-8 lg:px-10 lg:py-7 xl:px-12',
                 'transition-all duration-700 ease-out',
                 mounted ? 'translate-y-0 opacity-100' : 'translate-y-4 opacity-0',
               )}
@@ -117,7 +118,7 @@ export function LoginPage() {
               </div>
 
               {/* Hero copy — desktop only, like SWAT. */}
-              <div className="hidden max-w-xl space-y-6 lg:block">
+              <div className="hidden max-w-xl space-y-4 lg:block">
                 <div className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3.5 py-1.5 text-xs font-semibold text-white/90 backdrop-blur-sm">
                   <Sparkles className="size-3.5 text-[#ffd2c4]" />
                   {t('login.badge')}
@@ -142,9 +143,9 @@ export function LoginPage() {
                   />
                 </h1>
                 <p className="text-base leading-relaxed text-white/75">{t('login.subtitle')}</p>
-                <div className="grid gap-3 pt-1">
+                <div className="grid gap-2.5 pt-1">
                   {FEATURES.map(({ icon: Icon, key }) => (
-                    <div key={key} className="noamany-login-feature flex items-center gap-3.5 rounded-2xl border px-4 py-3.5 backdrop-blur-md">
+                    <div key={key} className="noamany-login-feature flex items-center gap-3.5 rounded-2xl border px-4 py-2.5 backdrop-blur-md">
                       <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-white/15 text-white">
                         <Icon className="size-[18px]" strokeWidth={2} />
                       </span>
@@ -154,7 +155,11 @@ export function LoginPage() {
                 </div>
               </div>
 
-              <p className="text-sm font-semibold text-white/80 lg:hidden">{t('login.badge')}</p>
+              <div>
+                <p className="text-sm font-semibold text-white/80 lg:hidden">{t('login.badge')}</p>
+                {/* Gymora vendor block at the foot of the side panel, as in SWAT. */}
+                <GymoraSideBadge className="mt-5 lg:mt-0" />
+              </div>
             </div>
           </section>
 
@@ -242,38 +247,6 @@ export function LoginPage() {
             </div>
           </section>
         </div>
-        <aside className="gymora-promo" aria-label="Gymora System">
-          <div className="gymora-promo-identity">
-            <a className="gymora-promo-logo" href="https://gymora.metacodecx.com/" target="_blank" rel="noopener noreferrer" aria-label={t('login.promoVisitGymora')}>
-              <img src="/gymora-logo.png" alt="Gymora System" />
-            </a>
-            <a className="gymora-promo-heading" href="https://gymora.metacodecx.com/" target="_blank" rel="noopener noreferrer">
-              <span className="gymora-promo-title" dir="ltr"><span>GYMORA</span> SYSTEM</span>
-              <span className="gymora-promo-description">{t('login.promoDescription')}</span>
-            </a>
-          </div>
-          <span className="gymora-promo-divider" aria-hidden="true" />
-          <div className="gymora-promo-contact">
-            <a className="gymora-promo-maker" href="https://metacodecx.com/" target="_blank" rel="noopener noreferrer" aria-label={t('login.promoVisitMta')}>
-              <img src="/mta-codex-icon.png" alt="" />
-              <span className="gymora-promo-byline">
-                <span className="gymora-promo-powered">{t('login.promoPoweredBy')}</span>
-                <strong dir="ltr">MTA Codex</strong>
-              </span>
-            </a>
-            <a
-              className="gymora-promo-phone"
-              href="whatsapp://send?phone=201033541597"
-              dir="ltr"
-              aria-label={t('login.promoWhatsApp')}
-            >
-              <svg className="gymora-whatsapp-icon" viewBox="0 0 32 32" fill="currentColor" aria-hidden="true">
-                <path d="M16 .8A15.2 15.2 0 0 0 2.9 23.7L.8 31.2l7.7-2A15.2 15.2 0 1 0 16 .8Zm0 27.6a12.4 12.4 0 0 1-6.3-1.7l-.5-.3-4.6 1.2 1.2-4.5-.3-.5A12.4 12.4 0 1 1 16 28.4Zm6.8-9.3c-.4-.2-2.2-1.1-2.6-1.2-.3-.1-.6-.2-.8.2-.3.4-1 1.2-1.2 1.4-.2.2-.4.3-.8.1a10.2 10.2 0 0 1-3-1.9 11.3 11.3 0 0 1-2.1-2.6c-.2-.4 0-.6.2-.8l.6-.7.4-.6c.1-.2 0-.5 0-.7l-1.2-2.8c-.3-.7-.6-.6-.8-.6h-.7c-.3 0-.7.1-1 .5-.4.4-1.3 1.2-1.3 3s1.4 3.5 1.6 3.8c.2.2 2.8 4.2 6.7 5.9.9.4 1.6.6 2.1.7.9.3 1.8.2 2.5.1.8-.1 2.2-.9 2.5-1.8.3-.9.3-1.7.2-1.9-.1-.2-.3-.3-.7-.5Z" />
-              </svg>
-              <span>+20 103 354 1597</span>
-            </a>
-          </div>
-        </aside>
       </main>
     </div>
   );
