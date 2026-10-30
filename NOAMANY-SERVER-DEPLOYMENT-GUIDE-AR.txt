@@ -476,3 +476,12 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - واجهة الإدارة بس: شيلنا الشريط اللي كان تحت الصفحة، وبانر Gymora بقى تحت البانر الجانبي.
 - النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct30-r3-update-backup.auc6GH
 - المرجع للرفع القادم: system.html الحالي = payload 30-r3.
+
+آخر تثبيت مؤكد: 20261030-r4 (أيقونات التطبيق من اللوجو النضيف)، 30 أكتوبر 2026
+--------------------------------------------------------------------------
+- الأيقونات اتعملت من noamany-logo-clean.png، وده لوجو الموقع اللي من غير خلفية، على خلفية بيضا.
+- الأيقونات الجديدة باسم v2، والـ manifest الجديد اسمه system-v2.webmanifest.
+  - السبب: المثبّت بيرفض يكتب فوق ملف موجود محتواه مختلف.
+  - الملفات القديمة لسه على السيرفر، بس ماحدش بيستخدمها.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct30-r4-update-backup.ryvlcD
+- المرجع للرفع اللي جاي: system.html الحالي هو اللي في payload 30-r4.
