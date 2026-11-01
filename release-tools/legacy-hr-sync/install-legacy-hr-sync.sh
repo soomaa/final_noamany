@@ -5,7 +5,7 @@
 # 2) moves the few rows created only in the new system to ids >= 1,000,000 and makes new rows
 #    start there, so old and new ids can never collide;
 # 3) runs the first sync and compares row counts;
-# 4) installs /etc/cron.d/legacy-hr-sync (every 3 minutes).
+# 4) installs /etc/cron.d/legacy-hr-sync (every 3 minutes) — skipped with ONCE=1 (one-time copy).
 # Undo: rm /etc/cron.d/legacy-hr-sync, then restore the backup printed below if needed.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -79,6 +79,11 @@ echo "--- last punches in the new system"
 q "SELECT hodoor_id, member_code, action_date, hdoor_time, ensraf_time, late_min FROM \`$NEW\`.tbl_hdoor_emps WHERE hodoor_id < $NATIVE_FROM ORDER BY hodoor_id DESC LIMIT 3"
 
 if [ "${LOCAL_TEST:-0}" = 1 ]; then echo "LOCAL TEST: cron not installed"; exit 0; fi
+# ONCE=1: copy the data one time only, no schedule (install the cron later by running without ONCE).
+if [ "${ONCE:-0}" = 1 ]; then
+  [ "$ok" = 1 ] && echo "LEGACY HR ONE-TIME SYNC DONE (no schedule installed)" || echo "LEGACY HR ONE-TIME SYNC DONE, but some counts differ — check the CONFLICT lines in the log"
+  exit 0
+fi
 cat > /etc/cron.d/legacy-hr-sync <<EOF
 # Old HR (hr.noamanycenter.com) -> new system sync. Log: $APP/tmp/legacy-hr-sync.log
 */3 * * * * root /usr/local/sbin/legacy-hr-sync
