@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { MapPin, Plus } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { PunchPhotoPreview, PunchPhotoThumb, type PunchPhotoItem } from '@/components/attendance/punch-photo-preview';
 import { DataTable } from '@/components/common/data-table';
 import { Combobox } from '@/components/common/combobox';
 import { FilterBar } from '@/components/common/filter-bar';
@@ -83,19 +84,16 @@ function durationText(seconds: number) {
   return [hours, minutes, secs].map((value) => String(value).padStart(2, '0')).join(':');
 }
 
-function PunchPhoto({ path, label }: { path?: string; label: string }) {
-  const src = uploadUrl(path);
-  if (!src) return <span className="text-muted-foreground">—</span>;
-  return (
-    <a href={src} target="_blank" rel="noreferrer" title={label}>
-      <img
-        src={src}
-        alt={label}
-        className="mx-auto size-[72px] rounded-xl border object-cover shadow-sm transition-transform hover:scale-105"
-        loading="lazy"
-      />
-    </a>
-  );
+/** Live "working hours" counter; ticks on its own so the table (and its photos) never re-render. */
+function WorkingTime({ seconds, isWorking, fetchedAt }: { seconds: number; isWorking?: boolean; fetchedAt: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    if (!isWorking) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [isWorking]);
+  const elapsedSinceFetch = isWorking ? Math.max(0, Math.floor((now - fetchedAt) / 1000)) : 0;
+  return <span className={`nums inline-flex rounded-md border px-3 py-2 font-semibold ${isWorking ? 'border-info/30 bg-info/10 text-info' : 'bg-muted text-muted-foreground'}`}>{isWorking && <span className="me-2 size-2 animate-pulse rounded-full bg-success" />}{toArabicDigits(durationText(seconds + elapsedSinceFetch))}</span>;
 }
 
 export function AttendanceBoardPage() {
@@ -104,7 +102,7 @@ export function AttendanceBoardPage() {
   const { params, setParams } = useListQuery({ filters: { date: today() } });
   const { data, isLoading, isError, refetch, dataUpdatedAt } = usePaginatedList<AttendanceRow>('attendance', params);
   const { data: branches = [] } = useBranches();
-  const [now, setNow] = useState(Date.now());
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [mapTarget, setMapTarget] = useState<{ lat: number; lng: number; name?: string } | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [manualForm, setManualForm] = useState({ branchId: '', empCode: '', checkIn: '', checkOut: '', type: 'in' as 'in' | 'out' });
@@ -120,10 +118,30 @@ export function AttendanceBoardPage() {
     staleTime: 30_000,
   });
 
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
+  // Every photo on the current page, in table order, for the preview's arrows.
+  const photoItems = useMemo<PunchPhotoItem[]>(() => (data?.data ?? []).flatMap((row) => {
+    const base = {
+      employeeName: row.employeeName, empCode: row.empCode, department: row.department, jobTitle: row.jobTitle,
+      branchName: row.branchName, weekday: row.weekday, actionDate: row.actionDate,
+    };
+    const shots: Array<[string, string | undefined, string, 'in' | 'out', string | undefined, number | undefined, number | undefined]> = [
+      ['in1', row.checkInPhoto, 'صورة الحضور', 'in', row.checkIn, row.checkInLat, row.checkInLng],
+      ['in2', row.secondCheckInPhoto, 'صورة الحضور للوردية الثانية', 'in', row.secondCheckIn, row.secondCheckInLat, row.secondCheckInLng],
+      ['out1', row.checkOutPhoto, 'صورة الانصراف', 'out', row.checkOut, row.checkOutLat, row.checkOutLng],
+      ['out2', row.secondCheckOutPhoto, 'صورة الانصراف للوردية الثانية', 'out', row.secondCheckOut, row.secondCheckOutLat, row.secondCheckOutLng],
+    ];
+    return shots.flatMap(([slot, path, label, kind, time, lat, lng]) => {
+      const src = uploadUrl(path);
+      return src ? [{ ...base, key: `${row.id}|${slot}`, src, label, kind, time, lat, lng, lateMin: slot === 'in1' ? row.lateMin : undefined }] : [];
+    });
+  }), [data]);
+  const photoCell = (row: AttendanceRow, slot: string, path: string | undefined, label: string) => (
+    <PunchPhotoThumb
+      src={uploadUrl(path)}
+      label={ui(label)}
+      onOpen={() => setPreviewIndex(photoItems.findIndex((item) => item.key === `${row.id}|${slot}`))}
+    />
+  );
 
   const branchOptions = useMemo(
     () => branches.map((branch) => ({ value: String(branch.id), label: branch.name ?? `#${branch.id}` })),
@@ -192,7 +210,7 @@ export function AttendanceBoardPage() {
     {
       id: 'checkInPhoto',
       header: ui('صورة الحضور'),
-      cell: ({ row }) => <div className="space-y-2"><PunchPhoto path={row.original.checkInPhoto} label={ui('صورة الحضور')} />{row.original.secondCheckInPhoto && <PunchPhoto path={row.original.secondCheckInPhoto} label={ui('صورة الحضور للوردية الثانية')} />}</div>,
+      cell: ({ row }) => <div className="space-y-2">{photoCell(row.original, 'in1', row.original.checkInPhoto, 'صورة الحضور')}{row.original.secondCheckInPhoto && photoCell(row.original, 'in2', row.original.secondCheckInPhoto, 'صورة الحضور للوردية الثانية')}</div>,
     },
     {
       id: 'checkIn',
@@ -202,7 +220,7 @@ export function AttendanceBoardPage() {
     {
       id: 'checkOutPhoto',
       header: ui('صورة الانصراف'),
-      cell: ({ row }) => <div className="space-y-2"><PunchPhoto path={row.original.checkOutPhoto} label={ui('صورة الانصراف')} />{row.original.secondCheckOutPhoto && <PunchPhoto path={row.original.secondCheckOutPhoto} label={ui('صورة الانصراف للوردية الثانية')} />}</div>,
+      cell: ({ row }) => <div className="space-y-2">{photoCell(row.original, 'out1', row.original.checkOutPhoto, 'صورة الانصراف')}{row.original.secondCheckOutPhoto && photoCell(row.original, 'out2', row.original.secondCheckOutPhoto, 'صورة الانصراف للوردية الثانية')}</div>,
     },
     {
       id: 'checkOut',
@@ -213,12 +231,9 @@ export function AttendanceBoardPage() {
     {
       id: 'workingHours',
       header: ui('ساعات العمل'),
-      cell: ({ row }) => {
-        const elapsedSinceFetch = row.original.isWorking ? Math.max(0, Math.floor((now - dataUpdatedAt) / 1000)) : 0;
-        return <span className={`nums inline-flex rounded-md border px-3 py-2 font-semibold ${row.original.isWorking ? 'border-info/30 bg-info/10 text-info' : 'bg-muted text-muted-foreground'}`}>{row.original.isWorking && <span className="me-2 size-2 animate-pulse rounded-full bg-success" />}{toArabicDigits(durationText((row.original.workingSeconds ?? 0) + elapsedSinceFetch))}</span>;
-      },
+      cell: ({ row }) => <WorkingTime seconds={row.original.workingSeconds ?? 0} isWorking={row.original.isWorking} fetchedAt={dataUpdatedAt} />,
     },
-  ], [dataUpdatedAt, now, params.page, params.pageSize, ui]);
+  ], [dataUpdatedAt, params.page, params.pageSize, photoItems, ui]);
 
   return <div className="space-y-4">
     <PageHeader
@@ -243,6 +258,13 @@ export function AttendanceBoardPage() {
       onRetry={() => void refetch()}
       emptyTitle={ui('لا يوجد حضور مسجل اليوم')}
       enableExport
+    />
+
+    <PunchPhotoPreview
+      items={photoItems}
+      index={previewIndex != null && previewIndex >= 0 ? previewIndex : null}
+      onIndexChange={setPreviewIndex}
+      onShowMap={(item) => { setPreviewIndex(null); setMapTarget({ lat: item.lat!, lng: item.lng!, name: item.employeeName }); }}
     />
 
     <MapModal open={!!mapTarget} onOpenChange={(open) => !open && setMapTarget(null)} lat={mapTarget?.lat} lng={mapTarget?.lng} employeeName={mapTarget?.name} />

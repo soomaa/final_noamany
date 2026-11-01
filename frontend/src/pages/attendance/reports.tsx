@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
+import { PunchPhotoPreview, PunchPhotoThumb, type PunchPhotoItem } from '@/components/attendance/punch-photo-preview';
 import { Combobox } from '@/components/common/combobox';
 import { DataTable } from '@/components/common/data-table';
 import { PageHeader } from '@/components/common/page-header';
@@ -211,22 +212,45 @@ export function AttendanceReportsPage() {
     ...branches.map((branch) => ({ value: String(branch.id), label: branch.name ?? `#${branch.id}` })),
   ];
   const n = (value: unknown) => <span className="nums">{toArabicDigits(String(value ?? 0))}</span>;
-  // Thumbnails like the legacy report; a click opens the full photo.
-  const photo = (...values: Array<string | undefined>) => {
-    const urls = values.map((value) => photoUrl(value)).filter((url): url is string => !!url);
-    if (!urls.length) return <span>—</span>;
+  // Every photo on the current page, in table order, for the preview's arrows.
+  const photoItems = useMemo<PunchPhotoItem[]>(() => (query.data?.data ?? []).flatMap((row, index) => {
+    if (kind === 'full-sheet' && row.status !== 'present') return [];
+    const base = {
+      employeeName: row.empName, empCode: row.empCode, department: row.department, jobTitle: row.jobTitle,
+      branchName: row.branchTitle, weekday: row.weekday, actionDate: row.actionDate,
+    };
+    const shots: Array<[string, string | undefined, string, 'in' | 'out', string | undefined]> = [
+      ['in1', row.checkInPhoto, 'صورة الحضور', 'in', row.checkIn],
+      ['in2', row.secondCheckInPhoto, 'صورة الحضور للوردية الثانية', 'in', row.secondCheckIn],
+      ['out1', row.checkOutPhoto, 'صورة الانصراف', 'out', row.checkOut],
+      ['out2', row.secondCheckOutPhoto, 'صورة الانصراف للوردية الثانية', 'out', row.secondCheckOut],
+    ];
+    return shots.flatMap(([slot, path, label, photoKind, time]) => {
+      const src = photoUrl(path);
+      return src ? [{ ...base, key: `${row.id ?? index}|${slot}`, src, label, kind: photoKind, time, lateMin: slot === 'in1' ? row.lateMin : undefined }] : [];
+    });
+  }), [kind, query.data]);
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  // Thumbnails like the legacy report; a click opens the preview with the punch details.
+  const photo = (row: Row, rowIndex: number, ...slots: Array<[string, string | undefined, string]>) => {
+    const shown = slots.filter(([, path]) => photoUrl(path));
+    if (!shown.length) return <span>—</span>;
     return <div className="flex flex-col items-center gap-1">
-      {urls.map((url) => <a key={url} href={url} target="_blank" rel="noreferrer"><img src={url} alt="" className="size-14 rounded-md border object-cover" loading="lazy" /></a>)}
+      {shown.map(([slot, path, label]) => <PunchPhotoThumb
+        key={slot}
+        src={photoUrl(path)}
+        label={ui(label)}
+        onOpen={() => setPreviewIndex(photoItems.findIndex((item) => item.key === `${row.id ?? rowIndex}|${slot}`))}
+      />)}
     </div>;
   };
-  const fullSheetContent = (row: Row, value?: string, isPhoto = false) => {
+  const fullSheetContent = (row: Row, value?: string, isPhoto = false, rowIndex = 0, slot = 'in1') => {
     if (row.status !== 'present') {
       const color = row.status === 'absent' ? 'text-destructive' : row.status === 'weekly_off' ? 'text-warning' : 'text-success';
       return <span className={`font-semibold ${color}`}>{ui(row.statusLabel ?? '—')}</span>;
     }
     if (!isPhoto) return value ? <span className="nums">{toArabicDigits(value)}</span> : <span>—</span>;
-    const url = photoUrl(value);
-    return url ? <a href={url} target="_blank" rel="noreferrer"><img src={url} alt="" className="mx-auto size-12 rounded-md border object-cover" loading="lazy" /></a> : <span>—</span>;
+    return photo(row, rowIndex, [slot, value, slot === 'in1' ? 'صورة الحضور' : 'صورة الانصراف']);
   };
   const remove = async (path: string, id?: number) => {
     if (!id || !window.confirm(ui('هل تريد حذف السجل؟'))) return;
@@ -272,9 +296,9 @@ export function AttendanceReportsPage() {
       { accessorKey: 'jobTitle', header: ui('الوظيفة') },
       { accessorKey: 'weekday', header: ui('اليوم') },
       { accessorKey: 'actionDate', header: ui('تاريخ البصمة') },
-      { accessorKey: 'checkInPhoto', header: ui('صورة الحضور'), cell: ({ row }) => photo(row.original.checkInPhoto, row.original.secondCheckInPhoto) },
+      { accessorKey: 'checkInPhoto', header: ui('صورة الحضور'), cell: ({ row }) => photo(row.original, row.index, ['in1', row.original.checkInPhoto, 'صورة الحضور'], ['in2', row.original.secondCheckInPhoto, 'صورة الحضور للوردية الثانية']) },
       { accessorKey: 'checkIn', header: ui('وقت الحضور'), cell: ({ row }) => punchText(row.original.checkIn, row.original.secondCheckIn) },
-      { accessorKey: 'checkOutPhoto', header: ui('صورة الانصراف'), cell: ({ row }) => photo(row.original.checkOutPhoto, row.original.secondCheckOutPhoto) },
+      { accessorKey: 'checkOutPhoto', header: ui('صورة الانصراف'), cell: ({ row }) => photo(row.original, row.index, ['out1', row.original.checkOutPhoto, 'صورة الانصراف'], ['out2', row.original.secondCheckOutPhoto, 'صورة الانصراف للوردية الثانية']) },
       { accessorKey: 'checkOut', header: ui('وقت الانصراف'), cell: ({ row }) => punchText(row.original.checkOut, row.original.secondCheckOut) },
       { accessorKey: 'lateMin', header: ui('التأخير بالدقائق'), cell: ({ getValue }) => n(getValue()) },
     ];
@@ -284,9 +308,9 @@ export function AttendanceReportsPage() {
       { accessorKey: 'branchTitle', header: ui('الفرع') },
       { accessorKey: 'weekday', header: ui('اليوم') },
       { accessorKey: 'actionDate', header: ui('التاريخ'), cell: ({ getValue }) => <span className="nums">{toArabicDigits(String(getValue() ?? '—'))}</span> },
-      { accessorKey: 'checkInPhoto', header: ui('صورة الحضور'), cell: ({ row }) => fullSheetContent(row.original, row.original.checkInPhoto, true) },
+      { accessorKey: 'checkInPhoto', header: ui('صورة الحضور'), cell: ({ row }) => fullSheetContent(row.original, row.original.checkInPhoto, true, row.index, 'in1') },
       { accessorKey: 'checkIn', header: ui('وقت الحضور'), cell: ({ row }) => fullSheetContent(row.original, row.original.checkIn) },
-      { accessorKey: 'checkOutPhoto', header: ui('صورة الانصراف'), cell: ({ row }) => fullSheetContent(row.original, row.original.checkOutPhoto, true) },
+      { accessorKey: 'checkOutPhoto', header: ui('صورة الانصراف'), cell: ({ row }) => fullSheetContent(row.original, row.original.checkOutPhoto, true, row.index, 'out1') },
       { accessorKey: 'checkOut', header: ui('وقت الانصراف'), cell: ({ row }) => fullSheetContent(row.original, row.original.checkOut) },
       { accessorKey: 'lateMin', header: ui('التأخير'), cell: ({ row }) => row.original.status === 'present' ? n(row.original.lateMin) : <span>—</span> },
       { accessorKey: 'workingSeconds', header: ui('ساعات العمل'), cell: ({ row }) => row.original.status === 'present' ? <span className="nums rounded bg-info/10 px-2 py-1 text-info">{toArabicDigits(durationText(row.original.workingSeconds))}</span> : <span>—</span> },
@@ -324,7 +348,7 @@ export function AttendanceReportsPage() {
       { accessorKey: 'dwamTitle', header: ui('الوردية') },
       { id: 'actions', header: ui('الإجراء'), cell: ({ row }) => <Button size="sm" variant="destructive" onClick={() => void remove('/attendance/shift-swaps', typeof row.original.id === 'number' ? row.original.id : undefined)}>{ui('حذف')}</Button> },
     ];
-  }, [kind, params.page, params.pageSize, ui]);
+  }, [kind, params.page, params.pageSize, photoItems, ui]);
 
   return <div className="space-y-6">
     <PageHeader title={ui('تقارير الحضور والانصراف')} description={ui('البصمة والغياب والتأخير والإضافي وتبديل الورديات')} />
@@ -359,6 +383,11 @@ export function AttendanceReportsPage() {
       onRetry={() => void query.refetch()}
       onExportExcel={exportExcel}
       emptyTitle={ui('لا توجد بيانات في الفترة المحددة')}
+    />
+    <PunchPhotoPreview
+      items={photoItems}
+      index={previewIndex != null && previewIndex >= 0 ? previewIndex : null}
+      onIndexChange={setPreviewIndex}
     />
   </div>;
 }
