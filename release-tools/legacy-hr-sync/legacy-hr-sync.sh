@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# One-way sync: old HR system (noamanycenter_hr, still used by the mobile app at hr.noamanycenter.com)
+# -> new system (noamanycenter_nest), so punches, leave, permissions, shift swaps and extra hours
+# recorded in the old system show up in the new screens and reports with every column as-is.
+# Also copies shift definitions/assignments and weekly off days, which the new punch logic reads.
+#
+# Runs as root from cron every few minutes (install-legacy-hr-sync.sh sets that up).
+# Rows are copied by primary key with all columns (both schemas have the same columns).
+# Rows created in the new system use ids >= NATIVE_FROM, so the two systems never share an id.
+# A new-system row that has the same id as an old row but a different employee/date is never
+# overwritten; it is reported as CONFLICT in the log instead.
+set -euo pipefail
+
+OLD="${OLD_DB:-noamanycenter_hr}"
+NEW="${NEW_DB:-noamanycenter_nest}"
+NATIVE_FROM=1000000
+LOG="${SYNC_LOG:-/home/noamanycenter/final.noamanycenter.com/tmp/legacy-hr-sync.log}"
+
+exec 9>"${SYNC_LOCK:-/run/lock/legacy-hr-sync.lock}"
+flock -n 9 || exit 0
+
+q() { mysql --batch --skip-column-names -e "$1"; }
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
+
+# Comma-separated, back-quoted list of the columns both tables have, in the new table's order.
+common_cols() {
+  q "SET SESSION group_concat_max_len = 1000000;
+     SELECT GROUP_CONCAT(CONCAT('\`', n.column_name, '\`') ORDER BY n.ordinal_position)
+     FROM information_schema.columns n
+     JOIN information_schema.columns o
+       ON o.table_schema = '$OLD' AND o.table_name = n.table_name AND o.column_name = n.column_name
+     WHERE n.table_schema = '$NEW' AND n.table_name = '$1'"
+}
+
+# upsert <table> <pk> <identity condition on o/n> <extra old-row filter>
+#   identity: what must match for an existing new row to be treated as the same record.
+upsert() {
+  local t="$1" pk="$2" same="$3" filter="$4" cols sel upd
+  cols=$(common_cols "$t")
+  sel=$(printf '%s' "$cols" | sed 's/`\([^`]*\)`/o.`\1`/g')
+  upd=$(printf '%s' "$cols" | tr ',' '\n' | grep -v "^\`$pk\`\$" | sed 's/.*/&=src.&/' | paste -sd, -)
+  local conflicts
+  conflicts=$(q "SELECT COUNT(*) FROM \`$OLD\`.\`$t\` o JOIN \`$NEW\`.\`$t\` n ON n.\`$pk\` = o.\`$pk\` WHERE NOT ($same)")
+  [ "$conflicts" = 0 ] || log "CONFLICT $t: $conflicts row(s) share an id with a different record in the new system; left untouched"
+  q "INSERT INTO \`$NEW\`.\`$t\` ($cols)
+     SELECT * FROM (
+       SELECT $sel FROM \`$OLD\`.\`$t\` o
+       LEFT JOIN \`$NEW\`.\`$t\` n ON n.\`$pk\` = o.\`$pk\`
+       WHERE o.\`$pk\` < $NATIVE_FROM AND (n.\`$pk\` IS NULL OR ($same)) AND ($filter)
+     ) AS src
+     ON DUPLICATE KEY UPDATE $upd;
+     SELECT ROW_COUNT();"
+}
+
+# Old-system rows deleted there (pk < NATIVE_FROM) are deleted in the new system too.
+mirror_deletes() {
+  local t="$1" pk="$2"
+  q "USE \`$NEW\`;
+     DELETE n FROM \`$NEW\`.\`$t\` n
+     LEFT JOIN \`$OLD\`.\`$t\` o ON o.\`$pk\` = n.\`$pk\`
+     WHERE n.\`$pk\` < $NATIVE_FROM AND o.\`$pk\` IS NULL;
+     SELECT ROW_COUNT();"
+}
+
+summary=""
+add() { summary="$summary $1=$2"; }
+
+# Punches: new rows plus anything in the last 40 days (check-outs and corrections update old rows).
+add hdoor "$(upsert tbl_hdoor_emps hodoor_id \
+  "o.member_code <=> n.member_code AND BINARY o.action_date <=> BINARY n.action_date" \
+  "n.hodoor_id IS NULL OR o.action_date >= DATE_FORMAT(CURDATE() - INTERVAL 40 DAY, '%Y-%m-%d')")"
+# Punch history is append-only.
+add history "$(upsert tbl_hdoor_emps_history hodoor_id \
+  "o.member_code <=> n.member_code" "n.hodoor_id IS NULL")"
+# Small tables: full copy every run (status changes, approvals, edits), deletions mirrored.
+add agzat "$(upsert hr_all_agzat_orders id "o.emp_code_fk <=> n.emp_code_fk" "1")"
+add agzat_del "$(mirror_deletes hr_all_agzat_orders id)"
+add ozonat "$(upsert hr_all_ozonat_orders id "o.emp_code_fk <=> n.emp_code_fk" "1")"
+add ozonat_del "$(mirror_deletes hr_all_ozonat_orders id)"
+add swaps "$(upsert tbl_emps_shef_edafi id \
+  "o.emp_code_fk <=> n.emp_code_fk AND BINARY o.sheft_date <=> BINARY n.sheft_date" "1")"
+add swaps_del "$(mirror_deletes tbl_emps_shef_edafi id)"
+add hours "$(upsert tbl_emps_hours_edafi id \
+  "o.emp_code_fk <=> n.emp_code_fk AND BINARY o.edafa_date <=> BINARY n.edafa_date" "1")"
+add hours_del "$(mirror_deletes tbl_emps_hours_edafi id)"
+add offdays "$(upsert hr_emp_agazat_dayes id "o.emp_code_fk <=> n.emp_code_fk" "1")"
+add offdays_del "$(mirror_deletes hr_emp_agazat_dayes id)"
+# Shift definitions and employee-to-shift assignments: the new punch logic reads these.
+add shifts "$(upsert tbl_hdodr_setting id "BINARY o.title <=> BINARY n.title" "1")"
+add shifts_del "$(mirror_deletes tbl_hdodr_setting id)"
+add shift_assign "$(upsert tbl_hdoor_dawms_emps id "o.emp_id_fk <=> n.emp_id_fk" "1")"
+add shift_assign_del "$(mirror_deletes tbl_hdoor_dawms_emps id)"
+
+# Employees added in the old system: insert the ones the new system does not have (by emp_code),
+# keeping the old id when it is free. Existing employees are never changed (HR edits them in the new system).
+emp_cols=$(common_cols employees)
+emp_sel=$(printf '%s' "$emp_cols" | sed 's/`\([^`]*\)`/o.`\1`/g')
+added=$(q "INSERT INTO \`$NEW\`.employees ($emp_cols)
+  SELECT $emp_sel FROM \`$OLD\`.employees o
+  WHERE o.emp_code IS NOT NULL
+    AND o.id = (SELECT MIN(o2.id) FROM \`$OLD\`.employees o2 WHERE o2.emp_code = o.emp_code)
+    AND NOT EXISTS (SELECT 1 FROM \`$NEW\`.employees n WHERE n.emp_code = o.emp_code)
+    AND NOT EXISTS (SELECT 1 FROM \`$NEW\`.employees n WHERE n.id = o.id);
+  SELECT ROW_COUNT();")
+add employees "$added"
+# Same, when the old id is already taken in the new system: let the new system pick the id.
+emp_cols_noid=$(printf '%s' "$emp_cols" | tr ',' '\n' | grep -v '^`id`$' | paste -sd, -)
+emp_sel_noid=$(printf '%s' "$emp_cols_noid" | sed 's/`\([^`]*\)`/o.`\1`/g')
+added=$(q "INSERT INTO \`$NEW\`.employees ($emp_cols_noid)
+  SELECT $emp_sel_noid FROM \`$OLD\`.employees o
+  WHERE o.emp_code IS NOT NULL
+    AND o.id = (SELECT MIN(o2.id) FROM \`$OLD\`.employees o2 WHERE o2.emp_code = o.emp_code)
+    AND NOT EXISTS (SELECT 1 FROM \`$NEW\`.employees n WHERE n.emp_code = o.emp_code);
+  SELECT ROW_COUNT();")
+add employees_newid "$added"
+
+log "OK$summary"
