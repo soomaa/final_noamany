@@ -1102,7 +1102,8 @@ export function ClubReceptionPage() {
           </div>
         </div>
 
-        {canUpdateSubscription ? <div className="mt-4 flex flex-wrap gap-2 border-t border-border/60 pt-3">
+        {/* All subscription actions on one row; compact buttons, sideways scroll only on narrow screens. */}
+        {canUpdateSubscription ? <div className="mt-4 flex flex-nowrap gap-1.5 overflow-x-auto border-t border-border/60 pt-3 [&>button]:h-8 [&>button]:shrink-0 [&>button]:gap-1 [&>button]:whitespace-nowrap [&>button]:px-2.5 [&>button]:text-xs [&>button_svg]:size-3.5">
           {s.remainingAmount > 0 && (
             <Button
               size="sm"
