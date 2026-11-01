@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { MemberAvatar } from '@/components/club/member-avatar';
 import { StatusBadge } from '@/components/common/status-badge';
@@ -7,35 +8,42 @@ import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import type { ClubMemberListItem, ClubMemberOverview } from '@/types/club';
 
-export function ReceptionMemberProfile({ member, overview, branches, section }: {
+export function ReceptionMemberProfile({ member, overview, branches, section, activeSubscriptions }: {
   member: ClubMemberListItem;
   overview?: ClubMemberOverview;
   branches: Array<{ id: number; name: string | null }>;
   section: 'details' | 'records' | 'profile';
+  /** Shown beside the photo (reception: the active subscription cards and their actions). */
+  activeSubscriptions?: ReactNode;
 }) {
   const { ui } = useLocale();
   const value = (text?: string | number | null) => text == null || text === '' ? '—' : toArabicDigits(text);
-  if (section === 'profile' && overview) {
-    const lastFreeze = overview.freezes[0];
+  if (section === 'profile') {
+    const lastFreeze = overview?.freezes[0];
+    // First row: the member card and the active subscriptions; everything else below it.
     return <div className="overflow-hidden rounded-2xl border">
-      <div className="grid grid-cols-2 gap-3 border-b bg-muted/15 p-4 lg:grid-cols-4">{[
-        ['إجمالي الاشتراكات', overview.subscriptionCount], ['اشتراكات اللوكر', overview.lockerSubscriptionCount],
-        ['أيام الوقف', overview.suspendedDays], ['اشتراكات موقوفة', overview.frozenCount],
-      ].map(([label, count]) => <div key={label} className="rounded-xl border bg-card p-3"><p className="text-xs text-muted-foreground">{ui(String(label))}</p><b className="mt-1 block nums">{value(count)}</b></div>)}</div>
       <div className="grid items-start gap-4 p-4 xl:grid-cols-[20rem_minmax(0,1fr)]">
-        <aside className="min-w-0 space-y-4">
+        <aside className="min-w-0">
           <div className="flex flex-col items-center gap-3 rounded-2xl border p-4 text-center"><MemberAvatar name={member.name} profilePicture={member.profilePicture} size="xl" className="size-36 ring-2 ring-primary/30" /><h3 className="text-xl font-bold">{member.name}</h3><StatusBadge status={member.isBlocked ? 'blocked' : member.isActive ? 'active' : 'suspended'} /><dl className="mt-2 w-full space-y-2 text-sm">{[
             ['كود العضو', member.memberCode], ['الموبايل', member.phone],
             ['الفرع', branches.find(b => b.id === member.branchId)?.name ?? member.branchId],
             ['النوع', ui(member.gender === 'female' ? 'أنثى' : 'ذكر')],
             ['آخر دخول', member.lastCheckIn ? formatDateTime(member.lastCheckIn) : null],
           ].map(([label, text]) => <div key={label} className="flex justify-between gap-3"><dt className="text-muted-foreground">{ui(String(label))}</dt><dd className="break-words">{value(text)}</dd></div>)}</dl></div>
-          
-          <section className="space-y-2 rounded-2xl border p-4 text-sm"><h3 className="font-bold">{ui('آخر وقف')}</h3>{lastFreeze ? <><b>{lastFreeze.subscriptionType || ui('اشتراك')}</b><p className="font-mono text-xs text-muted-foreground">{lastFreeze.subscriptionNumber}</p><p>{ui('من تاريخ')}: {value(lastFreeze.startDate)}</p><p>{ui('إلى تاريخ')}: {value(lastFreeze.endDate)}</p><p>{ui('عدد الأيام')}: {value(lastFreeze.actualDays ?? lastFreeze.plannedDays)}</p><StatusBadge status={lastFreeze.isActive ? 'active' : 'expired'} /></> : <p className="text-muted-foreground">{ui('لا يوجد وقف مسجل لهذا العضو')}</p>}</section>
-          <details className="rounded-2xl border p-3"><summary className="cursor-pointer text-sm font-bold">{ui('كل بيانات العضو')}</summary><div className="mt-3"><ReceptionMemberProfile member={member} overview={overview} branches={branches} section="details" /></div></details>
         </aside>
-        <div className="min-w-0"><ReceptionMemberProfile member={member} overview={overview} branches={branches} section="records" /></div>
+        <div className="min-w-0">{activeSubscriptions}</div>
       </div>
+      {overview ? <div className="space-y-4 border-t bg-muted/5 p-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[
+          ['إجمالي الاشتراكات', overview.subscriptionCount], ['اشتراكات اللوكر', overview.lockerSubscriptionCount],
+          ['أيام الوقف', overview.suspendedDays], ['اشتراكات موقوفة', overview.frozenCount],
+        ].map(([label, count]) => <div key={label} className="rounded-xl border bg-card p-3"><p className="text-xs text-muted-foreground">{ui(String(label))}</p><b className="mt-1 block nums">{value(count)}</b></div>)}</div>
+        <div className="grid items-start gap-4 md:grid-cols-2">
+          <section className="space-y-2 rounded-2xl border bg-card p-4 text-sm"><h3 className="font-bold">{ui('آخر وقف')}</h3>{lastFreeze ? <><b>{lastFreeze.subscriptionType || ui('اشتراك')}</b><p className="font-mono text-xs text-muted-foreground">{lastFreeze.subscriptionNumber}</p><p>{ui('من تاريخ')}: {value(lastFreeze.startDate)}</p><p>{ui('إلى تاريخ')}: {value(lastFreeze.endDate)}</p><p>{ui('عدد الأيام')}: {value(lastFreeze.actualDays ?? lastFreeze.plannedDays)}</p><StatusBadge status={lastFreeze.isActive ? 'active' : 'expired'} /></> : <p className="text-muted-foreground">{ui('لا يوجد وقف مسجل لهذا العضو')}</p>}</section>
+          <details className="rounded-2xl border bg-card p-3"><summary className="cursor-pointer text-sm font-bold">{ui('كل بيانات العضو')}</summary><div className="mt-3"><ReceptionMemberProfile member={member} overview={overview} branches={branches} section="details" /></div></details>
+        </div>
+        <ReceptionMemberProfile member={member} overview={overview} branches={branches} section="records" />
+      </div> : null}
     </div>;
   }
   if (section === 'details') {

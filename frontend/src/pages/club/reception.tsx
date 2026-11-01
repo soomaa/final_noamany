@@ -979,6 +979,290 @@ export function ClubReceptionPage() {
     }
   };
 
+  // Active (and frozen) subscriptions sit beside the member photo with their actions;
+  // expired and other subscriptions stay in the section below.
+  const isCurrentSubscription = (s: ClubSubscriptionListItem) =>
+    s.status === 'frozen' || (s.status === 'active' && !isExpiredLikeSubscription(s));
+  const activeSubs = sortedSubs.filter(isCurrentSubscription);
+  const otherSubs = sortedSubs.filter((s) => !isCurrentSubscription(s));
+
+  const renderSubscriptionCard = (s: ClubSubscriptionListItem) => {
+    const sessions = !!s.isLinkedToSessions;
+    const remainingSessions = Math.max(0, (s.sessionsCount ?? 0) - (s.sessionsUsed ?? 0));
+    const daysRemaining = Math.max(
+      0,
+      Math.round((Date.parse(s.subscriptionEndDate) - Date.parse(localToday())) / 86_400_000),
+    );
+    const status = s.status as string;
+    const active = status === 'active';
+    const frozen = status === 'frozen';
+    const activeFreeze = s.activeFreeze;
+    const expired = isExpiredLikeSubscription(s);
+    return (
+      <div
+        key={s.id}
+        className={cn(
+          'rounded-2xl border p-4 shadow-sm',
+          expired
+            ? 'border-destructive/50 bg-gradient-to-br from-destructive/15 via-destructive/5 to-card ring-1 ring-destructive/30'
+            : 'bg-gradient-to-br from-card to-muted/20',
+        )}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 space-y-2">
+            <p
+              className={cn(
+                'text-base font-semibold',
+                expired && 'text-destructive',
+              )}
+            >
+              {s.subscriptionType ?? '—'}
+            </p>
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              {s.specialClassTypeId ? <span className="rounded-full bg-violet-500/10 px-2.5 py-1 text-violet-700 dark:text-violet-200">اشتراك خاص · حضور تلقائي حسب الجدول</span> : null}
+              {sessions ? (
+                <span
+                  className={cn(
+                    'rounded-full px-2.5 py-1 nums',
+                    expired
+                      ? 'bg-destructive/15 text-destructive'
+                      : 'bg-primary/10 text-primary',
+                  )}
+                >
+                  {ui('حصص')}: {toArabicDigits(remainingSessions)} {ui('متبقّية')}
+                </span>
+              ) : (
+                <>
+                  <span
+                    className={cn(
+                      'rounded-full px-2.5 py-1 nums',
+                      expired
+                        ? 'bg-destructive/15 text-destructive'
+                        : 'bg-primary/10 text-primary',
+                    )}
+                  >
+                    {ui('متبقّي')} {toArabicDigits(daysRemaining)} {ui('يوم')}
+                  </span>
+                </>
+              )}
+              <StatusBadge
+                status={
+                  frozen
+                    ? 'info'
+                    : active && !expired
+                      ? 'active'
+                      : expired || status === 'expired'
+                        ? 'expired'
+                        : 'pending'
+                }
+                label={frozen ? ct('subscriptions.frozen') : undefined}
+              />
+              <span className="rounded-full bg-muted px-2.5 py-1 nums text-muted-foreground">
+                {ui('المبلغ المدفوع')}: {formatMoney(s.paidAmount)}
+              </span>
+              {s.remainingAmount > 0 && (
+                <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-amber-800 nums dark:text-amber-200">
+                  {ct('subscriptions.remaining')}: {formatMoney(s.remainingAmount)}
+                </span>
+              )}
+            </div>
+          </div>
+          {canCheckIn && active && !expired && (
+            <Button
+              variant="brand"
+              disabled={saving}
+              onClick={() => void checkIn(s.id)}
+              className="ms-auto min-w-[11.5rem] gap-2 px-5 py-2.5 text-sm font-semibold shadow-md shadow-primary/20"
+            >
+              <LogIn className="size-4 shrink-0" />
+              {checkingSubId === s.id ? ct('common.saving') : ct('members.checkIn')}
+            </Button>
+          )}
+          {canCheckIn && expired && (
+            <Button
+              variant="outline"
+              disabled={saving}
+              onClick={() => openGrace(s.id)}
+              className="ms-auto min-w-[11.5rem] gap-2 border-destructive/40 px-5 py-2.5 text-sm font-semibold text-destructive hover:bg-destructive/10"
+            >
+              <LogIn className="size-4 shrink-0" />
+              {ui('جلسة سماح')}
+            </Button>
+          )}
+        </div>
+
+        <div className="mt-4 grid grid-cols-2 gap-3 border-t border-border/60 pt-3">
+          <div>
+            <p className="text-xs text-muted-foreground">{ui('تاريخ بداية الاشتراك')}</p>
+            <p className="mt-1 text-lg font-bold nums">{toArabicDigits(s.subscriptionStartDate)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">{ui('تاريخ الانتهاء')}</p>
+            <p className={cn('mt-1 text-lg font-bold nums', expired && 'text-destructive')}>{toArabicDigits(s.subscriptionEndDate)}</p>
+          </div>
+        </div>
+
+        {canUpdateSubscription ? <div className="mt-4 flex flex-wrap gap-2 border-t border-border/60 pt-3">
+          {s.remainingAmount > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setPaySubId(s.id);
+                setPayMaxRemaining(s.remainingAmount);
+                setPayAmount(String(s.remainingAmount));
+                setPayRows(
+                  singlePaymentRow(
+                    (s.paymentMethod as ClubPaymentMethod) || 'cash',
+                    s.remainingAmount,
+                  ),
+                );
+                setPaymentOpen(true);
+              }}
+            >
+              {ct('subscriptions.pay')}
+            </Button>
+          )}
+          {active && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setFreezeSubId(s.id);
+                setEditingFreeze(false);
+                setFreezeForm({ startDate: localToday(), endDate: localToday(), reason: '' });
+                setFreezeOpen(true);
+              }}
+            >
+              <Snowflake className="size-4" />
+              {ct('subscriptions.freeze')}
+            </Button>
+          )}
+          {frozen && (
+            <>
+              {activeFreeze ? <Button size="sm" variant="outline" disabled={saving} onClick={() => {
+                setFreezeSubId(s.id);
+                setEditingFreeze(true);
+                setFreezeForm({ startDate: activeFreeze.startDate, endDate: activeFreeze.plannedEndDate ?? activeFreeze.startDate, reason: activeFreeze.reason ?? '' });
+                setFreezeOpen(true);
+              }}><Snowflake className="size-4" /> تعديل الإيقاف</Button> : null}
+              <Button size="sm" variant="outline" disabled={saving} onClick={() => void unfreeze(s.id)}>
+                <Sun className="size-4" />
+                {ct('subscriptions.unfreeze')}
+              </Button>
+            </>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setRenewSubId(s.id);
+              const net = subscriptionNetValue(s);
+              setRenewForm({ paidAmount: String(net) });
+              setRenewRows(
+                singlePaymentRow(
+                  (s.paymentMethod as ClubPaymentMethod) || 'cash',
+                  net,
+                ),
+              );
+              setRenewOpen(true);
+            }}
+          >
+            <RefreshCw className="size-4" />
+            {ct('subscriptions.renew')}
+          </Button>
+          {active && !frozen && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setTransferSubId(s.id);
+                setTransferForm({
+                  toSubscriptionTypeId: '',
+                  toStartDate: localToday(),
+                  toEndDate: '',
+                  toValue: '',
+                });
+                setTransferPlanPreview(null);
+                setTransferPlanPreviewError(null);
+                setTransferOpen(true);
+              }}
+            >
+              <ArrowRightLeft className="size-4" />
+              {ct('subscriptions.transferPlan')}
+            </Button>
+          )}
+          {active && !frozen && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate(CR.subscriptions.memberTransfer, {
+                state: { transferSubscriptionId: s.id, memberSearch: member?.memberCode ?? '' },
+              })}
+            >
+              <ArrowRightLeft className="size-4" />
+              {ui('تحويل العضوية لعضو آخر')}
+            </Button>
+          )}
+          {active && s.paidAmount > 0 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              onClick={() => {
+                setRefundSubId(s.id);
+                setRefundStopDate(localToday());
+                setRefundReason('');
+                setRefundNotes('');
+                setRefundPreview(null);
+                setRefundOpen(true);
+              }}
+            >
+              <Undo2 className="size-4" />
+              {ct('subscriptions.refundAction')}
+            </Button>
+          )}
+        </div> : null}
+      </div>
+    );
+  };
+
+  const activeSubscriptionsPanel = (
+    <section className="space-y-3" aria-label={ui('الاشتراكات النشطة')}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <CreditCard className="size-4 text-primary" />
+          <h3 className="font-semibold">{ui('الاشتراكات النشطة')}</h3>
+          <span className="text-sm nums text-muted-foreground">({toArabicDigits(activeSubs.length)})</span>
+        </div>
+        {canCreateSubscription ? (
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!member || member.isBlocked}
+            className="gap-2"
+            onClick={() => {
+              if (!member) return;
+              setMemberOpen(false);
+              navigate('/club/subscriptions/new', { state: { prefillMember: member } });
+            }}
+          >
+            <Plus className="size-4" />
+            {ct('subscriptions.addNewSubscription')}
+          </Button>
+        ) : null}
+      </div>
+      {entitlement ? <EntitlementBanner entitlement={entitlement} canGrace={canCheckIn && !member?.isBlocked} onGrace={() => openGrace()} /> : null}
+      {loadingSubs && activeSubs.length === 0 ? <p role="status" className="text-sm text-muted-foreground">{ui('جاري التحميل…')}</p> : null}
+      {!loadingSubs && activeSubs.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-destructive/40 bg-destructive/5 px-4 py-8 text-center text-sm text-destructive">
+          {ui('لا يوجد اشتراك نشط')}
+        </div>
+      ) : null}
+      <div className="grid gap-3">{activeSubs.map(renderSubscriptionCard)}</div>
+    </section>
+  );
+
   const hits = searchResult?.hits ?? [];
   const showHits = !memberOpen && query.trim().length >= 2 && hits.length > 0;
 
@@ -1142,13 +1426,12 @@ export function ClubReceptionPage() {
               <Button variant="outline" size="sm" onClick={() => closeMemberPanel(false)}>{ui('إغلاق البروفايل')}</Button>
             </div>
           </div>
-          {member && overview ? <ReceptionMemberProfile member={member} overview={overview} branches={branches} section="profile" /> : null}
-          {entitlement ? <EntitlementBanner entitlement={entitlement} canGrace={canCheckIn && !member?.isBlocked} onGrace={() => openGrace()} /> : null}
+          {member ? <ReceptionMemberProfile member={member} overview={overview} branches={branches} section="profile" activeSubscriptions={activeSubscriptionsPanel} /> : null}
           {loadingOverview ? <p role="status" className="text-sm text-muted-foreground">{ui('جاري تحميل سجلات العضو…')}</p> : null}
           {overviewError ? <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 p-3 text-sm text-destructive"><span>{ui('تعذر تحميل بروفايل العضو')}: {apiError(profileError)}</span><Button size="sm" variant="outline" onClick={() => void refetchOverview()}>{ui('إعادة المحاولة')}</Button></div> : null}
 
           <details className="space-y-3 rounded-2xl border p-4">
-            <summary className="cursor-pointer font-bold">{ui('عمليات الاشتراكات وتسجيل الدخول')}</summary>
+            <summary className="cursor-pointer font-bold">{ui('باقي الاشتراكات والعمليات')}</summary>
             <div
               className={cn(
                 'flex items-center gap-2 rounded-xl px-3 py-2',
@@ -1174,7 +1457,7 @@ export function ClubReceptionPage() {
                   hasExpiredSubscriptionAlert ? 'text-destructive/80' : 'text-muted-foreground',
                 )}
               >
-                ({toArabicDigits(sortedSubs.length)})
+                ({toArabicDigits(otherSubs.length)})
               </span>
               {hasExpiredSubscriptionAlert && (
                 <span className="ms-auto inline-flex items-center gap-1 text-xs font-bold">
@@ -1184,237 +1467,14 @@ export function ClubReceptionPage() {
               )}
             </div>
 
-            {sortedSubs.length === 0 && !loadingSubs && (
-              <div className="rounded-2xl border border-dashed border-destructive/40 bg-destructive/5 px-4 py-10 text-center text-sm text-destructive">
-                {ui('لا توجد اشتراكات')}
+            {otherSubs.length === 0 && !loadingSubs && (
+              <div className="rounded-2xl border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
+                {ui('لا توجد اشتراكات أخرى')}
               </div>
             )}
 
             <div className="grid gap-3">
-              {sortedSubs.map((s) => {
-                const sessions = !!s.isLinkedToSessions;
-                const remainingSessions = Math.max(0, (s.sessionsCount ?? 0) - (s.sessionsUsed ?? 0));
-                const daysRemaining = Math.max(
-                  0,
-                  Math.round((Date.parse(s.subscriptionEndDate) - Date.parse(localToday())) / 86_400_000),
-                );
-                const status = s.status as string;
-                const active = status === 'active';
-                const frozen = status === 'frozen';
-                const activeFreeze = s.activeFreeze;
-                const expired = isExpiredLikeSubscription(s);
-                return (
-                  <div
-                    key={s.id}
-                    className={cn(
-                      'rounded-2xl border p-4 shadow-sm',
-                      expired
-                        ? 'border-destructive/50 bg-gradient-to-br from-destructive/15 via-destructive/5 to-card ring-1 ring-destructive/30'
-                        : 'bg-gradient-to-br from-card to-muted/20',
-                    )}
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                      <div className="min-w-0 space-y-2">
-                        <p
-                          className={cn(
-                            'text-base font-semibold',
-                            expired && 'text-destructive',
-                          )}
-                        >
-                          {s.subscriptionType ?? '—'}
-                        </p>
-                        <div className="flex flex-wrap items-center gap-2 text-sm">
-                          {s.specialClassTypeId ? <span className="rounded-full bg-violet-500/10 px-2.5 py-1 text-violet-700 dark:text-violet-200">اشتراك خاص · حضور تلقائي حسب الجدول</span> : null}
-                          {sessions ? (
-                            <span
-                              className={cn(
-                                'rounded-full px-2.5 py-1 nums',
-                                expired
-                                  ? 'bg-destructive/15 text-destructive'
-                                  : 'bg-primary/10 text-primary',
-                              )}
-                            >
-                              {ui('حصص')}: {toArabicDigits(remainingSessions)} {ui('متبقّية')}
-                            </span>
-                          ) : (
-                            <>
-                              <span
-                                className={cn(
-                                  'rounded-full px-2.5 py-1 nums',
-                                  expired
-                                    ? 'bg-destructive/15 text-destructive'
-                                    : 'bg-primary/10 text-primary',
-                                )}
-                              >
-                                {ui('متبقّي')} {toArabicDigits(daysRemaining)} {ui('يوم')}
-                              </span>
-                              <span
-                                className={cn(
-                                  'rounded-full px-2.5 py-1 nums',
-                                  expired
-                                    ? 'bg-destructive/10 text-destructive/90'
-                                    : 'bg-muted text-muted-foreground',
-                                )}
-                              >
-                                {ui('ينتهي')} {toArabicDigits(s.subscriptionEndDate)}
-                              </span>
-                            </>
-                          )}
-                          <StatusBadge
-                            status={
-                              frozen
-                                ? 'info'
-                                : active && !expired
-                                  ? 'active'
-                                  : expired || status === 'expired'
-                                    ? 'expired'
-                                    : 'pending'
-                            }
-                            label={frozen ? ct('subscriptions.frozen') : undefined}
-                          />
-                          {s.remainingAmount > 0 && (
-                            <span className="rounded-full bg-amber-500/10 px-2.5 py-1 text-amber-800 nums dark:text-amber-200">
-                              {ct('subscriptions.remaining')}: {formatMoney(s.remainingAmount)}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {canCheckIn && active && !expired && (
-                        <Button
-                          variant="brand"
-                          disabled={saving}
-                          onClick={() => void checkIn(s.id)}
-                          className="ms-auto min-w-[11.5rem] gap-2 px-5 py-2.5 text-sm font-semibold shadow-md shadow-primary/20"
-                        >
-                          <LogIn className="size-4 shrink-0" />
-                          {checkingSubId === s.id ? ct('common.saving') : ct('members.checkIn')}
-                        </Button>
-                      )}
-                      {canCheckIn && expired && (
-                        <Button
-                          variant="outline"
-                          disabled={saving}
-                          onClick={() => openGrace(s.id)}
-                          className="ms-auto min-w-[11.5rem] gap-2 border-destructive/40 px-5 py-2.5 text-sm font-semibold text-destructive hover:bg-destructive/10"
-                        >
-                          <LogIn className="size-4 shrink-0" />
-                          {ui('جلسة سماح')}
-                        </Button>
-                      )}
-                    </div>
-
-                    {canUpdateSubscription ? <div className="mt-4 flex flex-wrap gap-2 border-t border-border/60 pt-3">
-                      {s.remainingAmount > 0 && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setPaySubId(s.id);
-                            setPayMaxRemaining(s.remainingAmount);
-                            setPayAmount(String(s.remainingAmount));
-                            setPayRows(
-                              singlePaymentRow(
-                                (s.paymentMethod as ClubPaymentMethod) || 'cash',
-                                s.remainingAmount,
-                              ),
-                            );
-                            setPaymentOpen(true);
-                          }}
-                        >
-                          {ct('subscriptions.pay')}
-                        </Button>
-                      )}
-                      {active && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setFreezeSubId(s.id);
-                            setEditingFreeze(false);
-                            setFreezeForm({ startDate: localToday(), endDate: localToday(), reason: '' });
-                            setFreezeOpen(true);
-                          }}
-                        >
-                          <Snowflake className="size-4" />
-                          {ct('subscriptions.freeze')}
-                        </Button>
-                      )}
-                      {frozen && (
-                        <>
-                          {activeFreeze ? <Button size="sm" variant="outline" disabled={saving} onClick={() => {
-                            setFreezeSubId(s.id);
-                            setEditingFreeze(true);
-                            setFreezeForm({ startDate: activeFreeze.startDate, endDate: activeFreeze.plannedEndDate ?? activeFreeze.startDate, reason: activeFreeze.reason ?? '' });
-                            setFreezeOpen(true);
-                          }}><Snowflake className="size-4" /> تعديل الإيقاف</Button> : null}
-                          <Button size="sm" variant="outline" disabled={saving} onClick={() => void unfreeze(s.id)}>
-                            <Sun className="size-4" />
-                            {ct('subscriptions.unfreeze')}
-                          </Button>
-                        </>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => {
-                          setRenewSubId(s.id);
-                          const net = subscriptionNetValue(s);
-                          setRenewForm({ paidAmount: String(net) });
-                          setRenewRows(
-                            singlePaymentRow(
-                              (s.paymentMethod as ClubPaymentMethod) || 'cash',
-                              net,
-                            ),
-                          );
-                          setRenewOpen(true);
-                        }}
-                      >
-                        <RefreshCw className="size-4" />
-                        {ct('subscriptions.renew')}
-                      </Button>
-                      {active && !frozen && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {
-                            setTransferSubId(s.id);
-                            setTransferForm({
-                              toSubscriptionTypeId: '',
-                              toStartDate: localToday(),
-                              toEndDate: '',
-                              toValue: '',
-                            });
-                            setTransferPlanPreview(null);
-                            setTransferPlanPreviewError(null);
-                            setTransferOpen(true);
-                          }}
-                        >
-                          <ArrowRightLeft className="size-4" />
-                          {ct('subscriptions.transferPlan')}
-                        </Button>
-                      )}
-                      {active && s.paidAmount > 0 && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="text-destructive hover:text-destructive"
-                          onClick={() => {
-                            setRefundSubId(s.id);
-                            setRefundStopDate(localToday());
-                            setRefundReason('');
-                            setRefundNotes('');
-                            setRefundPreview(null);
-                            setRefundOpen(true);
-                          }}
-                        >
-                          <Undo2 className="size-4" />
-                          {ct('subscriptions.refundAction')}
-                        </Button>
-                      )}
-                    </div> : null}
-                  </div>
-                );
-              })}
+              {otherSubs.map(renderSubscriptionCard)}
             </div>
 
             {canSellQuick && memberQuickServices.length > 0 ? (
@@ -1442,7 +1502,7 @@ export function ClubReceptionPage() {
               </div>
             ) : null}
 
-            {canCreateSubscription || canBlockMember ? (
+            {canBlockMember ? (
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
                 {canBlockMember ? (
                   member?.isBlocked ? (
@@ -1471,21 +1531,6 @@ export function ClubReceptionPage() {
                   )
                 ) : <span />}
 
-                {canCreateSubscription ? (
-                  <Button
-                    variant="brand"
-                    disabled={!member || member.isBlocked}
-                    className="min-w-[12rem] gap-2"
-                    onClick={() => {
-                      if (!member) return;
-                      setMemberOpen(false);
-                      navigate('/club/subscriptions/new', { state: { prefillMember: member } });
-                    }}
-                  >
-                    <Plus className="size-4" />
-                    {ct('subscriptions.addNewSubscription')}
-                  </Button>
-                ) : null}
               </div>
             ) : null}
           </details>

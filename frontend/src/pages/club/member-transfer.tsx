@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowRightLeft, CheckCircle2, Search, ShieldCheck, UserRoundCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { toast } from 'sonner';
 import { MemberSearchCombobox } from '@/components/club/member-search-combobox';
 import { MemberTransferHistoryTable, type MemberTransferHistory } from '@/components/club/member-transfer-history';
@@ -40,6 +40,17 @@ export function ClubMemberTransferPage() {
   const [target, setTarget] = useState<ClubMemberListItem | null>(null);
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
+  // Opened from the reception member profile: start the transfer with that subscription selected.
+  const location = useLocation();
+  useEffect(() => {
+    const prefill = location.state as { transferSubscriptionId?: number; memberSearch?: string } | null;
+    if (!prefill?.transferSubscriptionId || !canCreateTransfer) return;
+    setSourceSearch(prefill.memberSearch ?? '');
+    setSubscriptionId(String(prefill.transferSubscriptionId));
+    setDialogOpen(true);
+    // Only on arrival; later navigation inside the page must not reopen the dialog.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedSourceSearch(sourceSearch.trim()), 250);
     return () => window.clearTimeout(timer);
