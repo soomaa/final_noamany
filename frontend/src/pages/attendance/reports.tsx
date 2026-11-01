@@ -12,9 +12,10 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useBranches } from '@/hooks/use-branches';
 import { api, apiError } from '@/lib/api';
+import { downloadExcel, type ExportColumn } from '@/lib/export';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { fetchAllReportRows } from '@/lib/report-fetch';
-import { useListQuery } from '@/lib/use-list-query';
+import { listQueryToApiParams, useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import type { EmployeeListItem } from '@/types/employees';
@@ -35,12 +36,20 @@ interface Row {
   checkOut?: string;
   checkInPhoto?: string;
   checkOutPhoto?: string;
+  scheduledIn?: string;
+  scheduledOut?: string;
+  secondCheckIn?: string;
+  secondCheckOut?: string;
+  secondLateMin?: number;
+  earlyLeaveMin?: number;
+  overtimeMin?: number;
   lateMin?: number;
   absenceWithLeave?: number;
   absenceWithoutLeave?: number;
   totalAbsence?: number;
   lateWithPermission?: number;
   lateWithoutPermission?: number;
+  totalLate?: number;
   numHours?: number;
   edafaDate?: string;
   publisherName?: string;
@@ -61,6 +70,89 @@ function photoUrl(value?: string) {
   if (/^https?:\/\//i.test(value) || value.startsWith('/')) return value;
   return `/uploads/${value.replace(/^uploads[\\/]/, '')}`;
 }
+
+/** Main punch plus the second-shift punch (legacy shows both in one cell). */
+function punchText(main?: string, second?: string) {
+  return [main, second].filter(Boolean).join(' / ') || '—';
+}
+
+const REPORT_TITLES: Record<ReportKind, string> = {
+  basma: 'البصمة خلال فترة',
+  'full-sheet': 'شيت البصمة الكامل',
+  absence: 'الغياب خلال فترة',
+  late: 'التأخيرات خلال فترة',
+  'shift-swap': 'تبديل وإضافة وردية',
+  overtime: 'الساعات الإضافية',
+};
+
+/** Excel columns per report — plain values so the sheet can be sorted and compared. */
+const EXCEL_COLUMNS: Record<ReportKind, ExportColumn<Record<string, unknown>>[]> = {
+  basma: [
+    { key: 'empCode', header: 'كود الموظف' },
+    { key: 'empName', header: 'اسم الموظف' },
+    { key: 'branchTitle', header: 'الفرع' },
+    { key: 'department', header: 'الإدارة' },
+    { key: 'jobTitle', header: 'الوظيفة' },
+    { key: 'weekday', header: 'اليوم' },
+    { key: 'actionDate', header: 'تاريخ البصمة' },
+    { key: 'scheduledIn', header: 'موعد الحضور' },
+    { key: 'checkIn', header: 'وقت الحضور' },
+    { key: 'scheduledOut', header: 'موعد الانصراف' },
+    { key: 'checkOut', header: 'وقت الانصراف' },
+    { key: 'lateMin', header: 'التأخير بالدقائق' },
+    { key: 'earlyLeaveMin', header: 'الانصراف المبكر بالدقائق' },
+    { key: 'secondCheckIn', header: 'حضور الشيفت الثاني' },
+    { key: 'secondCheckOut', header: 'انصراف الشيفت الثاني' },
+    { key: 'secondLateMin', header: 'تأخير الشيفت الثاني بالدقائق' },
+  ],
+  'full-sheet': [
+    { key: 'empCode', header: 'كود الموظف' },
+    { key: 'empName', header: 'اسم الموظف' },
+    { key: 'branchTitle', header: 'الفرع' },
+    { key: 'weekday', header: 'اليوم' },
+    { key: 'actionDate', header: 'التاريخ' },
+    { key: 'statusLabel', header: 'الحالة' },
+    { key: 'checkIn', header: 'وقت الحضور' },
+    { key: 'checkOut', header: 'وقت الانصراف' },
+    { key: 'lateMin', header: 'التأخير بالدقائق' },
+    { key: 'workingHours', header: 'ساعات العمل' },
+  ],
+  absence: [
+    { key: 'empCode', header: 'كود الموظف' },
+    { key: 'empName', header: 'اسم الموظف' },
+    { key: 'department', header: 'الإدارة' },
+    { key: 'phone', header: 'رقم الهاتف' },
+    { key: 'totalAbsence', header: 'عدد مرات الغياب' },
+    { key: 'absenceWithLeave', header: 'عدد مرات الإجازات' },
+    { key: 'absenceWithoutLeave', header: 'عدد مرات الغياب بدون إجازة' },
+  ],
+  late: [
+    { key: 'empCode', header: 'كود الموظف' },
+    { key: 'empName', header: 'اسم الموظف' },
+    { key: 'department', header: 'الإدارة' },
+    { key: 'phone', header: 'رقم الهاتف' },
+    { key: 'lateWithPermission', header: 'دقائق التأخير بإذن' },
+    { key: 'lateWithoutPermission', header: 'دقائق التأخير بدون إذن' },
+    { key: 'totalLate', header: 'إجمالي التأخير بالدقائق' },
+  ],
+  'shift-swap': [
+    { key: 'empCode', header: 'كود الموظف' },
+    { key: 'empName', header: 'اسم الموظف' },
+    { key: 'branchTitle', header: 'الفرع' },
+    { key: 'sheftDate', header: 'التاريخ' },
+    { key: 'ttypeName', header: 'نوع العملية' },
+    { key: 'dwamTitle', header: 'الوردية' },
+  ],
+  overtime: [
+    { key: 'empCode', header: 'كود الموظف' },
+    { key: 'empName', header: 'اسم الموظف' },
+    { key: 'branchTitle', header: 'الفرع' },
+    { key: 'weekday', header: 'اليوم' },
+    { key: 'edafaDate', header: 'التاريخ' },
+    { key: 'numHours', header: 'عدد الساعات' },
+    { key: 'publisherName', header: 'القائم بالإضافة' },
+  ],
+};
 
 function durationText(seconds?: number) {
   if (seconds == null) return '—';
@@ -134,6 +226,26 @@ export function AttendanceReportsPage() {
     }
   };
 
+  const exportExcel = async () => {
+    try {
+      // fetchAllReportRows overrides page/pageSize, so every page in the filtered range is exported.
+      const rows = await fetchAllReportRows<Row>(`/attendance/reports/${kind}`, listQueryToApiParams(params), 500);
+      if (!rows.length) {
+        toast.info(ui('لا توجد بيانات في الفترة المحددة'));
+        return;
+      }
+      const sheetRows = rows.map((row) => ({
+        ...row,
+        statusLabel: row.statusLabel ? ui(row.statusLabel) : undefined,
+        workingHours: row.status === 'present' ? durationText(row.workingSeconds) : undefined,
+      })) as Record<string, unknown>[];
+      const range = `${params.filters.dateFrom ?? ''}_${params.filters.dateTo ?? ''}`;
+      await downloadExcel(sheetRows, EXCEL_COLUMNS[kind], `${REPORT_TITLES[kind]} ${range}.xlsx`, REPORT_TITLES[kind], { rightToLeft: true });
+    } catch (error) {
+      toast.error(apiError(error));
+    }
+  };
+
   const columns = useMemo<ColumnDef<Row>[]>(() => {
     const base: ColumnDef<Row>[] = [
       { accessorKey: 'empCode', header: ui('كود الموظف'), cell: ({ getValue }) => n(getValue()) },
@@ -146,9 +258,9 @@ export function AttendanceReportsPage() {
       { accessorKey: 'weekday', header: ui('اليوم') },
       { accessorKey: 'actionDate', header: ui('تاريخ البصمة') },
       { accessorKey: 'checkInPhoto', header: ui('صورة الحضور'), cell: ({ getValue }) => photo(getValue()) },
-      { accessorKey: 'checkIn', header: ui('وقت الحضور') },
+      { accessorKey: 'checkIn', header: ui('وقت الحضور'), cell: ({ row }) => punchText(row.original.checkIn, row.original.secondCheckIn) },
       { accessorKey: 'checkOutPhoto', header: ui('صورة الانصراف'), cell: ({ getValue }) => photo(getValue()) },
-      { accessorKey: 'checkOut', header: ui('وقت الانصراف') },
+      { accessorKey: 'checkOut', header: ui('وقت الانصراف'), cell: ({ row }) => punchText(row.original.checkOut, row.original.secondCheckOut) },
       { accessorKey: 'lateMin', header: ui('التأخير بالدقائق'), cell: ({ getValue }) => n(getValue()) },
     ];
     if (kind === 'full-sheet') return [
@@ -178,6 +290,7 @@ export function AttendanceReportsPage() {
       { accessorKey: 'phone', header: ui('رقم الهاتف') },
       { accessorKey: 'lateWithPermission', header: ui('دقائق التأخير بإذن'), cell: ({ getValue }) => n(getValue()) },
       { accessorKey: 'lateWithoutPermission', header: ui('دقائق التأخير بدون إذن'), cell: ({ getValue }) => n(getValue()) },
+      { accessorKey: 'totalLate', header: ui('إجمالي التأخير'), cell: ({ getValue }) => n(getValue()) },
     ];
     if (kind === 'overtime') return [
       ...base,
@@ -229,6 +342,7 @@ export function AttendanceReportsPage() {
       isLoading={query.isLoading}
       isError={query.isError}
       onRetry={() => void query.refetch()}
+      onExportExcel={exportExcel}
       emptyTitle={ui('لا توجد بيانات في الفترة المحددة')}
     />
   </div>;

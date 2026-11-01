@@ -1791,6 +1791,12 @@ export class AttendanceService {
       select: { emp_code: true, employee: true, edara_n: true, mosma_wazefy_n: true },
     });
     const byCode = new Map(emps.map((e) => [e.emp_code, e]));
+    const branchIds = [...new Set(rows.map((r) => r.branch_id_fk))];
+    const branches = await this.prisma.tbl_branches.findMany({
+      where: { branch_id: { in: branchIds } },
+      select: { branch_id: true, branch_name: true },
+    });
+    const branchMap = new Map(branches.map((b) => [b.branch_id, b.branch_name]));
     const data = rows.map((r) => {
       const e = byCode.get(r.member_code ?? 0);
       return {
@@ -1799,6 +1805,7 @@ export class AttendanceService {
         empName: e?.employee ?? '—',
         department: e?.edara_n ?? undefined,
         jobTitle: e?.mosma_wazefy_n ?? undefined,
+        branchTitle: r.branch_id_fk === 0 ? 'الادارة' : (branchMap.get(r.branch_id_fk) ?? undefined),
         weekday: r.action_date
           ? ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'][new Date(`${r.action_date.slice(0, 10)}T12:00:00`).getDay()]
           : undefined,
@@ -1807,6 +1814,11 @@ export class AttendanceService {
         checkIn: r.hdoor_time ?? undefined,
         checkOutPhoto: r.ensraf_img_path ?? undefined,
         checkOut: r.ensraf_time ?? undefined,
+        scheduledIn: r.dwam_hdoor_time ?? undefined,
+        scheduledOut: r.dwam_ensraf_time ?? undefined,
+        secondCheckIn: r.second_hdoor_time ?? undefined,
+        secondCheckOut: r.second_ensraf_time ?? undefined,
+        secondLateMin: r.second_late_min != null ? Math.round(r.second_late_min) : 0,
         lateMin: r.late_min != null ? Math.round(r.late_min) : 0,
         earlyLeaveMin: r.mobaker_min != null ? Math.round(r.mobaker_min) : 0,
         overtimeMin: r.num_min != null ? Math.round(r.num_min) : 0,

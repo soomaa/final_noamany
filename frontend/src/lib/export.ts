@@ -52,9 +52,11 @@ export async function downloadExcel<T extends Record<string, unknown>>(
   columns: ExportColumn<T>[],
   filename: string,
   sheetName = 'Sheet1',
+  options: { rightToLeft?: boolean } = {},
 ) {
   const workbook = await createWorkbook();
   const worksheet = workbook.addWorksheet(safeSheetName(sheetName, 0, new Set()));
+  if (options.rightToLeft) worksheet.views = [{ rightToLeft: true }];
   worksheet.addRow(columns.map((column) => column.header));
   for (const row of rows) {
     worksheet.addRow(columns.map((column) => toExcelCellValue(row[column.key])));
