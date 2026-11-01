@@ -3,9 +3,9 @@
 #   cd /home/noamanycenter/final.noamanycenter.com
 #   unzip -o noamany-daily-update-20261101-r3.zip
 #   bash noamany-daily-update-20261101-r3/install.sh
-# Contents: management UI only — reception member profile: active subscriptions beside the photo,
-# all subscription actions on one row, everything else below. On top of 01-r2. No backend,
-# database, Prisma schema, main.js or app.module.js changes.
+# Contents: management UI only — punch photo preview (large photo with the punch details) on the
+# attendance board and reports, and no per-second table redraw on the board. On top of 01-r2.
+# No backend, database, Prisma schema, main.js or app.module.js changes.
 set -Eeuo pipefail
 
 REL=20261101-r3
