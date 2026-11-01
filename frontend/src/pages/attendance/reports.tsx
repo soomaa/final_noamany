@@ -40,6 +40,8 @@ interface Row {
   scheduledOut?: string;
   secondCheckIn?: string;
   secondCheckOut?: string;
+  secondCheckInPhoto?: string;
+  secondCheckOutPhoto?: string;
   secondLateMin?: number;
   earlyLeaveMin?: number;
   overtimeMin?: number;
@@ -69,6 +71,11 @@ function photoUrl(value?: string) {
   if (!value) return undefined;
   if (/^https?:\/\//i.test(value) || value.startsWith('/')) return value;
   return `/uploads/${value.replace(/^uploads[\\/]/, '')}`;
+}
+
+function absoluteUrl(path?: string) {
+  if (!path) return undefined;
+  return /^https?:\/\//i.test(path) ? path : `${window.location.origin}${path}`;
 }
 
 /** Main punch plus the second-shift punch (legacy shows both in one cell). */
@@ -104,6 +111,8 @@ const EXCEL_COLUMNS: Record<ReportKind, ExportColumn<Record<string, unknown>>[]>
     { key: 'secondCheckIn', header: 'حضور الشيفت الثاني' },
     { key: 'secondCheckOut', header: 'انصراف الشيفت الثاني' },
     { key: 'secondLateMin', header: 'تأخير الشيفت الثاني بالدقائق' },
+    { key: 'checkInPhotoUrl', header: 'صورة الحضور' },
+    { key: 'checkOutPhotoUrl', header: 'صورة الانصراف' },
   ],
   'full-sheet': [
     { key: 'empCode', header: 'كود الموظف' },
@@ -202,9 +211,13 @@ export function AttendanceReportsPage() {
     ...branches.map((branch) => ({ value: String(branch.id), label: branch.name ?? `#${branch.id}` })),
   ];
   const n = (value: unknown) => <span className="nums">{toArabicDigits(String(value ?? 0))}</span>;
-  const photo = (value: unknown) => {
-    const url = photoUrl(typeof value === 'string' ? value : undefined);
-    return url ? <a className="text-primary underline" href={url} target="_blank" rel="noreferrer">{ui('عرض الصورة')}</a> : <span>—</span>;
+  // Thumbnails like the legacy report; a click opens the full photo.
+  const photo = (...values: Array<string | undefined>) => {
+    const urls = values.map((value) => photoUrl(value)).filter((url): url is string => !!url);
+    if (!urls.length) return <span>—</span>;
+    return <div className="flex flex-col items-center gap-1">
+      {urls.map((url) => <a key={url} href={url} target="_blank" rel="noreferrer"><img src={url} alt="" className="size-14 rounded-md border object-cover" loading="lazy" /></a>)}
+    </div>;
   };
   const fullSheetContent = (row: Row, value?: string, isPhoto = false) => {
     if (row.status !== 'present') {
@@ -238,6 +251,8 @@ export function AttendanceReportsPage() {
         ...row,
         statusLabel: row.statusLabel ? ui(row.statusLabel) : undefined,
         workingHours: row.status === 'present' ? durationText(row.workingSeconds) : undefined,
+        checkInPhotoUrl: absoluteUrl(photoUrl(row.checkInPhoto)),
+        checkOutPhotoUrl: absoluteUrl(photoUrl(row.checkOutPhoto)),
       })) as Record<string, unknown>[];
       const range = `${params.filters.dateFrom ?? ''}_${params.filters.dateTo ?? ''}`;
       await downloadExcel(sheetRows, EXCEL_COLUMNS[kind], `${REPORT_TITLES[kind]} ${range}.xlsx`, REPORT_TITLES[kind], { rightToLeft: true });
@@ -257,9 +272,9 @@ export function AttendanceReportsPage() {
       { accessorKey: 'jobTitle', header: ui('الوظيفة') },
       { accessorKey: 'weekday', header: ui('اليوم') },
       { accessorKey: 'actionDate', header: ui('تاريخ البصمة') },
-      { accessorKey: 'checkInPhoto', header: ui('صورة الحضور'), cell: ({ getValue }) => photo(getValue()) },
+      { accessorKey: 'checkInPhoto', header: ui('صورة الحضور'), cell: ({ row }) => photo(row.original.checkInPhoto, row.original.secondCheckInPhoto) },
       { accessorKey: 'checkIn', header: ui('وقت الحضور'), cell: ({ row }) => punchText(row.original.checkIn, row.original.secondCheckIn) },
-      { accessorKey: 'checkOutPhoto', header: ui('صورة الانصراف'), cell: ({ getValue }) => photo(getValue()) },
+      { accessorKey: 'checkOutPhoto', header: ui('صورة الانصراف'), cell: ({ row }) => photo(row.original.checkOutPhoto, row.original.secondCheckOutPhoto) },
       { accessorKey: 'checkOut', header: ui('وقت الانصراف'), cell: ({ row }) => punchText(row.original.checkOut, row.original.secondCheckOut) },
       { accessorKey: 'lateMin', header: ui('التأخير بالدقائق'), cell: ({ getValue }) => n(getValue()) },
     ];

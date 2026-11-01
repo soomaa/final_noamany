@@ -898,11 +898,14 @@ export class LegacyMobileController {
         { id: "2", title: "إضافة شفت" },
       ],
       dwam_types: () => this.attendance.listShifts(this.page(input)),
+      // Legacy Api::add_sheft_edafi / add_hours_edafi: the manager posts the target
+      // employee's phone (phone_num / emp_phone); fall back to the caller only without one.
       add_sheft_edafi: async () => {
-        const identity = await this.compat.identity(user);
+        const phone = this.value(input, "phone_num", "emp_phone", "employee_phone");
+        const empId = phone ? await this.mobile.employeeIdByPhone(phone) : (await this.compat.identity(user)).id;
         return this.attendance.createShiftSwap(
           {
-            empId: identity.id,
+            empId,
             ttype: this.id(input, "ttype", "sheft_type_id"),
             dwamIdFk: this.id(input, "dwam_id_fk", "dwam_id"),
             sheftDate: this.value(input, "sheft_date", "date") ?? "",
@@ -911,10 +914,11 @@ export class LegacyMobileController {
         );
       },
       add_hours_edafi: async () => {
-        const identity = await this.compat.identity(user);
+        const phone = this.value(input, "emp_phone", "phone_num", "employee_phone");
+        const empId = phone ? await this.mobile.employeeIdByPhone(phone) : (await this.compat.identity(user)).id;
         return this.attendance.createExtraHours(
           {
-            empId: identity.id,
+            empId,
             numHours: this.id(input, "num_hours"),
             edafaDate: this.value(input, "edafa_date", "date") ?? "",
           },

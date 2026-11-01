@@ -8,7 +8,14 @@ import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { isSystemAdmin } from '../../common/utils/system-admin.util';
-import { legacyDateMatchValues, todayIso } from '../../common/utils/legacy-date.util';
+import {
+  businessNowMinutes,
+  businessMidnightEpoch,
+  businessWallClockMs,
+  legacyDateMatchValues,
+  normalizeLegacyInputDate,
+  todayIso,
+} from '../../common/utils/legacy-date.util';
 import { UpsertShiftDto } from './dto/shift.dto';
 import { CheckPunchDto } from './dto/check.dto';
 import {
@@ -52,12 +59,12 @@ function formatMinutesAsTime(totalMin: number): string {
   const m = wrapped % 60;
   const period = h >= 12 ? 'PM' : 'AM';
   const h12 = h % 12 || 12;
-  return `${h12}:${String(m).padStart(2, '0')} ${period}`;
+  return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${period}`;
 }
 
+/** Punch clock in Cairo time, like the legacy system (the server itself runs on another timezone). */
 function nowMinutes(): number {
-  const d = new Date();
-  return d.getHours() * 60 + d.getMinutes();
+  return businessNowMinutes();
 }
 
 function pairDurationSeconds(checkIn?: string | null, checkOut?: string | null): number {
@@ -74,8 +81,8 @@ function activeDurationSeconds(actionDate: string, checkIn?: string | null): num
   if (!date) return 0;
   const [year, month, day] = date.split('-').map(Number);
   const minutes = parseTimeToMinutes(checkIn);
-  const startedAt = new Date(year, month - 1, day, Math.floor(minutes / 60), minutes % 60).getTime();
-  return Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+  const startedAt = Date.UTC(year, month - 1, day, Math.floor(minutes / 60), minutes % 60);
+  return Math.max(0, Math.floor((businessWallClockMs() - startedAt) / 1000));
 }
 
 /**
@@ -88,6 +95,9 @@ function sumMinLate(expected: string, actual: string): number {
   let actualMin = parseTimeToMinutes(actual);
   if (actualMin < expectedMin && expectedMin - actualMin > 12 * 60) {
     actualMin += 24 * 60;
+  } else if (actualMin > expectedMin && actualMin - expectedMin > 12 * 60) {
+    // Deduction time is just after midnight and the punch came before it (e.g. 23:50 vs 00:15).
+    actualMin -= 24 * 60;
   }
   const diff = Math.floor(actualMin - expectedMin);
   return diff > 0 ? diff : 0;
@@ -95,8 +105,12 @@ function sumMinLate(expected: string, actual: string): number {
 
 /** Faithful port of Api::sum_min_mobaker (l.7547): floor((expected-actual)/60), >0. */
 function sumMinMobaker(expected: string, actual: string): number {
-  const expectedMin = parseTimeToMinutes(expected);
+  let expectedMin = parseTimeToMinutes(expected);
   const actualMin = parseTimeToMinutes(actual);
+  // Same-night wrap as the legacy datetime maths: a shift ending after midnight
+  // (deduction 02:00, leaving 23:00 ⇒ 180 early) or leaving just after midnight.
+  if (expectedMin < actualMin && actualMin - expectedMin > 12 * 60) expectedMin += 24 * 60;
+  else if (expectedMin > actualMin && expectedMin - actualMin > 12 * 60) expectedMin -= 24 * 60;
   const diff = Math.floor(expectedMin - actualMin);
   return diff > 0 ? diff : 0;
 }
@@ -161,6 +175,24 @@ function isValidShiftTime(value: string | null | undefined): value is string {
   const hour = Number(twentyFourHour[1]);
   const minute = Number(twentyFourHour[2]);
   return hour >= 0 && hour < 24 && minute >= 0 && minute < 60;
+}
+
+function isShiftTimingComplete(shift: {
+  hdoor_from_time?: string | null;
+  hdoor_to_time?: string | null;
+  hdoor_khasm_from?: string | null;
+  ensraf_from_time?: string | null;
+  ensraf_to_time?: string | null;
+  ensraf_khasm_from?: string | null;
+}): boolean {
+  return [
+    shift.hdoor_from_time,
+    shift.hdoor_to_time,
+    shift.hdoor_khasm_from,
+    shift.ensraf_from_time,
+    shift.ensraf_to_time,
+    shift.ensraf_khasm_from,
+  ].every(isValidShiftTime);
 }
 
 function assertShiftTimingIsComplete(shift: {
@@ -876,8 +908,11 @@ export class AttendanceService {
     const assignmentBranchScope = scheduleBranchScope ?? clockBranchId;
     const assignmentMatchesScheduleScope = (branchId: string | null, scope: number) => {
       const assignedBranch = String(branchId ?? '').trim().toLowerCase();
-      if (scope === 0) return assignedBranch === 'all';
-      return assignedBranch === 'all' || Number(assignedBranch) === scope;
+      // Legacy get_dwams_for_emp_by_branch: NULL, '', 0 or any non-number (PHP casts it to 0,
+      // e.g. the placeholder 'اختر') means the assignment applies in every branch.
+      const assignedNumber = Number(assignedBranch);
+      if (!assignedBranch || assignedBranch === 'all' || !Number.isFinite(assignedNumber) || assignedNumber === 0) return true;
+      return assignedNumber === scope;
     };
     let mainShifts: ShiftRow[] = [];
 
@@ -892,10 +927,9 @@ export class AttendanceService {
       });
       if (last?.action_date && last.action_time) {
         const lastDate = last.action_date.slice(0, 10);
-        const now = new Date();
-        const lastAt = new Date(`${lastDate}T00:00:00`);
-        lastAt.setMinutes(parseTimeToMinutes(last.action_time));
-        const diffSeconds = Math.floor((now.getTime() - lastAt.getTime()) / 1000);
+        // Both sides as Cairo wall-clock, the timezone the punch times are written in.
+        const lastAt = Date.parse(`${lastDate}T00:00:00Z`) + parseTimeToMinutes(last.action_time) * 60_000;
+        const diffSeconds = Math.floor((businessWallClockMs() - lastAt) / 1000);
         if (diffSeconds >= 0 && diffSeconds < 45) {
           this.logPunchDecision(requestId, code, branchIdOverride, 'duplicate_45_seconds');
           throw new BadRequestException('تم استلام بصمتك بالفعل، برجاء الانتظار قليلاً قبل إعادة المحاولة');
@@ -973,7 +1007,8 @@ export class AttendanceService {
       });
       const filtered = special.filter((row) => {
         if (!clockBranchId || !row.branch_id_fk || row.branch_id_fk === clockBranchId) return true;
-        return false;
+        // Legacy exception: rows saved with employees.branch_id_fk before emp_sign was used.
+        return (emp.emp_sign ?? '').trim().toLowerCase() !== 'all' && row.branch_id_fk === emp.branch_id_fk;
       });
       const replacement = filtered.find((row) => row.ttype === 1);
       const extras = filtered.filter((row) => row.ttype === 2);
@@ -1008,18 +1043,23 @@ export class AttendanceService {
       return candidates;
     };
 
-    const [todayCandidates, yesterdayCandidates] = await Promise.all([
+    const [todayBuilt, yesterdayBuilt] = await Promise.all([
       buildCandidates(today),
       buildCandidates(yesterday),
     ]);
-    const allCandidates = [...todayCandidates, ...yesterdayCandidates];
-    if (!allCandidates.length) {
+    if (!todayBuilt.length && !yesterdayBuilt.length) {
       if (weeklySettings?.enabled) throw new BadRequestException('اليوم المحدد راحة أسبوعية ولا يوجد شيفت إضافي');
       throw new BadRequestException('لا يوجد دوام مسجل لهذا الموظف في موقع البصمة');
     }
-    for (const candidate of allCandidates) {
-      assertShiftTimingIsComplete(candidate.shift);
-    }
+    // Like legacy get_shift_datetimes: a shift with missing times is skipped, not fatal.
+    const todayCandidates = todayBuilt.filter((item) => isShiftTimingComplete(item.shift));
+    const yesterdayCandidates = yesterdayBuilt.filter((item) => isShiftTimingComplete(item.shift));
+    const allCandidates = [...todayCandidates, ...yesterdayCandidates];
+    if (!allCandidates.length) assertShiftTimingIsComplete([...todayBuilt, ...yesterdayBuilt][0].shift);
+    // Minutes of this punch counted from the candidate's own shift date (yesterday ⇒ +1440),
+    // so night shifts compare against real datetimes like the legacy code.
+    const punchFor = (item: ShiftCandidate) => punchMin + (item.date === yesterday ? 1440 : 0);
+    const inRange = (value: number, from: number, to: number) => value >= from && value <= to;
     const recentRows = await db.tbl_hdoor_emps.findMany({
       where: {
         member_code: code,
@@ -1030,6 +1070,9 @@ export class AttendanceService {
       orderBy: { hodoor_id: 'desc' },
     });
     const openRow = recentRows.find((row) => row.hdoor_time && !row.ensraf_time);
+    // Calendar date of a stored row (action_date; ISO action_date_s for older rows).
+    const rowDate = (row: { action_date?: string | null; action_date_s?: string | null }) =>
+      (row.action_date ?? '').slice(0, 10) || ((row.action_date_s ?? '').match(/^\d{4}-\d{2}-\d{2}/)?.[0] ?? '');
     let candidate: ShiftCandidate | undefined;
     let detected: 'in' | 'out' | null = null;
 
@@ -1051,7 +1094,7 @@ export class AttendanceService {
         if (!openCandidate) {
           const savedShift = await db.tbl_hdodr_setting.findUnique({ where: { id: row.dwam_id_fk } });
           if (savedShift) {
-            const savedDate = row.action_date_s;
+            const savedDate = row.action_date ?? row.action_date_s;
             openCandidate = {
               shift: savedShift,
               recordDwamId: savedShift.id,
@@ -1062,8 +1105,7 @@ export class AttendanceService {
             };
           }
         }
-        if (!openCandidate) continue;
-        assertShiftTimingIsComplete(openCandidate.shift);
+        if (!openCandidate || !isShiftTimingComplete(openCandidate.shift)) continue;
         const window = buildShiftWindow(openCandidate.shift);
         let punchForShift = punchMin;
         if (openCandidate.date === yesterday || punchForShift < window.hdoorFrom) punchForShift += 1440;
@@ -1072,9 +1114,11 @@ export class AttendanceService {
         openCandidates.push({ candidate: openCandidate, window, punchForShift, elapsed });
       }
 
-      const hasNewArrivalWaiting = todayCandidates.some((item) => {
+      const openShiftKeys = new Set(recentRows.map((row) => `${row.dwam_id_fk}|${rowDate(row)}`));
+      const hasNewArrivalWaiting = allCandidates.some((item) => {
+        if (openShiftKeys.has(`${item.recordDwamId}|${item.date}`)) return false;
         const window = buildShiftWindow(item.shift);
-        return inWindow(punchMin, window.hdoorFrom - 60, window.hdoorTo);
+        return inRange(punchFor(item), window.hdoorFrom - 60, window.hdoorTo);
       });
       const closeable = openCandidates.filter(({ window, punchForShift, elapsed }) => {
         const withinCheckoutAllowance = punchForShift >= window.hdoorFrom && punchForShift <= window.ensrafTo + 8 * 60;
@@ -1082,6 +1126,7 @@ export class AttendanceService {
           elapsed >= 60 && elapsed <= 24 * 60 && punchForShift > window.ensrafTo + 8 * 60 && !hasNewArrivalWaiting;
         return withinCheckoutAllowance || staleWithinOneDay;
       });
+      const allStale = openCandidates.every(({ window, punchForShift }) => punchForShift > window.ensrafTo + 8 * 60);
       if (closeable.length) {
         const selected = closeable.sort(
           (a, b) =>
@@ -1089,6 +1134,8 @@ export class AttendanceService {
         )[0];
         candidate = selected.candidate;
         detected = 'out';
+      } else if (hasNewArrivalWaiting && allStale) {
+        // Legacy: a row left open past ensraf_to + 8h does not block today's arrival.
       } else {
         this.logPunchDecision(requestId, code, branchIdOverride, 'rejected', {
           errorMessage: 'لديك حضور مفتوح يجب تسجيل انصرافه أو مراجعة الإدارة أولاً',
@@ -1097,21 +1144,24 @@ export class AttendanceService {
       }
     }
 
+    // Shifts that already have a record for their date are not offered for a new arrival
+    // (legacy detect_shift_action prefers shifts without a record).
+    const recordedKeys = new Set(recentRows.map((row) => `${row.dwam_id_fk}|${rowDate(row)}`));
+    const hasRecord = (item: ShiftCandidate) => recordedKeys.has(`${item.recordDwamId}|${item.date}`);
+
     if (!detected) {
-      const pool = body.type === 'out' ? allCandidates : todayCandidates;
+      const pool = body.type === 'out' ? allCandidates : body.type === 'in' ? todayCandidates : allCandidates;
       const options = pool
-        .map((item) => ({ item, window: buildShiftWindow(item.shift) }))
-        .filter(({ window }) => {
+        .map((item) => ({ item, window: buildShiftWindow(item.shift), at: punchFor(item) }))
+        .filter(({ item, window, at }) => {
           if (body.type === 'in') return true;
-          if (body.type === 'out') {
-            return inWindow(punchMin, window.ensrafFrom, window.ensrafTo + 8 * 60);
-          }
-          return inWindow(punchMin, window.hdoorFrom - 60, window.hdoorTo);
+          if (body.type === 'out') return inRange(at, window.ensrafFrom, window.ensrafTo + 8 * 60);
+          return !hasRecord(item) && inRange(at, window.hdoorFrom - 60, window.hdoorTo);
         })
         .sort((a, b) => {
           const aRef = body.type === 'out' ? a.window.ensrafKhasm : a.window.hdoorKhasm;
           const bRef = body.type === 'out' ? b.window.ensrafKhasm : b.window.hdoorKhasm;
-          return Math.abs(punchMin - aRef) - Math.abs(punchMin - bRef);
+          return Math.abs(a.at - aRef) - Math.abs(b.at - bRef);
         });
       if (options.length) {
         candidate = options[0].item;
@@ -1122,9 +1172,10 @@ export class AttendanceService {
     // Legacy mobile allows a checkout-only row when the arrival punch was missed.
     if (!detected && !body.type) {
       const departure = allCandidates
-        .map((item) => ({ item, window: buildShiftWindow(item.shift) }))
-        .filter(({ window }) => inWindow(punchMin, window.hdoorFrom + 60, window.ensrafTo + 8 * 60))
-        .sort((a, b) => Math.abs(punchMin - a.window.ensrafKhasm) - Math.abs(punchMin - b.window.ensrafKhasm))[0];
+        .filter((item) => !hasRecord(item))
+        .map((item) => ({ item, window: buildShiftWindow(item.shift), at: punchFor(item) }))
+        .filter(({ window, at }) => inRange(at, window.hdoorFrom + 60, window.ensrafTo + 8 * 60))
+        .sort((a, b) => Math.abs(a.at - a.window.ensrafKhasm) - Math.abs(b.at - b.window.ensrafKhasm))[0];
       if (departure) {
         candidate = departure.item;
         detected = 'out';
@@ -1189,7 +1240,7 @@ export class AttendanceService {
 
     // --- duplicate guards (step 4) ---
     if (existing) {
-      if (detected === 'in' && existing.hdoor_time) {
+      if (detected === 'in' && (existing.hdoor_time || existing.ensraf_time)) {
         throw new BadRequestException('لقد سجلت حضورك بالفعل، انتظر ساعة على الأقل لتسجيل انصراف');
       }
       if (detected === 'out' && existing.ensraf_time) {
@@ -1207,7 +1258,7 @@ export class AttendanceService {
         data: {
           member_code: code,
           member_id: emp.id,
-          action_date_s: date,
+          action_date_s: String(businessMidnightEpoch(date)),
           action_date: date,
           for_month: Number(date.slice(5, 7)),
           for_year: Number(date.slice(0, 4)),
@@ -1221,13 +1272,10 @@ export class AttendanceService {
 
     if (detected === 'out') {
       // early-leave vs ensraf_khasm (calculate_early_minutes / sum_min_mobaker)
-      const earlyRaw = sumMinMobaker(expectedEnsraf, currentTimeStr);
+      // floor(khasm − now) when leaving before the deduction time on the shift's own date, else 0.
+      const earlyRaw = Math.max(0, Math.floor(win.ensrafKhasm - punchFor(candidate)));
       const mobakerMin = this.applyEarlyRule(earlyRaw, rules);
-      const overtime = this.computeOvertime(
-        punchMin < win.hdoorFrom ? punchMin + 1440 : punchMin,
-        win.ensrafKhasm,
-        rules,
-      );
+      const overtime = this.computeOvertime(punchFor(candidate), win.ensrafKhasm, rules);
       const checkoutUpdate = await db.tbl_hdoor_emps.updateMany({
         where: { hodoor_id: row.hodoor_id, ensraf_time: null },
         data: {
@@ -1247,7 +1295,7 @@ export class AttendanceService {
         throw new BadRequestException('لقد قمت بتسجيل الانصراف مسبقاً لهذا اليوم');
       }
       await db.tbl_hdoor_emps_history.create({ data: {
-        member_code: code, member_id: emp.id, action_date: today, action_date_s: today,
+        member_code: code, member_id: emp.id, action_date: today, action_date_s: String(businessMidnightEpoch(today)),
         action_time: currentTimeStr, hdoor_ensraf_time: currentTimeStr, ttype: 'ensraf',
         setting_time: expectedEnsraf, img_path: photoPath, m_lat: body.lat, m_long: body.long,
       } });
@@ -1256,7 +1304,7 @@ export class AttendanceService {
     }
 
     // check-in: late vs khasm (calculate_late_minutes), then late-rule grace
-    const lateRaw = sumMinLate(formatMinutesAsTime(win.hdoorKhasm % 1440), currentTimeStr);
+    const lateRaw = Math.max(0, Math.floor(punchFor(candidate) - win.hdoorKhasm));
     const lateMin = this.applyLateRule(lateRaw, rules);
     await db.tbl_hdoor_emps.update({
       where: { hodoor_id: row.hodoor_id },
@@ -1273,7 +1321,7 @@ export class AttendanceService {
       },
     });
     await db.tbl_hdoor_emps_history.create({ data: {
-      member_code: code, member_id: emp.id, action_date: today, action_date_s: today,
+      member_code: code, member_id: emp.id, action_date: today, action_date_s: String(businessMidnightEpoch(today)),
       action_time: currentTimeStr, hdoor_ensraf_time: currentTimeStr, ttype: 'hdoor',
       setting_time: formatMinutesAsTime(win.hdoorKhasm % 1440), img_path: photoPath,
       m_lat: body.lat, m_long: body.long,
@@ -1589,7 +1637,7 @@ export class AttendanceService {
     if (!emp) throw new BadRequestException('الموظف غير موجود في النظام');
     const publisherEmployee = await this.assertCanManageEdafiEmployee(emp, userId);
 
-    const sheftDate = (dto.sheftDate ?? '').replace(/\//g, '-').slice(0, 10);
+    const sheftDate = normalizeLegacyInputDate(dto.sheftDate);
 
     // dup-check: same emp + date + ttype (faithful)
     const dup = await this.prisma.tbl_emps_shef_edafi.findFirst({
@@ -1613,9 +1661,10 @@ export class AttendanceService {
         ttype: dto.ttype,
         dwam_id_fk: dto.dwamIdFk,
         sheft_date: sheftDate,
-        branch_id_fk: emp.branch_id_fk ?? 0,
+        // Like the legacy add_sheft_edafi: the punch geofence branch (emp_sign) wins when set.
+        branch_id_fk: /^\d+$/.test(emp.emp_sign ?? '') ? Number(emp.emp_sign) : (emp.branch_id_fk ?? 0),
         date_ar: today,
-        date_s: String(Math.floor(new Date(today + 'T00:00:00').getTime() / 1000)),
+        date_s: String(businessMidnightEpoch(today)),
         publisher: userId,
         publisher_emp_id: publisherEmployee.id,
       },
@@ -1687,7 +1736,7 @@ export class AttendanceService {
     if (!emp) throw new BadRequestException('الموظف غير موجود في النظام');
     const publisherEmployee = await this.assertCanManageEdafiEmployee(emp, userId);
 
-    const edafaDate = (dto.edafaDate ?? '').replace(/\//g, '-').slice(0, 10);
+    const edafaDate = normalizeLegacyInputDate(dto.edafaDate);
 
     const dup = await this.prisma.tbl_emps_hours_edafi.findFirst({
       where: { emp_code_fk: emp.emp_code ?? 0, edafa_date: edafaDate },
@@ -1706,7 +1755,7 @@ export class AttendanceService {
         num_hours: dto.numHours,
         edafa_date: edafaDate,
         date_ar: today,
-        date_s: String(Math.floor(new Date(today + 'T00:00:00').getTime() / 1000)),
+        date_s: String(businessMidnightEpoch(today)),
         publisher: userId,
         publisher_emp_id: publisherEmployee.id,
       },
@@ -1818,6 +1867,8 @@ export class AttendanceService {
         scheduledOut: r.dwam_ensraf_time ?? undefined,
         secondCheckIn: r.second_hdoor_time ?? undefined,
         secondCheckOut: r.second_ensraf_time ?? undefined,
+        secondCheckInPhoto: r.second_hdoor_img_path ?? undefined,
+        secondCheckOutPhoto: r.second_ensraf_img_path ?? undefined,
         secondLateMin: r.second_late_min != null ? Math.round(r.second_late_min) : 0,
         lateMin: r.late_min != null ? Math.round(r.late_min) : 0,
         earlyLeaveMin: r.mobaker_min != null ? Math.round(r.mobaker_min) : 0,

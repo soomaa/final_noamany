@@ -988,17 +988,14 @@ export class LegacyMobileCompatService {
   async employeeRange(user: JwtUser) {
     const emp = await this.employee(user);
     const points = emp.neqat_total ?? 0;
-    const ranges = await this.prisma.hr_ntaqat_types.findMany({
-      orderBy: { id: "asc" },
-    });
-    const range =
-      ranges[
-        Math.max(0, Math.min(ranges.length - 1, Math.floor(points / 1000)))
-      ] ?? null;
+    // Legacy hr_helper::netaq_type thresholds, looked up by hr_ntaqat_types.id.
+    const bandId =
+      points >= 6650 ? 1 : points >= 6300 ? 2 : points >= 5950 ? 3 : points >= 5600 ? 4 : 5;
+    const range = await this.prisma.hr_ntaqat_types.findUnique({ where: { id: bandId } });
     return {
-      point: points,
+      point: Math.trunc(points),
       netaq_stars: 0,
-      title: "رصيد النقاط لديك",
+      title: "رصيد النقاط لديك ",
       netaq_type: range?.title ?? "",
       netaq_color: range?.color ?? "",
       netaq_msg: range?.msg ?? "",

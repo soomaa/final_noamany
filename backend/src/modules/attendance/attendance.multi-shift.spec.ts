@@ -185,7 +185,7 @@ describe('AttendanceService legacy multi-shift selection', () => {
     }));
   });
 
-  it('does not use the employee home branch to select an extra shift', async () => {
+  it('accepts an extra shift saved with the employee home branch for fixed-site staff (legacy build_available_shifts_for_date)', async () => {
     const mainShift = {
       id: 10,
       title: 'main',
@@ -248,8 +248,10 @@ describe('AttendanceService legacy multi-shift selection', () => {
       2,
     );
 
+    // The 02:00 PM arrival is nearest the extra shift's deduction time, so the extra
+    // shift (saved under home branch 1 while punching at branch 2) is used.
     expect(prisma.tbl_hdoor_emps.create).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ dwam_id_fk: 10, sheft_type: 0, branch_id_fk: 2 }),
+      data: expect.objectContaining({ dwam_id_fk: 20, sheft_type: 2, branch_id_fk: 2 }),
     }));
   });
 
@@ -359,5 +361,80 @@ describe('AttendanceService legacy multi-shift selection', () => {
     expect(prisma.tbl_hdoor_emps.updateMany).toHaveBeenCalledWith(expect.objectContaining({
       where: { hodoor_id: 71, ensraf_time: null },
     }));
+  });
+
+  it('dates an after-midnight arrival on a night shift to the shift day, with late minutes on real datetimes', async () => {
+    const nightShift = {
+      id: 30, title: 'night', hdoor_from_time: '11:00 PM', hdoor_to_time: '01:00 AM', hdoor_khasm_from: '11:15 PM',
+      ensraf_from_time: '06:00 AM', ensraf_to_time: '08:00 AM', ensraf_khasm_from: '07:00 AM',
+    };
+    const prisma = {
+      employees: { findFirst: jest.fn().mockResolvedValue({ id: 7, emp_code: 1007, branch_id_fk: 1, emp_sign: '1' }) },
+      attendance_channels: { findMany: jest.fn().mockResolvedValue([]) },
+      attendance_rules: { findMany: jest.fn().mockResolvedValue([]) },
+      tbl_hdoor_dawms_emps: { findMany: jest.fn().mockResolvedValue([{ emp_code_fk: 1007, emp_id_fk: 7, branch_id_fk: null, dwam_id_fk: 30 }]) },
+      tbl_hdodr_setting: { findMany: jest.fn().mockResolvedValue([nightShift]), findUnique: jest.fn() },
+      tbl_emps_shef_edafi: { findMany: jest.fn().mockResolvedValue([]) },
+      tbl_hdoor_emps_history: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({}) },
+      tbl_hdoor_emps: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }) => ({ hodoor_id: 90, ...data })),
+        update: jest.fn().mockResolvedValue({ hodoor_id: 90 }),
+      },
+      $transaction: jest.fn(async (callback) => callback(prisma)),
+      $queryRaw: jest.fn().mockResolvedValue([{ acquired: 1 }]),
+    };
+    const service = new AttendanceService(prisma as never);
+
+    await expect(service.manualCheck(
+      { empCode: '1007', checkIn: '12:30 AM', channel: 'app' },
+      9,
+      1,
+      { actionDate: '2026-08-26', time: '12:30 AM' },
+    )).resolves.toEqual(expect.objectContaining({ id: 90, type: 'in', lateMin: 75 }));
+    expect(prisma.tbl_hdoor_emps.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action_date: '2026-08-25', dwam_id_fk: 30 }),
+    }));
+    expect(prisma.tbl_hdoor_emps.update).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ hdoor_time: '12:30 AM', late_min: 75 }),
+    }));
+  });
+
+  it("does not let yesterday's forgotten checkout block today's arrival (legacy stale open row)", async () => {
+    const shift = {
+      id: 10, title: 'main', hdoor_from_time: '07:00 AM', hdoor_to_time: '09:00 AM', hdoor_khasm_from: '08:00 AM',
+      ensraf_from_time: '04:00 PM', ensraf_to_time: '05:00 PM', ensraf_khasm_from: '04:00 PM',
+    };
+    const prisma = {
+      employees: { findFirst: jest.fn().mockResolvedValue({ id: 7, emp_code: 1007, branch_id_fk: 1, emp_sign: '1' }) },
+      attendance_channels: { findMany: jest.fn().mockResolvedValue([]) },
+      attendance_rules: { findMany: jest.fn().mockResolvedValue([]) },
+      tbl_hdoor_dawms_emps: { findMany: jest.fn().mockResolvedValue([{ emp_code_fk: 1007, emp_id_fk: 7, branch_id_fk: '1', dwam_id_fk: 10 }]) },
+      tbl_hdodr_setting: { findMany: jest.fn().mockResolvedValue([shift]), findUnique: jest.fn() },
+      tbl_emps_shef_edafi: { findMany: jest.fn().mockResolvedValue([]) },
+      tbl_hdoor_emps_history: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({}) },
+      tbl_hdoor_emps: {
+        findMany: jest.fn().mockResolvedValue([{ hodoor_id: 71, dwam_id_fk: 10, action_date: '2026-08-25', action_date_s: '1787605200', hdoor_time: '08:00 AM', ensraf_time: null }]),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }) => ({ hodoor_id: 91, ...data })),
+        update: jest.fn().mockResolvedValue({ hodoor_id: 91 }),
+        updateMany: jest.fn(),
+      },
+      $transaction: jest.fn(async (callback) => callback(prisma)),
+      $queryRaw: jest.fn().mockResolvedValue([{ acquired: 1 }]),
+    };
+    const service = new AttendanceService(prisma as never);
+
+    await expect(service.manualCheck(
+      { empCode: '1007', checkIn: '08:10 AM', channel: 'app' },
+      9,
+      1,
+      { actionDate: '2026-08-26', time: '08:10 AM' },
+    )).resolves.toEqual(expect.objectContaining({ id: 91, type: 'in', lateMin: 10 }));
+    expect(prisma.tbl_hdoor_emps.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ action_date: '2026-08-26', action_date_s: '1787691600' }),
+    }));
+    expect(prisma.tbl_hdoor_emps.updateMany).not.toHaveBeenCalled();
   });
 });
