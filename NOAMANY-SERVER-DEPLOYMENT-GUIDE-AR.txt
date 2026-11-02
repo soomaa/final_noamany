@@ -524,3 +524,17 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - أمر الرجوع لهذا التثبيت فقط:
   bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261102-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r2-update-backup.x1g7TU
 - المرجع للرفع اللي جاي: system.html الحالي = 45ebded85fbd89cc34ace238afe9b5b83e6d016827c67363e50f1df17b72b6c7.
+
+آخر تثبيت مؤكد: 20261102-r3 (أكواد الخصم وصلاحيات الريسبشن الافتراضية)، 2 نوفمبر 2026
+---------------------------------------------------------------------------------
+- المحتوى: 4 ملفات backend (sidebar-api-permissions، club-discount-codes controller/service، rbac/job-title-defaults) + واجهة الإدارة.
+  - كود خصم لعضو بشكل جديد: أكواد الشهر ده بس، واسم العضو والكابتن، وحذف الكود اللي ماتستخدمش.
+  - البحث عن كود خصم: بالكود أو الموبايل، وبيعرض الصالح الشهر ده بس.
+- اتبنى فوق 02-r2 بتاع الشات التاني (c725828) + 97f4aa2، وبناء الأساس طابق system.html بتاع 02-r2 (45ebded8…) بالبايت.
+- ملحوظة: الاسم 02-r2 راح لتحديث الشيفتات والموبايل (release-tools/daily-update-20261102-r2-hr)، والتحديث ده اسمه 02-r3.
+- اتأكد على السيرفر: UPDATE VERIFIED: 2026-11-02-r3، والعملية اتغيرت من 595215 لـ 646403.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r3-update-backup.oWBlrJ
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261102-r3/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r3-update-backup.oWBlrJ
+- المرجع للرفع اللي جاي: system.html الحالي = payload 02-r3 (eba02ef9…).
+- لسه منفصل: release-tools/reception-permissions-fix-20261102 (صلاحيات الريسبشن الموجودة).
