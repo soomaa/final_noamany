@@ -576,3 +576,18 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - 16 صنف سعرهم 0 في القديم (ديتول، سكر، مناديل، أكياس…) فضلوا 0.
 - النسخ الاحتياطية: tmp/cafe-before-old-menu-20261103-011255.sql.gz (قبل أي تعديل)، و-013050 (قبل تصليح الفئات).
 - الرجوع: gunzip -c <النسخة دي> | mysql noamanycenter_nest
+- رصيد البار (3 نوفمبر 02:04، بيانات بس): release-tools/cafe-from-old-20261103/sync-bar-stock-from-old.sh خلّى رصيد كل بار
+  (LEG-WH-3/4/5/8/9) زي حساب القديم بالظبط (المصروف للبار + رصيد أول المدة + المرتجع − المبيعات والمسحوبات)،
+  بـ 796 حركة تسوية (doc_type legacy_stock_sync). ممكن يتشغل تاني ليلة النقل عشان الأرقام تتطابق.
+  النسخة الاحتياطية: tmp/cafe-stock-before-old-sync-20261103-020416.sql.gz
+
+آخر تثبيت مؤكد: 20261103-r1 (شاشة بيع الكافيه)، 3 نوفمبر 2026
+------------------------------------------------------------
+- واجهة الإدارة بس (new-receipt.tsx، e64ccd4): "الكل" بيعرض كل الأصناف، والفاتورة بتاخد فئتها من أول صنف.
+  الفاتورة لسه فئة واحدة؛ صنف من فئة تانية بيطلّع رسالة "احفظها الأول".
+- اتبنى من 97f4aa2 + 0d21edd (= 02-r4) + e64ccd4، والأساس طابق system.html بتاع 02-r4 بالبايت.
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r1، والعملية اتغيرت من 967569 لـ 1658781.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r1-update-backup.7DRgC5
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r1-update-backup.7DRgC5
+- المرجع للرفع اللي جاي: system.html = 99dcb78eb9546c68424c1fb1cfebe831c2467a4e421205bec810f014675a22cb.
