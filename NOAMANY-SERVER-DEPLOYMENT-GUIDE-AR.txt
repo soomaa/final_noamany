@@ -485,3 +485,18 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   - الملفات القديمة لسه على السيرفر، بس ماحدش بيستخدمها.
 - النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/oct30-r4-update-backup.ryvlcD
 - المرجع للرفع اللي جاي: system.html الحالي هو اللي في payload 30-r4.
+
+آخر تثبيت مؤكد: 20261102-r1 (ملاحظات ندى 2 نوفمبر)، 2 نوفمبر 2026
+-----------------------------------------------------------------
+- المحتوى: 6 ملفات backend (club-subscriptions وemployees) + واجهة الإدارة. مافيش تغيير في قاعدة البيانات.
+  - قائمة الموظفين في إضافة اشتراك من كل الفروع، والكابتن في البرايفت من نفس القائمة.
+  - نفس الاشتراك ينفع يتضاف لنفس العميل أكتر من مرة.
+  - تاريخ النهاية زي القديم: يوم البداية بيتحسب (30 يوم من 2 نوفمبر = 1 ديسمبر).
+  - إضافة عضو: الموبايل والنوع فاضيين. الباركود: آخر حضور منذ كام يوم + السبا والإنبودي.
+- اتبنى من 352b02a (= 01-r3) + fe24a25 بـ npm ci، وبناء الأساس طابق system.html بتاع 01-r3 بالبايت.
+- اتأكد على السيرفر: UPDATE VERIFIED: 2026-11-02-r1، والعملية اتغيرت من 2164133 لـ 476604.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r1-update-backup.7EGpLS
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261102-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r1-update-backup.7EGpLS
+- المرجع للرفع اللي جاي: system.html الحالي = payload 02-r1 (1387152528753fb4…).
+- لسه منفصل: release-tools/stopped-plans-fix-20261102 (إخفاء 233 باقة متوقفة في القديم).
