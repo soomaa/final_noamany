@@ -546,5 +546,6 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - اتشال: خدمات سريعة، وإضافة لوكر، وتقارير المصروفات (13 خلية من الأدوار + 56 صف استثناء شخصي allow لموظفي الريسبشن).
 - اتضاف: إدارة المصروفات (عرض، إضافة، طباعة)، وخدمة المصروفات بتقصر الريسبشن على مصروفات النهارده لفرعه.
 - ماتلمسش: استثناءات deny، واستثناءات المصروفات الشخصية (عبدالفتاح السيد الشافعي واسماء محمد888 عندهم اعتماد وحذف مصروفات، والقرار لندى).
-- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/rbac-permissions-before-reception-fix-20261102-192411.sql.gz
+- اتطبق 19:24، واترجع بالغلط بأمر الرجوع، واتطبق تاني 19:31 بنفس الأرقام.
+- النسخة الاحتياطية (قبل التطبيق التاني): /home/noamanycenter/final.noamanycenter.com/tmp/rbac-permissions-before-reception-fix-20261102-193136.sql.gz
 - الرجوع: gunzip -c <النسخة دي> | mysql noamanycenter_nest
