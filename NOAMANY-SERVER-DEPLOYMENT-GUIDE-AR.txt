@@ -500,3 +500,12 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261102-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r1-update-backup.7EGpLS
 - المرجع للرفع اللي جاي: system.html الحالي = payload 02-r1 (1387152528753fb4…).
 - لسه منفصل: release-tools/stopped-plans-fix-20261102 (إخفاء 233 باقة متوقفة في القديم).
+
+إخفاء الباقات المتوقفة في السيستم القديم — 2 نوفمبر 2026 (بيانات بس)
+------------------------------------------------------------------
+- السكريبت: release-tools/stopped-plans-fix-20261102/fix-stopped-plans.sh (اتشغل من /root/stopped-plans-fix-20261102).
+- السبب: النقل نقل كل الباقات كنشطة، وتجاهل علامة الإيقاف في القديم (tbl_subscription_settings.approved = 2).
+- اتقفل 118 باقة (is_active = 0) من 233 في القايمة. الباقي كان متقفل أو اتعدل اسمه/سعره، فاتساب.
+- الباقات النشطة دلوقتي: 370. الاشتراكات المباعة والتجديد والتقارير ماتأثروش.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/club-subscription-types-before-stopped-plans-20261102-174423.sql.gz
+- الرجوع: gunzip -c <النسخة دي> | mysql noamanycenter_nest
