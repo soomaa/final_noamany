@@ -1,3 +1,4 @@
+import { todayIso } from '../../common/utils/legacy-date.util';
 import {
   All,
   Body,
@@ -884,12 +885,12 @@ export class LegacyMobileController {
       },
       Basma_Today: async () => {
         const identity = await this.compat.identity(user);
-        const today = new Date().toISOString().slice(0, 10);
+        // Cairo date (the server clock is UTC/Riyadh); the employee's own punches at any branch.
+        const today = todayIso();
         const dto = Object.assign(new AttendanceReportDto(), this.page(input), {
           empCode: String(identity.empCode),
           dateFrom: today,
           dateTo: today,
-          branchId: identity.branchId ? String(identity.branchId) : undefined,
         });
         return this.attendance.basmaReport(dto);
       },

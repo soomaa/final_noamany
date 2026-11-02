@@ -554,6 +554,38 @@ export class AttendanceService {
   // -------------------------------------------------------------------------
   // CHECK (faithful add_hdor_ensraf: dwam-window gate + late/early/overtime)
   // -------------------------------------------------------------------------
+  /**
+   * The employee's attendance card for today (Cairo date): a shift still open from yesterday
+   * (night shift) first, otherwise today's latest row. Fields are null when nothing is recorded,
+   * so the app clears yesterday's times instead of showing them.
+   */
+  async mobileToday(user: JwtUser) {
+    if (user.emp_code == null) throw new ForbiddenException('الحساب غير مرتبط بموظف');
+    const emp = await this.prisma.employees.findUnique({ where: { id: user.emp_code }, select: { emp_code: true } });
+    if (!emp?.emp_code) throw new NotFoundException('الموظف غير موجود');
+    const today = todayIso();
+    const yesterdayDate = new Date(`${today}T12:00:00Z`);
+    yesterdayDate.setUTCDate(yesterdayDate.getUTCDate() - 1);
+    const yesterday = yesterdayDate.toISOString().slice(0, 10);
+    const rows = await this.prisma.tbl_hdoor_emps.findMany({
+      where: { member_code: emp.emp_code, action_date: { in: [today, yesterday] } },
+      orderBy: { hodoor_id: 'desc' },
+    });
+    const open = rows.find((r) => r.action_date === yesterday && r.hdoor_time && !r.ensraf_time);
+    const row = open ?? rows.find((r) => r.action_date === today);
+    return {
+      id: row?.hodoor_id ?? null,
+      empCode: emp.emp_code,
+      date: row?.action_date ?? today,
+      checkIn: row?.hdoor_time ?? null,
+      checkOut: row?.ensraf_time ?? null,
+      scheduledIn: row?.dwam_hdoor_time ?? null,
+      scheduledOut: row?.dwam_ensraf_time ?? null,
+      lateMin: row?.late_min != null ? Math.round(row.late_min) : 0,
+      earlyLeaveMin: row?.mobaker_min != null ? Math.round(row.mobaker_min) : 0,
+    };
+  }
+
   async mobilePunch(
     user: JwtUser,
     body: { lat: string; long: string; photo?: string },

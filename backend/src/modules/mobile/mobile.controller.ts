@@ -113,6 +113,12 @@ export class MobileController {
     return this.leavesService.listTypes(query);
   }
 
+  /** Declared after leaves/types so "types" never reaches the id pipe. */
+  @Get('leaves/:id')
+  leaveDetail(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.mobile.leave(user, id);
+  }
+
   @Post('leaves')
   createLeave(@Body() dto: CreateLeaveDto, @CurrentUser() user: JwtUser) {
     return this.leavesService.create(dto, user.sub, user.name ?? undefined);
@@ -139,6 +145,12 @@ export class MobileController {
   permissionAvailability(@Query('date') date: string, @CurrentUser() user: JwtUser) {
     return this.permissions.available(user.emp_code!, date || new Date().toISOString().slice(0, 10));
   }
+  /** Declared after permissions/available so "available" never reaches the id pipe. */
+  @Get('permissions/:id')
+  permissionDetail(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.compat.permissionDetail(user, { ezn_id: String(id) });
+  }
+
 
   @Post('permissions')
   createPermission(@Body() dto: CreatePermissionDto, @CurrentUser() user: JwtUser) {
@@ -168,6 +180,12 @@ export class MobileController {
   @Delete('tasks/:id')
   deleteTask(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
     return this.mobile.deleteDailyTask(user, id);
+  }
+
+  /** Home card: today's attendance for the signed-in employee. */
+  @Get('attendance/today')
+  attendanceToday(@CurrentUser() user: JwtUser) {
+    return this.attendanceService.mobileToday(user);
   }
 
   @Post('attendance/punch')
