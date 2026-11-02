@@ -437,4 +437,53 @@ describe('AttendanceService legacy multi-shift selection', () => {
     }));
     expect(prisma.tbl_hdoor_emps.updateMany).not.toHaveBeenCalled();
   });
+
+  // Real production shifts (old system recorded these arrivals on the first open shift, not the right one).
+  const realShift = (id: number, title: string, times: [string, string, string, string, string, string]) => ({
+    id, title, hdoor_from_time: times[0], hdoor_to_time: times[1], hdoor_khasm_from: times[2],
+    ensraf_from_time: times[3], ensraf_to_time: times[4], ensraf_khasm_from: times[5],
+  });
+  const multiShiftPrisma = (shifts: ReturnType<typeof realShift>[]) => {
+    const prisma = {
+      employees: { findFirst: jest.fn().mockResolvedValue({ id: 7, emp_code: 29, branch_id_fk: 1, emp_sign: '1' }) },
+      attendance_channels: { findMany: jest.fn().mockResolvedValue([]) },
+      attendance_rules: { findMany: jest.fn().mockResolvedValue([]) },
+      tbl_hdoor_dawms_emps: { findMany: jest.fn().mockResolvedValue(shifts.map((shift) => ({ emp_code_fk: 29, emp_id_fk: 7, branch_id_fk: '1', dwam_id_fk: shift.id }))) },
+      tbl_hdodr_setting: { findMany: jest.fn().mockResolvedValue(shifts), findUnique: jest.fn() },
+      tbl_emps_shef_edafi: { findMany: jest.fn().mockResolvedValue([]) },
+      tbl_hdoor_emps_history: { findFirst: jest.fn().mockResolvedValue(null), create: jest.fn().mockResolvedValue({}) },
+      tbl_hdoor_emps: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+        create: jest.fn().mockImplementation(({ data }) => ({ hodoor_id: 95, ...data })),
+        update: jest.fn().mockResolvedValue({ hodoor_id: 95 }),
+      },
+      $transaction: jest.fn(async (callback: (tx: unknown) => unknown) => callback(prisma)),
+      $queryRaw: jest.fn().mockResolvedValue([{ acquired: 1 }]),
+    };
+    return prisma;
+  };
+
+  it.each([
+    // [assigned shifts, arrival, expected shift, expected late]
+    [[realShift(16, 'صباحي10 (11ص-7م)', ['10:00 AM', '05:30 PM', '11:00 AM', '06:55 PM', '11:30 PM', '08:00 PM']),
+      realShift(19, 'مسائى3 (12م-8م)', ['11:00 AM', '06:30 PM', '12:00 PM', '07:55 PM', '11:30 PM', '09:00 PM'])], '11:55 AM', 19, 0],
+    [[realShift(12, 'صباحي6 (9ص-4م)', ['08:05 AM', '02:30 PM', '09:00 AM', '03:55 PM', '11:30 PM', '05:00 PM']),
+      realShift(50, 'صباحي (11ص-4م)', ['10:00 AM', '02:30 PM', '11:00 AM', '03:55 PM', '10:30 PM', '05:29 PM'])], '10:58 AM', 50, 0],
+    [[realShift(12, 'صباحي6 (9ص-4م)', ['08:05 AM', '02:30 PM', '09:00 AM', '03:55 PM', '11:30 PM', '05:00 PM']),
+      realShift(50, 'صباحي (11ص-4م)', ['10:00 AM', '02:30 PM', '11:00 AM', '03:55 PM', '10:30 PM', '05:29 PM'])], '09:10 AM', 12, 10],
+  ])('an employee with several shifts is recorded on the shift nearest the arrival (%#)', async (shifts, arrival, expectedShift, expectedLate) => {
+    const prisma = multiShiftPrisma(shifts);
+    const service = new AttendanceService(prisma as never);
+
+    await expect(service.manualCheck(
+      { empCode: '29', checkIn: arrival, channel: 'app' },
+      9,
+      1,
+      { actionDate: '2026-10-15', time: arrival },
+    )).resolves.toEqual(expect.objectContaining({ type: 'in', lateMin: expectedLate }));
+    expect(prisma.tbl_hdoor_emps.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ dwam_id_fk: expectedShift, action_date: '2026-10-15' }),
+    }));
+  });
 });

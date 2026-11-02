@@ -1,5 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Pencil, Plus, Power, Trash2 } from 'lucide-react';
+import { AlertTriangle, Pencil, Plus, Power, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -29,6 +29,8 @@ import { uiStatic } from '@/lib/ui-static';
 interface ShiftRow {
   id: number;
   title?: string;
+  /** Wrong or suspicious times (e.g. AM/PM typed the wrong way) reported by the API. */
+  warnings?: string[];
   hdoorFromTime?: string;
   hdoorToTime?: string;
   hdoorKhasmFrom?: string;
@@ -185,7 +187,25 @@ export function AttendanceSettingsPage() {
 
   const columns: ColumnDef<ShiftRow>[] = [
     { accessorKey: 'id', header: ui('م'), cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1) },
-    { accessorKey: 'title', header: ui('الوردية'), cell: ({ getValue }) => (getValue() as string) ?? '—' },
+    {
+      accessorKey: 'title',
+      header: ui('الوردية'),
+      cell: ({ row }) => (
+        <div className="space-y-1">
+          <span>{row.original.title ?? '—'}</span>
+          {row.original.warnings?.length ? (
+            <ul className="space-y-0.5 text-xs text-destructive">
+              {row.original.warnings.map((warning) => (
+                <li key={warning} className="flex items-start gap-1">
+                  <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+                  <span>{warning}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+      ),
+    },
     { accessorKey: 'hdoorFromTime', header: ui('بداية الحضور'), cell: ({ getValue }) => timeCell(getValue() as string) },
     { accessorKey: 'hdoorToTime', header: ui('نهاية الحضور'), cell: ({ getValue }) => timeCell(getValue() as string) },
     { accessorKey: 'hdoorKhasmFrom', header: ui('بداية الخصم'), cell: ({ getValue }) => timeCell(getValue() as string) },

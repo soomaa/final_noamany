@@ -1,5 +1,5 @@
 import { SUSPEND_APPROVED } from '../../common/utils/suspend-status.util';
-import { parseStrictNumeric, assertTimeOrder, parseEmployeeCode } from '../../common/validators/validation.util';
+import { parseStrictNumeric, parseEmployeeCode } from '../../common/validators/validation.util';
 import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
@@ -193,6 +193,47 @@ function isShiftTimingComplete(shift: {
     shift.ensraf_to_time,
     shift.ensraf_khasm_from,
   ].every(isValidShiftTime);
+}
+
+/**
+ * Mistakes in a shift's six times, with the same day-wrapping the punch logic uses
+ * (times before hdoor_from belong to the next day). `errors` block saving the shift;
+ * `warnings` are shown on the shift list. Typical cause: AM/PM typed the wrong way.
+ */
+export function shiftTimingProblems(shift: {
+  hdoor_from_time?: string | null;
+  hdoor_to_time?: string | null;
+  hdoor_khasm_from?: string | null;
+  ensraf_from_time?: string | null;
+  ensraf_to_time?: string | null;
+  ensraf_khasm_from?: string | null;
+}): { errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  if (!isShiftTimingComplete(shift)) {
+    return { errors: ['أوقات الوردية غير مكتملة أو مكتوبة بصيغة غير صحيحة'], warnings };
+  }
+  const w = buildShiftWindow(shift);
+  const hours = (minutes: number) => `${Math.round((minutes / 60) * 10) / 10} ساعة`;
+  const checkIn = w.hdoorTo - w.hdoorFrom;
+  const inRange = `${shift.hdoor_from_time} – ${shift.hdoor_to_time}`;
+  const outRange = `${shift.ensraf_from_time} – ${shift.ensraf_to_time}`;
+  if (checkIn > 12 * 60) {
+    errors.push(`فترة الحضور ${inRange} طولها ${hours(checkIn)}؛ راجع AM/PM في نهاية الحضور`);
+  } else if (checkIn > 8 * 60) {
+    warnings.push(`فترة الحضور ${inRange} طولها ${hours(checkIn)}؛ أي حضور متأخر جداً هيتحسب على الوردية دي`);
+  }
+  if (w.hdoorKhasm < w.hdoorFrom || w.hdoorKhasm > w.hdoorTo) {
+    errors.push(`بداية الخصم ${shift.hdoor_khasm_from} خارج فترة الحضور ${inRange}`);
+  }
+  const checkOut = w.ensrafTo - w.ensrafFrom;
+  if (checkOut > 12 * 60) {
+    warnings.push(`فترة الانصراف ${outRange} طولها ${hours(checkOut)}؛ راجع AM/PM في نهاية الانصراف`);
+  }
+  if (w.ensrafKhasm < w.ensrafFrom || w.ensrafKhasm > w.ensrafTo) {
+    errors.push(`احتساب الإضافي ${shift.ensraf_khasm_from} خارج فترة الانصراف ${outRange}`);
+  }
+  return { errors, warnings };
 }
 
 function assertShiftTimingIsComplete(shift: {
@@ -1361,9 +1402,12 @@ export class AttendanceService {
     ensraf_to_time: string | null;
     ensraf_khasm_from: string | null;
   }) {
+    const problems = shiftTimingProblems(r);
     return {
       id: r.id,
       title: r.title ?? undefined,
+      // Shown on the shift list so wrong settings (e.g. AM/PM) are fixed before they cause lateness.
+      warnings: [...problems.errors, ...problems.warnings],
       hdoorFromTime: r.hdoor_from_time ?? undefined,
       hdoorToTime: r.hdoor_to_time ?? undefined,
       hdoorKhasmFrom: r.hdoor_khasm_from ?? undefined,
@@ -1385,13 +1429,7 @@ export class AttendanceService {
   }
 
   private shiftData(dto: UpsertShiftDto) {
-    if (dto.hdoorFromTime && dto.hdoorToTime) {
-      assertTimeOrder(dto.hdoorFromTime, dto.hdoorToTime, 'نافذة الحضور: البداية يجب أن تسبق النهاية');
-    }
-    if (dto.ensrafFromTime && dto.ensrafToTime) {
-      assertTimeOrder(dto.ensrafFromTime, dto.ensrafToTime, 'نافذة الانصراف: البداية يجب أن تسبق النهاية');
-    }
-    return {
+    const data = {
       title: dto.title?.trim() || 'الدوام الصباحي',
       hdoor_from_time: this.toLegacyTime(dto.hdoorFromTime, '08:00 AM'),
       hdoor_to_time: this.toLegacyTime(dto.hdoorToTime, '09:00 AM'),
@@ -1400,6 +1438,10 @@ export class AttendanceService {
       ensraf_to_time: this.toLegacyTime(dto.ensrafToTime, '06:00 PM'),
       ensraf_khasm_from: this.toLegacyTime(dto.ensrafKhasmFrom, '12:40 PM'),
     };
+    // Night shifts may cross midnight; only settings that would misplace punches are refused.
+    const { errors } = shiftTimingProblems(data);
+    if (errors.length) throw new BadRequestException(errors.join(' • '));
+    return data;
   }
 
   async createShift(dto: UpsertShiftDto) {
