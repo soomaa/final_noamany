@@ -509,3 +509,18 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - الباقات النشطة دلوقتي: 370. الاشتراكات المباعة والتجديد والتقارير ماتأثروش.
 - النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/club-subscription-types-before-stopped-plans-20261102-174423.sql.gz
 - الرجوع: gunzip -c <النسخة دي> | mysql noamanycenter_nest
+
+آخر تثبيت مؤكد: 20261102-r2 (الـ HR وتطبيق الموبايل)، 2 نوفمبر 2026
+------------------------------------------------------------------
+- المحتوى: 5 ملفات backend (attendance.service + 4 في mobile) + واجهة الإدارة (إعدادات الشيفتات). مافيش تغيير في قاعدة البيانات.
+  - إعدادات الشيفتات بترفض غلطة صباحًا/مساءً وبتنبّه على الفترات الطويلة.
+  - مسارات تطبيق الـ HR الجديد اللي كانت ناقصة: حضور النهارده، تفاصيل الإجازة، تفاصيل الإذن.
+  - سجلات التطبيق بتوقيت القاهرة، وزيارات المواقع في hr_locations_visits.
+- اتبنى من c725828، والأساس 352b02a + fe24a25 (= 02-r1)، وبناء الأساس طابق system.html بتاع 02-r1 بالبايت.
+- أدوات الرفع: release-tools/daily-update-20261102-r2-hr. اسم الباكدج على السيرفر noamany-daily-update-20261102-r2
+  (zip sha256 5ec75913…). فولدر release-tools/daily-update-20261102-r2 بتاع أكواد الخصم ماتثبتش باسم 02-r2.
+- اتأكد على السيرفر: UPDATE VERIFIED: 2026-11-02-r2، والعملية اتغيرت من 476604 لـ 595215.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r2-update-backup.x1g7TU
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261102-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r2-update-backup.x1g7TU
+- المرجع للرفع اللي جاي: system.html الحالي = 45ebded85fbd89cc34ace238afe9b5b83e6d016827c67363e50f1df17b72b6c7.
