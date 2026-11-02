@@ -131,6 +131,9 @@ export function SalesNewReceiptPage() {
   const [branchId, setBranchId] = useState("");
   const [search, setSearch] = useState("");
   const [categoryId, setCategoryId] = useState("");
+  // The category list shown ("all" or one category). The invoice category (categoryId) comes from
+  // the first item added, or from a category picked while the cart is empty.
+  const [browseCategoryId, setBrowseCategoryId] = useState("all");
   const [gender, setGender] = useState<"male" | "female" | "">("");
   const [saleType, setSaleType] = useState<"customer" | "employee" | "partner" | "drawing">(
     "customer",
@@ -156,6 +159,10 @@ export function SalesNewReceiptPage() {
   const [receiptComment, setReceiptComment] = useState("");
   const [commentOpen, setCommentOpen] = useState(false);
   const [cart, setCart] = useState<CartLine[]>([]);
+  useEffect(() => {
+    // An emptied cart browsing "all" takes its category from the next item again.
+    if (!cart.length && browseCategoryId === "all") setCategoryId("");
+  }, [cart.length, browseCategoryId]);
   const [highlightedLineKey, setHighlightedLineKey] = useState<string | null>(
     null,
   );
@@ -205,7 +212,7 @@ export function SalesNewReceiptPage() {
     fetchNextPage: fetchMoreProducts,
     isFetchingNextPage: loadingMoreProducts,
   } = useInfiniteQuery({
-    queryKey: ["cafe-products", "pos", search, categoryId, effectiveBranchId, warehouseId],
+    queryKey: ["cafe-products", "pos", search, browseCategoryId, effectiveBranchId, warehouseId],
     initialPageParam: 1,
     queryFn: async ({ pageParam }) => {
       const { data: r } = await api.get<PaginatedResponse<CafeProductListItem>>(
@@ -215,7 +222,7 @@ export function SalesNewReceiptPage() {
             page: pageParam,
             pageSize: 100,
             search: search || undefined,
-            categoryId: categoryId || undefined,
+            categoryId: browseCategoryId === "all" ? undefined : browseCategoryId,
             branchId: effectiveBranchId || undefined,
             warehouseId: warehouseId || undefined,
             sellableOnly: true,
@@ -230,18 +237,18 @@ export function SalesNewReceiptPage() {
         : undefined,
   });
   const products = useMemo(
-    () => {
-      if (!categoryId) return [];
-      return (productPages?.pages ?? [])
+    () =>
+      (productPages?.pages ?? [])
         .flatMap((page) => page.data)
         .filter(
           (product) =>
             product.isActive &&
             product.productType !== "internal" &&
-            product.categoryId === Number(categoryId),
-        );
-    },
-    [productPages, categoryId],
+            // An invoice needs a category, so items without one are not sellable here.
+            product.categoryId != null &&
+            (browseCategoryId === "all" || product.categoryId === Number(browseCategoryId)),
+        ),
+    [productPages, browseCategoryId],
   );
 
   const { data: partners } = useQuery({
@@ -554,13 +561,23 @@ export function SalesNewReceiptPage() {
     p: CafeProductListItem,
     variant?: CafeProductVariant,
   ) => {
-    if (!categoryId) {
-      toast.error(ui("اختر فئة الفاتورة أولًا"));
+    if (p.categoryId == null) {
+      toast.error(ui("المنتج ده مالوش فئة؛ حدد فئته من منتجات الكافيه"));
       return;
     }
-    if (p.categoryId !== Number(categoryId)) {
-      toast.error(ui("لا يمكن إضافة منتج من فئة مختلفة إلى الفاتورة"));
+    // One invoice per category, as in the old bar (عادي and بروتين were separate invoices):
+    // the daily closing counts each invoice as بار or بروتين.
+    if (categoryId && cart.length && p.categoryId !== Number(categoryId)) {
+      const name = (id: number | string) =>
+        categories?.find((c) => String(c.id) === String(id))?.nameAr ?? "";
+      toast.error(
+        `${ui("الفاتورة دي")} ${name(categoryId)}. ${ui("احفظها الأول، وبعدين اعمل فاتورة جديدة لـ")} ${name(p.categoryId)}`,
+      );
       return;
+    }
+    if (!categoryId || !cart.length) {
+      if (String(p.categoryId) !== categoryId) setRecommendedEmployeeId("");
+      setCategoryId(String(p.categoryId));
     }
     if (p.productType === "ready" && (p.currentStock ?? 0) <= 0) {
       toast.error(ui("هذا المنتج نفد من المخزون"));
@@ -954,18 +971,15 @@ export function SalesNewReceiptPage() {
           <div className="grid items-start gap-5 md:grid-cols-[190px_minmax(0,1fr)]">
             <PosCategoryGrid
               categories={categories ?? []}
-              activeCategoryId={categoryId}
+              activeCategoryId={browseCategoryId}
               onSelect={(nextCategoryId) => {
-                if (nextCategoryId === "all") {
-                  toast.error(ui("اختر فئة واحدة للفاتورة"));
-                  return;
+                setBrowseCategoryId(nextCategoryId);
+                // Picking a category with an empty cart makes it the invoice category; with items in
+                // the cart it only changes the list (adding from another category is explained above).
+                if (!cart.length) {
+                  setCategoryId(nextCategoryId === "all" ? "" : nextCategoryId);
+                  setRecommendedEmployeeId('');
                 }
-                if (cart.length && nextCategoryId !== categoryId) {
-                  toast.error(ui("أفرغ السلة قبل تغيير فئة الفاتورة"));
-                  return;
-                }
-                setCategoryId(nextCategoryId);
-                setRecommendedEmployeeId('');
               }}
             />
 
