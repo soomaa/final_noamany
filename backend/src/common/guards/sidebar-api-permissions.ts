@@ -276,6 +276,7 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
   ],
   "ClubDiscountCodesController.memberGrants": [
     "club.discount_codes.member_grants:view",
+    "club.discount_codes.member_search:view",
     "club.discount_codes.member_report:view",
     "club.subscriptions:view",
     "club.subscriptions.list:view",
@@ -286,7 +287,8 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
     "club.discount_codes.member_report:view"
   ],
   "ClubDiscountCodesController.findMemberForGrant": [
-    "club.discount_codes.member_grants:view"
+    "club.discount_codes.member_grants:view",
+    "club.discount_codes.member_search:view"
   ],
   "ClubDiscountCodesController.usageReport": [
     "club.discount_codes.usage_report:view"
@@ -314,6 +316,10 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
   ],
   "ClubDiscountCodesController.grantToMember": [
     "club.discount_codes.member_grants:create"
+  ],
+  "ClubDiscountCodesController.revokeMemberGrant": [
+    "club.discount_codes.member_grants:create",
+    "club.discount_codes.member_grants:delete"
   ],
   "AttendanceController.basmaReport": [
     "attendance.reports:view"

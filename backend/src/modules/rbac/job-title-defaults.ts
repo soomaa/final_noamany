@@ -35,7 +35,8 @@ function normalizeJobTitle(value: string): string {
  */
 function receptionCells(): JobTitlePermissionCell[] {
   return [
-    ...grant(['club.reception', 'club.reception.quick_services'], VIEW_OPERATE),
+    // Quick services are not a reception task (Nada, 2 Nov).
+    ...grant(['club.reception'], VIEW_OPERATE),
     // Members: full desk workflow; edits/deletes are limited to members added today.
     ...grant(['club.members'], ['view', 'create', 'update', 'delete', 'print', 'export']),
     ...grant(['club.members.attendance'], ['view', 'create', 'print']),
@@ -48,12 +49,15 @@ function receptionCells(): JobTitlePermissionCell[] {
     // Discount codes
     ...grant(['club.discount_codes.member_grants'], ['view', 'create']),
     ...grant(['club.discount_codes.captain_codes', 'club.discount_codes.member_search'], ['view']),
-    // Lockers
+    // Lockers: reception does not add locker numbers (club.lockers.new).
     ...grant(['club.lockers.list'], ['view']),
-    ...grant(['club.lockers.new', 'club.lockers.inventory'], ['view', 'create', 'print']),
+    ...grant(['club.lockers.inventory'], ['view', 'create', 'print']),
     ...grant(['club.lockers.inventory_reports'], ['view', 'print']),
     // Financial reports: today only; target is the employee's own, monthly.
-    ...grant(['financial-reports.reports', 'financial-reports.daily_closing', 'financial-reports.target'], ['view', 'print']),
+    ...grant(['financial-reports.daily_closing', 'financial-reports.target'], ['view', 'print']),
+    // Expenses: add one and see today's own-branch expenses (enforced by the expenses service),
+    // not the expense reports.
+    ...grant(['financial-reports.expenses'], ['view', 'create', 'print']),
     // HR: add an employee only.
     ...grant(['employees.new'], ['view', 'create']),
     // App invitations

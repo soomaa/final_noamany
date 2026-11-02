@@ -272,13 +272,19 @@ export class ClubDiscountCodesService {
     } });
   }
 
-  async memberGrants(memberId?: number, user?: JwtUser) {
+  async memberGrants(memberId?: number, user?: JwtUser, options: { currentMonth?: boolean } = {}) {
     // A member's own grants are visible to whoever may serve that member (e.g. reception applying
     // the code). Without a member, each employee sees only the grants they are allowed to see.
     if (memberId && user) await this.assertMemberInScope(user, memberId);
     const visible = memberId ? undefined : await this.employeeFilter(this.viewer(user));
+    // "This month" is the allowance month the grant was issued in, the same month its count uses.
+    const period = options.currentMonth ? grantPeriod() : null;
     const rows = await this.prisma.tbl_emps_members_dis_codes.findMany({
-      where: memberId ? { mem_id_fk: memberId } : visible ? { emp_id_fk: { in: visible } } : undefined,
+      where: {
+        ...(memberId ? { mem_id_fk: memberId } : visible ? { emp_id_fk: { in: visible } } : {}),
+        // Old-system rows may store the month without the leading zero ("1" for January).
+        ...(period ? { year: period.year, month: { in: [...new Set([period.month, String(Number(period.month))])] } } : {}),
+      },
       orderBy: { id: 'desc' },
     });
     const [codeIds, employeeIds, memberIds] = [
@@ -307,6 +313,24 @@ export class ClubDiscountCodesService {
       expiresOn: row.ended_date,
       used: row.approved,
     }));
+  }
+
+  /**
+   * Take back a code given to a member, as in the old system. Only a code not yet used on a
+   * subscription, and only by someone who may see that captain's codes (the captain or
+   * reception who issued it, their branch manager, an admin). The monthly count is freed.
+   */
+  async revokeMemberGrant(id: number, user?: JwtUser) {
+    const grant = await this.prisma.tbl_emps_members_dis_codes.findUnique({ where: { id } });
+    if (!grant) throw new NotFoundException('الكود الممنوح غير موجود');
+    if (grant.emp_id_fk == null) {
+      if (this.viewer(user).kind !== 'all') throw new ForbiddenException('لا يمكنك حذف هذا الكود');
+    } else {
+      await this.assertEmployeeVisible(user, grant.emp_id_fk);
+    }
+    if (grant.approved) throw new BadRequestException('الكود استُخدم في اشتراك ولا يمكن حذفه');
+    await this.prisma.tbl_emps_members_dis_codes.delete({ where: { id } });
+    return { id, deleted: true };
   }
 
   async memberGrantsByMemberCode(memberCode: string, user?: JwtUser) {

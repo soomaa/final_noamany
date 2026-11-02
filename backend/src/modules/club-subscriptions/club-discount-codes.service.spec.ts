@@ -79,3 +79,46 @@ describe('ClubDiscountCodesService.resolveDiscount', () => {
     expect(memberGrantExpiryOn(new Date('2026-10-31T12:00:00.000Z'))).toBe('2026-11-30');
   });
 });
+
+describe('ClubDiscountCodesService member grants (Nada 2 Nov)', () => {
+  const reception = { sub: 9, level: 2, branch: 3, emp_code: 50 } as never;
+  const admin = { sub: 1, level: 1, branch: 0, emp_code: null } as never;
+  const build = (grant: Record<string, unknown> | null) => {
+    const prisma = {
+      tbl_emps_members_dis_codes: {
+        findUnique: jest.fn().mockResolvedValue(grant),
+        findMany: jest.fn().mockResolvedValue([]),
+        delete: jest.fn().mockResolvedValue({}),
+      },
+    };
+    return { prisma, service: new ClubDiscountCodesService(prisma as unknown as PrismaService) };
+  };
+
+  it('lets the issuing employee take back an unused code', async () => {
+    const { prisma, service } = build({ id: 4, emp_id_fk: 50, approved: false });
+    await expect(service.revokeMemberGrant(4, reception)).resolves.toEqual({ id: 4, deleted: true });
+    expect(prisma.tbl_emps_members_dis_codes.delete).toHaveBeenCalledWith({ where: { id: 4 } });
+  });
+
+  it('refuses a code already used on a subscription', async () => {
+    const { prisma, service } = build({ id: 4, emp_id_fk: 50, approved: true });
+    await expect(service.revokeMemberGrant(4, admin)).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.tbl_emps_members_dis_codes.delete).not.toHaveBeenCalled();
+  });
+
+  it("refuses another employee's code", async () => {
+    const { prisma, service } = build({ id: 4, emp_id_fk: 77, approved: false });
+    await expect(service.revokeMemberGrant(4, reception)).rejects.toThrow('لا يمكنك عرض أكواد موظف آخر');
+    expect(prisma.tbl_emps_members_dis_codes.delete).not.toHaveBeenCalled();
+  });
+
+  it('limits the list to the current allowance month on request', async () => {
+    const { prisma, service } = build(null);
+    await service.memberGrants(undefined, reception, { currentMonth: true });
+    const where = prisma.tbl_emps_members_dis_codes.findMany.mock.calls[0][0].where;
+    const now = new Date().toISOString();
+    expect(where.emp_id_fk).toEqual({ in: [50] });
+    expect(where.year).toBe(now.slice(0, 4));
+    expect(where.month.in).toContain(now.slice(5, 7));
+  });
+});

@@ -67,12 +67,17 @@ export class ClubDiscountCodesController {
   }
 
   @Get('member-grants')
-  memberGrants(@CurrentUser() user: JwtUser, @Query('memberId') memberId?: string) {
+  memberGrants(@CurrentUser() user: JwtUser, @Query('memberId') memberId?: string, @Query('period') period?: string) {
     const id = memberId == null || memberId === '' ? undefined : Number(memberId);
     if (id !== undefined && (!Number.isInteger(id) || id < 1)) {
       throw new BadRequestException('رقم العضو غير صالح');
     }
-    return this.service.memberGrants(id, user);
+    return this.service.memberGrants(id, user, { currentMonth: period === 'current' });
+  }
+
+  @Delete('member-grants/:id')
+  revokeMemberGrant(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.revokeMemberGrant(id, user);
   }
 
   @Get('member-grants/search')
