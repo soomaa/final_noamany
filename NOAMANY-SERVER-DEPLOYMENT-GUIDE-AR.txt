@@ -591,3 +591,17 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - أمر الرجوع لهذا التثبيت فقط:
   bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r1-update-backup.7DRgC5
 - المرجع للرفع اللي جاي: system.html = 99dcb78eb9546c68424c1fb1cfebe831c2467a4e421205bec810f014675a22cb.
+
+آخر تثبيت مؤكد: 20261103-r2 (مشتريات الكافيه)، 3 نوفمبر 2026
+------------------------------------------------------------
+- المحتوى: 4 ملفات backend (supplier-invoices.service، procurement-ext.dto، suppliers.service/controller) + واجهة الإدارة.
+  - مشتريات الكافيه بتعرض كل الأصناف (GET /suppliers/:id/products?all=1)، والصنف بيترْبط بالمورد عند الحفظ بدل الرفض.
+  - بحث بالاسم/الكود/الباركود، فلتر بار/بروتين/مستهلكات، الموجود في مخزن الاستلام، وسعر البيع لكل سطر (بيغيّر سعر الكافيه).
+- اتبنى من 97f4aa2 + 0d21edd + e64ccd4 (= 03-r1) + 0ad6093، والأساس طابق system.html بتاع 03-r1 بالبايت.
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r2، والعملية اتغيرت من 1658781 لـ 1693675.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r2-update-backup.CjSiW5
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r2-update-backup.CjSiW5
+- بعده (بيانات): وحدات 439 صنف قديم بقت وحدة بدل 1 (fix-cafe-from-old.sh، نسخة tmp/cafe-before-old-menu-20261103-023026.sql.gz).
+  تنبيه: تشغيل fix-cafe-from-old.sh تاني بيرجّع أسعار وأسماء أصناف القديم لقيم القديم؛ ماتشغلوش بعد ما الكافيه يبدأ يغيّر أسعاره في الجديد.
+- المرجع للرفع اللي جاي: system.html = 1eb7d638920e8d2c90e485fbb123fb3ba264fe03abff96e5f5d82e4596e15e31.
