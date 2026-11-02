@@ -1,3 +1,4 @@
+import { BUSINESS_TIMEZONE, todayIso } from '../../common/utils/legacy-date.util';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { AuthService, LoginResult, StaffLoginResult } from '../auth/auth.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -458,8 +459,9 @@ export class MobileService {
         long: dto.long,
         img_path: dto.img ?? undefined,
         notes: dto.notes ?? undefined,
-        send_date_ar: now.toISOString().slice(0, 10),
-        send_time: now.toTimeString().slice(0, 5),
+        // Cairo date/time, like the legacy system.
+        send_date_ar: todayIso(now),
+        send_time: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZone: BUSINESS_TIMEZONE }),
       },
     });
     return { id: row.id };

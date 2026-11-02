@@ -1,3 +1,4 @@
+import { BUSINESS_TIMEZONE, businessClockParts, todayIso } from '../../common/utils/legacy-date.util';
 import {
   BadRequestException,
   ForbiddenException,
@@ -71,16 +72,19 @@ export class LegacyMobileCompatService {
     return { page, perPage, skip: (page - 1) * perPage };
   }
 
+  /** Cairo date/time like the legacy PHP system (the server itself runs on another timezone). */
   private now() {
     const date = new Date();
+    const cairo = businessClockParts(date);
     return {
-      date: date.toISOString().slice(0, 10),
+      date: todayIso(date),
       time: date.toLocaleTimeString("en-US", {
         hour: "2-digit",
         minute: "2-digit",
+        timeZone: BUSINESS_TIMEZONE,
       }),
-      month: date.getMonth() + 1,
-      year: date.getFullYear(),
+      month: cairo.month,
+      year: cairo.year,
     };
   }
 
@@ -1243,28 +1247,24 @@ export class LegacyMobileCompatService {
     return "";
   }
 
+  // Location visits live in hr_locations_visits, like the legacy Add_location_basma /
+  // get_employee_visits / Delete_zeyara (tbl_emp_zeyarat is the separate site-visit module).
   async addLocation(user: JwtUser, input: LegacyInput) {
     const emp = await this.employee(user);
     const lat = Number(this.text(input, "lat", "site_lat"));
     const long = Number(this.text(input, "long", "lng", "site_long"));
-    const siteId = this.positiveId(input, "site_id");
     if (!Number.isFinite(lat) || !Number.isFinite(long))
       throw new BadRequestException("إحداثيات الموقع غير صحيحة");
     const now = this.now();
-    const row = await this.prisma.tbl_emp_zeyarat.create({
+    const row = await this.prisma.hr_locations_visits.create({
       data: {
-        emp_id: emp.id,
-        emp_code: emp.emp_code ?? emp.id,
-        emp_name: emp.employee,
-        site_lat: lat,
-        site_long: long,
-        date: now.date,
-        zeyara_date: now.date,
-        zeyara_time: now.time,
-        emp_img: this.text(input, "emp_img", "zeyara_img") ?? "",
-        site_id: siteId,
-        site_name: this.text(input, "site_name") ?? null,
+        emp_id_fk: emp.id,
+        lat: String(lat),
+        long: String(long),
+        img_path: this.text(input, "img", "img_path", "emp_img") ?? null,
         notes: this.text(input, "notes") ?? null,
+        send_date_ar: now.date,
+        send_time: now.time,
       },
     });
     return { zeyara_id: String(row.id) };
@@ -1273,8 +1273,8 @@ export class LegacyMobileCompatService {
   async locations(user: JwtUser, input: LegacyInput) {
     const emp = await this.employee(user);
     const { perPage, skip } = this.paging(input);
-    const rows = await this.prisma.tbl_emp_zeyarat.findMany({
-      where: { emp_id: emp.id },
+    const rows = await this.prisma.hr_locations_visits.findMany({
+      where: { emp_id_fk: emp.id },
       orderBy: { id: "desc" },
       skip,
       take: perPage,
@@ -1282,16 +1282,15 @@ export class LegacyMobileCompatService {
     return rows.map((row) => ({
       ...row,
       id: String(row.id),
-      emp_code: String(row.emp_code),
-      site_id: String(row.site_id),
+      emp_name: emp.employee ?? "",
     }));
   }
 
   async deleteLocation(user: JwtUser, input: LegacyInput) {
     const emp = await this.employee(user);
     const id = this.positiveId(input, "zeyara_id", "id");
-    const result = await this.prisma.tbl_emp_zeyarat.deleteMany({
-      where: { id, emp_id: emp.id },
+    const result = await this.prisma.hr_locations_visits.deleteMany({
+      where: { id, emp_id_fk: emp.id },
     });
     if (!result.count) throw new NotFoundException("الزيارة غير موجودة");
     return "";
