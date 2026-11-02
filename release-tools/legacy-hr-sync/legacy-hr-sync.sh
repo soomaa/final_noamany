@@ -21,7 +21,7 @@ OLD="${OLD_DB:-noamanycenter_hr}"
 NEW="${NEW_DB:-noamanycenter_nest}"
 NATIVE_FROM=1000000
 # Tables the mobile app writes to through the old system (besides attendance, leave and permissions).
-APP_TABLES="hr_ta3mem_personal_msg hr_ta3mem_personal_msg_details hr_ta3mem_details hr_enzarat hr_lawyeh_files_seens hr_dialy_reports hr_talabat_orders hr_mobadrat hr_ansheta hr_ansheta_files hr_locations_visits tbl_emp_zeyarat hr_mosalat tbl_notifications hr_alert_items_emps hr_all_agzat_history hr_all_ozonat_history hr_entdab"
+APP_TABLES="hr_ta3mem_personal_msg hr_ta3mem_personal_msg_details hr_ta3mem_details hr_enzarat hr_lawyeh_files_seens hr_dialy_reports hr_talabat_orders hr_mobadrat hr_ansheta hr_ansheta_files hr_locations_visits tbl_emp_zeyarat hr_mosalat tbl_notifications hr_alert_items_emps hr_all_agzat_history hr_all_ozonat_history hr_entdab hr_solaf hr_solaf_files emp_evaluation emp_evaluation_details hr_ta3en_moaqt_evaluation hr_ta3en_moaqt_evaluation_details"
 LOG="${SYNC_LOG:-/home/noamanycenter/final.noamanycenter.com/tmp/legacy-hr-sync.log}"
 
 exec 9>"${SYNC_LOCK:-/run/lock/legacy-hr-sync.lock}"
