@@ -144,7 +144,8 @@ export interface ClubMemberFormData {
   branchId: number;
   name: string;
   phone: string;
-  gender: 'male' | 'female';
+  /** Empty until the receptionist chooses one on a new member. */
+  gender: 'male' | 'female' | '';
   cardNumber: string;
   email?: string;
   dateOfBirth?: string;

@@ -126,7 +126,8 @@ const EMPTY_FORM: ClubMemberFormData = {
   branchId: 0,
   name: '',
   phone: '',
-  gender: 'male',
+  // Like the name, phone and gender start empty: the receptionist chooses them.
+  gender: '',
   cardNumber: '',
   email: '',
   dateOfBirth: '',
@@ -651,6 +652,10 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     }
     if (!/^\d{11}$/.test(normalizeMemberPhone(form.phone))) {
       toast.error(MEMBER_PHONE_FORMAT_ERROR);
+      return;
+    }
+    if (!form.gender) {
+      toast.error('اختر النوع');
       return;
     }
 
@@ -1969,7 +1974,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                     maxLength={11}
                     aria-invalid={!!phoneValidationError}
                     onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-                    placeholder="01012345678"
                   />
                   {checkingPhone && <p className="mt-1 text-xs text-muted-foreground">جارٍ التحقق من الرقم…</p>}
                   {phoneValidationError && <p className="mt-1 flex items-center gap-1 text-xs text-destructive"><AlertTriangle className="size-3.5" />{phoneValidationError}</p>}
@@ -1980,6 +1984,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                     value={form.gender}
                     onChange={(e) => setForm((f) => ({ ...f, gender: e.target.value as 'male' | 'female' }))}
                   >
+                    <option value="" disabled>اختر النوع</option>
                     {genderOptions.map((g) => (
                       <option key={g.value} value={g.value}>{g.label}</option>
                     ))}

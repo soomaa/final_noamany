@@ -131,6 +131,21 @@ function dayWord(count: number, ui: (text: string) => string) {
   return ui('يوم');
 }
 
+/** Whole calendar days from a visit to today, in the browser's (Cairo) time. */
+function daysSince(value: string): number {
+  const visit = new Date(value);
+  const today = new Date();
+  const startOf = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return Math.max(0, Math.round((startOf(today) - startOf(visit)) / 86_400_000));
+}
+
+function lastVisitLabel(value: string, ui: (text: string) => string) {
+  const days = daysSince(value);
+  if (days === 0) return ui('اليوم');
+  if (days === 1) return ui('أمس');
+  return `${ui('منذ')} ${toArabicDigits(days)} ${dayWord(days, ui)}`;
+}
+
 /** Remaining days for active subscriptions, elapsed days for expired ones. */
 function SubscriptionDuration({ sub }: { sub: ClubMemberOverviewSubscription }) {
   const { ui } = useLocale();
@@ -199,6 +214,9 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
   const [code, setCode] = useState('');
   const [committedCode, setCommittedCode] = useState<string | null>(null);
   const [overview, setOverview] = useState<ClubMemberOverview | null>(null);
+  // The visit before this scan. Kept from the first lookup: the auto check-in makes the refreshed
+  // overview report today's entry, which would hide how long the member had been away.
+  const [previousVisit, setPreviousVisit] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
   const [checkingIn, setCheckingIn] = useState(false);
   const [notFound, setNotFound] = useState(false);
@@ -247,6 +265,16 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
       )
     : 0;
   const lastFreeze = overview?.freezes[0] ?? null;
+  // The active subscription that carries each service, for the spa/InBody shortcut under the photo.
+  const activeSubscriptions = overview?.subscriptions.filter((s) => s.status === 'active') ?? [];
+  const spaSubscription =
+    activeSubscriptions.find((s) => s.isLinkedToSpa && (s.spaCount ?? 0) > s.spaUsed) ??
+    activeSubscriptions.find((s) => s.isLinkedToSpa && (s.spaCount ?? 0) > 0) ??
+    null;
+  const inbodySubscription =
+    activeSubscriptions.find((s) => (s.inbodyCount ?? 0) > s.inbodyUsed) ??
+    activeSubscriptions.find((s) => (s.inbodyCount ?? 0) > 0) ??
+    null;
 
   const cancelPendingLookup = () => {
     if (lookupTimerRef.current) clearTimeout(lookupTimerRef.current);
@@ -287,6 +315,7 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
       });
       if (requestId !== lookupRequestRef.current) return;
       setOverview(data);
+      setPreviousVisit(data.member.lastCheckIn ?? null);
       setCommittedCode(value);
       if (autoCheckIn && mode === 'attendance') {
         setCode('');
@@ -442,6 +471,7 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
     cancelPendingLookup();
     setSearching(false);
     setOverview(null);
+    setPreviousVisit(null);
     setCommittedCode(null);
     setNotFound(false);
     setErrorMessage(null);
@@ -577,7 +607,34 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
                   ) : (
                     <StatusBadge status="suspended" label={ui('غير نشط')} />
                   )}
+                  <p className="flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-sm">
+                    <CalendarDays className="size-3.5 text-primary" />
+                    <span className="text-muted-foreground">{ui('آخر حضور')}:</span>
+                    <b className="nums">{previousVisit ? lastVisitLabel(previousVisit, ui) : ui('لم يحضر بعد')}</b>
+                  </p>
                 </div>
+                {(spaSubscription || inbodySubscription) && (
+                  <div className="mt-4 grid grid-cols-2 gap-2">
+                    {([
+                      { type: 'spa' as const, label: ui('السبا'), Icon: Sparkles, sub: spaSubscription, used: spaSubscription?.spaUsed ?? 0, total: spaSubscription?.spaCount ?? null },
+                      { type: 'inbody' as const, label: ui('الإنبودي'), Icon: Activity, sub: inbodySubscription, used: inbodySubscription?.inbodyUsed ?? 0, total: inbodySubscription?.inbodyCount ?? null },
+                    ]).map(({ type, label, Icon, sub, used, total }) => (
+                      <div key={type} className="flex flex-col items-center gap-1.5 rounded-xl border bg-muted/30 p-2.5 text-center">
+                        <span className="flex items-center gap-1 text-xs font-medium text-muted-foreground"><Icon className="size-3.5 text-primary" /> {label}</span>
+                        {sub && total != null ? (
+                          <>
+                            <span className="text-sm">
+                              {ui('المتبقي')} <b className="nums">{toArabicDigits(Math.max(0, total - used))}</b> {ui('من')} <span className="nums">{toArabicDigits(total)}</span>
+                            </span>
+                            {serviceButton(sub, type, used, total)}
+                          </>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">{ui('غير متاح')}</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <dl className="mt-4 space-y-2.5 text-sm">
                   <div className="flex items-center justify-between gap-2">
                     <dt className="text-muted-foreground">{ui('كود العضو')}</dt>

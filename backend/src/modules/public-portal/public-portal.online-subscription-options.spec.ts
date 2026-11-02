@@ -103,7 +103,7 @@ describe('PublicPortalService online subscription requests', () => {
     expect(prisma.$executeRawUnsafe).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO online_subscription_requests'),
       41, 'M-41', 'أحمد علي', 3, 12, 'باقة الجلاء', 1200, 30,
-      '2026-09-27', '2026-10-27', 2, 'أورانج كاش', 'transfer',
+      '2026-09-27', '2026-10-26', 2, 'أورانج كاش', 'transfer',
       'club/online-subscription-proofs/proof.png', 'إثبات دفع أورانج كاش',
     );
   });

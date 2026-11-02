@@ -60,8 +60,8 @@ export class EmployeesController {
   // Static route must precede ':id'.
   @Get('subscription-options')
   @RequiresPermission('club.subscriptions:create', 'club.subscriptions.list:create', 'club.subscriptions.new:create', 'club.lockers:create', 'club.lockers:update')
-  subscriptionOptions(@CurrentUser() user: JwtUser) {
-    return this.employees.subscriptionOptions(user);
+  subscriptionOptions() {
+    return this.employees.subscriptionOptions();
   }
 
   @Get(':id/identity')

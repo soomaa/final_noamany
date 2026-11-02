@@ -10,7 +10,7 @@ import { BranchScopeService } from '../../common/branch-scope/branch-scope.servi
 import { paginated } from '../../common/dto/list-result';
 import { JwtUser } from '../../common/types/jwt-user';
 import { localDateString } from '../club-members/club-member.utils';
-import { addDays, deriveSessionAwareStatus, toNum } from './club-subscription.utils';
+import { addDays, deriveSessionAwareStatus, subscriptionEndDate, toNum } from './club-subscription.utils';
 import { ClubSubscriptionsService } from './club-subscriptions.service';
 import {
   CreatePrivateEnrollmentDto,
@@ -174,8 +174,36 @@ export class PrivateSubscriptionsService {
     return { success: true };
   }
 
+  /**
+   * The captain of a private subscription can be any active employee (the reception picks from the
+   * same list as ordinary subscriptions). Private commissions and attendance hang off club_trainers,
+   * so reuse the employee's linked trainer row, reactivating it if needed, or create one.
+   */
+  private async trainerForEmployee(employeeId: number) {
+    const employee = await this.prisma.employees.findFirst({
+      where: { id: employeeId, employee_type: 1, OR: [{ leave_emp: null }, { leave_emp: 0 }] },
+      select: { id: true, employee: true, phone: true, email: true },
+    });
+    if (!employee) return null;
+    const name = employee.employee?.trim() || `موظف #${employee.id}`;
+    const linked = await this.prisma.club_trainers.findUnique({ where: { employee_id: employee.id } });
+    if (linked) {
+      if (linked.is_active && !linked.is_deleted) return linked;
+      return this.prisma.club_trainers.update({
+        where: { id: linked.id },
+        data: { is_active: true, is_deleted: false, name },
+      });
+    }
+    return this.prisma.club_trainers.create({
+      data: { employee_id: employee.id, name, phone: employee.phone ?? null, email: employee.email ?? null, is_active: true },
+    });
+  }
+
   async createEnrollment(body: CreatePrivateEnrollmentDto, user: JwtUser) {
-    const [member, packageRow, trainer] = await Promise.all([
+    if (!body.trainerId && !body.trainerEmployeeId) {
+      throw new BadRequestException('اختر الكابتن المسؤول عن اشتراك البرايفت');
+    }
+    const [member, packageRow] = await Promise.all([
       this.prisma.club_members.findFirst({
         where: { id: body.memberId, is_deleted: false },
       }),
@@ -183,13 +211,9 @@ export class PrivateSubscriptionsService {
         where: { id: body.packageId, is_active: true },
         include: { branches: true },
       }),
-      this.prisma.club_trainers.findFirst({
-        where: { id: body.trainerId, is_active: true, is_deleted: false },
-      }),
     ]);
     if (!member) throw new NotFoundException('العضو غير موجود');
     if (!packageRow) throw new NotFoundException('باقة البرايفت غير موجودة أو غير مفعلة');
-    if (!trainer) throw new NotFoundException('المدرب غير موجود أو غير مفعل');
 
     const branchId = body.branchId ?? member.branch_id;
     if (!this.branchScope.isBranchAllowed(user, branchId)) {
@@ -198,12 +222,18 @@ export class PrivateSubscriptionsService {
     if (!packageRow.branches.some((branch) => branch.branch_id === branchId)) {
       throw new BadRequestException('الباقة غير متاحة في الفرع المختار');
     }
+    const trainer = body.trainerEmployeeId
+      ? await this.trainerForEmployee(body.trainerEmployeeId)
+      : await this.prisma.club_trainers.findFirst({
+          where: { id: body.trainerId, is_active: true, is_deleted: false },
+        });
+    if (!trainer) throw new NotFoundException('الكابتن غير موجود أو غير نشط');
     const startDate = body.startDate || localDateString();
     this.assertValidDate(startDate, 'تاريخ بداية الاشتراك');
     if (body.registrationDate) {
       this.assertValidDate(body.registrationDate, 'تاريخ التسجيل');
     }
-    const endDate = addDays(startDate, packageRow.duration_days);
+    const endDate = subscriptionEndDate(startDate, packageRow.duration_days);
     const discountValue = body.discountValue ?? 0;
 
     const created = await this.subscriptions.create({

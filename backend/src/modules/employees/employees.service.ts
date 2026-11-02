@@ -290,13 +290,16 @@ export class EmployeesService {
     });
   }
 
-  /** Active employees that may be assigned to ordinary club subscriptions. */
-  async subscriptionOptions(user: JwtUser) {
+  /**
+   * Active employees of every branch that a subscription (or a private captain) may be credited to.
+   * Deliberately not branch-scoped: a sale is often credited to staff of another branch. Name and
+   * code only, so no HR data crosses branches.
+   */
+  async subscriptionOptions() {
     return this.prisma.employees.findMany({
       where: {
         employee_type: 1,
         OR: [{ leave_emp: null }, { leave_emp: 0 }],
-        ...this.pickerBranchWhere(user),
       },
       select: { id: true, employee: true, emp_code: true },
       orderBy: [{ employee: 'asc' }, { emp_code: 'asc' }],

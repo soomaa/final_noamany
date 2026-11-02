@@ -84,8 +84,16 @@ export function addDays(dateStr: string, days: number): string {
 }
 
 /**
+ * Last day of a subscription lasting `days` calendar days. The start day counts, as in the old
+ * system: 30 days from 2 Nov ends on 1 Dec, and a one-day plan ends the day it starts.
+ */
+export function subscriptionEndDate(startDate: string, days: number): string {
+  return addDays(startDate, Math.max(1, days) - 1);
+}
+
+/**
  * End date for a new/updated subscription.
- * Session packages (حصص) default to start + 30 days when type days are unset/zero.
+ * Session packages (حصص) default to 30 days when type days are unset/zero.
  */
 export function resolveSubscriptionEndDate(
   startDate: string,
@@ -94,9 +102,9 @@ export function resolveSubscriptionEndDate(
 ): string {
   if (isLinkedToSessions) {
     const validityDays = days > 0 ? days : DEFAULT_SESSION_PACKAGE_DAYS;
-    return addDays(startDate, validityDays);
+    return subscriptionEndDate(startDate, validityDays);
   }
-  return addDays(startDate, days);
+  return subscriptionEndDate(startDate, days);
 }
 
 /** MySQL UNSIGNED aggregates may return bigint — normalize before arithmetic. */

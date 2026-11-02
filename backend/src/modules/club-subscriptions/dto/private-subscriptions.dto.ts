@@ -66,10 +66,19 @@ export class CreatePrivateEnrollmentDto {
   @Min(1)
   packageId!: number;
 
-  @Transform(({ value }) => Number(value))
+  /** A club_trainers row. Either this or trainerEmployeeId is required. */
+  @IsOptional()
+  @Transform(({ value }) => (value == null || value === '' ? undefined : Number(value)))
   @IsInt()
   @Min(1)
-  trainerId!: number;
+  trainerId?: number;
+
+  /** The captain picked from the employee list; resolved to (or linked as) their club_trainers row. */
+  @IsOptional()
+  @Transform(({ value }) => (value == null || value === '' ? undefined : Number(value)))
+  @IsInt()
+  @Min(1)
+  trainerEmployeeId?: number;
 
   @IsOptional()
   @Transform(({ value }) => (value == null || value === '' ? undefined : Number(value)))

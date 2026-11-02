@@ -496,9 +496,10 @@ export function ClubReceptionPage() {
           setTransferPlanPreviewError(apiError(e));
           setTransferForm((f) => ({
             ...f,
+            // The start day counts, matching the server's plan-transfer end date.
             toEndDate: addDaysLocal(
               f.toStartDate,
-              type.days > 0 ? type.days : type.isLinkedToSessions ? 30 : 0,
+              Math.max(1, type.days > 0 ? type.days : type.isLinkedToSessions ? 30 : 0) - 1,
             ),
             toValue: String(type.price),
           }));

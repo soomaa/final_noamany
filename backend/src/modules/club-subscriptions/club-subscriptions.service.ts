@@ -43,6 +43,7 @@ import {
   resolveClubPayments,
   resolveSessionMatrixPrice,
   resolveSubscriptionEndDate,
+  subscriptionEndDate,
   deriveSessionAwareStatus,
   toClubPaymentMethod,
   toNum,
@@ -265,54 +266,6 @@ export class ClubSubscriptionsService {
   private assertBranchAccess(user: JwtUser | undefined, branchId: number) {
     if (!this.branchScope.isBranchAllowed(user, branchId)) {
       throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
-    }
-  }
-
-  /** Prevent a member from holding the same live package/class entitlement twice. */
-  private async assertNoDuplicateLiveSubscription(
-    data: UpsertClubSubscriptionDto,
-    excludeSubscriptionId?: number,
-  ) {
-    if (!data.memberId) return;
-
-    const identity: Prisma.club_subscriptionsWhereInput | null = data.specialClassTypeId
-      ? { special_class_type_id: data.specialClassTypeId }
-      : data.subscriptionTypeId
-        ? { subscription_type_id: data.subscriptionTypeId }
-        : data.subscriptionType?.trim()
-          ? { subscription_type: data.subscriptionType.trim() }
-          : null;
-    if (!identity) return;
-
-    const existing = await this.prisma.club_subscriptions.findMany({
-      where: {
-        member_id: data.memberId,
-        ...identity,
-        ...(excludeSubscriptionId ? { id: { not: excludeSubscriptionId } } : {}),
-      },
-      select: {
-        status: true,
-        subscription_start_date: true,
-        subscription_end_date: true,
-        is_linked_to_sessions: true,
-        sessions_count: true,
-        sessions_used: true,
-      },
-    });
-
-    const hasLiveDuplicate = existing.some((subscription) => {
-      if (subscription.status === 'frozen') return true;
-      return deriveSessionAwareStatus({
-        startDate: subscription.subscription_start_date,
-        endDate: subscription.subscription_end_date,
-        isLinkedToSessions: subscription.is_linked_to_sessions,
-        sessionsCount: subscription.sessions_count,
-        sessionsUsed: subscription.sessions_used,
-      }) !== 'expired';
-    });
-
-    if (hasLiveDuplicate) {
-      throw new BadRequestException('العضو مشترك بالفعل في هذا الاشتراك');
     }
   }
 
@@ -942,7 +895,7 @@ export class ClubSubscriptionsService {
         subscriptionType: classType.name,
         subscriptionValue: toNum(classType.single_session_price) * sessionsCount,
         subscriptionStartDate: data.startDate,
-        subscriptionEndDate: addDays(data.startDate, validityDays),
+        subscriptionEndDate: subscriptionEndDate(data.startDate, validityDays),
         isSpecial: true,
         isLinkedToSessions: true,
         sessionsCount,
@@ -1067,7 +1020,6 @@ export class ClubSubscriptionsService {
       if (!memberBranch || !(isSystemAdmin(user) || shareClubMemberIdentity(memberBranch.branch_id, data.branchId) || sharesSelectedGroup)) {
         throw new ForbiddenException('لا يمكن إنشاء اشتراك لعضو تابع لفرع آخر');
       }
-      await this.assertNoDuplicateLiveSubscription(data);
     }
 
     const subValue = data.subscriptionValue ?? 0;
@@ -1342,16 +1294,17 @@ export class ClubSubscriptionsService {
         throw new BadRequestException(`عدد الحصص يجب أن يكون من 1 إلى ${maxSessions}`);
       }
       const startChanged = dto.subscriptionStartDate != null && dto.subscriptionStartDate !== existing.subscription_start_date;
+      // The start day counts, so a stored 1-30 Nov subscription is 30 days long.
       const previousValidityDays = Math.max(
         1,
-        daysBetween(existing.subscription_start_date, existing.subscription_end_date),
+        daysBetween(existing.subscription_start_date, existing.subscription_end_date) + 1,
       );
       const validityDays = dto.validityDays ?? previousValidityDays;
       if (!Number.isInteger(validityDays) || validityDays < 1) {
         throw new BadRequestException('مدة صلاحية الاشتراك يجب أن تكون رقمًا صحيحًا أكبر من صفر');
       }
       if (dto.subscriptionEndDate == null && (specialChanged || startChanged || dto.validityDays !== undefined)) {
-        end = addDays(start, validityDays);
+        end = subscriptionEndDate(start, validityDays);
       }
     }
     const selectedTypeId = dto.subscriptionTypeId ?? existing.subscription_type_id;
@@ -1471,20 +1424,6 @@ export class ClubSubscriptionsService {
     if (paid + waived + transferredCredit > netAfterDiscount) {
       throw new BadRequestException('لا يمكن تقليل قيمة الاشتراك عن المبلغ المسدد أو المعفى أو الرصيد المنقول');
     }
-
-    await this.assertNoDuplicateLiveSubscription(
-      {
-        memberId: dto.memberId ?? existing.member_id ?? undefined,
-        specialClassTypeId: specialClassTypeId ?? undefined,
-        subscriptionTypeId: specialClassType
-          ? undefined
-          : dto.subscriptionTypeId ?? existing.subscription_type_id ?? undefined,
-        subscriptionType: specialClassType
-          ? specialClassType.name
-          : dto.subscriptionType ?? existing.subscription_type ?? undefined,
-      },
-      id,
-    );
 
     const row = await this.prisma.club_subscriptions.update({
       where: { id },

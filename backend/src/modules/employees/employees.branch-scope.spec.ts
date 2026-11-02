@@ -42,10 +42,10 @@ describe('EmployeesService branch scoping', () => {
     expect(prisma.employees.findMany.mock.calls[1][0].where.AND).toContainEqual({ branch_id_fk: { in: [4] } });
   });
 
-  it('scopes the subscription and sales-rep pickers', async () => {
+  it('offers every branch in the subscription picker but scopes the sales-rep picker', async () => {
     const { prisma, service } = build();
-    await service.subscriptionOptions(tantaMain);
-    expect(prisma.employees.findMany.mock.calls[0][0].where.branch_id_fk).toEqual({ in: [2, 5, 6] });
+    await service.subscriptionOptions();
+    expect(prisma.employees.findMany.mock.calls[0][0].where.branch_id_fk).toBeUndefined();
     await service.salesReps(tantaMain);
     expect(prisma.employees.findMany.mock.calls[1][0].where.AND).toContainEqual({ branch_id_fk: { in: [2, 5, 6] } });
   });

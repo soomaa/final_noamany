@@ -99,7 +99,7 @@ import { useListQuery } from '@/lib/use-list-query';
 import { cn, toArabicDigits } from '@/lib/utils';
 import type { ClubSubscriptionsView } from '@/lib/club-routes';
 import type { ClubDiscountCode, ClubMemberListItem, ClubPrivatePackage, ClubSubscriptionListItem, ClubSubscriptionStatistics, ClubSubscriptionType } from '@/types/club';
-import type { ClubClassType, ClubTrainerRow } from '@/types/fitness';
+import type { ClubClassType } from '@/types/fitness';
 
 const selectCls = 'flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm';
 
@@ -122,6 +122,11 @@ function addDaysLocal(dateStr: string, days: number): string {
   const mm = String(dt.getMonth() + 1).padStart(2, '0');
   const dd = String(dt.getDate()).padStart(2, '0');
   return `${dt.getFullYear()}-${mm}-${dd}`;
+}
+
+/** Last day of a subscription lasting `days` days; the start day counts, as in the old system. */
+function subscriptionEndLocal(startDate: string, days: number): string {
+  return addDaysLocal(startDate, Math.max(1, days) - 1);
 }
 
 function daysBetweenLocal(startDate: string, endDate: string): number {
@@ -297,10 +302,6 @@ export function ClubSubscriptionsPage({
   const { data: specialClassTypes } = useArrayResource<ClubClassType>('club-class-types');
   const { data: discountCodes = [] } = useArrayResource<ClubDiscountCode>('club-discount-codes');
   const { data: privatePackages = [] } = useArrayResource<ClubPrivatePackage>('club-private-subscriptions/packages');
-  const { data: privateTrainers = [] } = useQuery({
-    queryKey: ['club-trainers', 'private-subscriptions'],
-    queryFn: async () => (await api.get<{ data: ClubTrainerRow[] }>('/club-trainers', { params: { page: 1, pageSize: 200, isActive: true } })).data.data,
-  });
   const [selectedMember, setSelectedMember] = useState<ClubMemberListItem | null>(null);
   const showNewSubButton = !singleView || singleView === 'subs';
   const [receiptFilters, setReceiptFilters] = useState({ branchId: '', memberId: '', startDate: '', endDate: '' });
@@ -471,7 +472,8 @@ export function ClubSubscriptionsPage({
   const { data: subscriptionEmployees = [] } = useQuery({
     queryKey: ['employees', 'subscription-options'],
     queryFn: async () => (await api.get<Array<{ id: number; employee: string | null; emp_code: number | null }>>('/employees/subscription-options')).data,
-    enabled: subscriptionKind === 'package',
+    // The private captain is picked from the same all-branch employee list.
+    enabled: subscriptionKind === 'package' || subscriptionKind === 'private',
   });
   /** Tender rows for the create/edit dialog — one row unless the user splits the payment. */
   const [paymentRows, setPaymentRows] = useState<ClubPaymentSplitRow[]>(singlePaymentRow());
@@ -696,7 +698,7 @@ export function ClubSubscriptionsPage({
       subscriptionValue: String(type.price),
       isLinkedToSessions: !!type.isLinkedToSessions,
       sessionsCount: type.isLinkedToSessions ? String(packageSessions) : '',
-      endDate: addDaysLocal(f.startDate, type.days > 0 ? type.days : type.isLinkedToSessions ? 30 : 0),
+      endDate: subscriptionEndLocal(f.startDate, type.days > 0 ? type.days : type.isLinkedToSessions ? 30 : 0),
     }));
   }, [form.subscriptionTypeId, form.startDate, subTypes]);
 
@@ -721,7 +723,7 @@ export function ClubSubscriptionsPage({
         Number.isInteger(Number(current.sessionsCount)) && Number(current.sessionsCount) > 0
           ? String(Math.min(Number(current.sessionsCount), maxSessions))
           : String(maxSessions),
-      endDate: addDaysLocal(
+      endDate: subscriptionEndLocal(
         current.startDate,
         Number.isInteger(Number(current.validityDays)) && Number(current.validityDays) > 0
           ? Number(current.validityDays)
@@ -739,7 +741,7 @@ export function ClubSubscriptionsPage({
     setForm((current) => ({
       ...current,
       subscriptionValue: String(packageRow.price),
-      endDate: addDaysLocal(current.startDate, packageRow.durationDays),
+      endDate: subscriptionEndLocal(current.startDate, packageRow.durationDays),
       isSpecial: true,
       isLinkedToSessions: packageRow.kind === 'sessions',
       sessionsCount: packageRow.sessionsCount == null ? '' : String(packageRow.sessionsCount),
@@ -905,7 +907,7 @@ export function ClubSubscriptionsPage({
       sessionsCount: row.sessionsCount ? String(row.sessionsCount) : '',
       validityDays:
         row.specialClassTypeId || row.isSpecial
-          ? String(daysBetweenLocal(row.subscriptionStartDate, row.subscriptionEndDate))
+          ? String(daysBetweenLocal(row.subscriptionStartDate, row.subscriptionEndDate) + 1)
           : '',
     });
     setEditRemainingAmount(row.remainingAmount);
@@ -1021,7 +1023,7 @@ export function ClubSubscriptionsPage({
         await api.post('/club-private-subscriptions/enrollments', {
           memberId: Number(form.memberId),
           packageId: Number(form.privatePackageId),
-          trainerId: Number(form.privateTrainerId),
+          trainerEmployeeId: Number(form.privateTrainerId),
           branchId: effectiveBranchId,
           startDate: form.startDate,
           discountType: form.privateDiscountType.trim() || undefined,
@@ -1092,7 +1094,7 @@ export function ClubSubscriptionsPage({
           ...common,
           ...(datesChanged && selectedType
             ? {
-                subscriptionEndDate: addDaysLocal(
+                subscriptionEndDate: subscriptionEndLocal(
                   form.startDate,
                   selectedType.days > 0 ? selectedType.days : selectedType.isLinkedToSessions ? 30 : 0,
                 ),
@@ -2156,12 +2158,12 @@ export function ClubSubscriptionsPage({
                     <Combobox
                       value={form.privateTrainerId}
                       onValueChange={(val) => setForm((current) => ({ ...current, privateTrainerId: val }))}
-                      options={privateTrainers.map((trainer) => ({
-                        value: String(trainer.id),
-                        label: trainer.name + (trainer.specialization ? ` — ${trainer.specialization}` : ''),
+                      options={subscriptionEmployees.map((employee) => ({
+                        value: String(employee.id),
+                        label: `${employee.employee ?? `موظف #${employee.id}`}${employee.emp_code ? ` (${employee.emp_code})` : ''}`,
                       }))}
                       placeholder="اختر الكابتن"
-                      searchPlaceholder="ابحث باسم الكابتن أو التخصص…"
+                      searchPlaceholder="ابحث باسم الكابتن أو الكود…"
                       emptyText="لا يوجد كابتن مطابق"
                       className="h-11"
                     />
@@ -2199,7 +2201,7 @@ export function ClubSubscriptionsPage({
                             ? String(Math.max(1, selectedClass.subscriptionSessionsCount ?? 1))
                             : '',
                           validityDays: selectedClass ? '30' : '',
-                          endDate: selectedClass ? addDaysLocal(current.startDate, 30) : '',
+                          endDate: selectedClass ? subscriptionEndLocal(current.startDate, 30) : '',
                           subscriptionValue: selectedClass
                             ? String(
                                 selectedClass.singleSessionPrice *
@@ -2258,7 +2260,7 @@ export function ClubSubscriptionsPage({
                               validityDays,
                               endDate:
                                 Number.isInteger(parsedDays) && parsedDays > 0
-                                  ? addDaysLocal(current.startDate, parsedDays)
+                                  ? subscriptionEndLocal(current.startDate, parsedDays)
                                   : '',
                             }));
                           }}
@@ -2484,15 +2486,8 @@ export function ClubSubscriptionsPage({
                         : form.endDate
                           ? [{
                               label: ct('packages.subscriptionDays'),
-                              value: toArabicDigits(
-                                Math.max(
-                                  0,
-                                  Math.round(
-                                    (new Date(form.endDate).getTime() - new Date(form.startDate).getTime()) /
-                                      86400000,
-                                  ),
-                                ),
-                              ),
+                              // The start day counts: 1-30 Nov is 30 days.
+                              value: toArabicDigits(daysBetweenLocal(form.startDate, form.endDate) + 1),
                             }]
                           : []),
                       { label: ct('subscriptions.startDate'), value: form.startDate || '—' },
