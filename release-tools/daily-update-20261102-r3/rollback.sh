@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Undo the 2026-11-02-r2 install using the backup folder that install.sh printed.
-#   bash noamany-daily-update-20261102-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r2-update-backup.XXXXXX
+# Undo the 2026-11-02-r3 install using the backup folder that install.sh printed.
+#   bash noamany-daily-update-20261102-r3/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r3-update-backup.XXXXXX
 # Restores the changed backend files and public/system.html, removes the new backend files,
 # keeps the added assets (open browser tabs may still load them), restarts and health-checks.
 # Refuses to overwrite files that changed after this install unless FORCE=1.
 set -Eeuo pipefail
 
-REL=20261102-r2
+REL=20261102-r3
 PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="${APP:-$(dirname "$PKG")}"
 SITE="${SITE:-https://final.noamanycenter.com}"
@@ -39,7 +39,7 @@ three_health() {
 
 [ -n "$BACKUP" ] || die "usage: rollback.sh <backup folder printed by install.sh>"
 BACKUP="$(cd "$BACKUP" 2>/dev/null && pwd)" || die "backup folder not found"
-case "$BACKUP" in "$APP"/tmp/nov02-r2-update-backup.*) ;; *) die "not a 02-r2 backup inside $APP/tmp: $BACKUP" ;; esac
+case "$BACKUP" in "$APP"/tmp/nov02-r3-update-backup.*) ;; *) die "not a 02-r3 backup inside $APP/tmp: $BACKUP" ;; esac
 [ "$(cat "$BACKUP/RELEASE" 2>/dev/null)" = "$REL" ] || die "backup belongs to another release"
 
 say "=== rollback $REL from $BACKUP ==="
@@ -53,7 +53,7 @@ if [ "${FORCE:-0}" != 1 ]; then
     cur=$(sha "$rel")
     [ "$cur" = "$s" ] && continue
     [ -f "$PKG/payload/$rel" ] && [ "$cur" = "$(sha "$PKG/payload/$rel")" ] && continue
-    die "$rel changed after the install (not 02-r2, not the backup). Check before forcing with FORCE=1."
+    die "$rel changed after the install (not 02-r3, not the backup). Check before forcing with FORCE=1."
   done < "$BACKUP/MANIFEST"
 fi
 
@@ -81,5 +81,5 @@ done
 three_health || die "API not healthy after rollback restart"
 got=$(curl -fsS -m 20 -H 'Accept: text/html' -H 'Cache-Control: no-cache' "$SITE/login" | sha256sum | cut -d' ' -f1)
 [ "$got" = "$(sha public/system.html)" ] || die "/login does not serve the restored management HTML"
-say "ROLLBACK VERIFIED: $REL removed; 02-r1 files restored; API healthy."
+say "ROLLBACK VERIFIED: $REL removed; 02-r2 files restored; API healthy."
 [ "$AUTO" = --auto ] || true

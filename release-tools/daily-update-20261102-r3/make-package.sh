@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# Assembles noamany-daily-update-20261102-r2.zip.
+# Assembles noamany-daily-update-20261102-r3.zip.
 #   bash make-package.sh <backend-dist-base> <backend-dist-new> <frontend-dist-base> <frontend-dist-new> <out-dir>
 # Inputs, built beforehand with the same toolchain:
-#   backend-dist-base  `tsc -p backend/tsconfig.build.json --outDir …` of 579fc7c (= production 02-r1:
-#                      352b02a + fe24a25), with the git-ignored modules/uploads copied in
-#   backend-dist-new   the same command on 579fc7c + 97f4aa2 (discount codes, reception) cherry-picked
-#   frontend-dist-base `vite build` of 579fc7c after `npm ci`; its index.html equals production
-#                      public/system.html (13871525…)
-#   frontend-dist-new  same `npm ci` node_modules, built on 579fc7c + 97f4aa2
+#   backend-dist-base  `tsc -p backend/tsconfig.build.json --outDir …` of c725828 (= production 02-r2,
+#                      installed by the HR session), with the git-ignored modules/uploads copied in
+#   backend-dist-new   the same command on 97f4aa2 (discount codes, reception; its parent is c725828)
+#   frontend-dist-base `vite build` of c725828 after `npm ci`; its index.html equals production
+#                      public/system.html (45ebded8…)
+#   frontend-dist-new  same `npm ci` node_modules, built on 97f4aa2
 # The changed backend list is every compiled .js whose normalized content differs between the two
 # builds; modules/uploads is excluded (git-ignored locally, untouched by this release).
 set -euo pipefail
-REL=20261102-r2
+REL=20261102-r3
 NAME="noamany-daily-update-$REL"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BE_BASE="$1"; BE_NEW="$2"; FE_BASE="$3"; FE_NEW="$4"; OUT="$5"
@@ -46,7 +46,7 @@ done
 grep -q revokeMemberGrant "$P/payload/dist/modules/club-subscriptions/club-discount-codes.service.js"
 
 echo 63f965a823d6595447aed5d8d4a8a563ab6d68dd9cbda6e7250cb3afcb81ef54 > "$P/expected/schema.sha256"
-echo 1387152528753fb4bd359c018d7cadcdd8f1f0ee8508ce54cdafd9a34016a17f > "$P/expected/system.html.sha256"
+echo 45ebded85fbd89cc34ace238afe9b5b83e6d016827c67363e50f1df17b72b6c7 > "$P/expected/system.html.sha256"
 [ "$(shasum -a 256 "$FE_BASE/index.html" | cut -d' ' -f1)" = "$(cat "$P/expected/system.html.sha256")" ] \
   || { echo "frontend base build does not match production"; exit 1; }
 

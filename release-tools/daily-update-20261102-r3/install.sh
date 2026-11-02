@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# Noamany daily update 2026-11-02-r2 installer.
+# Noamany daily update 2026-11-02-r3 installer.
 #   cd /home/noamanycenter/final.noamanycenter.com
-#   unzip -o noamany-daily-update-20261102-r2.zip
-#   bash noamany-daily-update-20261102-r2/install.sh
+#   unzip -o noamany-daily-update-20261102-r3.zip
+#   bash noamany-daily-update-20261102-r3/install.sh
 # Contents: Nada's 2 Nov evening notes — discount codes for members redesigned (this month only,
 # member name and captain in the list, delete an unused code), code search shows only codes
 # still usable this month, reception starter permissions. Four backend files plus the
-# management UI, on top of 02-r1. No database, Prisma schema, main.js or app.module.js changes.
+# management UI, on top of 02-r2 (the HR session's shift/mobile release). No database, Prisma schema, main.js or app.module.js changes.
 set -Eeuo pipefail
 
-REL=20261102-r2
+REL=20261102-r3
 PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="${APP:-$(dirname "$PKG")}"
 SITE="${SITE:-https://final.noamanycenter.com}"
@@ -85,15 +85,15 @@ fi
 OWNER=$(owner_of dist/main.js)
 say "file owner: $OWNER"
 [ "$(sha prisma/schema.prisma)" = "$(cat "$PKG/expected/schema.sha256")" ] || die "prisma/schema.prisma differs from the reviewed schema"
-[ "$(sha public/system.html)" = "$(cat "$PKG/expected/system.html.sha256")" ] || die "public/system.html differs from 02-r1 (someone changed the UI since)"
+[ "$(sha public/system.html)" = "$(cat "$PKG/expected/system.html.sha256")" ] || die "public/system.html differs from 02-r2 (someone changed the UI since)"
 while read -r rel exp; do
   [ -f "dist/$rel" ] || die "missing dist/$rel"
-  [ "$(norm "dist/$rel")" = "$exp" ] || die "dist/$rel differs from the 02-r1 baseline"
+  [ "$(norm "dist/$rel")" = "$exp" ] || die "dist/$rel differs from the 02-r2 baseline"
 done < "$PKG/expected/backend-baseline.txt"
 while read -r rel; do
   [ ! -e "dist/$rel" ] || die "dist/$rel already exists (unexpected)"
 done < "$PKG/expected/backend-new.txt"
-say "OK: schema, management HTML and $(wc -l < "$PKG/expected/backend-baseline.txt" | tr -d ' ') backend files match the 02-r1 baseline"
+say "OK: schema, management HTML and $(wc -l < "$PKG/expected/backend-baseline.txt" | tr -d ' ') backend files match the 02-r2 baseline"
 
 CONFLICT=0
 while read -r rel; do
@@ -110,7 +110,7 @@ three_health || die "API is not healthy before the update"
 say "OK: API healthy before the update"
 
 say "--- 4) staged backend check (live dist is not touched)"
-STAGE=$(mktemp -d "$APP/tmp/nov02-r2-stage.XXXXXX")
+STAGE=$(mktemp -d "$APP/tmp/nov02-r3-stage.XXXXXX")
 cp -a dist "$STAGE/dist"
 (cd "$PKG/payload" && find dist -type f) | while read -r f; do cp "$PKG/payload/$f" "$STAGE/$f"; done
 CHANGED=$(cut -d' ' -f1 "$PKG/expected/backend-baseline.txt"; cat "$PKG/expected/backend-new.txt")
@@ -131,7 +131,7 @@ tail -1 "$STAGE/new-check.log"
 rm -rf "$STAGE"
 
 say "--- 5) backup"
-BACKUP=$(mktemp -d "$APP/tmp/nov02-r2-update-backup.XXXXXX")
+BACKUP=$(mktemp -d "$APP/tmp/nov02-r3-update-backup.XXXXXX")
 mkdir -p "$BACKUP/files"
 : > "$BACKUP/MANIFEST"
 backup_file() {
@@ -159,7 +159,7 @@ auto_rollback() {
   trap - ERR
   say "!! failure after changes started — restoring the backup automatically"
   if bash "$PKG/rollback.sh" "$BACKUP" --auto; then
-    say "ROLLBACK DONE: the server is back on 02-r1. Send this log."
+    say "ROLLBACK DONE: the server is back on 02-r2. Send this log."
   else
     say "!! automatic rollback did not finish. Run: $UNDO"
   fi
@@ -223,6 +223,6 @@ say "OK: /login and two admin routes serve the new HTML, $ENTRY 200, manifest 20
 
 trap - ERR
 say
-say "UPDATE VERIFIED: 2026-11-02-r2; backend and management UI updated; API healthy."
+say "UPDATE VERIFIED: 2026-11-02-r3; backend and management UI updated; API healthy."
 say "backup: $BACKUP"
 say "undo (this install only): $UNDO"
