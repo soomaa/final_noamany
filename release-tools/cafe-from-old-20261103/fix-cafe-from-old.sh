@@ -6,9 +6,12 @@
 #
 # The 2 Aug import copied the items (cafe_products LEG-CAFE-<old id> + inv_products L<old id>-<code>)
 # but no categories, and the old menu changed after it. This:
-# 1) creates the old menu groups as café categories (store_item rows 1-5: مشروبات، مأكولات، البروتين،
-#    اكسسورات، مستهلكات), reusing بروتين and مستهلكات that staff already made in the new system;
-# 2) puts every imported item in its old group (store_item.id_from);
+# 1) puts every imported item in the café category of its old classification (store_item.sanf_type_gym:
+#    7 عادى -> بار, 8 بروتين -> بروتين, 9 مستهلكات -> مستهلكات). These are the categories the new café
+#    uses: the daily closing counts بار as normal and بروتين as protein sales, and a café invoice only
+#    takes items of its chosen category. (The old menu groups مشروبات/مأكولات/… are display groups only;
+#    a first run on 3 Nov used them, so this also hides those three categories again once empty.)
+# 2) creates any of the three categories that is missing;
 # 3) sets the sale price to the old system's current price (customer_price_sale), never to 0;
 # 4) adds the items created in the old system after the import, in the same format;
 # 5) copies names renamed in the old system since, and hides items the old system retired by renaming
@@ -22,8 +25,10 @@ APP="${APP:-/home/noamanycenter/final.noamanycenter.com}"
 q() { mysql --batch --skip-column-names -e "$1"; }
 
 # Old group (store_item.id_from) -> new category name_ar / name_en.
-GROUP_NAME="CASE o.id_from WHEN 1 THEN 'مشروبات' WHEN 2 THEN 'مأكولات' WHEN 3 THEN 'بروتين' WHEN 4 THEN 'اكسسورات' WHEN 5 THEN 'مستهلكات' END"
-CATS="('مشروبات','Drinks',1),('مأكولات','Food',2),('بروتين','Protein',3),('اكسسورات','Accessories',4),('مستهلكات','Consumables',5)"
+GROUP_NAME="CASE o.sanf_type_gym WHEN 7 THEN 'بار' WHEN 8 THEN 'بروتين' WHEN 9 THEN 'مستهلكات' END"
+CATS="('بار','normal',1),('بروتين','proteen',2),('مستهلكات','mostahlkat',3)"
+# Categories made by the first run on 3 Nov (old menu groups), hidden again when no item uses them.
+FIRST_RUN_CATS="'مشروبات','مأكولات','اكسسورات'"
 
 read -r -d '' PREP <<SQL || true
 SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci;
@@ -32,7 +37,7 @@ CREATE TEMPORARY TABLE cafe_old AS
   SELECT o.id AS old_id, o.sanf_code, TRIM(o.name) AS name, o.customer_price_sale AS price, o.unit,
          o.sanf_type, o.sanf_type_gym, $GROUP_NAME AS cat_name,
          CONCAT('LEG-CAFE-', o.id) AS cafe_code, CONCAT('L', o.id, '-', o.sanf_code) AS inv_code
-  FROM \`$O\`.store_item o WHERE o.id_from IN (1,2,3,4,5);
+  FROM \`$O\`.store_item o WHERE o.id_from IN (1,2,3,4,5) AND o.sanf_type_gym IN (7,8,9);
 DROP TEMPORARY TABLE IF EXISTS cafe_cats;
 CREATE TEMPORARY TABLE cafe_cats (name_ar VARCHAR(100), name_en VARCHAR(100), sort_order INT) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 INSERT INTO cafe_cats VALUES $CATS;
@@ -53,6 +58,7 @@ SELECT 'names to update', COUNT(*) FROM cafe_old m JOIN \`$N\`.cafe_products n O
   WHERE m.name <> '' AND m.name NOT REGEXP '^0+$' AND BINARY n.name <> BINARY m.name;
 SELECT 'retired in old (name 000), to hide', COUNT(*) FROM cafe_old m JOIN \`$N\`.cafe_products n ON n.product_code = m.cafe_code
   WHERE m.name REGEXP '^0+$' AND n.is_active = 1;
+SELECT 'first-run categories to hide', COUNT(*) FROM \`$N\`.inv_categories c WHERE c.name_ar IN ($FIRST_RUN_CATS) AND c.is_deleted = 0;
 SELECT 'old price 0 (price kept)', COUNT(*) FROM cafe_old m JOIN \`$N\`.cafe_products n ON n.product_code = m.cafe_code
   WHERE IFNULL(m.price, 0) = 0;
 SQL
@@ -119,6 +125,11 @@ UPDATE \`$N\`.inv_products i JOIN \`$N\`.cafe_products n ON n.inventory_product_
   SET i.name_ar = n.name WHERE BINARY i.name_ar <> BINARY n.name;
 UPDATE \`$N\`.cafe_products n JOIN cafe_old m ON n.product_code = m.cafe_code
   SET n.is_active = 0 WHERE m.name REGEXP '^0+$';
+UPDATE \`$N\`.inv_categories c SET c.is_active = 0, c.is_deleted = 1, c.updated_at = NOW(3)
+  WHERE c.name_ar IN ($FIRST_RUN_CATS) AND c.is_deleted = 0
+    AND NOT EXISTS (SELECT 1 FROM \`$N\`.cafe_products n WHERE n.category_id = c.id)
+    AND NOT EXISTS (SELECT 1 FROM \`$N\`.inv_products i WHERE i.category_id = c.id)
+    AND NOT EXISTS (SELECT 1 FROM \`$N\`.sales_quick_sales q WHERE q.cafe_category_id = c.id);
 COMMIT;
 SQL
 echo "=== after (all should be 0 except old price 0)"
