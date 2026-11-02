@@ -13,7 +13,8 @@
 # Two translations are applied on the way (same as fix-hr-branches-and-ids.sh):
 # - branch numbers: the old system numbers places by tbl_sites (1 = البر الشرقي, 2 = الجلاء,
 #   3 = طنطا, 0 = none); the new branches are 2 = طنطا, 3 = البر الشرقي, 4 = الجلاء;
-# - employee ids: people added separately in both systems keep the id the new system uses.
+# - employee ids: people added separately in both systems keep the id the new system uses;
+# - user ids: old accounts 369-402 clash with new accounts; see fix-hr-users.sh for the mapping.
 set -euo pipefail
 
 OLD="${OLD_DB:-noamanycenter_hr}"
@@ -30,6 +31,8 @@ site_to_branch() { echo "CASE $1 WHEN 0 THEN 3 WHEN 1 THEN 3 WHEN 2 THEN 4 WHEN 
 site_to_branch_keep0() { echo "CASE $1 WHEN 1 THEN 3 WHEN 2 THEN 4 WHEN 3 THEN 2 ELSE $1 END"; }
 site_to_branch_text() { echo "CASE TRIM($1) WHEN '1' THEN '3' WHEN '2' THEN '4' WHEN '3' THEN '2' ELSE $1 END"; }
 # old employee id -> id the new system uses for the same person
+# old user id -> account in the new system (fix-hr-users.sh added the rest at 1000000 + id)
+user_id() { echo "CASE $1 WHEN 375 THEN 374 WHEN 377 THEN 376 WHEN 391 THEN 379 WHEN 392 THEN 380 WHEN 393 THEN 381 WHEN 394 THEN 382 WHEN 395 THEN 383 WHEN 396 THEN 384 WHEN 397 THEN 385 WHEN 398 THEN 386 ELSE CASE WHEN $1 IN (369,370,371,372,373,374,376,378,379,380,381,382,383,384,385,386,387,388) THEN $1 + 1000000 ELSE $1 END END"; }
 emp_id() { echo "CASE $1 WHEN 182 THEN 2602 WHEN 183 THEN 2603 WHEN 184 THEN 2604 WHEN 185 THEN 2605 WHEN 186 THEN 2606 WHEN 187 THEN 2607 WHEN 188 THEN 2608 WHEN 189 THEN 2609 WHEN 193 THEN 192 ELSE $1 END"; }
 
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*" >> "$LOG"; }
@@ -87,22 +90,27 @@ add() { summary="$summary $1=$2"; }
 add hdoor "$(upsert tbl_hdoor_emps hodoor_id \
   "o.member_code <=> n.member_code AND BINARY o.action_date <=> BINARY n.action_date" \
   "n.hodoor_id IS NULL OR o.action_date >= DATE_FORMAT(CURDATE() - INTERVAL 40 DAY, '%Y-%m-%d')" \
-  "branch_id_fk=$(site_to_branch o.branch_id_fk)" "member_id=$(emp_id o.member_id)")"
+  "branch_id_fk=$(site_to_branch o.branch_id_fk)" "member_id=$(emp_id o.member_id)" \
+  "hdoor_user_id=$(user_id o.hdoor_user_id)" "ensraf_user_id=$(user_id o.ensraf_user_id)")"
 # Punch history is append-only.
 add history "$(upsert tbl_hdoor_emps_history hodoor_id \
   "o.member_code <=> n.member_code" "n.hodoor_id IS NULL" "member_id=$(emp_id o.member_id)")"
 # Small tables: full copy every run (status changes, approvals, edits), deletions mirrored.
-add agzat "$(upsert hr_all_agzat_orders id "o.emp_code_fk <=> n.emp_code_fk" "1" "emp_id_fk=$(emp_id o.emp_id_fk)")"
+add agzat "$(upsert hr_all_agzat_orders id "o.emp_code_fk <=> n.emp_code_fk" "1" "emp_id_fk=$(emp_id o.emp_id_fk)" \
+  "publisher=$(user_id o.publisher)" "emp_user_id=$(user_id o.emp_user_id)" \
+  "current_from_user_id=$(user_id o.current_from_user_id)" "current_to_user_id=$(user_id o.current_to_user_id)")"
 add agzat_del "$(mirror_deletes hr_all_agzat_orders id)"
-add ozonat "$(upsert hr_all_ozonat_orders id "o.emp_code_fk <=> n.emp_code_fk" "1" "emp_id_fk=$(emp_id o.emp_id_fk)")"
+add ozonat "$(upsert hr_all_ozonat_orders id "o.emp_code_fk <=> n.emp_code_fk" "1" "emp_id_fk=$(emp_id o.emp_id_fk)" \
+  "publisher=$(user_id o.publisher)" "emp_user_id=$(user_id o.emp_user_id)" \
+  "current_from_user_id=$(user_id o.current_from_user_id)" "current_to_user_id=$(user_id o.current_to_user_id)")"
 add ozonat_del "$(mirror_deletes hr_all_ozonat_orders id)"
 add swaps "$(upsert tbl_emps_shef_edafi id \
   "o.emp_code_fk <=> n.emp_code_fk AND BINARY o.sheft_date <=> BINARY n.sheft_date" "1" \
-  "branch_id_fk=$(site_to_branch_keep0 o.branch_id_fk)" "emp_id_fk=$(emp_id o.emp_id_fk)")"
+  "branch_id_fk=$(site_to_branch_keep0 o.branch_id_fk)" "emp_id_fk=$(emp_id o.emp_id_fk)" "publisher=$(user_id o.publisher)")"
 add swaps_del "$(mirror_deletes tbl_emps_shef_edafi id)"
 add hours "$(upsert tbl_emps_hours_edafi id \
   "o.emp_code_fk <=> n.emp_code_fk AND BINARY o.edafa_date <=> BINARY n.edafa_date" "1" \
-  "branch_id_fk=$(site_to_branch_keep0 o.branch_id_fk)" "emp_id_fk=$(emp_id o.emp_id_fk)")"
+  "branch_id_fk=$(site_to_branch_keep0 o.branch_id_fk)" "emp_id_fk=$(emp_id o.emp_id_fk)" "publisher=$(user_id o.publisher)")"
 add hours_del "$(mirror_deletes tbl_emps_hours_edafi id)"
 add offdays "$(upsert hr_emp_agazat_dayes id "o.emp_code_fk <=> n.emp_code_fk" "1")"
 add offdays_del "$(mirror_deletes hr_emp_agazat_dayes id)"
@@ -146,5 +154,17 @@ moved=$(q "UPDATE \`$NEW\`.employees n JOIN \`$OLD\`.employees o
   SET n.branch_id_fk = $(site_to_branch o.branch_id_fk), n.emp_sign = $(site_to_branch_text o.emp_sign);
   SELECT ROW_COUNT();")
 add employee_branches "$moved"
+
+# Accounts created later in the old system (no clash: the new system's own accounts are 1,000,000+).
+# No RBAC role is given, so they have no permissions in the new system until HR grants them.
+user_cols=$(common_cols users)
+user_sel=$(printf '%s' "$user_cols" | sed 's/`\([^`]*\)`/o.`\1`/g')
+user_sel="${user_sel//o.\`emp_code\`/$(emp_id o.emp_code) AS \`emp_code\`}"
+added=$(q "INSERT INTO \`$NEW\`.users ($user_cols) SELECT $user_sel FROM \`$OLD\`.users o
+  WHERE o.user_id < $NATIVE_FROM AND o.user_id > 402
+    AND NOT EXISTS (SELECT 1 FROM \`$NEW\`.users n WHERE n.user_id = o.user_id)
+    AND NOT EXISTS (SELECT 1 FROM \`$NEW\`.users n WHERE n.username = o.username);
+  SELECT ROW_COUNT();")
+add users "$added"
 
 log "OK$summary"
