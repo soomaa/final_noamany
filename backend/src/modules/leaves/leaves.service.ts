@@ -21,7 +21,7 @@ import {
   SuspendStatus,
   suspendToListStatus,
 } from "../../common/utils/suspend-status.util";
-import { todayIso } from "../../common/utils/legacy-date.util";
+import { legacyBusinessIsoDate, todayIso } from "../../common/utils/legacy-date.util";
 import { insertLegacyNotification } from "../../common/utils/legacy-notification.util";
 import { CreateLeaveDto } from "./dto/create-leave.dto";
 import { ActionLeaveDto } from "./dto/action-leave.dto";
@@ -181,7 +181,7 @@ export class LeavesService {
       id: r.id,
       agaza_rkm: r.agaza_rkm,
       requestNumber: r.agaza_rkm ?? undefined,
-      submittedAt: r.agaza_date ?? undefined,
+      submittedAt: legacyBusinessIsoDate(r.agaza_date),
       employeeName: empMap.get(r.emp_id_fk ?? 0) ?? r.manager_name ?? undefined,
       leaveType:
         r.no3_agaza != null

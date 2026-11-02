@@ -77,6 +77,14 @@ export function businessMidnightEpoch(isoDate: string): number {
   return Math.floor((Date.UTC(y, m - 1, d) - offsetMs) / 1000);
 }
 
+/** A legacy stored date as YYYY-MM-DD. Unix seconds (PHP strtotime) are read on the Cairo calendar,
+ *  where toIsoDate's UTC day would be one day early for a Cairo-midnight timestamp. */
+export function legacyBusinessIsoDate(raw: string | null | undefined): string | undefined {
+  const s = raw?.trim();
+  if (s && /^\d{8,10}$/.test(s)) return todayIso(new Date(parseInt(s, 10) * 1000));
+  return toIsoDate(raw);
+}
+
 /** Legacy form dates: "d/m/Y" or "d-m-Y" (PHP strtotime after str_replace('/', '-')) or ISO. */
 export function normalizeLegacyInputDate(raw: string | null | undefined): string {
   const s = (raw ?? '').trim();
