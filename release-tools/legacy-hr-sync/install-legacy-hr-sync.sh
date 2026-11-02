@@ -14,7 +14,7 @@ NEW="${NEW_DB:-noamanycenter_nest}"
 NATIVE_FROM=1000000
 APP="${APP:-/home/noamanycenter/final.noamanycenter.com}"
 SYNC_BIN="${SYNC_BIN:-/usr/local/sbin/legacy-hr-sync}"
-TABLES="tbl_hdoor_emps tbl_hdoor_emps_history hr_all_agzat_orders hr_all_ozonat_orders tbl_emps_shef_edafi tbl_emps_hours_edafi hr_emp_agazat_dayes tbl_hdodr_setting tbl_hdoor_dawms_emps employees"
+TABLES="tbl_hdoor_emps tbl_hdoor_emps_history hr_all_agzat_orders hr_all_ozonat_orders tbl_emps_shef_edafi tbl_emps_hours_edafi hr_emp_agazat_dayes tbl_hdodr_setting tbl_hdoor_dawms_emps hr_ta3mem_personal_msg hr_ta3mem_personal_msg_details hr_ta3mem_details hr_enzarat hr_lawyeh_files_seens hr_dialy_reports hr_talabat_orders hr_mobadrat hr_ansheta hr_ansheta_files hr_locations_visits tbl_emp_zeyarat hr_mosalat tbl_notifications hr_alert_items_emps hr_all_agzat_history hr_all_ozonat_history hr_entdab employees"
 q() { mysql --batch --skip-column-names -e "$1"; }
 pk_of() { case "$1" in tbl_hdoor_emps|tbl_hdoor_emps_history) echo hodoor_id ;; *) echo id ;; esac; }
 

@@ -20,6 +20,8 @@ set -euo pipefail
 OLD="${OLD_DB:-noamanycenter_hr}"
 NEW="${NEW_DB:-noamanycenter_nest}"
 NATIVE_FROM=1000000
+# Tables the mobile app writes to through the old system (besides attendance, leave and permissions).
+APP_TABLES="hr_ta3mem_personal_msg hr_ta3mem_personal_msg_details hr_ta3mem_details hr_enzarat hr_lawyeh_files_seens hr_dialy_reports hr_talabat_orders hr_mobadrat hr_ansheta hr_ansheta_files hr_locations_visits tbl_emp_zeyarat hr_mosalat tbl_notifications hr_alert_items_emps hr_all_agzat_history hr_all_ozonat_history hr_entdab"
 LOG="${SYNC_LOG:-/home/noamanycenter/final.noamanycenter.com/tmp/legacy-hr-sync.log}"
 
 exec 9>"${SYNC_LOCK:-/run/lock/legacy-hr-sync.lock}"
@@ -73,6 +75,30 @@ upsert() {
      SELECT ROW_COUNT();"
 }
 
+# Translations for a table chosen by column name: user ids (publisher, *_user_id, from_user/to_user,
+# user_id_fk) and employee ids (emp_id, emp_id_fk, *_emp_id, member_id). Prints one
+# "column=expression" per line for upsert().
+id_overrides() {
+  local c
+  for c in $(q "SELECT n.column_name FROM information_schema.columns n JOIN information_schema.columns o
+                ON o.table_schema = '$OLD' AND o.table_name = n.table_name AND o.column_name = n.column_name
+                WHERE n.table_schema = '$NEW' AND n.table_name = '$1' AND n.data_type IN ('int','bigint','smallint','mediumint')"); do
+    case "$c" in
+      publisher|from_user|to_user|user_id_fk|*_user_id|emp_user_id) echo "$c=$(user_id "o.$c")" ;;
+      emp_id|emp_id_fk|*_emp_id|member_id) echo "$c=$(emp_id "o.$c")" ;;
+    esac
+  done
+}
+
+# Whole-table copy for the smaller app tables (messages, regulations read, tasks, requests, ...):
+# same ids, translated user/employee ids, deletions mirrored.
+copy_table() {
+  local t="$1" overrides=()
+  mapfile -t overrides < <(id_overrides "$t")
+  add "$t" "$(upsert "$t" id "1" "1" "${overrides[@]}")"
+  add "${t}_del" "$(mirror_deletes "$t" id)"
+}
+
 # Old-system rows deleted there (pk < NATIVE_FROM) are deleted in the new system too.
 mirror_deletes() {
   local t="$1" pk="$2"
@@ -120,6 +146,9 @@ add shifts_del "$(mirror_deletes tbl_hdodr_setting id)"
 add shift_assign "$(upsert tbl_hdoor_dawms_emps id "$(emp_id o.emp_id_fk) <=> n.emp_id_fk" "1" \
   "branch_id_fk=$(site_to_branch_text o.branch_id_fk)" "emp_id_fk=$(emp_id o.emp_id_fk)")"
 add shift_assign_del "$(mirror_deletes tbl_hdoor_dawms_emps id)"
+
+# Everything else the mobile app writes in the old system.
+for t in $APP_TABLES; do copy_table "$t"; done
 
 # Employees added in the old system: insert the ones the new system does not have (by emp_code),
 # keeping the old id when it is free. Existing employees are never changed (HR edits them in the new system).
