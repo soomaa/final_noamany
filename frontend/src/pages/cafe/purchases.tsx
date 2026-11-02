@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { CalendarDays, CheckCircle2, FileUp, Lock, PackagePlus, Pencil, Plus, ReceiptText, Trash2, Truck, WalletCards, X } from 'lucide-react';
+import { CalendarDays, CheckCircle2, FileUp, Lock, PackagePlus, Pencil, Plus, ReceiptText, ScanBarcode, Trash2, Truck, WalletCards, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -29,8 +29,14 @@ interface SupplierMaterial {
   unitOfMeasure: string;
   costPrice: number;
   currentStock: number;
+  productCode?: string;
+  barcode?: string | null;
+  categoryId?: number | null;
+  categoryName?: string | null;
+  cafeProductId?: number | null;
+  sellPrice?: number | null;
 }
-interface PurchaseLine { productId: string; quantity: string; unit: string; lineTotal: string }
+interface PurchaseLine { productId: string; quantity: string; unit: string; lineTotal: string; sellPrice: string }
 interface CostChange { productId: number; productName: string; oldCost: number; newCost: number }
 interface SupplierInvoiceItem { productId: number | null; productName: string | null; quantity: number; unit: string | null; lineTotal: number }
 interface SupplierInvoice {
@@ -53,7 +59,8 @@ interface SupplierInvoice {
   items: SupplierInvoiceItem[];
 }
 
-const emptyLine = (): PurchaseLine => ({ productId: '', quantity: '1', unit: '', lineTotal: '' });
+const emptyLine = (): PurchaseLine => ({ productId: '', quantity: '1', unit: '', lineTotal: '', sellPrice: '' });
+const materialLabel = (material: SupplierMaterial) => `${material.nameAr}${material.size ? ` — ${material.size}` : ''}`;
 const lineUnitPrice = (line: PurchaseLine) => {
   const quantity = Number(line.quantity) || 0;
   const total = Number(line.lineTotal) || 0;
@@ -93,6 +100,9 @@ export function CafePurchasesPage() {
   const [inlineMaterials, setInlineMaterials] = useState<SupplierMaterial[]>([]);
   const [costDialogOpen, setCostDialogOpen] = useState(false);
   const [costChanges, setCostChanges] = useState<CostChange[]>([]);
+  // Quick add, like the old purchase invoice: search by name, code or barcode, filtered by category.
+  const [itemSearch, setItemSearch] = useState('');
+  const [itemCategory, setItemCategory] = useState('all');
   const effectiveBranchId = user?.branch && user.branch > 0
     ? String(user.branch)
     : branchId || String(branches[0]?.id ?? '');
@@ -102,8 +112,9 @@ export function CafePurchasesPage() {
     queryFn: async () => (await api.get<PaginatedResponse<NamedEntity>>('/suppliers', { params: { page: 1, pageSize: 200, status: 'active' } })).data.data,
   });
   const { data: materials, isLoading: materialsLoading } = useQuery({
-    queryKey: ['suppliers', supplierId, 'materials', effectiveBranchId],
-    queryFn: async () => (await api.get<SupplierMaterial[]>(`/suppliers/${supplierId}/products`, { params: { branchId: effectiveBranchId } })).data,
+    queryKey: ['suppliers', supplierId, 'materials', effectiveBranchId, warehouseId],
+    // all=1: every stock item, not only those bought from this supplier before; saving links new ones.
+    queryFn: async () => (await api.get<SupplierMaterial[]>(`/suppliers/${supplierId}/products`, { params: { branchId: effectiveBranchId, warehouseId: warehouseId || undefined, all: 1 } })).data,
     enabled: !!supplierId && !!effectiveBranchId,
   });
   const { data: invoices } = useQuery({
@@ -115,6 +126,46 @@ export function CafePurchasesPage() {
     const byId = new Map([...(materials ?? []), ...inlineMaterials].map((material) => [material.id, material]));
     return [...byId.values()];
   }, [materials, inlineMaterials]);
+  const materialCategories = useMemo(
+    () => [...new Set(allMaterials.map((material) => material.categoryName).filter((name): name is string => !!name))],
+    [allMaterials],
+  );
+  const matchingMaterials = useMemo(() => {
+    const term = itemSearch.trim().toLowerCase();
+    return allMaterials.filter((material) =>
+      (itemCategory === 'all' || material.categoryName === itemCategory)
+      && (!term
+        || material.nameAr.toLowerCase().includes(term)
+        || (material.productCode ?? '').toLowerCase().includes(term)
+        || (material.barcode ?? '').toLowerCase() === term));
+  }, [allMaterials, itemCategory, itemSearch]);
+  const lineFor = (material: SupplierMaterial): PurchaseLine => ({
+    productId: String(material.id),
+    quantity: '1',
+    unit: material.unitOfMeasure,
+    lineTotal: '',
+    sellPrice: material.sellPrice != null ? String(material.sellPrice) : '',
+  });
+  /** Adds the item as a new line, or one more of it when it is already on the invoice. */
+  const addMaterial = (material: SupplierMaterial) => {
+    setLines((current) => {
+      const existing = current.findIndex((line) => line.productId === String(material.id));
+      if (existing >= 0) {
+        return current.map((line, i) => i === existing ? { ...line, quantity: String((Number(line.quantity) || 0) + 1) } : line);
+      }
+      const blank = current.findIndex((line) => !line.productId);
+      return blank >= 0 ? current.map((line, i) => i === blank ? lineFor(material) : line) : [...current, lineFor(material)];
+    });
+    setItemSearch('');
+  };
+  const addFromSearch = () => {
+    const term = itemSearch.trim().toLowerCase();
+    if (!term) return;
+    const exact = allMaterials.find((material) => (material.barcode ?? '').toLowerCase() === term || (material.productCode ?? '').toLowerCase() === term);
+    const pick = exact ?? (matchingMaterials.length === 1 ? matchingMaterials[0] : undefined);
+    if (pick) addMaterial(pick);
+    else toast.error(ui(matchingMaterials.length ? 'اختر الصنف من القائمة' : 'مفيش صنف بالاسم أو الكود ده'));
+  };
 
   const subtotal = useMemo(() => lines.reduce((sum, line) => sum + (Number(line.lineTotal) || 0), 0), [lines]);
   const total = Math.max(0, subtotal + (Number(taxAmount) || 0) - (Number(discountAmount) || 0));
@@ -152,6 +203,7 @@ export function CafePurchasesPage() {
       quantity: String(item.quantity),
       unit: item.unit ?? '',
       lineTotal: String(item.lineTotal),
+      sellPrice: '',
     })));
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -178,6 +230,7 @@ export function CafePurchasesPage() {
     if (!effectiveBranchId) return toast.error(ui('حساب المستخدم غير مرتبط بفرع'));
     if (!supplierId) return toast.error(ui('اختر المورد'));
     if (lines.some((line) => !line.productId || Number(line.quantity) <= 0 || Number(line.lineTotal) < 0 || !line.unit)) return toast.error(ui('راجع بنود الفاتورة'));
+    if (lines.some((line) => line.sellPrice.trim() && !(Number(line.sellPrice) > 0))) return toast.error(ui('سعر البيع لازم يكون أكبر من صفر'));
     if (!costUpdateMode) {
       const changes = lines.flatMap((line): CostChange[] => {
         const material = allMaterials.find((item) => item.id === Number(line.productId));
@@ -185,7 +238,8 @@ export function CafePurchasesPage() {
         const baseQuantity = convertCafeUnit(Number(line.quantity), line.unit, material.unitOfMeasure);
         if (!baseQuantity || baseQuantity <= 0) return [];
         const newCost = Math.round((Number(line.lineTotal) / baseQuantity) * 10000) / 10000;
-        if (Math.abs(newCost - material.costPrice) < 0.0001) return [];
+        // No cost recorded yet (e.g. items brought over from the old system): the purchase sets it.
+        if (material.costPrice === 0 || Math.abs(newCost - material.costPrice) < 0.0001) return [];
         return [{ productId: material.id, productName: `${material.nameAr}${material.size ? ` — ${material.size}` : ''}`, oldCost: material.costPrice, newCost }];
       });
       if (changes.length > 0) {
@@ -209,7 +263,13 @@ export function CafePurchasesPage() {
         initialPaymentMethod,
         attachmentUrl: attachmentUrl || undefined,
         paidAmount: Number(paidAmount) || 0,
-        items: lines.map((line) => ({ productId: Number(line.productId), quantity: Number(line.quantity), unit: line.unit, lineTotal: Number(line.lineTotal), unitPrice: lineUnitPrice(line), costUpdateMode })),
+        items: lines.map((line) => {
+          const material = allMaterials.find((item) => item.id === Number(line.productId));
+          const sellPrice = Number(line.sellPrice);
+          // Only a changed sale price is sent; it updates the café item's price when the invoice is saved.
+          const changedSellPrice = line.sellPrice.trim() && sellPrice > 0 && sellPrice !== (material?.sellPrice ?? null) ? sellPrice : undefined;
+          return { productId: Number(line.productId), quantity: Number(line.quantity), unit: line.unit, lineTotal: Number(line.lineTotal), unitPrice: lineUnitPrice(line), costUpdateMode: material?.costPrice === 0 ? 'replace' : costUpdateMode, sellPrice: changedSellPrice };
+        }),
       };
       if (editingInvoiceId) await api.put(`/supplier-invoices/${editingInvoiceId}`, payload);
       else await api.post('/supplier-invoices', payload);
@@ -250,14 +310,30 @@ export function CafePurchasesPage() {
               </div>
             </section>
 
-            {(suppliers ?? []).length === 0 ? <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{ui('ابدأ بإضافة مورد وربطه بالخامات؛ بعدها ستظهر خاماته هنا فقط.')}</div> : null}
-            {supplierId && !materialsLoading && (materials ?? []).length === 0 ? <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{ui('لا توجد خامات مربوطة بهذا المورد. اربط الخامة من صفحة الموردين أو اختره كمورد أساسي داخل بيانات الخامة.')}</div> : null}
+            {(suppliers ?? []).length === 0 ? <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{ui('ابدأ بإضافة مورد؛ بعدها كل الأصناف هتظهر هنا للشراء منه.')}</div> : null}
+            {supplierId && !materialsLoading && (materials ?? []).length === 0 ? <div className="rounded-xl border border-dashed p-4 text-sm text-muted-foreground">{ui('لا توجد أصناف مخزون نشطة بعد.')}</div> : null}
 
             <section className="rounded-2xl border p-4">
               <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                 <div className="flex items-center gap-2"><PackagePlus className="size-5 text-primary" /><div><h2 className="font-bold">{ui('بنود الاستلام')}</h2><p className="text-xs text-muted-foreground">{toArabicDigits(lines.length)} {ui('بند في الفاتورة')}</p></div></div>
                 <div className="flex flex-wrap gap-2"><Button type="button" size="sm" variant="outline" onClick={() => setLines((rows) => [...rows, emptyLine()])}><Plus className="size-4" />{ui('إضافة بند')}</Button>{can('gym-sales.inventory.raw_materials:create') ? <InlineRawMaterialDialog supplierId={supplierId ? Number(supplierId) : undefined} disabled={!supplierId} onCreated={(material) => setInlineMaterials((current) => [...current.filter((item) => item.id !== material.id), { id: material.id, nameAr: material.nameAr, size: material.size, unitOfMeasure: material.unitOfMeasure, costPrice: material.costPrice, currentStock: material.currentStock ?? 0 }])} /> : null}</div>
               </div>
+              {supplierId ? <div className="mb-4 rounded-xl border bg-background p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative min-w-[220px] flex-1">
+                    <ScanBarcode className="absolute start-3 top-3 size-4 text-muted-foreground" />
+                    <Input className="h-10 ps-9" value={itemSearch} onChange={(event) => setItemSearch(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addFromSearch(); } }} placeholder={ui('ابحث بالاسم أو الكود أو امسح الباركود ثم Enter')} />
+                  </div>
+                  {['all', ...materialCategories].map((category) => <Button key={category} type="button" size="sm" variant={itemCategory === category ? 'default' : 'outline'} onClick={() => setItemCategory(category)}>{category === 'all' ? ui('الكل') : category}</Button>)}
+                </div>
+                {itemSearch.trim() || itemCategory !== 'all' ? <div className="mt-3 flex max-h-56 flex-wrap gap-2 overflow-y-auto">
+                  {matchingMaterials.slice(0, 60).map((material) => <button key={material.id} type="button" onClick={() => addMaterial(material)} className="rounded-lg border bg-muted/30 px-3 py-2 text-start text-xs transition hover:border-primary hover:bg-primary/5">
+                    <span className="block font-bold">{materialLabel(material)}</span>
+                    <span className="nums text-muted-foreground">{ui('الموجود')}: {toArabicDigits(material.currentStock)}{material.sellPrice != null ? ` · ${ui('سعر البيع')}: ${toArabicDigits(material.sellPrice)}` : ''}</span>
+                  </button>)}
+                  {matchingMaterials.length === 0 ? <p className="text-xs text-muted-foreground">{ui('مفيش أصناف مطابقة')}</p> : null}
+                </div> : null}
+              </div> : null}
               <div className="space-y-3">{lines.map((line, index) => {
                 const selectedMaterial = allMaterials.find((material) => material.id === Number(line.productId));
                 return <article key={index} className="rounded-2xl border bg-muted/[0.12] p-4 shadow-sm">
@@ -265,14 +341,16 @@ export function CafePurchasesPage() {
                     <div className="flex min-w-0 items-center gap-2"><span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-sm font-black text-primary">{index + 1}</span><div className="min-w-0"><p className="truncate font-bold">{selectedMaterial ? `${selectedMaterial.nameAr}${selectedMaterial.size ? ` — ${selectedMaterial.size}` : ''}` : ui('بند شراء جديد')}</p>{selectedMaterial ? <p className="mt-0.5 text-xs text-muted-foreground">{ui('الوحدة الأساسية')}: {selectedMaterial.unitOfMeasure}</p> : null}</div></div>
                     <Button type="button" variant="ghost" size="icon" className="size-8 text-destructive" aria-label={ui('حذف البند')} disabled={lines.length === 1} onClick={() => setLines((rows) => rows.filter((_, lineIndex) => lineIndex !== index))}><Trash2 className="size-4" /></Button>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(230px,1.5fr)_110px_120px_150px]">
-                    <div><Label className="text-xs">{ui('الخامة والمقاس')}</Label><select className="mt-1 h-10 w-full rounded-lg border bg-background px-3 text-sm" value={line.productId} onChange={(event) => { const material = allMaterials.find((item) => item.id === Number(event.target.value)); updateLine(index, { productId: event.target.value, unit: material?.unitOfMeasure ?? '', lineTotal: '' }); }}><option value="">{ui('اختر الخامة')}</option>{allMaterials.map((material) => <option key={material.id} value={material.id}>{material.nameAr}{material.size ? ` — ${material.size}` : ''}</option>)}</select></div>
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(230px,1.5fr)_110px_120px_150px_130px]">
+                    <div><Label className="text-xs">{ui('الخامة والمقاس')}</Label><select className="mt-1 h-10 w-full rounded-lg border bg-background px-3 text-sm" value={line.productId} onChange={(event) => { const material = allMaterials.find((item) => item.id === Number(event.target.value)); updateLine(index, { productId: event.target.value, unit: material?.unitOfMeasure ?? '', lineTotal: '', sellPrice: material?.sellPrice != null ? String(material.sellPrice) : '' }); }}><option value="">{ui('اختر الخامة')}</option>{allMaterials.map((material) => <option key={material.id} value={material.id}>{materialLabel(material)}</option>)}</select></div>
                     <div><Label className="text-xs">{ui('الكمية')}</Label><Input className="nums mt-1 h-10" type="number" min={0.001} step="0.001" value={line.quantity} onChange={(event) => updateLine(index, { quantity: event.target.value })} /></div>
                     <div><Label className="text-xs">{ui('الوحدة')}</Label><select className="mt-1 h-10 w-full rounded-lg border bg-background px-2 text-sm" value={line.unit} onChange={(event) => updateLine(index, { unit: event.target.value })} disabled={!selectedMaterial}><option value="">{ui('الوحدة')}</option>{compatibleCafeUnits(selectedMaterial?.unitOfMeasure ?? '').map((unit) => <option key={unit} value={unit}>{unit}</option>)}</select></div>
                     <div><Label className="text-xs">{ui('إجمالي تكلفة البند')}</Label><Input className="nums mt-1 h-10 font-bold" type="number" min={0} step="0.01" value={line.lineTotal} onChange={(event) => updateLine(index, { lineTotal: event.target.value })} placeholder="0.00" /></div>
+                    <div><Label className="text-xs">{ui('سعر البيع')}</Label><Input className="nums mt-1 h-10" type="number" min={0} step="0.01" value={line.sellPrice} disabled={!selectedMaterial || selectedMaterial.sellPrice == null} onChange={(event) => updateLine(index, { sellPrice: event.target.value })} placeholder={selectedMaterial?.sellPrice != null ? String(selectedMaterial.sellPrice) : '—'} /></div>
                   </div>
                   <div className="mt-3 flex flex-wrap gap-2 text-xs">
-                    <span className="rounded-full bg-background px-3 py-1.5 text-muted-foreground">{ui('الموجود الآن')}: <b className="nums text-foreground">{selectedMaterial ? `${toArabicDigits(selectedMaterial.currentStock)} ${selectedMaterial.unitOfMeasure}` : '—'}</b></span>
+                    <span className="rounded-full bg-background px-3 py-1.5 text-muted-foreground">{ui(warehouseId ? 'الموجود في المخزن المختار' : 'الموجود في مخزن الفرع')}: <b className="nums text-foreground">{selectedMaterial ? `${toArabicDigits(selectedMaterial.currentStock)} ${selectedMaterial.unitOfMeasure}` : '—'}</b></span>
+                    {selectedMaterial && line.sellPrice.trim() && selectedMaterial.sellPrice != null && Number(line.sellPrice) !== selectedMaterial.sellPrice ? <span className="rounded-full bg-amber-500/15 px-3 py-1.5 font-bold text-amber-800 dark:text-amber-200">{ui('سعر البيع هيتغير من')} {toArabicDigits(selectedMaterial.sellPrice)} {ui('لـ')} {toArabicDigits(Number(line.sellPrice))}</span> : null}
                     <span className="rounded-full bg-background px-3 py-1.5 text-muted-foreground">{ui('سعر الوحدة في الفاتورة')}: <b className="nums text-primary">{toArabicDigits(lineUnitPrice(line).toFixed(4))}</b></span>
                     {selectedMaterial ? <span className="rounded-full bg-background px-3 py-1.5 text-muted-foreground">{ui('التكلفة الحالية')}: <b className="nums text-foreground">{toArabicDigits(selectedMaterial.costPrice.toFixed(4))}</b></span> : null}
                   </div>

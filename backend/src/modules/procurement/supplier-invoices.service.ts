@@ -197,6 +197,37 @@ export class SupplierInvoicesService {
     return {supplierId,branchId,balance,rows};
   }
 
+  /** Links the item to the supplier (or refreshes the link) with the last purchase unit and cost. */
+  private async linkSupplierProduct(tx: Prisma.TransactionClient, supplierId: number, productId: number, unit: string, unitPrice: number) {
+    await tx.inv_supplier_products.upsert({
+      where: { supplier_id_product_id: { supplier_id: supplierId, product_id: productId } },
+      update: { purchase_unit: unit, last_unit_cost: unitPrice, is_active: true },
+      create: { supplier_id: supplierId, product_id: productId, purchase_unit: unit, last_unit_cost: unitPrice, is_active: true },
+    });
+  }
+
+  /**
+   * Sale price typed on the purchase line (the old purchase invoice's "سعر بيع الوحدة"): updates the
+   * café item sold from this stock item, its default variant and the stock item's selling price.
+   */
+  private async applySellPrice(tx: Prisma.TransactionClient, productId: number, sellPrice?: number) {
+    if (sellPrice == null || !Number.isFinite(sellPrice) || sellPrice <= 0) return;
+    const price = Math.round(sellPrice * 100) / 100;
+    const cafeProducts = await tx.cafe_products.findMany({
+      where: { inventory_product_id: productId, product_type: { not: 'internal' } },
+      select: { id: true, sell_price: true },
+    });
+    for (const cafe of cafeProducts) {
+      if (toNumber(cafe.sell_price) === price) continue;
+      await tx.cafe_products.update({ where: { id: cafe.id }, data: { sell_price: price } });
+      await tx.cafe_product_variants.updateMany({
+        where: { product_id: cafe.id, is_default: true, is_active: true },
+        data: { sell_price: price },
+      });
+    }
+    await tx.inv_products.update({ where: { id: productId }, data: { selling_price: price } });
+  }
+
   /** Pass `outerTx` to post the invoice inside a caller's transaction (e.g. re-posting an edited purchase order). */
   async create(dto: UpsertSupplierInvoiceDto, user: JwtUser, outerTx?: Prisma.TransactionClient) {
     const db = outerTx ?? this.prisma;
@@ -218,12 +249,8 @@ export class SupplierInvoicesService {
     }));
     const productIds = [...new Set(pricedItems.map((item) => item.productId).filter((id): id is number => !!id))];
     if (productIds.length !== pricedItems.length) throw new BadRequestException('اختر خامة مخزنية لكل بند');
-    const links = await db.inv_supplier_products.findMany({
-      where: { supplier_id: dto.supplierId, product_id: { in: productIds }, is_active: true },
-    });
-    if (links.length !== productIds.length) {
-      throw new BadRequestException('تحتوي الفاتورة على خامة غير مربوطة بهذا المورد');
-    }
+    // Any stock item can be bought from any supplier (as in the old bar, where most purchases used
+    // "مورد نقدي"); the item is linked to the supplier when the invoice is posted.
     const products = await db.inv_products.findMany({
       where: { id: { in: productIds }, is_deleted: false },
     });
@@ -306,10 +333,8 @@ export class SupplierInvoicesService {
           where: { id: item.productId! },
           data: { cost_price: Math.round(nextCost * 10000) / 10000 },
         });
-        await tx.inv_supplier_products.update({
-          where: { supplier_id_product_id: { supplier_id: dto.supplierId, product_id: item.productId! } },
-          data: { purchase_unit: item.unit, last_unit_cost: item.unitPrice },
-        });
+        await this.linkSupplierProduct(tx, dto.supplierId, item.productId!, item.unit, item.unitPrice);
+        await this.applySellPrice(tx, item.productId!, item.sellPrice);
         await this.stock.applyMovement({
           productId: item.productId!,
           warehouseId,
@@ -495,10 +520,6 @@ export class SupplierInvoicesService {
     }));
     const newProductIds = [...new Set(pricedItems.map((item) => item.productId).filter((value): value is number => !!value))];
     if (newProductIds.length !== pricedItems.length) throw new BadRequestException('اختر خامة مخزنية لكل بند ولا تكرر الخامة');
-    const links = await this.prisma.inv_supplier_products.findMany({
-      where: { supplier_id: supplierId, product_id: { in: newProductIds }, is_active: true },
-    });
-    if (links.length !== newProductIds.length) throw new BadRequestException('تحتوي الفاتورة على خامة غير مربوطة بهذا المورد');
 
     const oldProductIds = [...new Set(existing.items.map((item) => item.product_id).filter((value): value is number => !!value))];
     const allProductIds = [...new Set([...oldProductIds, ...newProductIds])];
@@ -651,10 +672,8 @@ export class SupplierInvoicesService {
             : weightedCost;
         await tx.inv_products.update({ where: { id: item.productId! }, data: { cost_price: Math.round(nextCost * 10000) / 10000 } });
         item.product.cost_price = new Prisma.Decimal(nextCost);
-        await tx.inv_supplier_products.update({
-          where: { supplier_id_product_id: { supplier_id: supplierId, product_id: item.productId! } },
-          data: { purchase_unit: item.unit, last_unit_cost: item.unitPrice },
-        });
+        await this.linkSupplierProduct(tx, supplierId, item.productId!, item.unit, item.unitPrice);
+        await this.applySellPrice(tx, item.productId!, item.sellPrice);
         await this.stock.applyMovement({
           productId: item.productId!, warehouseId, direction: MovementDirection.in,
           quantity: item.baseQuantity, unitCost: receivedCostPerBase,

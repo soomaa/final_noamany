@@ -355,6 +355,8 @@ export class SupplierInvoiceItemDto {
   @IsOptional() @IsNumber() @Min(0) unitPrice?: number;
   @IsOptional() @IsNumber() @Min(0) lineTotal?: number;
   @IsOptional() @IsIn(['replace', 'keep', 'weighted']) costUpdateMode?: 'replace' | 'keep' | 'weighted';
+  /** New sale price for the café item sold from this stock item (optional). */
+  @IsOptional() @IsNumber() @Min(0) sellPrice?: number;
 }
 
 export class ListSupplierInvoicesDto extends PaginationDto {

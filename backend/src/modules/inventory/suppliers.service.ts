@@ -92,7 +92,13 @@ export class SuppliersService {
     return { success: true };
   }
 
-  async products(id: number, warehouseId?: number, branchId?: number) {
+  /**
+   * Items for a purchase from this supplier, with the stock in the receiving warehouse (or the
+   * branch's default one). With `all`, every active stock item is listed (bought from this supplier
+   * before or not, like the old purchase invoice) with its category, barcode and café sale price;
+   * posting the invoice links new items to the supplier.
+   */
+  async products(id: number, warehouseId?: number, branchId?: number, all = false) {
     await this.findOne(id);
     let resolvedWarehouseId = warehouseId;
     if (!resolvedWarehouseId && branchId) {
@@ -107,26 +113,56 @@ export class SuppliersService {
       include: { product: true },
       orderBy: { product: { name_ar: 'asc' } },
     });
-    const productIds = links.map((link) => link.product_id);
-    const stockRows = productIds.length
-      ? await this.prisma.inv_stock_balances.groupBy({
-          by: ['product_id'],
-          where: { product_id: { in: productIds }, ...(resolvedWarehouseId ? { warehouse_id: resolvedWarehouseId } : {}) },
-          _sum: { current_stock: true },
+    const linkByProduct = new Map(links.map((link) => [link.product_id, link]));
+    const products = all
+      ? await this.prisma.inv_products.findMany({
+          where: { is_deleted: false, status: 'active', inventory_kind: { not: 'manufactured_internal' } },
+          orderBy: { name_ar: 'asc' },
         })
-      : [];
+      : links.map((link) => link.product);
+    const productIds = products.map((product) => product.id);
+    const [stockRows, categories, cafeProducts] = productIds.length
+      ? await Promise.all([
+          this.prisma.inv_stock_balances.groupBy({
+            by: ['product_id'],
+            where: { product_id: { in: productIds }, ...(resolvedWarehouseId ? { warehouse_id: resolvedWarehouseId } : {}) },
+            _sum: { current_stock: true },
+          }),
+          this.prisma.inv_categories.findMany({
+            where: { id: { in: [...new Set(products.map((p) => p.category_id).filter((c): c is number => c != null))] } },
+            select: { id: true, name_ar: true },
+          }),
+          this.prisma.cafe_products.findMany({
+            where: { inventory_product_id: { in: productIds }, product_type: { not: 'internal' } },
+            select: { id: true, inventory_product_id: true, sell_price: true },
+          }),
+        ])
+      : [[], [], []];
     const stock = new Map(stockRows.map((row) => [row.product_id, Number(row._sum.current_stock ?? 0)]));
-    return links.map((link) => ({
-      id: link.product.id,
-      productCode: link.product.product_code,
-      nameAr: link.product.name_ar,
-      size: link.product.size,
-      unitOfMeasure: link.product.unit_of_measure,
-      costPrice: Number(link.product.cost_price),
-      currentStock: stock.get(link.product.id) ?? 0,
-      inventoryKind: link.product.inventory_kind,
-      purchaseUnit: link.purchase_unit,
-      lastUnitCost: link.last_unit_cost != null ? Number(link.last_unit_cost) : null,
-    }));
+    const categoryName = new Map(categories.map((c) => [c.id, c.name_ar]));
+    const cafeByProduct = new Map(cafeProducts.map((c) => [c.inventory_product_id, c]));
+    return products.map((product) => {
+      const link = linkByProduct.get(product.id);
+      const cafe = cafeByProduct.get(product.id);
+      return {
+        id: product.id,
+        productCode: product.product_code,
+        nameAr: product.name_ar,
+        size: product.size,
+        unitOfMeasure: product.unit_of_measure,
+        costPrice: Number(product.cost_price),
+        currentStock: stock.get(product.id) ?? 0,
+        inventoryKind: product.inventory_kind,
+        purchaseUnit: link?.purchase_unit ?? null,
+        lastUnitCost: link?.last_unit_cost != null ? Number(link.last_unit_cost) : null,
+        linked: !!link,
+        barcode: product.barcode,
+        categoryId: product.category_id,
+        categoryName: product.category_id != null ? categoryName.get(product.category_id) ?? null : null,
+        cafeProductId: cafe?.id ?? null,
+        sellPrice: cafe ? Number(cafe.sell_price) : product.selling_price != null ? Number(product.selling_price) : null,
+      };
+    });
   }
+
 }

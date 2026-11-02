@@ -15,7 +15,8 @@
 # 3) sets the sale price to the old system's current price (customer_price_sale), never to 0;
 # 4) adds the items created in the old system after the import, in the same format;
 # 5) copies names renamed in the old system since, and hides items the old system retired by renaming
-#    them to zeros ("000", "00"; replaced there by new items).
+#    them to zeros ("000", "00"; replaced there by new items);
+# 6) writes the old unit names (store_units_settings 1 وحدة, 2 قطعه) where the import stored the unit id.
 # Items made in the new system (CP-…, CFM-…) are not touched. Prices are the same in every branch,
 # as in the old system; the new café shows every active item in every branch.
 set -euo pipefail
@@ -59,6 +60,8 @@ SELECT 'names to update', COUNT(*) FROM cafe_old m JOIN \`$N\`.cafe_products n O
 SELECT 'retired in old (name 000), to hide', COUNT(*) FROM cafe_old m JOIN \`$N\`.cafe_products n ON n.product_code = m.cafe_code
   WHERE m.name REGEXP '^0+$' AND n.is_active = 1;
 SELECT 'first-run categories to hide', COUNT(*) FROM \`$N\`.inv_categories c WHERE c.name_ar IN ($FIRST_RUN_CATS) AND c.is_deleted = 0;
+SELECT 'units stored as old ids (1/2)', COUNT(*) FROM \`$N\`.inv_products i JOIN \`$N\`.cafe_products n ON n.inventory_product_id = i.id
+  JOIN cafe_old m ON n.product_code = m.cafe_code WHERE i.unit_of_measure IN ('1', '2');
 SELECT 'old price 0 (price kept)', COUNT(*) FROM cafe_old m JOIN \`$N\`.cafe_products n ON n.product_code = m.cafe_code
   WHERE IFNULL(m.price, 0) = 0;
 SQL
@@ -125,6 +128,10 @@ UPDATE \`$N\`.inv_products i JOIN \`$N\`.cafe_products n ON n.inventory_product_
   SET i.name_ar = n.name WHERE BINARY i.name_ar <> BINARY n.name;
 UPDATE \`$N\`.cafe_products n JOIN cafe_old m ON n.product_code = m.cafe_code
   SET n.is_active = 0 WHERE m.name REGEXP '^0+$';
+UPDATE \`$N\`.inv_products i JOIN \`$N\`.cafe_products n ON n.inventory_product_id = i.id
+  JOIN cafe_old m ON n.product_code = m.cafe_code
+  SET i.unit_of_measure = CASE i.unit_of_measure WHEN '1' THEN 'وحدة' ELSE 'قطعة' END
+  WHERE i.unit_of_measure IN ('1', '2');
 UPDATE \`$N\`.inv_categories c SET c.is_active = 0, c.is_deleted = 1, c.updated_at = NOW(3)
   WHERE c.name_ar IN ($FIRST_RUN_CATS) AND c.is_deleted = 0
     AND NOT EXISTS (SELECT 1 FROM \`$N\`.cafe_products n WHERE n.category_id = c.id)

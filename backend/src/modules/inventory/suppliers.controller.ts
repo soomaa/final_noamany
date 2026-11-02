@@ -31,11 +31,13 @@ export class SuppliersController {
     @Param('id', ParseIntPipe) id: number,
     @Query('warehouseId') warehouseId?: string,
     @Query('branchId') branchId?: string,
+    @Query('all') all?: string,
   ) {
     return this.service.products(
       id,
       warehouseId ? Number(warehouseId) : undefined,
       branchId ? Number(branchId) : undefined,
+      all === '1' || all === 'true',
     );
   }
 
