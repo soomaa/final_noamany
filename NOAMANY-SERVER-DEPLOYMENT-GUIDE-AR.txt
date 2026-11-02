@@ -549,3 +549,16 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - اتطبق 19:24، واترجع بالغلط بأمر الرجوع، واتطبق تاني 19:31 بنفس الأرقام.
 - النسخة الاحتياطية (قبل التطبيق التاني): /home/noamanycenter/final.noamanycenter.com/tmp/rbac-permissions-before-reception-fix-20261102-193136.sql.gz
 - الرجوع: gunzip -c <النسخة دي> | mysql noamanycenter_nest
+
+آخر تثبيت مؤكد: 20261102-r4 (تاريخ طلب الإجازة)، 2 نوفمبر 2026
+---------------------------------------------------------------
+- المحتوى: ملفين backend (leaves.service + common/utils/legacy-date.util). واجهة الإدارة زي ما هي، ومافيش تغيير في قاعدة البيانات.
+  - قائمة الإجازات بتبعت تاريخ التقديم YYYY-MM-DD بتوقيت القاهرة بدل الثواني المتخزنة في الطلبات القديمة.
+- اتبنى من 97f4aa2 (= 02-r3) + 0d21edd، وبناء الواجهة طابق system.html بتاع 02-r3 بالبايت (eba02ef9…).
+- أدوات الرفع: release-tools/daily-update-20261102-r4. zip sha256 3e86e885…
+- اتأكد على السيرفر: UPDATE VERIFIED: 2026-11-02-r4، والعملية اتغيرت من 646403 لـ 967569.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r4-update-backup.tA4ql0
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261102-r4/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r4-update-backup.tA4ql0
+- المرجع للرفع اللي جاي: system.html لسه eba02ef9… (ماتغيرش)، والـ dist فيه ملفين 02-r4 دول.
+- النقل من القديم (legacy-hr-sync) بقى ينقل كمان السلف والتقييمات (4011cdb)، واتأكد إن كل الجداول متطابقة.
