@@ -538,3 +538,13 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261102-r3/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov02-r3-update-backup.oWBlrJ
 - المرجع للرفع اللي جاي: system.html الحالي = payload 02-r3 (eba02ef9…).
 - لسه منفصل: release-tools/reception-permissions-fix-20261102 (صلاحيات الريسبشن الموجودة).
+
+صلاحيات الريسبشن — 2 نوفمبر 2026 (بيانات بس)
+-------------------------------------------
+- السكريبت: release-tools/reception-permissions-fix-20261102/fix-reception-permissions.sh (اتشغل من /root).
+- الأدوار: موظف ريسيبشن (117، عليه 10 موظفين) وموظف استقبال (5). "مسئول ريسيبشن" اتساب زي ما هو.
+- اتشال: خدمات سريعة، وإضافة لوكر، وتقارير المصروفات (13 خلية من الأدوار + 56 صف استثناء شخصي allow لموظفي الريسبشن).
+- اتضاف: إدارة المصروفات (عرض، إضافة، طباعة)، وخدمة المصروفات بتقصر الريسبشن على مصروفات النهارده لفرعه.
+- ماتلمسش: استثناءات deny، واستثناءات المصروفات الشخصية (عبدالفتاح السيد الشافعي واسماء محمد888 عندهم اعتماد وحذف مصروفات، والقرار لندى).
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/rbac-permissions-before-reception-fix-20261102-192411.sql.gz
+- الرجوع: gunzip -c <النسخة دي> | mysql noamanycenter_nest
