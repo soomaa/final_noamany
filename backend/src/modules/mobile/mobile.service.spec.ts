@@ -4,7 +4,10 @@ import { MobileService } from './mobile.service';
 describe('MobileService legacy HR contracts', () => {
   const prisma = {
     employees: { findFirst: jest.fn(), findUnique: jest.fn() },
-    users: { findFirst: jest.fn() },
+    users: { findFirst: jest.fn(), findMany: jest.fn() },
+    tbl_notifications: { findMany: jest.fn() },
+    tbl_sys_notifications_settings: { findMany: jest.fn() },
+    users_notifications: { findMany: jest.fn() },
     hr_dialy_reports: {
       create: jest.fn(),
       findMany: jest.fn(),
@@ -233,6 +236,29 @@ describe('MobileService legacy HR contracts', () => {
     expect(prisma.tbl_hdoor_emps.findMany).toHaveBeenCalledWith({
       where: { member_code: 1008, for_month: 8, for_year: 2026 },
       select: { late_min: true, second_late_min: true },
+    });
+  });
+
+  it('notifications carry a title and text instead of only a code', async () => {
+    prisma.tbl_notifications.findMany.mockResolvedValue([
+      { id: 90, from_user: 175, to_user: 44, date_ar: '2026-10-25', time_ar: '09:32 PM', seen: 0, seen_date: null, fk_id: BigInt(48), notify_id_fk: 13, n_code: 115 },
+      { id: 91, from_user: 175, to_user: 44, date_ar: '2026-10-25', time_ar: '09:40 PM', seen: 1, seen_date: '2026-10-25', fk_id: null, notify_id_fk: null, n_code: 110 },
+      { id: 92, from_user: null, to_user: 44, date_ar: '2026-10-26', time_ar: '10:00', seen: 0, seen_date: null, fk_id: null, notify_id_fk: null, n_code: null },
+    ]);
+    prisma.tbl_sys_notifications_settings.findMany.mockResolvedValue([{ code: 110, title: 'تم قبول طلب الاجازة المقدم ' }]);
+    prisma.users_notifications.findMany.mockResolvedValue([{ notify_id_fk: 92, message: 'تعميم جديد — الاجتماع الساعة 10' }]);
+    prisma.users.findMany.mockResolvedValue([{ user_id: 175, name: 'سارة أحمد' }]);
+
+    const rows = await service.notifications(user);
+
+    expect(rows.map((r) => [r.title, r.message, r.fromName])).toEqual([
+      ['لديك طلب إذن محوّل من المدير المباشر إلى مدير الإدارة', '', 'سارة أحمد'],
+      ['تم قبول طلب الاجازة المقدم', '', 'سارة أحمد'],
+      ['تعميم جديد', 'الاجتماع الساعة 10', null],
+    ]);
+    expect(prisma.users_notifications.findMany).toHaveBeenCalledWith({
+      where: { notify_id_fk: { in: [92] }, type: null },
+      select: { notify_id_fk: true, message: true },
     });
   });
 });

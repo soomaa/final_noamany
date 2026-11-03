@@ -1,4 +1,5 @@
 import { BUSINESS_TIMEZONE, todayIso } from '../../common/utils/legacy-date.util';
+import { LEGACY_NOTIFICATION_TITLES } from '../../common/utils/legacy-notification.util';
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { AuthService, LoginResult, StaffLoginResult } from '../auth/auth.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -175,25 +176,66 @@ export class MobileService {
     return { ok: true };
   }
 
-  /** Latest 50 notifications delivered to the current user. */
+  /**
+   * Latest 50 notifications delivered to the current user, with their text: tbl_notifications
+   * holds only the event, so the title comes from the notification code (settings table, then
+   * the built-in legacy titles) and the text of a pushed message from its users_notifications row.
+   */
   async notifications(user: JwtUser) {
     const rows = await this.prisma.tbl_notifications.findMany({
       where: { to_user: user.sub },
       orderBy: { id: 'desc' },
       take: 50,
     });
-    const data = rows.map((n) => ({
-      id: n.id,
-      fromUser: n.from_user,
-      date: n.date_ar,
-      time: n.time_ar,
-      seen: n.seen === 1,
-      seenDate: n.seen_date,
-      code: n.n_code,
-      notifyId: n.notify_id_fk,
-      targetId: n.fk_id != null ? Number(n.fk_id) : null,
-    }));
-    return data;
+    const codes = [...new Set(rows.map((n) => n.n_code).filter((c): c is number => c != null))];
+    const pushedIds = rows.filter((n) => n.n_code == null).map((n) => n.id);
+    const senderIds = [...new Set(rows.map((n) => n.from_user).filter((u): u is number => u != null))];
+    const [settings, messages, senders] = await Promise.all([
+      this.prisma.tbl_sys_notifications_settings.findMany({
+        where: { code: { in: codes } },
+        select: { code: true, title: true },
+      }),
+      // PushService rows: linked by notify_id_fk = event id; legacy rows carry a type.
+      this.prisma.users_notifications.findMany({
+        where: { notify_id_fk: { in: pushedIds }, type: null },
+        select: { notify_id_fk: true, message: true },
+      }),
+      this.prisma.users.findMany({
+        where: { user_id: { in: senderIds } },
+        select: { user_id: true, name: true },
+      }),
+    ]);
+    const titleByCode = new Map(settings.map((s) => [s.code, s.title?.trim()]));
+    const messageByEvent = new Map(messages.map((m) => [m.notify_id_fk, m.message?.trim() ?? '']));
+    const nameByUser = new Map(senders.map((u) => [u.user_id, u.name?.trim() ?? '']));
+
+    return rows.map((n) => {
+      let title = n.n_code != null
+        ? titleByCode.get(n.n_code) || LEGACY_NOTIFICATION_TITLES[n.n_code] || 'إشعار'
+        : 'إشعار';
+      let message = '';
+      const pushed = messageByEvent.get(n.id);
+      if (pushed) {
+        // PushService stores "title — body".
+        const [head, ...rest] = pushed.split(' — ');
+        title = rest.length ? head : title;
+        message = rest.length ? rest.join(' — ') : pushed;
+      }
+      return {
+        id: n.id,
+        title,
+        message,
+        fromUser: n.from_user,
+        fromName: n.from_user != null ? nameByUser.get(n.from_user) || null : null,
+        date: n.date_ar,
+        time: n.time_ar,
+        seen: n.seen === 1,
+        seenDate: n.seen_date,
+        code: n.n_code,
+        notifyId: n.notify_id_fk,
+        targetId: n.fk_id != null ? Number(n.fk_id) : null,
+      };
+    });
   }
 
   /** Mark one of the current user's notifications as seen (legacy seen flag + seen_date/time). */

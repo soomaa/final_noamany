@@ -1,11 +1,23 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { createSign } from 'crypto';
+import { readFileSync } from 'fs';
 import { PrismaService } from '../../common/prisma/prisma.service';
 
 export interface PushPayload {
   title: string;
   body: string;
 }
+
+/** The fields of a Firebase service-account key file that the FCM v1 send needs. */
+interface ServiceAccount {
+  project_id: string;
+  client_email: string;
+  private_key: string;
+}
+
+/** Android channel the employee app creates for its own notifications. */
+const ANDROID_CHANNEL_ID = 'com.metacodex.noamanyhr';
 
 export interface SendResult {
   /** users that had a non-empty device_token and were dispatched to. */
@@ -127,26 +139,96 @@ export class PushService {
     return this.sendToUsers(userIds, params.title, params.body, fromUserId);
   }
 
+  private account: ServiceAccount | null | undefined;
+  private accessToken: { value: string; expiresAt: number } | null = null;
+
   /**
-   * FCM SEND SEAM — this is the single place where firebase-admin would push.
-   *
-   * NOTE: This rebuild ships WITHOUT live Firebase credentials, so dispatch() is
-   * stubbed to log only (no network call). When credentials are provisioned,
-   * replace the body below with the real send, e.g.:
-   *
-   *   import * as admin from 'firebase-admin';
-   *   await admin.messaging().send({
-   *     token,
-   *     notification: { title: payload.title, body: payload.body },
-   *   });
-   *
-   * The (token, payload) signature is intentionally already the firebase-admin
-   * message shape so wiring in the real SDK is a drop-in replacement.
+   * FCM HTTP v1 send. Needs a Firebase service-account key (project of the employee app's
+   * google-services.json) at FIREBASE_SERVICE_ACCOUNT_FILE; without one it only logs, as before.
+   * The message carries both a notification block (shown by the phone when the app is closed)
+   * and the same title/body in data (read by the app when it is open). A failed push is logged
+   * and never fails the caller: the notification row is already saved.
    */
   private async dispatch(token: string, payload: PushPayload): Promise<void> {
-    // NOTE: stubbed — no firebase-admin send() yet. Log the seam so QA can trace it.
-    this.logger.log(
-      `FCM(stub) → token=${token.slice(0, 12)}… title="${payload.title}"`,
-    );
+    const account = this.serviceAccount();
+    if (!account) {
+      this.logger.log(`FCM(not configured) → token=${token.slice(0, 12)}… title="${payload.title}"`);
+      return;
+    }
+    try {
+      const response = await fetch(
+        `https://fcm.googleapis.com/v1/projects/${account.project_id}/messages:send`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${await this.fcmAccessToken(account)}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ message: PushService.fcmMessage(token, payload) }),
+        },
+      );
+      if (!response.ok) {
+        this.logger.warn(`FCM send failed (${response.status}): ${(await response.text()).slice(0, 300)}`);
+      }
+    } catch (error) {
+      this.logger.warn(`FCM send failed: ${(error as Error).message}`);
+    }
+  }
+
+  static fcmMessage(token: string, payload: PushPayload) {
+    return {
+      token,
+      notification: { title: payload.title, body: payload.body },
+      data: { title: payload.title, body: payload.body },
+      android: { priority: 'HIGH', notification: { channel_id: ANDROID_CHANNEL_ID, sound: 'default' } },
+      apns: { payload: { aps: { sound: 'default' } } },
+    };
+  }
+
+  private serviceAccount(): ServiceAccount | null {
+    if (this.account !== undefined) return this.account;
+    const file = process.env.FIREBASE_SERVICE_ACCOUNT_FILE?.trim();
+    this.account = null;
+    if (!file) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<ServiceAccount>;
+      if (parsed.project_id && parsed.client_email && parsed.private_key) {
+        this.account = parsed as ServiceAccount;
+      } else {
+        this.logger.warn(`FIREBASE_SERVICE_ACCOUNT_FILE is not a service-account key: ${file}`);
+      }
+    } catch (error) {
+      this.logger.warn(`Cannot read FIREBASE_SERVICE_ACCOUNT_FILE ${file}: ${(error as Error).message}`);
+    }
+    return this.account;
+  }
+
+  /** OAuth token for the FCM scope from a self-signed service-account JWT, reused until near expiry. */
+  private async fcmAccessToken(account: ServiceAccount): Promise<string> {
+    const now = Math.floor(Date.now() / 1000);
+    if (this.accessToken && this.accessToken.expiresAt > now + 60) return this.accessToken.value;
+    const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString('base64url');
+    const unsigned = `${encode({ alg: 'RS256', typ: 'JWT' })}.${encode({
+      iss: account.client_email,
+      scope: 'https://www.googleapis.com/auth/firebase.messaging',
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: now,
+      exp: now + 3600,
+    })}`;
+    const signature = createSign('RSA-SHA256').update(unsigned).sign(account.private_key, 'base64url');
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+        assertion: `${unsigned}.${signature}`,
+      }),
+    });
+    const body = (await response.json()) as { access_token?: string; expires_in?: number; error?: string };
+    if (!response.ok || !body.access_token) {
+      throw new Error(`FCM token request failed (${response.status}): ${body.error ?? 'no access_token'}`);
+    }
+    this.accessToken = { value: body.access_token, expiresAt: now + (body.expires_in ?? 3600) };
+    return body.access_token;
   }
 }
