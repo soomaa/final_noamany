@@ -701,3 +701,20 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - بيانات في الإنتاج محتاجة قرار (ماتغيرتش): GRN-000003/4 دخّلوا مخزون بـ 750 + 1975 ج.م على أوامر شراء مسودة 4 و5 (فرع 3)
   ومالهمش مديونية عند أي مورد؛ ووردية مفتوحة من 22 يوليو (فرع 1، user 1).
 - المرجع للرفع اللي جاي: system.html = 77c6a652e36af760b0c9be70f8288a3504db9b1938ba179e2561107487440a3e.
+
+آخر تثبيت مؤكد: 20261103-r7 (شيل دليل الافتتاح الأول + عرض شاشة إضافة اشتراك)، 3 نوفمبر 2026
+------------------------------------------------------------
+- المحتوى: واجهة الإدارة بس (906084f). مافيش ملفات backend ولا قاعدة بيانات.
+  - اتشال "دليل الافتتاح الأول" (مربع "فهمت") من صفحة الأعضاء، قائمة الاشتراكات، وفورم إضافة اشتراك؛ واتمسح
+    الملف member-onboarding-guide.tsx ونصوصه من club.ar/en.json. فاضل مدخلاته في ui-map.json (قاموس الترجمة) ومش مستخدمة.
+  - /club/subscriptions/new: الفورم كان واخد حد الـ popup (sm:max-w 64rem) فكان فيه فراغ على الشمال في الشاشات الكبيرة؛
+    بقى عرض الصفحة كله، 4 حقول في الصف من 2xl، وهوامش أقل على الموبايل.
+- اتبنى من أساس 03-r6 (97f4aa2 + 0d21edd e64ccd4 0ad6093 2a2dd1c c2ef717 e006ed1 4512791 0b880d4) + 906084f، بـ npm ci
+  في شجرة البناء. الأساس طابق system.html بتاع 03-r6 بالبايت.
+- اختبارات frontend في شجرة الإصدار: 41 ناجح و2 فاشلين، ونفس النتيجة بالظبط على الأساس من غير 906084f
+  (rbac-catalog-sync محتاج @nestjs/common، وmember-barcode-check-in).
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r7، والعملية اتغيرت من 2002540 لـ 2016541.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r7-update-backup.9Lb80B
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r7/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r7-update-backup.9Lb80B
+- المرجع للرفع اللي جاي: system.html = 41df1f0faff1f318c8acae07689f7f3473b41e718ca400acc40eb96fd6a4fbe1.
