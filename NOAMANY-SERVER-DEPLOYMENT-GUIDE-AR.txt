@@ -640,3 +640,22 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   ملحوظة: فرع 3 فيه كمان "بار البر الشرقى" (WH000001، اتعمل 20 أكتوبر، فيه صنفين بس). الإعداد على LEG-WH-4 (رصيد القديم اتنقل له)؛
   يتغير من إعدادات نقطة البيع لو البار الحقيقي هو WH000001.
 - المرجع للرفع اللي جاي: system.html = f3d441d5dd5e265c469edc02548c14e15fe78dd66d055d5156617e27951764eb.
+
+آخر تثبيت مؤكد: 20261103-r5 (صفحة الحضور + نسخ الباركود)، 3 نوفمبر 2026
+------------------------------------------------------------
+- واجهة الإدارة بس (مافيش ملفات backend). الكود: e006ed1 + 4512791.
+  - صفحة "حضور" (/club/attendance) تحت إدارة العضوية والأعضاء، فيها تابات حضور الأعضاء / حضور السبا / حضور الحصص.
+    التاب في ?tab=members|spa|classes؛ التنقل مابيغيّرش المسار فمافيش شاشة تحميل، والتاب اللي اتفتح بيفضل محفوظ.
+    التلات صفحات اتشالوا من إدارة الباركود؛ اللينكات القديمة (barcode-management/member-check-in وspa-check-in وclasses-check-in،
+    وbarcode-management?tab=…، و/club/fitness/barcode-check-in) بتحوّل للتاب الصح.
+  - الصلاحيات زي ما هي: كل تاب بيظهر لمن عنده view على صفحته القديمة (club.members.barcode.member_check_in / spa_check_in /
+    classes_check_in). الصفحة نفسها مالهاش resource في الكتالوج (route-permission-aliases.ts في الواجهة).
+  - إدارة الباركود: "نسخ" على كل كارت و"نسخ صورة الباركود" في شاشة الطباعة (PNG للكارت كله، Code 128)؛ لو المتصفح رفض
+    النسخ الصورة بتتنزل.
+- اتبنى من 97f4aa2 + 0d21edd + e64ccd4 + 0ad6093 + 2a2dd1c + c2ef717 (= 03-r4) + e006ed1 + 4512791، والأساس طابق system.html
+  بتاع 03-r4 بالبايت. (0ad6093 بيتعارض بس في release-tools/cafe-from-old-20261103/fix-cafe-from-old.sh اللي مش في 97f4aa2؛ اتشال.)
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r5، والعملية اتغيرت من 1955121 لـ 1970616.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r5-update-backup.eLF2YX
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r5/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r5-update-backup.eLF2YX
+- المرجع للرفع اللي جاي: system.html = 8247ec0d65220114b14333f50e8eb3d5a9c7ee46f3538e7b5c0c2438ac45a9db.
