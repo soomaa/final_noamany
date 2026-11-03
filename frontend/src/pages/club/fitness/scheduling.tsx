@@ -292,8 +292,8 @@ export function FitnessSchedulingPage({ embedded = false, onAddSpecialSubscripti
       <Tabs value={tab} onValueChange={setTab}>
         {!embedded ? (
           <TabsList className="h-auto flex-wrap">
-            <TabsTrigger value="schedule"><CalendarDays className="me-2 size-4" /> الجدولة</TabsTrigger>
-            <TabsTrigger value="reports"><ListChecks className="me-2 size-4" /> التقارير</TabsTrigger>
+            <TabsTrigger value="schedule"><CalendarDays className="size-4" /> الجدولة</TabsTrigger>
+            <TabsTrigger value="reports"><ListChecks className="size-4" /> التقارير</TabsTrigger>
           </TabsList>
         ) : null}
 

@@ -1257,11 +1257,13 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as ClubMembersView)}>
         {!singleView && (
-        <TabsList className="flex h-auto flex-wrap gap-1">
+        <div className="flex justify-center">
+        <TabsList>
           <TabsTrigger value="members"><User className="size-4" /> {ct('members.tabMembers')}</TabsTrigger>
           <TabsTrigger value="attendance"><LogIn className="size-4" /> {ct('members.tabAttendance')}</TabsTrigger>
           <TabsTrigger value="financial"><Wallet className="size-4" /> {ct('members.tabFinancial')}</TabsTrigger>
         </TabsList>
+        </div>
         )}
 
         <TabsContent value="members" className="space-y-4 pt-4">
@@ -1273,7 +1275,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                 setParams({ page: 1 });
               }}
             >
-              <TabsList className="h-auto rounded-xl border bg-muted/40 p-1.5 shadow-sm">
+              <TabsList>
                 <TabsTrigger value="all" className="min-w-36">
                   <User className="size-4" /> {ui('جميع الأعضاء')}
                 </TabsTrigger>

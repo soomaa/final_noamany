@@ -731,11 +731,13 @@ export function ClubLockersPage({
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as ClubLockersView)}>
         {!singleView && (
-        <TabsList className="flex h-auto flex-wrap gap-1">
+        <div className="flex justify-center">
+        <TabsList>
           <TabsTrigger value="subscriptions"><Lock className="size-4" /> {ct('lockers.tabSubs')}</TabsTrigger>
           <TabsTrigger value="lockers"><Lock className="size-4" /> {ct('lockers.tabLockers')}</TabsTrigger>
           <TabsTrigger value="types"><Settings className="size-4" /> {ct('lockers.tabTypes')}</TabsTrigger>
         </TabsList>
+        </div>
         )}
 
         <TabsContent value="subscriptions" className="space-y-4 pt-4">
@@ -760,7 +762,7 @@ export function ClubLockersPage({
 
         <TabsContent value="lockers" className="space-y-4 pt-4">
           {!singleView && (
-            <Button variant="outline" onClick={openLockerDialog}>
+            <Button variant="brand" onClick={openLockerDialog}>
               <Plus className="size-4" /> {ct('lockers.newLocker')}
             </Button>
           )}
@@ -812,7 +814,7 @@ export function ClubLockersPage({
 
         <TabsContent value="types" className="space-y-4 pt-4">
           {!singleView && (
-            <Button variant="outline" onClick={() => { setTypeEditId(null); setTypeForm({ name: '', metaValue: '', days: '', branchId: '', hasStop: false, stopDays: '', isTargetBased: false }); setTypeOpen(true); }}>
+            <Button variant="brand" onClick={() => { setTypeEditId(null); setTypeForm({ name: '', metaValue: '', days: '', branchId: '', hasStop: false, stopDays: '', isTargetBased: false }); setTypeOpen(true); }}>
               <Plus className="size-4" /> {ct('lockers.newType')}
             </Button>
           )}

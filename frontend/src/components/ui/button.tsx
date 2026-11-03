@@ -11,7 +11,7 @@ const buttonVariants = cva(
         default:
           'bg-primary text-primary-foreground shadow-sm hover:bg-primary/90 dark:bg-gradient-to-br dark:from-[#ED1C24] dark:to-[#F75D64] dark:text-white dark:shadow-[0_8px_20px_-8px_rgba(237,28,36,.6)] dark:hover:brightness-110',
         brand:
-          'bg-brand-gradient text-white shadow-sm hover:brightness-110 hover:shadow-md',
+          'bg-brand-gradient font-semibold text-white shadow-[0_6px_16px_-6px_rgba(237,28,36,.55)] hover:brightness-110 hover:shadow-[0_8px_20px_-6px_rgba(237,28,36,.7)] dark:bg-gradient-to-br dark:from-[#ED1C24] dark:to-[#9B1218]',
         destructive: 'bg-destructive text-destructive-foreground shadow-sm hover:bg-destructive/90',
         outline:
           'border border-input bg-card hover:bg-accent hover:text-accent-foreground dark:border-[rgba(255,255,255,.12)] dark:bg-[rgba(255,255,255,.05)] dark:hover:bg-[rgba(255,255,255,.10)] dark:text-foreground',

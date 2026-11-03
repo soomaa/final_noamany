@@ -1690,7 +1690,7 @@ export function ClubSubscriptionsPage({
       >
         {!singleView && !reportFocus && (
         <div className="flex justify-center">
-        <TabsList className="flex h-auto max-w-full flex-wrap justify-center gap-1 rounded-xl border bg-muted/40 p-1.5 shadow-sm">
+        <TabsList>
           <TabsTrigger value="subs"><CreditCard className="size-4" /> {ct('subscriptions.tabSubs')}</TabsTrigger>
           <TabsTrigger value="private"><ContactRound className="size-4" /> قائمة الاشتراكات الخاصة</TabsTrigger>
           <TabsTrigger value="receipts"><FileText className="size-4" /> {ct('subscriptions.tabReceipts')}</TabsTrigger>
@@ -1747,7 +1747,7 @@ export function ClubSubscriptionsPage({
 
         <TabsContent value="receipts" className="space-y-4 pt-4">
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" onClick={() => setReceiptOpen(true)}>
+            <Button variant="brand" onClick={() => setReceiptOpen(true)}>
               <Plus className="size-4" /> {ct('subscriptions.newReceipt')}
             </Button>
             <Button variant="outline" onClick={() => window.print()}><Printer className="size-4" /> طباعة النتائج</Button>

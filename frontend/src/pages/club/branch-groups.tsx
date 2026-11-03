@@ -141,7 +141,7 @@ export default function BranchGroupsPage() {
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed py-16 text-center">
           <Network className="mb-3 h-10 w-10 text-muted-foreground/50" />
           <p className="text-sm text-muted-foreground">لا توجد مجموعات فروع حتى الآن</p>
-          <Button variant="outline" className="mt-4" onClick={openCreate}>
+          <Button variant="brand" className="mt-4" onClick={openCreate}>
             <Plus className="h-4 w-4 ml-1" />
             إضافة مجموعة
           </Button>

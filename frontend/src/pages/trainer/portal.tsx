@@ -164,10 +164,10 @@ export function TrainerPortalPage() {
 
             <Tabs defaultValue="schedule">
               <TabsList className="h-auto flex-wrap">
-                <TabsTrigger value="schedule"><CalendarDays className="me-2 size-4" /> جدولي</TabsTrigger>
-                <TabsTrigger value="attendance"><UserCheck className="me-2 size-4" /> الحضور</TabsTrigger>
-                <TabsTrigger value="earnings"><Wallet className="me-2 size-4" /> مستحقاتي</TabsTrigger>
-                <TabsTrigger value="statistics"><TrendingUp className="me-2 size-4" /> الإحصائيات</TabsTrigger>
+                <TabsTrigger value="schedule"><CalendarDays className="size-4" /> جدولي</TabsTrigger>
+                <TabsTrigger value="attendance"><UserCheck className="size-4" /> الحضور</TabsTrigger>
+                <TabsTrigger value="earnings"><Wallet className="size-4" /> مستحقاتي</TabsTrigger>
+                <TabsTrigger value="statistics"><TrendingUp className="size-4" /> الإحصائيات</TabsTrigger>
               </TabsList>
 
               <TabsContent value="schedule" className="pt-2">

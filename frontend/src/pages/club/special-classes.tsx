@@ -36,11 +36,11 @@ export function SpecialClassesPage() {
     <div className="space-y-6">
       <PageHeader title="الاشتراكات الخاصة" description="إدارة باقات حصص النادي ومدربيها وجداولها وحضورها بشكل مستقل عن الباقات العادية." />
       <Tabs value={section} onValueChange={setSection}>
-        <div className="flex justify-center"><TabsList className="h-auto flex-wrap justify-center rounded-xl border bg-muted/40 p-1.5 shadow-sm">
-          <TabsTrigger value="private"><Dumbbell className="me-2 size-4" /> اشتراكات برايفت</TabsTrigger>
-          <TabsTrigger value="classes"><GraduationCap className="me-2 size-4" /> اشتراكات الحصص</TabsTrigger>
-          <TabsTrigger value="scheduling"><CalendarDays className="me-2 size-4" /> الجدولة والحضور</TabsTrigger>
-          <TabsTrigger value="reports"><ListChecks className="me-2 size-4" /> تقارير المدربين</TabsTrigger>
+        <div className="flex justify-center"><TabsList>
+          <TabsTrigger value="private"><Dumbbell className="size-4" /> اشتراكات برايفت</TabsTrigger>
+          <TabsTrigger value="classes"><GraduationCap className="size-4" /> اشتراكات الحصص</TabsTrigger>
+          <TabsTrigger value="scheduling"><CalendarDays className="size-4" /> الجدولة والحضور</TabsTrigger>
+          <TabsTrigger value="reports"><ListChecks className="size-4" /> تقارير المدربين</TabsTrigger>
         </TabsList></div>
         <TabsContent value="classes"><ClassSettingsPanel autoOpenCreate={searchParams.get('action') === 'create'} onAutoOpenHandled={clearAction} /></TabsContent>
         <TabsContent value="private"><PrivatePackageCatalog /></TabsContent>
