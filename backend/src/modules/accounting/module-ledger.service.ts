@@ -397,13 +397,26 @@ export class ModuleLedgerService {
       sourceDocType?: string;
       sourceDocId?: string;
       description?: string;
+      /** Tax on the invoice: recoverable input VAT, not part of the stock's cost. */
+      taxAmount?: number;
+      /** Invoice-level discount: the stock is valued before it, so it is booked as a purchase discount. */
+      discountAmount?: number;
     },
     tx?: Tx,
   ): Promise<void> {
     const amount = roundMoney(input.amount);
     if (amount <= 0) return;
+    const tax = roundMoney(Math.max(0, input.taxAmount ?? 0));
+    const discount = roundMoney(Math.max(0, input.discountAmount ?? 0));
+    const goods = roundMoney(amount - tax + discount);
+    if (goods < 0) throw new BadRequestException("قيمة الفاتورة أقل من الضريبة");
     await this.ensureChart();
     const debitAccount = input.hasGrn ? "grn_clearing" : "inventory";
+    const lines: LedgerLineInput[] = [];
+    if (goods > 0) lines.push({ accountCode: debitAccount, debit: goods, credit: 0 });
+    if (tax > 0) lines.push({ accountCode: "vat_input", debit: tax, credit: 0 });
+    lines.push({ accountCode: "accounts_payable", debit: 0, credit: amount });
+    if (discount > 0) lines.push({ accountCode: "purchase_discount", debit: 0, credit: discount });
     await this.ledger.postEntry(
       {
         sourceModule: "procurement",
@@ -412,10 +425,7 @@ export class ModuleLedgerService {
         branchId: input.branchId,
         date: input.invoiceDate,
         description: input.description ?? `فاتورة شراء ${input.invoiceNumber}`,
-        lines: [
-          { accountCode: debitAccount, debit: amount, credit: 0 },
-          { accountCode: "accounts_payable", debit: 0, credit: amount },
-        ],
+        lines,
         createdBy: input.createdBy,
         entryPrefix: "A",
       },
@@ -1137,7 +1147,8 @@ export class ModuleLedgerService {
       branchId?: number;
       date: string;
       amount: number;
-      kind: "issue" | "damage";
+      /** `drawing` = مسحوبات الإدارة: goods given out free on management's say-so. */
+      kind: "issue" | "damage" | "drawing";
       createdBy?: number;
     },
     tx?: Tx,
@@ -1145,19 +1156,68 @@ export class ModuleLedgerService {
     const amount = roundMoney(input.amount);
     if (amount <= 0) return;
     await this.ensureChart();
+    const meta = {
+      issue: { docType: "internal_issue", label: "صرف مخزون داخل الجيم", account: "operating_expense" },
+      damage: { docType: "inventory_damage", label: "هالك مخزون", account: "operating_expense" },
+      // No revenue and no personal debt, so it is neither a sale nor an owner's drawing:
+      // it is hospitality at cost, kept apart from general expenses.
+      drawing: { docType: "management_withdrawal", label: "مسحوبات الإدارة", account: "hospitality_expense" },
+    }[input.kind];
     await this.ledger.postEntry(
       {
         sourceModule: "inventory",
-        sourceDocType:
-          input.kind === "damage" ? "inventory_damage" : "internal_issue",
+        sourceDocType: meta.docType,
         sourceDocId: input.transactionId,
         branchId: input.branchId,
         date: input.date,
-        description: `${input.kind === "damage" ? "هالك مخزون" : "صرف مخزون داخل الجيم"} — ${input.reference}`,
+        description: `${meta.label} — ${input.reference}`,
         lines: [
-          { accountCode: "operating_expense", debit: amount, credit: 0 },
+          { accountCode: meta.account, debit: amount, credit: 0 },
           { accountCode: "inventory", debit: 0, credit: amount },
         ],
+        createdBy: input.createdBy,
+        entryPrefix: "A",
+      },
+      tx,
+    );
+  }
+
+  /**
+   * Cash counted at shift close (or handover) against what the drawer should hold.
+   * `difference` is counted − expected: negative is a shortage, positive a surplus.
+   */
+  async postShiftCashDifference(
+    input: {
+      sessionId: number;
+      branchId?: number | null;
+      date: string;
+      difference: number;
+      createdBy?: number;
+    },
+    tx?: Tx,
+  ): Promise<void> {
+    const difference = roundMoney(input.difference);
+    if (difference === 0) return;
+    const amount = Math.abs(difference);
+    await this.ensureChart();
+    const shortage = difference < 0;
+    await this.ledger.postEntry(
+      {
+        sourceModule: "sales",
+        sourceDocType: "shift_cash_difference",
+        sourceDocId: input.sessionId,
+        branchId: input.branchId ?? undefined,
+        date: input.date,
+        description: `${shortage ? "عجز" : "زيادة"} نقدية عند إغلاق الوردية #${input.sessionId}`,
+        lines: shortage
+          ? [
+              { accountCode: "cash_over_short", debit: amount, credit: 0 },
+              { accountCode: "cash", debit: 0, credit: amount },
+            ]
+          : [
+              { accountCode: "cash", debit: amount, credit: 0 },
+              { accountCode: "cash_over_short", debit: 0, credit: amount },
+            ],
         createdBy: input.createdBy,
         entryPrefix: "A",
       },

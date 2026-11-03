@@ -87,6 +87,8 @@ export const FULL_GYM_CHART: SeedAccountDef[] = [
   { code: '5.01.010', name: 'مستلزمات نظافة', accountType: 'expense', parentCode: '5.01', category: 'تشغيل' },
   { code: '5.01.011', name: 'مصروف الرواتب والأجور', accountType: 'expense', parentCode: '5.01', category: 'رواتب', defaultKey: 'salary_expense' },
   { code: '5.01.012', name: 'عمولات وأتعاب المدربين', accountType: 'expense', parentCode: '5.01', category: 'رواتب', defaultKey: 'trainer_commission_expense' },
+  { code: '5.01.013', name: 'ضيافة ومسحوبات الإدارة', accountType: 'expense', parentCode: '5.01', defaultKey: 'hospitality_expense' },
+  { code: '5.01.014', name: 'عجز وزيادة النقدية', accountType: 'expense', parentCode: '5.01', defaultKey: 'cash_over_short' },
   { code: '5.02', name: 'مصروفات إدارية وعمومية', accountType: 'expense', parentCode: '5', isPostable: false },
   { code: '5.02.001', name: 'قرطاسية ومكتب', accountType: 'expense', parentCode: '5.02' },
   { code: '5.02.002', name: 'اتصالات وإنترنت', accountType: 'expense', parentCode: '5.02' },

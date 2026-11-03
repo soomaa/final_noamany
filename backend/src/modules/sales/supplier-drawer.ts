@@ -1,4 +1,6 @@
+import { BadRequestException } from "@nestjs/common";
 import { Prisma, ShiftSessionStatus } from "@prisma/client";
+import { expectedDrawerBalance } from "./cash-drawer.math";
 import { toDecimal, toNumber } from "./sales.utils";
 
 /** Drawer movement for cash handed to (or refunded by) a supplier from the cashier's drawer. */
@@ -30,6 +32,16 @@ export async function takeSupplierPaymentFromDrawer(
     orderBy: { id: "desc" },
   });
   if (!session) return null;
+  if (!input.refund) {
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM sales_shift_sessions WHERE id = ${session.id} FOR UPDATE`);
+    const available = await drawerCashAvailable(tx, session.id);
+    if (amount > available + 0.001) {
+      throw new BadRequestException(
+        `الرصيد المتاح في درج ورديتك ${available.toFixed(2)} ج.م فقط ولا يكفي لدفع ${amount.toFixed(2)} ج.م للمورد نقدًا — ` +
+          "اختر طريقة دفع أخرى أو اجعل جزءًا من المبلغ آجلًا",
+      );
+    }
+  }
   const direction = input.refund ? "in" : "out";
   await tx.sales_cash_drawer_transactions.create({
     data: {
@@ -104,4 +116,24 @@ export async function returnSupplierPaymentsToDrawer(
     });
     await tx.sales_shift_sessions.update({ where: { id: session.id }, data: { expected_closing_balance: back } });
   }
+}
+
+/** Movements that change a drawer's cash besides sales; mirrors ShiftSessionsService.drawerAdjustments. */
+const DRAWER_ADJUSTMENT_TYPES = ["petty_expense", "custody_issue", "custody_return", "adjustment", SUPPLIER_DRAWER_MOVEMENT];
+
+/** Cash the shift's drawer should hold right now: opening float + cash takings ± drawer movements. */
+async function drawerCashAvailable(tx: Prisma.TransactionClient, sessionId: number) {
+  const session = await tx.sales_shift_sessions.findUniqueOrThrow({
+    where: { id: sessionId },
+    select: { opening_balance: true, total_cash: true },
+  });
+  const rows = await tx.sales_cash_drawer_transactions.findMany({
+    where: { shift_session_id: sessionId, status: "posted", movement_type: { in: DRAWER_ADJUSTMENT_TYPES } },
+    select: { direction: true, amount: true },
+  });
+  const adjustments = rows.reduce(
+    (sum, row) => sum + (row.direction === "in" ? toNumber(row.amount) : -toNumber(row.amount)),
+    0,
+  );
+  return expectedDrawerBalance(toNumber(session.opening_balance), toNumber(session.total_cash), adjustments);
 }

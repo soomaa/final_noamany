@@ -886,6 +886,17 @@ export class ShiftSessionsService {
         },
         include: { shift: true },
       });
+      // What the count found short (or over) leaves (or joins) the cash account.
+      await this.moduleLedger.postShiftCashDifference(
+        {
+          sessionId: id,
+          branchId: current.branch_id,
+          date: localDateString(),
+          difference: freshCashDifference,
+          createdBy: userId,
+        },
+        tx,
+      );
       if (cashDropAmount > 0) {
         await tx.sales_cash_drawer_transactions.create({
           data: {
@@ -1015,6 +1026,16 @@ export class ShiftSessionsService {
           shortage_reason: difference < -0.01 ? shortageReason : null,
         },
       });
+      await this.moduleLedger.postShiftCashDifference(
+        {
+          sessionId: lockedCurrent.id,
+          branchId: lockedCurrent.branch_id,
+          date: sessionDate,
+          difference,
+          createdBy: currentUserId,
+        },
+        tx,
+      );
       const next = await tx.sales_shift_sessions.create({
         data: {
           shift_id: targetShift.id,

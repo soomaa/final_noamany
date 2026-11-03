@@ -8,6 +8,7 @@ import { paginated } from '../../common/dto/list-result';
 import { isDryRun, previewResponse } from '../../common/preview';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { roundMoney } from '../accounting/accounting.utils';
+import { localDateString } from '../sales/sales.utils';
 import type { JwtUser } from '../../common/types/jwt-user';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { LedgerService } from '../accounting/ledger.service';
@@ -83,6 +84,7 @@ export class PurchaseReturnsService {
     userId: number,
     tx: Prisma.TransactionClient,
   ) {
+    const factor = await this.stockCostFactor(ret, tx);
     for (const item of ret.items) {
       if (toNumber(item.quantity) <= 0) continue;
       await this.stock.applyMovement(
@@ -92,7 +94,7 @@ export class PurchaseReturnsService {
           direction: MovementDirection.out,
           quantity: item.quantity,
           txnType: InventoryTxnType.purchase_return,
-          unitCost: item.unit_price,
+          unitCost: Math.round(toNumber(item.unit_price) * factor * 10000) / 10000,
           docType: 'purchase_return',
           docRef: ret.return_number,
           branchId: ret.branch_id,
@@ -108,6 +110,7 @@ export class PurchaseReturnsService {
     userId: number,
     tx: Prisma.TransactionClient,
   ) {
+    const factor = await this.stockCostFactor(ret, tx);
     for (const item of ret.items) {
       if (toNumber(item.quantity) <= 0) continue;
       await this.stock.applyMovement(
@@ -117,7 +120,7 @@ export class PurchaseReturnsService {
           direction: MovementDirection.in,
           quantity: item.quantity,
           txnType: InventoryTxnType.purchase_return,
-          unitCost: item.unit_price,
+          unitCost: Math.round(toNumber(item.unit_price) * factor * 10000) / 10000,
           docType: 'purchase_return',
           docRef: ret.return_number,
           branchId: ret.branch_id,
@@ -143,10 +146,8 @@ export class PurchaseReturnsService {
   }
 
   /**
-   * GL for a confirmed purchase return — the mirror of the GRN inventory entry
-   * (postGrnInventory: debit inventory / credit grn_clearing). On return we
-   * remove goods from stock, so: credit inventory / debit grn_clearing.
-   * Idempotent per return number.
+   * GL for a confirmed purchase return: debit the supplier (AP), credit the goods out of
+   * inventory. Idempotent per return number.
    */
   private async postReturnLedger(
     ret: Prisma.prc_purchase_returnsGetPayload<{ include: { items: true } }>,
@@ -155,23 +156,67 @@ export class PurchaseReturnsService {
   ) {
     const amount = this.returnValue(ret);
     if (amount <= 0) return;
+    // An invoice-linked return carries its share of the invoice tax and discount: the supplier is
+    // owed less by `amount`, the stock leaves at its pre-tax, pre-discount value, and the rest
+    // unwinds the input VAT and purchase discount the invoice booked.
+    const invoice = await this.sourceInvoiceTotals(ret, tx);
+    const share = invoice && invoice.total > 0 ? amount / invoice.total : 0;
+    const tax = roundMoney((invoice?.tax ?? 0) * share);
+    const discount = roundMoney((invoice?.discount ?? 0) * share);
+    const goods = roundMoney(amount - tax + discount);
+    const lines = [
+      // The supplier holds the returned value as a credit, with or without an invoice (café
+      // purchases never go through a goods receipt, so there is no GRN clearing to unwind).
+      { accountCode: 'accounts_payable', debit: amount, credit: 0 },
+      ...(discount > 0 ? [{ accountCode: 'purchase_discount', debit: discount, credit: 0 }] : []),
+      ...(goods > 0 ? [{ accountCode: 'inventory', debit: 0, credit: goods }] : []),
+      ...(tax > 0 ? [{ accountCode: 'vat_input', debit: 0, credit: tax }] : []),
+    ];
     await this.ledger.postEntry(
       {
         sourceModule: 'procurement',
         sourceDocType: 'purchase_return',
         sourceDocId: ret.return_number,
         branchId: ret.branch_id,
-        date: ret.created_at.toISOString().slice(0, 10),
+        date: ret.return_date ?? localDateString(ret.created_at),
         description: `مرتجع مشتريات ${ret.return_number}`,
-        lines: [
-          { accountCode: ret.supplier_invoice_id ? 'accounts_payable' : 'grn_clearing', debit: amount, credit: 0 },
-          { accountCode: 'inventory', debit: 0, credit: amount },
-        ],
+        lines,
         createdBy: userId,
         entryPrefix: 'A',
       },
       tx,
     );
+  }
+
+  /** Totals of the invoice a return is linked to; null for a return with no invoice. */
+  private async sourceInvoiceTotals(
+    ret: { supplier_invoice_id: number | null },
+    tx: Prisma.TransactionClient,
+  ) {
+    if (!ret.supplier_invoice_id) return null;
+    const invoice = await tx.prc_supplier_invoices.findUnique({
+      where: { id: ret.supplier_invoice_id },
+      select: { total_amount: true, tax_amount: true, discount_amount: true },
+    });
+    if (!invoice) return null;
+    return {
+      total: toNumber(invoice.total_amount),
+      tax: toNumber(invoice.tax_amount),
+      discount: toNumber(invoice.discount_amount),
+    };
+  }
+
+  /**
+   * Invoice-linked return lines are priced at the invoice's net (tax in, discount out); the stock
+   * itself was received at the pre-tax, pre-discount price, so it moves at that value.
+   */
+  private async stockCostFactor(
+    ret: { supplier_invoice_id: number | null },
+    tx: Prisma.TransactionClient,
+  ) {
+    const invoice = await this.sourceInvoiceTotals(ret, tx);
+    if (!invoice || invoice.total <= 0) return 1;
+    return (invoice.total - invoice.tax + invoice.discount) / invoice.total;
   }
 
   /** Reverse the return GL entry (mirror of postReturnLedger). */

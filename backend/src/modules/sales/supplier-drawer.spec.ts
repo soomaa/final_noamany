@@ -1,12 +1,19 @@
 import { ShiftSessionStatus } from "@prisma/client";
 import { returnSupplierPaymentsToDrawer, takeSupplierPaymentFromDrawer } from "./supplier-drawer";
 
-function fakeTx(sessions: Array<{ id: number; branch_id: number; user_id: number; status: ShiftSessionStatus }>) {
+type FakeSession = { id: number; branch_id: number; user_id: number; status: ShiftSessionStatus; opening_balance?: number; total_cash?: number };
+
+function fakeTx(sessions: FakeSession[]) {
   const movements: Array<Record<string, any>> = [];
   const tx = {
+    $queryRaw: jest.fn(async () => []),
     sales_shift_sessions: {
       findFirst: jest.fn(async ({ where }: any) =>
         sessions.find((s) => s.branch_id === where.branch_id && s.user_id === where.user_id && s.status === where.status) ?? null),
+      findUniqueOrThrow: jest.fn(async ({ where }: any) => {
+        const s = sessions.find((row) => row.id === where.id)!;
+        return { opening_balance: s.opening_balance ?? 1000, total_cash: s.total_cash ?? 0 };
+      }),
       update: jest.fn(async () => ({})),
     },
     sales_cash_drawer_transactions: {
@@ -16,9 +23,12 @@ function fakeTx(sessions: Array<{ id: number; branch_id: number; user_id: number
         return row;
       }),
       findMany: jest.fn(async ({ where }: any) =>
-        movements
-          .filter((m) => where.reference.in.includes(m.reference) && m.status === where.status)
-          .map((m) => ({ ...m, session: { status: sessions.find((s) => s.id === m.shift_session_id)!.status } }))),
+        where.shift_session_id != null
+          ? movements.filter((m) => m.shift_session_id === where.shift_session_id && m.status === where.status
+            && where.movement_type.in.includes(m.movement_type))
+          : movements
+            .filter((m) => where.reference.in.includes(m.reference) && m.status === where.status)
+            .map((m) => ({ ...m, session: { status: sessions.find((s) => s.id === m.shift_session_id)!.status } }))),
       update: jest.fn(async ({ where, data }: any) => Object.assign(movements.find((m) => m.id === where.id)!, data)),
     },
   };
@@ -60,5 +70,21 @@ describe("supplier cash payments and the shift drawer", () => {
     await returnSupplierPaymentsToDrawer(tx, ["PAY-3"], 50);
     expect(movements[0].status).toBe("posted");
     expect(movements[1]).toMatchObject({ reference: "SUP-PAY-3-R", shift_session_id: 8, direction: "in", source_transaction_id: 1 });
+  });
+
+  it("refuses a cash payment the drawer cannot cover, counting what already left it", async () => {
+    const { tx, movements } = fakeTx([{ id: 7, branch_id: 3, user_id: 50, status: ShiftSessionStatus.open, opening_balance: 100, total_cash: 50 }]);
+    await takeSupplierPaymentFromDrawer(tx, { branchId: 3, userId: 50, paymentNumber: "PAY-4", amount: 120, description: "x" });
+    await expect(takeSupplierPaymentFromDrawer(tx, { branchId: 3, userId: 50, paymentNumber: "PAY-5", amount: 30.01, description: "x" }))
+      .rejects.toThrow("30.00 ج.م فقط");
+    expect(movements).toHaveLength(1);
+    await takeSupplierPaymentFromDrawer(tx, { branchId: 3, userId: 50, paymentNumber: "PAY-6", amount: 30, description: "x" });
+    expect(movements).toHaveLength(2);
+  });
+
+  it("lets a supplier refund into the drawer regardless of its balance", async () => {
+    const { tx, movements } = fakeTx([{ id: 7, branch_id: 3, user_id: 50, status: ShiftSessionStatus.open, opening_balance: 0 }]);
+    await takeSupplierPaymentFromDrawer(tx, { branchId: 3, userId: 50, paymentNumber: "REF-1", amount: 500, description: "x", refund: true });
+    expect(movements[0]).toMatchObject({ direction: "in" });
   });
 });

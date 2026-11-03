@@ -48,6 +48,8 @@ export const DEFAULT_CHART: SeedAccountDef[] = [
   { code: '5.01.004', name: 'صيانة أجهزة الجيم', accountType: 'expense', parentCode: '5.01', defaultKey: 'maintenance_expense' },
   { code: '5.01.011', name: 'مصروف الرواتب والأجور', accountType: 'expense', parentCode: '5.01', defaultKey: 'salary_expense' },
   { code: '5.01.012', name: 'عمولات وأتعاب المدربين', accountType: 'expense', parentCode: '5.01', defaultKey: 'trainer_commission_expense' },
+  { code: '5.01.013', name: 'ضيافة ومسحوبات الإدارة', accountType: 'expense', parentCode: '5.01', defaultKey: 'hospitality_expense' },
+  { code: '5.01.014', name: 'عجز وزيادة النقدية', accountType: 'expense', parentCode: '5.01', defaultKey: 'cash_over_short' },
   { code: '5.08', name: 'تكلفة البضاعة المباعة', accountType: 'expense', parentCode: '5', defaultKey: 'cost_of_goods_sold' },
 ];
 

@@ -30,8 +30,12 @@ describe('SupplierPaymentsService.create', () => {
         update: jest.fn(async () => invoice),
       },
       inv_suppliers: { findUnique: jest.fn(async () => ({ name_ar: 'مورد' })) },
-      sales_shift_sessions: { findFirst: jest.fn(async () => ({ id: 7, branch_id: 3 })), update: jest.fn() },
-      sales_cash_drawer_transactions: { create: jest.fn() },
+      sales_shift_sessions: {
+        findFirst: jest.fn(async () => ({ id: 7, branch_id: 3 })),
+        findUniqueOrThrow: jest.fn(async () => ({ opening_balance: 1000, total_cash: 0 })),
+        update: jest.fn(),
+      },
+      sales_cash_drawer_transactions: { create: jest.fn(), findMany: jest.fn(async () => []) },
       $queryRaw: jest.fn(async () => [{ v: 0 }]),
     };
     const prisma = {

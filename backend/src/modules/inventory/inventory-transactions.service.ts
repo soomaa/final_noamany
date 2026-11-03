@@ -446,7 +446,9 @@ export class InventoryTransactionsService {
         tx,
       );
       if (financiallyConsumed) {
-        const kind = txn.txn_type === InventoryTxnType.damage ? 'damage' : 'issue';
+        const kind = txn.txn_type === InventoryTxnType.damage
+          ? 'damage'
+          : txn.business_classification === 'management_withdrawal' ? 'drawing' : 'issue';
         await this.moduleLedger.postInventoryConsumption({
           transactionId: id,
           reference: txn.reference,
@@ -457,12 +459,12 @@ export class InventoryTransactionsService {
           createdBy: user.sub,
         }, tx);
         await recordSystemExpense(tx, {
-          invoiceNumber: `INV-${kind.toUpperCase()}-${id}`,
+          invoiceNumber: `INV-${kind === 'drawing' ? 'ISSUE' : kind.toUpperCase()}-${id}`,
           date: txn.txn_date.toISOString().slice(0, 10),
           category: 'مخزون',
-          subCategory: kind === 'damage' ? 'هالك' : 'صرف داخلي',
+          subCategory: kind === 'damage' ? 'هالك' : kind === 'drawing' ? 'مسحوبات الإدارة' : 'صرف داخلي',
           amount: financialAmount,
-          description: `${kind === 'damage' ? 'هالك مخزون' : 'صرف مخزون داخل الجيم'} — ${txn.reference}`,
+          description: `${kind === 'damage' ? 'هالك مخزون' : kind === 'drawing' ? 'مسحوبات الإدارة' : 'صرف مخزون داخل الجيم'} — ${txn.reference}`,
           branchId: txn.branch_id,
           createdBy: user.sub,
           paymentMethod: 'تسوية مخزون',

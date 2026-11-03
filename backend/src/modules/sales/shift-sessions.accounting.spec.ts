@@ -195,4 +195,47 @@ describe("shift session financial attribution", () => {
       new BadRequestException("اكتب سبب عجز النقدية قبل اعتماد الإغلاق"),
     );
   });
+
+  it("posts the counted shortage to the ledger when the shift closes", async () => {
+    const open = { id: 12, branch_id: 1, opening_balance: 100, total_cash: 50, status: ShiftSessionStatus.open, shift: { id: 2 } };
+    const tx = {
+      $queryRaw: jest.fn().mockResolvedValue([]),
+      sales_shift_sessions: {
+        findUnique: jest.fn().mockResolvedValue(open),
+        update: jest.fn().mockResolvedValue({ ...open, status: ShiftSessionStatus.closed }),
+      },
+      sales_cash_drawer_transactions: { create: jest.fn() },
+    };
+    const prisma = {
+      sales_shift_sessions: { findUnique: jest.fn().mockResolvedValue(open) },
+      $transaction: jest.fn(async (fn: (client: typeof tx) => unknown) => fn(tx)),
+    };
+    const moduleLedger = { postShiftCashDifference: jest.fn() };
+    const service = new ShiftSessionsService(
+      prisma as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      moduleLedger as never,
+      new BranchScopeService(),
+    );
+    service.calculateSessionSales = jest.fn().mockResolvedValue({
+      totalSales: 50, totalCash: 50, totalCard: 0, totalWallet: 0, totalTransfer: 0,
+      totalDiscount: 0, totalTax: 0, transactionsCount: 1,
+    });
+    jest
+      .spyOn(service as unknown as { drawerAdjustments: () => Promise<number> }, "drawerAdjustments")
+      .mockResolvedValue(0);
+    jest
+      .spyOn(service as unknown as { supplierDrawerPayments: () => Promise<number> }, "supplierDrawerPayments")
+      .mockResolvedValue(0);
+    jest.spyOn(service as unknown as { mapSession: (row: unknown) => unknown }, "mapSession").mockReturnValue({});
+
+    await service.close(12, { closingBalance: 148, cashDropAmount: 48, retainedAmount: 100, shortageReason: "فكة" }, 1);
+
+    expect(moduleLedger.postShiftCashDifference).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 12, branchId: 1, difference: -2, createdBy: 1 }),
+      tx,
+    );
+  });
 });

@@ -356,6 +356,8 @@ export class SupplierInvoicesService {
         branchId,
         invoiceDate: dto.invoiceDate ?? new Date().toISOString().slice(0, 10),
         amount: totals.totalAmount,
+        taxAmount: totals.taxAmount,
+        discountAmount: totals.discountAmount,
         hasGrn: false,
         createdBy: userId,
       }, tx);
@@ -698,6 +700,8 @@ export class SupplierInvoicesService {
         branchId,
         invoiceDate: updated.invoice_date ?? new Date().toISOString().slice(0, 10),
         amount: totals.totalAmount,
+        taxAmount: totals.taxAmount,
+        discountAmount: totals.discountAmount,
         hasGrn: false,
         createdBy: userId,
         sourceDocType: 'purchase_invoice_correction',
