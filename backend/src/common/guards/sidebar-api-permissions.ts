@@ -493,6 +493,34 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
     "termination.archive:view",
     "club.fitness.trainers:view"
   ],
+  "ClubSubscriptionTypesController.list": [
+    "club.subscriptions:view",
+    "club.subscriptions.list:view",
+    "club.subscriptions.new:view",
+    "club.subscriptions.new:create",
+    "club.subscriptions.special:view",
+    "club.subscriptions.special:create",
+    "club.packages.settings:view",
+    "club.subscriptions.online:view",
+    "club.subscriptions.reports:view",
+    "club.subscriptions.refunds:view",
+    "club.reception:view",
+    "financial-reports.revenue_reports:view"
+  ],
+  "ClubSubscriptionTypesController.listAll": [
+    "club.subscriptions:view",
+    "club.subscriptions.list:view",
+    "club.subscriptions.new:view",
+    "club.subscriptions.new:create",
+    "club.subscriptions.special:view",
+    "club.subscriptions.special:create",
+    "club.packages.settings:view",
+    "club.subscriptions.online:view",
+    "club.subscriptions.reports:view",
+    "club.subscriptions.refunds:view",
+    "club.reception:view",
+    "financial-reports.revenue_reports:view"
+  ],
   "ClubOpsController.universalSearch": [
     "club.members:view",
     "club.reception:view",
