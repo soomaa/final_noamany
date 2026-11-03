@@ -739,3 +739,15 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - أمر الرجوع لهذا التثبيت فقط:
   bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r8/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r8-update-backup.2RX3rZ
 - المرجع للرفع اللي جاي: system.html = 41df1f0faff1f318c8acae07689f7f3473b41e718ca400acc40eb96fd6a4fbe1 (زي 03-r7).
+
+آخر تثبيت مؤكد: 20261103-r9 (التحديث الأخير ليوم 3 نوفمبر)، 3 نوفمبر 2026
+-----------------------------------------------------------------------
+- المحتوى: محاسبة Swat (67e10a1: 6 ملفات backend في modules/accounting + الشاشات)، التابات وأزرار الإضافة
+  (b02c314، مكونات tabs/button المشتركة)، والمبالغ من غير .00 لما مافيش قروش (16f7aa9). مافيش تغيير في قاعدة البيانات.
+- الأساس: 3fb75e9 (= 03-r8؛ كل commits الكود على feat/attendance-reports-excel لحد هنا متثبتة)، والجديد 16f7aa9.
+  بناء الأساس طابق system.html بتاع 03-r8 بالبايت (41df1f0f…). node_modules للواجهة: npm ci في شجرة الأساس + نسخة APFS.
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r9، والعملية اتغيرت من 2035643 لـ 2107162. القيود: 56375 قيد كلهم متزنين.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r9-update-backup.TPyU0P
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r9/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r9-update-backup.TPyU0P
+- المرجع للرفع اللي جاي: الأساس = 16f7aa9 (كل الكود لحد هنا متثبت)، system.html = 5bc4057ffad1b65aeceb2830f64eb7fd5f22f1dc3cf6f37eb443ca2c46ef2b04.
