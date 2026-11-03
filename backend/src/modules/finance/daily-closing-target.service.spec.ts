@@ -123,6 +123,32 @@ describe('DailyClosingTargetService daily closing', () => {
     expect(result.totalRevenue).toBe('285.00');
   });
 
+  it('splits an invoice that mixes بار and بروتين items by the items\' totals', async () => {
+    const empty = () => ({ findMany: jest.fn().mockResolvedValue([]) });
+    const bar = { id: 3, daily_closing_classification: null, name_ar: 'بار' };
+    const protein = { id: 2, daily_closing_classification: null, name_ar: 'بروتين' };
+    const prisma = {
+      club_subscriptions: empty(), club_locker_subscriptions: empty(),
+      sales_quick_sales: { findMany: withRefundedSales(jest.fn().mockResolvedValue([
+        // 100 collected after discount: items 40 (bar) + 60 (protein) → 40 bar, 60 protein; half cash.
+        { collected_amount: dec('100'), payment_method: 'mixed', cafe_category: bar,
+          payments: [{ method: 'cash', amount: dec('50') }, { method: 'card', amount: dec('50') }],
+          items: [{ cafe_product_id: 11, line_total: dec('40') }, { cafe_product_id: 22, line_total: dec('60') }] },
+        // A one-category invoice is not split.
+        { collected_amount: dec('15'), payment_method: 'cash', cafe_category: bar, items: [{ cafe_product_id: 11, line_total: dec('15') }] },
+      ])) },
+      cafe_products: { findMany: jest.fn().mockResolvedValue([{ id: 11, category: bar }, { id: 22, category: protein }]) },
+      prc_purchase_returns: empty(), prc_purchase_invoices: empty(), prc_supplier_payments: empty(),
+      fin_expenses: empty(), club_subscription_refunds: empty(),
+    };
+    const service = new DailyClosingTargetService(prisma as never, new BranchScopeService());
+
+    const result = await service.dailyClosing({ fromDate: '2026-11-03', toDate: '2026-11-03' }, { sub: 1, level: 1, branch: 0 } as never);
+
+    expect(result.normalSales).toEqual({ total: '55.00', cash: '35.00', knet: '20.00' });
+    expect(result.proteinSales).toEqual({ total: '60.00', cash: '30.00', knet: '30.00' });
+  });
+
   it('returns the daily closing when a pre-migration database lacks the classification column', async () => {
     const completedSales = jest.fn()
       .mockRejectedValueOnce({ code: 'P2022', message: 'The column `inv_categories.daily_closing_classification` does not exist.' })

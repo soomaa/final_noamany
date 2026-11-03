@@ -114,15 +114,57 @@ export class DailyClosingTargetService {
         where,
         select: {
           ...salesSelect,
-          cafe_category: { select: { daily_closing_classification: true, name_ar: true } },
+          cafe_category: { select: { id: true, daily_closing_classification: true, name_ar: true } },
+          items: { select: { cafe_product_id: true, line_total: true } },
         },
       });
-      return { rows: rows as unknown as Array<Record<string, unknown>>, classificationAvailable: true };
+      return { rows: await this.splitMixedCategorySales(rows), classificationAvailable: true };
     } catch (error) {
       if (!this.isMissingDailyClosingSalesDimension(error)) throw error;
       const rows = await this.prisma.sales_quick_sales.findMany({ where, select: salesSelect });
       return { rows: rows as unknown as Array<Record<string, unknown>>, classificationAvailable: false };
     }
+  }
+
+  /**
+   * An invoice whose items belong to several café categories (allowed by the POS setting
+   * allow_mixed_categories) is split into one row per category, each with its share of the collected
+   * amount and payments by the items' totals, so بار and بروتين are counted correctly.
+   */
+  private async splitMixedCategorySales(rows: Array<Record<string, any>>): Promise<Array<Record<string, unknown>>> {
+    const productIds = [...new Set(rows.flatMap((row) => (row.items ?? []).map((item: any) => item.cafe_product_id).filter((id: unknown): id is number => typeof id === 'number')))];
+    const products = productIds.length
+      ? await this.prisma.cafe_products.findMany({
+          where: { id: { in: productIds } },
+          select: { id: true, category: { select: { id: true, daily_closing_classification: true, name_ar: true } } },
+        })
+      : [];
+    const categoryOf = new Map(products.map((product) => [product.id, product.category]));
+    return rows.flatMap((row) => {
+      const byCategory = new Map<number, { category: any; amount: Prisma.Decimal }>();
+      for (const item of row.items ?? []) {
+        const category = item.cafe_product_id != null ? categoryOf.get(item.cafe_product_id) : null;
+        const key = category?.id ?? row.cafe_category?.id ?? 0;
+        const entry = byCategory.get(key) ?? { category: category ?? row.cafe_category, amount: new Prisma.Decimal(0) };
+        entry.amount = entry.amount.plus(this.money(item.line_total));
+        byCategory.set(key, entry);
+      }
+      const parts = [...byCategory.values()];
+      const total = parts.reduce((sum, part) => sum.plus(part.amount), new Prisma.Decimal(0));
+      if (parts.length <= 1 || total.lte(0)) return [row];
+      const collected = this.money(row.collected_amount);
+      return parts.map((part) => {
+        const share = part.amount.div(total);
+        return {
+          ...row,
+          cafe_category: part.category,
+          collected_amount: collected.times(share),
+          payments: Array.isArray(row.payments)
+            ? row.payments.map((payment: any) => ({ ...payment, amount: this.money(payment.amount).times(share) }))
+            : row.payments,
+        };
+      });
+    });
   }
 
   private isMissingColumn(error: unknown): boolean {

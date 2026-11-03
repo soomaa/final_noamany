@@ -1027,7 +1027,9 @@ export class QuickSalesService {
         categoryId: product.category_id,
       })),
     ].find((product) => product.categoryId !== dto.cafeCategoryId);
-    if (mismatchedProduct) {
+    // With allow_mixed_categories on, the invoice keeps its chosen category for filters, and the daily
+    // closing splits it by each item's category.
+    if (mismatchedProduct && !(await this.posSettings.allowsMixedCategories(dto.branchId))) {
       throw new BadRequestException(
         `المنتج ${mismatchedProduct.name} لا ينتمي إلى فئة الفاتورة المختارة`,
       );

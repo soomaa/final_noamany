@@ -291,6 +291,8 @@ export class PosSettingsService {
       { key: 'partner_discount_percentage', value: 0, type: 'number' },
       { key: 'tax_rate', value: 15, type: 'number' },
       { key: 'enable_tax', value: true, type: 'boolean' },
+      // One café invoice may hold items of several categories (بار + بروتين …); off = one category per invoice.
+      { key: 'allow_mixed_categories', value: false, type: 'boolean' },
       { key: 'currency', value: 'EGP', type: 'string' },
       { key: 'receipt_business_name', value: 'Noamany CLUB · CAFE', type: 'string' },
       { key: 'receipt_logo_url', value: '/noamany-logo.png', type: 'string' },
@@ -418,17 +420,27 @@ export class PosSettingsService {
   }
 
   async isTaxEnabled(branchId?: number): Promise<boolean> {
+    return this.getGeneralBoolean('enable_tax', branchId);
+  }
+
+  /** Whether one café invoice may mix categories (pos-settings/general allow_mixed_categories). */
+  async allowsMixedCategories(branchId?: number): Promise<boolean> {
+    return this.getGeneralBoolean('allow_mixed_categories', branchId);
+  }
+
+  /** A boolean general setting: the branch's row, else the all-branches row, else the default. */
+  private async getGeneralBoolean(key: string, branchId?: number): Promise<boolean> {
     const row = await this.prisma.sales_pos_settings.findFirst({
-      where: { category: 'general', setting_key: 'enable_tax', branch_id: branchId ?? null, is_active: true },
+      where: { category: 'general', setting_key: key, branch_id: branchId ?? null, is_active: true },
     });
     if (row) return this.coerce(row.setting_value, row.setting_type) === true;
     if (branchId != null) {
       const globalRow = await this.prisma.sales_pos_settings.findFirst({
-        where: { category: 'general', setting_key: 'enable_tax', branch_id: null, is_active: true },
+        where: { category: 'general', setting_key: key, branch_id: null, is_active: true },
       });
       if (globalRow) return this.coerce(globalRow.setting_value, globalRow.setting_type) === true;
     }
-    const fallback = (this.DEFAULTS.general ?? []).find((d) => d.key === 'enable_tax');
+    const fallback = (this.DEFAULTS.general ?? []).find((d) => d.key === key);
     return fallback?.value === true;
   }
 }

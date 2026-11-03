@@ -166,6 +166,7 @@ function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
   });
 
   const [enableTax, setEnableTax] = useState(true);
+  const [allowMixedCategories, setAllowMixedCategories] = useState(false);
   const [taxRate, setTaxRate] = useState('15');
   const [customerDiscount, setCustomerDiscount] = useState('0');
   const [employeeDiscount, setEmployeeDiscount] = useState('0');
@@ -179,6 +180,7 @@ function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
     if (!settings?.length) return;
     const byKey = Object.fromEntries(settings.map((s) => [s.key, s.value]));
     setEnableTax(byKey.enable_tax !== false);
+    setAllowMixedCategories(byKey.allow_mixed_categories === true);
     setTaxRate(String(byKey.tax_rate ?? 15));
     setCustomerDiscount(String(byKey.default_discount_percentage ?? 0));
     setEmployeeDiscount(String(byKey.employee_discount_percentage ?? 0));
@@ -196,6 +198,7 @@ function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
         { key: 'employee_discount_percentage', value: Math.min(100, Math.max(0, Number(employeeDiscount) || 0)), type: 'number' },
         { key: 'partner_discount_percentage', value: Math.min(100, Math.max(0, Number(partnerDiscount) || 0)), type: 'number' },
         { key: 'enable_tax', value: enableTax, type: 'boolean' },
+        { key: 'allow_mixed_categories', value: allowMixedCategories, type: 'boolean' },
         { key: 'tax_rate', value: Math.min(100, Math.max(0, Number(taxRate) || 0)), type: 'number' },
         { key: 'currency', value: currency.trim() || 'EGP', type: 'string' },
         { key: 'receipt_business_name', value: receiptBusinessName.trim() || 'Noamany CLUB · CAFE', type: 'string' },
@@ -243,6 +246,13 @@ function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
                 <p className="text-xs text-muted-foreground">{ui('عند الإيقاف تكون الضريبة 0% في نقطة البيع.')}</p>
               </div>
               <Switch checked={enableTax} onCheckedChange={setEnableTax} />
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+              <div>
+                <Label>{ui('السماح بأكثر من فئة في الفاتورة الواحدة')}</Label>
+                <p className="text-xs text-muted-foreground">{ui('مثلًا بار وبروتين في نفس الفاتورة. التقفيل اليومي بيقسم الفاتورة على فئات أصنافها. عند الإيقاف كل فاتورة فئة واحدة.')}</p>
+              </div>
+              <Switch checked={allowMixedCategories} onCheckedChange={setAllowMixedCategories} />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-2 rounded-xl border bg-muted/20 p-3">

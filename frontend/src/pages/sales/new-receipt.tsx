@@ -81,6 +81,7 @@ interface CartLine {
   imageUrl: string | null;
   productType: CafeProductListItem["productType"];
   currentStock: number | null;
+  categoryId?: number | null;
 }
 
 interface PosPaymentOption {
@@ -301,6 +302,10 @@ export function SalesNewReceiptPage() {
       return r;
     },
   });
+
+  // POS setting: one invoice may hold several categories (the daily closing splits it per item).
+  const allowMixedCategories =
+    posSettings?.find((setting) => setting.key === "allow_mixed_categories")?.value === true;
 
   const { data: printTemplateCatalog } = useQuery({
     queryKey: ["pos-invoice-templates", "cafe-printing"],
@@ -567,7 +572,7 @@ export function SalesNewReceiptPage() {
     }
     // One invoice per category, as in the old bar (عادي and بروتين were separate invoices):
     // the daily closing counts each invoice as بار or بروتين.
-    if (categoryId && cart.length && p.categoryId !== Number(categoryId)) {
+    if (!allowMixedCategories && categoryId && cart.length && p.categoryId !== Number(categoryId)) {
       const name = (id: number | string) =>
         categories?.find((c) => String(c.id) === String(id))?.nameAr ?? "";
       toast.error(
@@ -614,6 +619,7 @@ export function SalesNewReceiptPage() {
           imageUrl: p.imageUrl,
           productType: p.productType,
           currentStock: p.currentStock ?? null,
+          categoryId: p.categoryId ?? null,
         },
       ];
     });
@@ -671,6 +677,12 @@ export function SalesNewReceiptPage() {
     setBranchId(nextBranchId);
   };
 
+  const categoryName = (id: number | string | null | undefined) =>
+    categories?.find((c) => String(c.id) === String(id))?.nameAr ?? "";
+  const cartCategoryIds = [...new Set(cart.map((line) => line.categoryId).filter((id): id is number => id != null))];
+  const hasProteinItems = (cartCategoryIds.length ? cartCategoryIds : categoryId ? [Number(categoryId)] : [])
+    .some((id) => categoryName(id).includes("بروتين"));
+
   const checkout = async (onHold = false, allowIngredientShortage = false) => {
     if (!cart.length || !effectiveBranchId) {
       toast.error(ui("أضف منتجات واختر الفرع"));
@@ -725,7 +737,7 @@ export function SalesNewReceiptPage() {
       const payload: Record<string, unknown> = {
         branchId: Number(effectiveBranchId),
         warehouseId: warehouseId ? Number(warehouseId) : undefined,
-        targetEmployeeId: recommendedEmployeeId && categories?.find((c)=>String(c.id)===categoryId)?.nameAr.includes('بروتين') ? Number(recommendedEmployeeId) : undefined,
+        targetEmployeeId: recommendedEmployeeId && hasProteinItems ? Number(recommendedEmployeeId) : undefined,
         gender,
         cafeCategoryId: Number(categoryId),
         customerName: customerName || ui("عميل نقدي"),
@@ -1076,7 +1088,8 @@ export function SalesNewReceiptPage() {
           </div>
         </div>
 
-        <Card className="h-fit overflow-hidden border shadow-xl xl:sticky xl:top-4">
+        {/* The cart stays on screen while the products scroll: its body scrolls, totals and buttons stay at the bottom. */}
+        <Card className="flex h-fit flex-col overflow-hidden border shadow-xl xl:sticky xl:top-4 xl:max-h-[calc(100dvh-9rem)]">
           <CardHeader className="border-b bg-gradient-to-l from-primary/15 via-primary/5 to-card pb-4">
             <CardTitle className="flex items-center justify-between gap-2 text-lg">
               <span className="flex items-center gap-2">
@@ -1101,8 +1114,20 @@ export function SalesNewReceiptPage() {
                 </span>
               </span>
             </CardTitle>
+            {cart.length ? (
+              <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] font-semibold">
+                <span className="nums rounded-full bg-background px-2.5 py-1 text-muted-foreground">
+                  {toArabicDigits(cart.length)} {ui("صنف")} · {toArabicDigits(cart.reduce((sum, line) => sum + line.quantity, 0))} {ui("قطعة")}
+                </span>
+                {(cartCategoryIds.length ? cartCategoryIds : categoryId ? [Number(categoryId)] : []).map((id) => (
+                  <span key={id} className="rounded-full bg-primary/10 px-2.5 py-1 text-primary">
+                    {ui("فئة")}: {categoryName(id)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-3 pt-4 xl:min-h-0 xl:flex-1 xl:overflow-y-auto xl:overscroll-contain xl:[scrollbar-gutter:stable]">
             <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
               {(
                 [
@@ -1141,7 +1166,7 @@ export function SalesNewReceiptPage() {
               <div><Label>{ui('سبب المسحوبات')}</Label><Input value={drawingReason} onChange={(e) => setDrawingReason(e.target.value)} /></div>
               <p className="text-xs text-muted-foreground">{ui('تُخصم الكمية عند التسجيل، دون تسجيل مبيعات أو مديونية على المستفيد.')}</p>
             </section> : null}
-            {saleType !== 'drawing' && categories?.find((c) => String(c.id) === categoryId)?.nameAr.includes('بروتين') ? <Combobox value={recommendedEmployeeId} onValueChange={setRecommendedEmployeeId} options={employeeOptions} placeholder={ui('موصى بواسطة (اختياري)')} /> : null}
+            {saleType !== 'drawing' && hasProteinItems ? <Combobox value={recommendedEmployeeId} onValueChange={setRecommendedEmployeeId} options={employeeOptions} placeholder={ui('موصى بواسطة (اختياري)')} /> : null}
             {saleType === "customer" ? (
               <section className="rounded-xl border border-primary/15 bg-primary/[0.025] p-3">
                 <div className="mb-2"><p className="text-sm font-bold">{ui("بيانات العميل")}</p><p className="text-[10px] text-muted-foreground">{ui("اختيارية ومحفوظة داخل النظام للأرشفة فقط — لا تظهر في أي إيصال مطبوع.")}</p></div>
@@ -1296,6 +1321,11 @@ export function SalesNewReceiptPage() {
                                   </p>
                                   <p className="nums mt-0.5 text-[11px] text-muted-foreground">
                                     {l.productCode}
+                                    {l.productType === "ready" && l.currentStock != null ? (
+                                      <span className={`ms-2 rounded-full px-2 py-0.5 font-bold ${l.currentStock - l.quantity > 0 ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                                        {ui("يتبقى بالمخزن")} {toArabicDigits(Math.max(0, l.currentStock - l.quantity))}
+                                      </span>
+                                    ) : null}
                                   </p>
                                 </div>
                                 <Button
@@ -1594,7 +1624,9 @@ export function SalesNewReceiptPage() {
                 </div>
               ) : null}
             </div>
+          </CardContent>
 
+          <div className="space-y-3 border-t bg-card p-4 shadow-[0_-10px_24px_-20px_rgba(15,82,150,.7)] xl:shrink-0">
             <div className="rounded-2xl border bg-gradient-to-l from-primary/[0.07] to-transparent p-3">
               <dl className="grid grid-cols-3 gap-2 text-center">
                 <div>
@@ -1665,7 +1697,7 @@ export function SalesNewReceiptPage() {
                   : ui("تأكيد الطلب")}
               </Button>
             </div>
-          </CardContent>
+          </div>
         </Card>
       </div>
       <Dialog
