@@ -766,3 +766,13 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - مستني موافقة المستخدم: عمود club_trainers.branch_id (18 من 23 مدرب مالهمش موظف)، حقل كابتن للإنبودي،
   عمود acc_journal_entries.entry_type، وتصليح ربط الحسابات المكررة 5.01.011/5.01.012.
 - المرجع للرفع اللي جاي: الأساس = ca5218a، system.html = 61a7de15035a3f8e0a5bcaa1ab17f8673a7339bc983ba328e0a8bd5798a77bfe.
+
+آخر تثبيت مؤكد: 20261103-r11، 3 نوفمبر 2026 (بالليل)
+--------------------------------------------------
+- المحتوى: 695cdda — سياسة لـ GET /club-subscription-types و/all في sidebar-api-permissions: أي صلاحية صفحة اشتراكات
+  أو الاستقبال بتقرا أنواع الاشتراكات (دور الريسيبشن job_title_70 كان بياخد 403 فـ"إضافة اشتراك" تطلع فاضية).
+  ملف backend واحد، الواجهة زي ما هي.
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r11، والعملية اتغيرت من 2181346 لـ 216400.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r11-update-backup.ZeW5ZQ
+- الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r11/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r11-update-backup.ZeW5ZQ
+- المرجع للرفع اللي جاي: الأساس = 695cdda، system.html = 61a7de15035a3f8e0a5bcaa1ab17f8673a7339bc983ba328e0a8bd5798a77bfe (ماتغيرش).
