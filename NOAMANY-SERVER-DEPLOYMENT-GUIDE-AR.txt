@@ -605,3 +605,16 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - بعده (بيانات): وحدات 439 صنف قديم بقت وحدة بدل 1 (fix-cafe-from-old.sh، نسخة tmp/cafe-before-old-menu-20261103-023026.sql.gz).
   تنبيه: تشغيل fix-cafe-from-old.sh تاني بيرجّع أسعار وأسماء أصناف القديم لقيم القديم؛ ماتشغلوش بعد ما الكافيه يبدأ يغيّر أسعاره في الجديد.
 - المرجع للرفع اللي جاي: system.html = 1eb7d638920e8d2c90e485fbb123fb3ba264fe03abff96e5f5d82e4596e15e31.
+
+آخر تثبيت مؤكد: 20261103-r3 (شاشة بيع الكافيه)، 3 نوفمبر 2026
+------------------------------------------------------------
+- المحتوى: 3 ملفات backend (quick-sales.service، pos-reports-notifications.service، daily-closing-target.service) + واجهة الإدارة.
+  - إعداد allow_mixed_categories (إعدادات نقطة البيع، لكل فرع، مقفول افتراضيًا): فاتورة واحدة فيها أكتر من فئة،
+    والتقفيل اليومي بيقسمها على فئات الأصناف بالنسبة لإجمالي كل صنف.
+  - السلة ثابتة وبتتحرك لوحدها والأزرار ظاهرة؛ عدد الأصناف والقطع وفئات الفاتورة و"يتبقى بالمخزن".
+- اتبنى من 97f4aa2 + 0d21edd + e64ccd4 + 0ad6093 (= 03-r2) + 2a2dd1c، والأساس طابق system.html بتاع 03-r2.
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r3، والعملية اتغيرت من 1693675 لـ 1812301.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r3-update-backup.a0701C
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r3/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r3-update-backup.a0701C
+- المرجع للرفع اللي جاي: system.html = cf41e3741961aa5ba8402a14d62d73207e39d0e7a2e217735c2261396179e23c.
