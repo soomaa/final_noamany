@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
 import { api } from '@/lib/api';
 import { financeQueryDates, normalizeProfitLoss } from '@/lib/finance-api';
-import { localDateStr, localToday } from '@/lib/formatters';
+import { localDateStr, localToday, formatMoneyNumber } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { FinancePageShell } from './finance-shell';
@@ -98,13 +98,13 @@ export function FinanceProfitLossPage() {
                   {(data.revenue?.items ?? []).map((item) => (
                     <li key={item.label} className="flex justify-between">
                       <span>{item.label}</span>
-                      <span className="nums font-medium text-green-600">{toArabicDigits(item.amount.toFixed(2))}</span>
+                      <span className="nums font-medium text-green-600">{formatMoneyNumber(item.amount)}</span>
                     </li>
                   ))}
                 </ul>
                 <div className="mt-3 flex justify-between border-t pt-3 font-bold">
                   <span>{ui('إجمالي الإيرادات')}</span>
-                  <span className="nums text-green-600">{toArabicDigits((data.revenue?.total ?? 0).toFixed(2))}</span>
+                  <span className="nums text-green-600">{formatMoneyNumber((data.revenue?.total ?? 0))}</span>
                 </div>
               </div>
 
@@ -117,13 +117,13 @@ export function FinanceProfitLossPage() {
                   {(data.expenses?.items ?? []).map((item) => (
                     <li key={item.label} className="flex justify-between">
                       <span>{item.label}</span>
-                      <span className="nums font-medium text-red-600">({toArabicDigits(item.amount.toFixed(2))})</span>
+                      <span className="nums font-medium text-red-600">({formatMoneyNumber(item.amount)})</span>
                     </li>
                   ))}
                 </ul>
                 <div className="mt-3 flex justify-between border-t pt-3 font-bold">
                   <span>{ui('إجمالي المصروفات')}</span>
-                  <span className="nums text-red-600">({toArabicDigits((data.expenses?.total ?? 0).toFixed(2))})</span>
+                  <span className="nums text-red-600">({formatMoneyNumber((data.expenses?.total ?? 0))})</span>
                 </div>
               </div>
 
@@ -134,11 +134,11 @@ export function FinanceProfitLossPage() {
                   <div>
                     <span className="text-xl font-bold">{ui('صافي الربح/الخسارة')}</span>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      {ui('هامش الربح')}: {toArabicDigits(profitMargin.toFixed(2))}%
+                      {ui('هامش الربح')}: {formatMoneyNumber(profitMargin)}%
                     </p>
                   </div>
                   <span className={`nums text-4xl font-bold ${netProfit >= 0 ? 'text-blue-600' : 'text-orange-600'}`}>
-                    {toArabicDigits(netProfit.toFixed(2))}
+                    {formatMoneyNumber(netProfit)}
                   </span>
                 </div>
               </div>

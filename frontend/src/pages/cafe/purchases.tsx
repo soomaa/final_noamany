@@ -19,7 +19,7 @@ import { compatibleCafeUnits, convertCafeUnit } from '@/lib/cafe-units';
 import { useBranches } from '@/hooks/use-branches';
 import { WarehouseSelect } from '@/components/inventory/warehouse-select';
 import { Link } from 'react-router-dom';
-import { localToday } from '@/lib/formatters';
+import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { usePermission } from '@/hooks/use-permission';
 
 interface SupplierMaterial {
@@ -362,11 +362,11 @@ export function CafePurchasesPage() {
               <div className="rounded-2xl border bg-muted/15 p-4">
                 <h2 className="font-bold">{ui('ملخص الفاتورة')}</h2>
                 <div className="mt-4 grid grid-cols-3 gap-2">
-                  <div><Label className="text-[11px]">{ui('إجمالي البنود')}</Label><div className="nums mt-1 grid h-10 place-items-center rounded-lg border bg-background font-bold">{toArabicDigits(subtotal.toFixed(2))}</div></div>
+                  <div><Label className="text-[11px]">{ui('إجمالي البنود')}</Label><div className="nums mt-1 grid h-10 place-items-center rounded-lg border bg-background font-bold">{formatMoneyNumber(subtotal)}</div></div>
                   <div><Label className="text-[11px]">{ui('الضريبة')}</Label><Input className="nums mt-1 h-10" type="number" min={0} step="0.01" value={taxAmount} onChange={(event) => setTaxAmount(event.target.value)} /></div>
                   <div><Label className="text-[11px]">{ui('الخصم')}</Label><Input className="nums mt-1 h-10" type="number" min={0} max={subtotal + (Number(taxAmount) || 0)} step="0.01" value={discountAmount} onChange={(event) => setDiscountAmount(event.target.value)} /></div>
                 </div>
-                <div className="mt-3 flex items-center justify-between rounded-xl bg-primary px-4 py-3 text-primary-foreground"><span className="font-bold">{ui('الإجمالي النهائي')}</span><span className="nums text-2xl font-black">{toArabicDigits(total.toFixed(2))}</span></div>
+                <div className="mt-3 flex items-center justify-between rounded-xl bg-primary px-4 py-3 text-primary-foreground"><span className="font-bold">{ui('الإجمالي النهائي')}</span><span className="nums text-2xl font-black">{formatMoneyNumber(total)}</span></div>
               </div>
 
               <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/[0.06] p-4">
@@ -375,7 +375,7 @@ export function CafePurchasesPage() {
                   <div><Label className="text-xs">{ui('المدفوع الآن')}</Label><Input className="nums mt-1 h-11 border-emerald-500/35 bg-background text-lg font-black" type="number" min={0} max={editingInvoiceId ? undefined : total} step="any" value={paidAmount} disabled={!!editingInvoiceId} onChange={(event) => setPaidAmount(event.target.value)} /></div>
                   <div><Label className="text-xs">{ui('طريقة الدفع')}</Label><select disabled={!!editingInvoiceId || Number(paidAmount) <= 0} className="mt-1 h-11 w-full rounded-lg border bg-background px-3 text-sm disabled:opacity-60" value={initialPaymentMethod} onChange={(event) => setInitialPaymentMethod(event.target.value)}><option value="cash">{ui('نقدي')}</option><option value="bank">{ui('تحويل بنكي')}</option><option value="card">{ui('بطاقة')}</option><option value="wallet">{ui('محفظة')}</option></select></div>
                 </div>
-                <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-500/25 bg-background px-4 py-3"><span className="text-sm font-bold">{ui('المتبقي للمورد')}</span><span className={`nums text-xl font-black ${remaining > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{toArabicDigits(remaining.toFixed(2))}</span></div>
+                <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-500/25 bg-background px-4 py-3"><span className="text-sm font-bold">{ui('المتبقي للمورد')}</span><span className={`nums text-xl font-black ${remaining > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{formatMoneyNumber(remaining)}</span></div>
                 {editingInvoiceId ? <p className="mt-2 text-xs text-emerald-800/75 dark:text-emerald-200/75">{ui('الدفعات المرحّلة تُدار من صفحة سداد الموردين')}</p> : null}
               </div>
             </section>
@@ -391,7 +391,7 @@ export function CafePurchasesPage() {
               const status = invoiceStatusLabel(invoice.status);
               return <article key={invoice.id} className="rounded-2xl border bg-card p-3 text-sm shadow-sm">
                 <div className="flex items-start justify-between gap-2"><div><p className="nums font-black">{invoice.invoiceNumber}</p><p className="nums mt-1 text-xs text-muted-foreground">{invoice.invoiceDate ? toArabicDigits(invoice.invoiceDate.slice(0, 10)) : '—'}</p></div><span className="rounded-full bg-primary/10 px-2 py-1 text-[10px] font-bold text-primary">{ui(status)}</span></div>
-                <dl className="mt-3 grid grid-cols-2 gap-2"><div className="rounded-lg bg-muted/45 p-2"><dt className="text-[10px] text-muted-foreground">{ui('الإجمالي')}</dt><dd className="nums mt-0.5 font-bold">{toArabicDigits(invoice.totalAmount.toFixed(2))}</dd></div><div className="rounded-lg bg-muted/45 p-2"><dt className="text-[10px] text-muted-foreground">{ui('المتبقي')}</dt><dd className={`nums mt-0.5 font-bold ${invoice.remainingAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{toArabicDigits(invoice.remainingAmount.toFixed(2))}</dd></div></dl>
+                <dl className="mt-3 grid grid-cols-2 gap-2"><div className="rounded-lg bg-muted/45 p-2"><dt className="text-[10px] text-muted-foreground">{ui('الإجمالي')}</dt><dd className="nums mt-0.5 font-bold">{formatMoneyNumber(invoice.totalAmount)}</dd></div><div className="rounded-lg bg-muted/45 p-2"><dt className="text-[10px] text-muted-foreground">{ui('المتبقي')}</dt><dd className={`nums mt-0.5 font-bold ${invoice.remainingAmount > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{formatMoneyNumber(invoice.remainingAmount)}</dd></div></dl>
                 {can('gym-sales.procurement.cafe_purchases:update') ? <Button type="button" variant="outline" size="sm" className="mt-3 w-full" onClick={() => editInvoice(invoice)}><Pencil className="size-4" />{ui('فتح وتصحيح الفاتورة')}</Button> : null}
                 {invoice.warehouseId ? <Button asChild variant="secondary" size="sm" className="mt-2 w-full"><Link to={`/inventory/transactions?fromInvoice=${invoice.id}`}><Truck className="size-4" />{ui('عمل أمر صرف من الفاتورة')}</Link></Button> : null}
                 <Link className="mt-2 block text-sm text-primary" to={`/procurement/returns?invoiceId=${invoice.id}`}>{ui('عمل مرتجع من الفاتورة')}</Link>

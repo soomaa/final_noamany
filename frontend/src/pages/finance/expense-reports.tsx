@@ -16,7 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
 import { api } from '@/lib/api';
-import { localDateStr, localToday } from '@/lib/formatters';
+import { localDateStr, localToday, formatMoneyNumber } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import type { ExpenseReportData } from '@/types/finance';
 import { useLocale } from '@/store/locale';
@@ -85,7 +85,7 @@ export function FinanceExpenseReportsPage() {
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
           title={ui('إجمالي المصروفات')}
-          value={isLoading ? '…' : toArabicDigits((data?.totalAmount ?? 0).toFixed(2))}
+          value={isLoading ? '…' : formatMoneyNumber((data?.totalAmount ?? 0))}
           colorIndex={4}
           loading={isLoading}
         />
@@ -113,7 +113,7 @@ export function FinanceExpenseReportsPage() {
                   <span>{cat.category}</span>
                   <div className="flex items-center gap-3">
                     <span className="text-muted-foreground">{toArabicDigits(cat.count)}</span>
-                    <span className="nums font-bold">{toArabicDigits(cat.total.toFixed(2))}</span>
+                    <span className="nums font-bold">{formatMoneyNumber(cat.total)}</span>
                   </div>
                 </div>
               ))}
@@ -131,7 +131,7 @@ export function FinanceExpenseReportsPage() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                 <YAxis tickFormatter={(v) => toArabicDigits(v)} />
-                <Tooltip formatter={(v: number) => toArabicDigits(v.toFixed(2))} />
+                <Tooltip formatter={(v: number) => formatMoneyNumber(v)} />
                 <Bar dataKey="total" fill="#dc2626" radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>

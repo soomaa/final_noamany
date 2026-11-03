@@ -20,7 +20,7 @@ import { useBranches } from '@/hooks/use-branches';
 import { api, apiError } from '@/lib/api';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
-import { localToday } from '@/lib/formatters';
+import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import {
@@ -202,8 +202,8 @@ export function FinanceExpensesPage() {
         cell: ({ row }) => {
           const r = row.original;
           const amt = r.nesba != null && r.mainValue != null
-            ? `${toArabicDigits(r.amount.toFixed(2))} (${toArabicDigits(String(r.nesba))}%)`
-            : toArabicDigits(r.amount.toFixed(2));
+            ? `${formatMoneyNumber(r.amount)} (${toArabicDigits(String(r.nesba))}%)`
+            : formatMoneyNumber(r.amount);
           return <span className="nums">{amt}</span>;
         },
       },

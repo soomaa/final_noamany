@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
 import { api, getAccessToken } from '@/lib/api';
 import { downloadFromApi, downloadMultiSheetExcel, printElement } from '@/lib/export';
-import { localToday } from '@/lib/formatters';
+import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
@@ -287,10 +287,10 @@ export function UnifiedTreasuryPage() {
         <>
           <div ref={printRef} className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('إجمالي الإيراد')}</p><p className="nums text-2xl font-bold">{toArabicDigits(data.grandTotal.toFixed(2))}</p></CardContent></Card>
+              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('إجمالي الإيراد')}</p><p className="nums text-2xl font-bold">{formatMoneyNumber(data.grandTotal)}</p></CardContent></Card>
               <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('عدد العمليات')}</p><p className="nums text-2xl font-bold">{toArabicDigits(data.grandCount)}</p></CardContent></Card>
-              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('المصروفات')}</p><p className="nums text-2xl font-bold">{toArabicDigits(data.totalExpenses.toFixed(2))}</p></CardContent></Card>
-              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('صافي النقد')}</p><p className="nums text-2xl font-bold">{toArabicDigits(data.netCash.toFixed(2))}</p></CardContent></Card>
+              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('المصروفات')}</p><p className="nums text-2xl font-bold">{formatMoneyNumber(data.totalExpenses)}</p></CardContent></Card>
+              <Card><CardContent className="p-4"><p className="text-xs text-muted-foreground">{ui('صافي النقد')}</p><p className="nums text-2xl font-bold">{formatMoneyNumber(data.netCash)}</p></CardContent></Card>
             </div>
 
             <div className="overflow-x-auto rounded-xl border">
@@ -317,7 +317,7 @@ export function UnifiedTreasuryPage() {
                     <tr key={i} className="border-b">
                       <td className="p-2">{e.sourceLabel}</td>
                       <td className="p-2">{e.customerName}</td>
-                      <td className="p-2 nums">{toArabicDigits(e.amount.toFixed(2))}</td>
+                      <td className="p-2 nums">{formatMoneyNumber(e.amount)}</td>
                       <td className="p-2">{METHOD_LABELS[e.paymentMethod] ?? e.paymentMethod}</td>
                     </tr>
                   ))}

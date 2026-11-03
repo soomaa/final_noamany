@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { api, apiError } from '@/lib/api';
-import { localToday } from '@/lib/formatters';
+import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { InventoryPageShell } from '@/pages/inventory/inventory-shell';
@@ -23,7 +23,7 @@ interface SupplierDebt {
   lastPaymentDate: string | null;
 }
 
-const money = (value: number) => `${toArabicDigits(value.toFixed(2))} ج.م`;
+const money = (value: number) => `${formatMoneyNumber(value)} ج.م`;
 
 export function CafeSupplierPaymentsPage() {
   const { ui } = useLocale();

@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
 import { api } from '@/lib/api';
-import { localDateStr, localToday } from '@/lib/formatters';
+import { localDateStr, localToday, formatMoneyNumber } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import type { NamedEntity } from '@/types/inventory';
 import { useLocale } from '@/store/locale';
@@ -96,7 +96,7 @@ export function FinanceAnalysisPage() {
     URL.revokeObjectURL(url);
   };
 
-  const value = (amount: number) => toArabicDigits(amount.toFixed(2));
+  const value = (amount: number) => formatMoneyNumber(amount);
 
   return (
     <FinancePageShell title={ui('تقرير التحليل الشهري')} description={ui('الإيرادات والمصروفات وصافي النتيجة وفق منطق التقرير القديم')}>

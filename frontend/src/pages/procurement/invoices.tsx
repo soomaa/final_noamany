@@ -28,7 +28,7 @@ import type { NamedEntity, ProductListItem } from '@/types/inventory';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
 import { WarehouseSelect } from '@/components/inventory/warehouse-select';
-import { localToday } from '@/lib/formatters';
+import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { uiStatic } from '@/lib/ui-static';
@@ -518,7 +518,7 @@ function PurchaseInvoicesTab() {
                       onChange={(e) => updateLine(idx, { price: e.target.value })}
                     />
                     <div className="nums flex h-10 items-center rounded-md border bg-muted/40 px-2 text-sm font-semibold">
-                      {toArabicDigits(lineTotal(line).toFixed(2))}
+                      {formatMoneyNumber(lineTotal(line))}
                     </div>
                     <Button
                       type="button"
@@ -547,7 +547,7 @@ function PurchaseInvoicesTab() {
               <div className="grid gap-1">
                 <Label>{uiStatic('إجمالي الفاتورة')}</Label>
                 <div className="nums flex h-10 items-center rounded-md border bg-muted/40 px-3 text-base font-bold">
-                  {toArabicDigits(invoiceTotal.toFixed(2))}
+                  {formatMoneyNumber(invoiceTotal)}
                 </div>
               </div>
               {isDirect ? (

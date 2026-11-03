@@ -1,5 +1,6 @@
 import { Coffee, Printer, ReceiptText } from 'lucide-react';
 import { toArabicDigits } from '@/lib/utils';
+import { formatMoneyNumber } from '@/lib/formatters';
 
 export type PosPrintDocumentType = 'customer_receipt' | 'kitchen_ticket';
 export type PosPrintFontScale = 'compact' | 'normal' | 'large';
@@ -222,7 +223,7 @@ export function PosPrintTemplatePreview({
                     <p className="text-xl font-black leading-tight">{item.name}</p>
                     {item.variantName ? <p className="mt-1 inline-block rounded border-2 border-slate-950 px-2 py-0.5 text-sm font-black">{item.variantName}</p> : null}
                     {item.itemNote ? <p className="mt-1 border-s-4 border-slate-950 ps-2 text-sm font-black">ملاحظة: {item.itemNote}</p> : null}
-                    {template.layoutConfig.showPrices ? <p className="nums mt-1 text-sm font-bold">{toArabicDigits(item.lineTotal.toFixed(2))} {currency}</p> : null}
+                    {template.layoutConfig.showPrices ? <p className="nums mt-1 text-sm font-bold">{formatMoneyNumber(item.lineTotal)} {currency}</p> : null}
                   </div>
                 </div>
               ))}
@@ -254,14 +255,14 @@ export function PosPrintTemplatePreview({
             </div>
             <table className="w-full border-collapse text-[11px]">
               <thead><tr className="border-y-2 border-slate-950"><th className="py-1 text-start">الصنف</th><th className="py-1 text-center">الكمية</th>{template.layoutConfig.showPrices ? <th className="py-1 text-end">الإجمالي</th> : null}</tr></thead>
-              <tbody>{receipt.items.map((item, index) => <tr key={`${item.name}-${index}`} className="border-b border-dashed border-slate-400"><td className="py-2 font-bold">{item.name}{item.variantName ? <small className="block text-[9px]">{item.variantName}</small> : null}{item.itemNote ? <small className="block text-[9px]">ملاحظة: {item.itemNote}</small> : null}</td><td className="nums py-2 text-center font-black">{toArabicDigits(item.quantity)}</td>{template.layoutConfig.showPrices ? <td className="nums py-2 text-end font-bold">{toArabicDigits(item.lineTotal.toFixed(2))}</td> : null}</tr>)}</tbody>
+              <tbody>{receipt.items.map((item, index) => <tr key={`${item.name}-${index}`} className="border-b border-dashed border-slate-400"><td className="py-2 font-bold">{item.name}{item.variantName ? <small className="block text-[9px]">{item.variantName}</small> : null}{item.itemNote ? <small className="block text-[9px]">ملاحظة: {item.itemNote}</small> : null}</td><td className="nums py-2 text-center font-black">{toArabicDigits(item.quantity)}</td>{template.layoutConfig.showPrices ? <td className="nums py-2 text-end font-bold">{formatMoneyNumber(item.lineTotal)}</td> : null}</tr>)}</tbody>
             </table>
             {template.layoutConfig.showPrices ? (
               <div className="mt-3 space-y-1 border-t-2 border-slate-950 pt-2 text-xs">
-                <p className="flex justify-between"><span>المجموع</span><b className="nums">{toArabicDigits(receipt.subtotal.toFixed(2))}</b></p>
-                {receipt.discountAmount > 0 ? <p className="flex justify-between"><span>الخصم</span><b className="nums">-{toArabicDigits(receipt.discountAmount.toFixed(2))}</b></p> : null}
-                {receipt.taxAmount > 0 ? <p className="flex justify-between"><span>الضريبة</span><b className="nums">{toArabicDigits(receipt.taxAmount.toFixed(2))}</b></p> : null}
-                <p className="mt-2 flex justify-between bg-slate-950 p-2 text-base font-black text-white"><span>الإجمالي</span><span className="nums">{toArabicDigits(receipt.totalAmount.toFixed(2))} {currency}</span></p>
+                <p className="flex justify-between"><span>المجموع</span><b className="nums">{formatMoneyNumber(receipt.subtotal)}</b></p>
+                {receipt.discountAmount > 0 ? <p className="flex justify-between"><span>الخصم</span><b className="nums">-{formatMoneyNumber(receipt.discountAmount)}</b></p> : null}
+                {receipt.taxAmount > 0 ? <p className="flex justify-between"><span>الضريبة</span><b className="nums">{formatMoneyNumber(receipt.taxAmount)}</b></p> : null}
+                <p className="mt-2 flex justify-between bg-slate-950 p-2 text-base font-black text-white"><span>الإجمالي</span><span className="nums">{formatMoneyNumber(receipt.totalAmount)} {currency}</span></p>
               </div>
             ) : null}
             {template.layoutConfig.showReceiptComment && receipt.receiptComment ? <div className="mt-3 border-2 border-slate-950 p-2 text-xs"><b>ملاحظة الطلب</b><p className="mt-1">{receipt.receiptComment}</p></div> : null}
@@ -286,8 +287,8 @@ function printableBody(receipt: PosReceiptData, template: PosPrintTemplate) {
   const kitchen = template.layoutConfig.documentType === 'kitchen_ticket';
   const currency = escapeHtml(receipt.currency || 'EGP');
   const rows = receipt.items.map((item) => kitchen
-    ? `<div class="k-item"><b class="qty">${escapeHtml(item.quantity)}</b><div><strong>${escapeHtml(item.name)}</strong>${item.variantName ? `<span class="variant">${escapeHtml(item.variantName)}</span>` : ''}${item.itemNote ? `<small class="item-note">ملاحظة: ${escapeHtml(item.itemNote)}</small>` : ''}${template.layoutConfig.showPrices ? `<small>${escapeHtml(item.lineTotal.toFixed(2))} ${currency}</small>` : ''}</div></div>`
-    : `<tr><td><b>${escapeHtml(item.name)}</b>${item.variantName ? `<small>${escapeHtml(item.variantName)}</small>` : ''}${item.itemNote ? `<small class="item-note">ملاحظة: ${escapeHtml(item.itemNote)}</small>` : ''}</td><td class="center nums">${escapeHtml(item.quantity)}</td>${template.layoutConfig.showPrices ? `<td class="end nums">${escapeHtml(item.lineTotal.toFixed(2))}</td>` : ''}</tr>`).join('');
+    ? `<div class="k-item"><b class="qty">${escapeHtml(item.quantity)}</b><div><strong>${escapeHtml(item.name)}</strong>${item.variantName ? `<span class="variant">${escapeHtml(item.variantName)}</span>` : ''}${item.itemNote ? `<small class="item-note">ملاحظة: ${escapeHtml(item.itemNote)}</small>` : ''}${template.layoutConfig.showPrices ? `<small>${escapeHtml(formatMoneyNumber(item.lineTotal, 'en'))} ${currency}</small>` : ''}</div></div>`
+    : `<tr><td><b>${escapeHtml(item.name)}</b>${item.variantName ? `<small>${escapeHtml(item.variantName)}</small>` : ''}${item.itemNote ? `<small class="item-note">ملاحظة: ${escapeHtml(item.itemNote)}</small>` : ''}</td><td class="center nums">${escapeHtml(item.quantity)}</td>${template.layoutConfig.showPrices ? `<td class="end nums">${escapeHtml(formatMoneyNumber(item.lineTotal, 'en'))}</td>` : ''}</tr>`).join('');
   const comment = template.layoutConfig.showReceiptComment && receipt.receiptComment
     ? `<div class="comment"><b>${kitchen ? 'ملاحظات التحضير' : 'ملاحظة الطلب'}</b><p>${escapeHtml(receipt.receiptComment)}</p></div>`
     : '';
@@ -305,7 +306,7 @@ function printableBody(receipt: PosReceiptData, template: PosPrintTemplate) {
     <section class="order-number"><span>رقم الطلب</span><b>#${escapeHtml(receipt.dailyNumber ?? 1)}</b></section>
     <section class="meta"><span>رقم الفاتورة</span><b class="sale-number-small">${escapeHtml(receipt.saleNumber)}</b><span>التاريخ</span><b>${escapeHtml(receipt.saleDate)}</b>${template.layoutConfig.showPaymentMethod ? `<span>الدفع</span><b>${escapeHtml(receipt.paymentMethod)}</b>` : ''}</section>
     <table><thead><tr><th>الصنف</th><th class="center">الكمية</th>${template.layoutConfig.showPrices ? '<th class="end">الإجمالي</th>' : ''}</tr></thead><tbody>${rows}</tbody></table>
-    ${template.layoutConfig.showPrices ? `<section class="totals"><p><span>المجموع</span><b>${escapeHtml(receipt.subtotal.toFixed(2))}</b></p>${receipt.discountAmount > 0 ? `<p><span>الخصم</span><b>-${escapeHtml(receipt.discountAmount.toFixed(2))}</b></p>` : ''}${receipt.taxAmount > 0 ? `<p><span>الضريبة</span><b>${escapeHtml(receipt.taxAmount.toFixed(2))}</b></p>` : ''}<p class="grand"><span>الإجمالي</span><b>${escapeHtml(receipt.totalAmount.toFixed(2))} ${currency}</b></p></section>` : ''}
+    ${template.layoutConfig.showPrices ? `<section class="totals"><p><span>المجموع</span><b>${escapeHtml(formatMoneyNumber(receipt.subtotal, 'en'))}</b></p>${receipt.discountAmount > 0 ? `<p><span>الخصم</span><b>-${escapeHtml(formatMoneyNumber(receipt.discountAmount, 'en'))}</b></p>` : ''}${receipt.taxAmount > 0 ? `<p><span>الضريبة</span><b>${escapeHtml(formatMoneyNumber(receipt.taxAmount, 'en'))}</b></p>` : ''}<p class="grand"><span>الإجمالي</span><b>${escapeHtml(formatMoneyNumber(receipt.totalAmount, 'en'))} ${currency}</b></p></section>` : ''}
     ${comment}${template.includeFooter ? `<footer>${escapeHtml(template.footerText || receipt.footerText || 'شكراً لزيارتكم')}</footer>` : ''}
   </main>`;
 }

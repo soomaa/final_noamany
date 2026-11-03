@@ -20,7 +20,7 @@ import { useBranches } from '@/hooks/use-branches';
 import { api, apiError } from '@/lib/api';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
-import { localToday } from '@/lib/formatters';
+import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { normalizeRevenueSync } from '@/lib/finance-api';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
@@ -107,7 +107,7 @@ export function FinanceRevenuesPage() {
       {
         accessorKey: 'amount',
         header: ui('المبلغ'),
-        cell: ({ getValue }) => <span className="nums">{toArabicDigits((getValue() as number).toFixed(2))}</span>,
+        cell: ({ getValue }) => <span className="nums">{formatMoneyNumber((getValue() as number))}</span>,
       },
       { accessorKey: 'paymentMethod', header: ui('طريقة الدفع') },
       { accessorKey: 'paymentStatus', header: ui('حالة الدفع') },

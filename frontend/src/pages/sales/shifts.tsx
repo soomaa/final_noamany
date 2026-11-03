@@ -48,7 +48,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useBranches } from "@/hooks/use-branches";
 import { useCurrentShiftSession } from "@/hooks/use-shift-session";
 import { api, apiError } from "@/lib/api";
-import { formatDateTime, formatTime, localToday } from "@/lib/formatters";
+import { formatDateTime, formatTime, localToday, formatMoneyNumber } from "@/lib/formatters";
 import { confirm, confirmWithPreview } from "@/lib/confirm";
 import { isDryRunResponse } from "@/lib/validators";
 import { clientPaginate, useMutationWithToast } from "@/lib/api-hooks";
@@ -1087,10 +1087,10 @@ export function SalesShiftsPage() {
                           `#${row.userId}`}
                       </td>
                       <td className="nums text-center">
-                        {toArabicDigits(row.totalSales.toFixed(2))}
+                        {formatMoneyNumber(row.totalSales)}
                       </td>
                       <td className="nums text-center">
-                        {toArabicDigits(row.totalCash.toFixed(2))}
+                        {formatMoneyNumber(row.totalCash)}
                       </td>
                       <td className="nums text-center">
                         {row.expectedClosingBalance == null
@@ -1102,14 +1102,14 @@ export function SalesShiftsPage() {
                       <td className="nums text-center">
                         {row.closingBalance == null
                           ? "—"
-                          : toArabicDigits(row.closingBalance.toFixed(2))}
+                          : formatMoneyNumber(row.closingBalance)}
                       </td>
                       <td
                         className={`nums text-center font-bold ${(row.cashDifference ?? 0) < -0.01 ? "text-destructive" : (row.cashDifference ?? 0) > 0.01 ? "text-amber-600" : "text-emerald-600"}`}
                       >
                         {row.cashDifference == null
                           ? "—"
-                          : toArabicDigits(row.cashDifference.toFixed(2))}
+                          : formatMoneyNumber(row.cashDifference)}
                       </td>
                       <td className="text-center">
                         <Badge
@@ -1233,7 +1233,7 @@ export function SalesShiftsPage() {
                 <div className="flex items-center justify-between gap-3">
                   <Label className="font-bold text-destructive">{ui("سبب عجز النقدية")}</Label>
                   <b className="nums text-sm text-destructive">
-                    -{toArabicDigits(closingShortage.toFixed(2))} EGP
+                    -{formatMoneyNumber(closingShortage)} EGP
                   </b>
                 </div>
                 <Textarea

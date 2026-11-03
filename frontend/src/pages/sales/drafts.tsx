@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { api, apiError } from '@/lib/api';
-import { formatTime } from '@/lib/formatters';
+import { formatTime, formatMoneyNumber } from '@/lib/formatters';
 import { confirm } from '@/lib/confirm';
 import { confirmWithPreview } from '@/lib/confirm';
 import { usePermission } from '@/hooks/use-permission';
@@ -206,7 +206,7 @@ export function SalesDraftsPage() {
         <Metric icon={ReceiptText} label={ui('فواتير آخر ورديتين')} value={toArabicDigits(totals.orders)} tone="primary" />
         <Metric icon={Clock3} label={ui('فواتير معلقة')} value={toArabicDigits(totals.drafts)} tone="amber" />
         <Metric icon={Coffee} label={ui('فواتير مكتملة')} value={toArabicDigits(totals.completed)} tone="emerald" />
-        <Metric icon={ReceiptText} label={ui('إيراد النافذة')} value={`${toArabicDigits(totals.value.toFixed(2))} ج.م`} tone="primary" />
+        <Metric icon={ReceiptText} label={ui('إيراد النافذة')} value={`${formatMoneyNumber(totals.value)} ج.م`} tone="primary" />
       </div>
 
       <Card className="overflow-hidden border-amber-300 bg-amber-50/40 dark:border-amber-900 dark:bg-amber-950/10">
@@ -233,7 +233,7 @@ export function SalesDraftsPage() {
                   </div>
                   <div className="my-3 grid grid-cols-2 gap-2 rounded-xl bg-amber-50 p-3 text-sm dark:bg-amber-950/20">
                     <span>{toArabicDigits((draft.items ?? []).length)} {ui('صنف')}</span>
-                    <span className="nums text-end font-bold">{toArabicDigits(draft.totalAmount.toFixed(2))} ج.م</span>
+                    <span className="nums text-end font-bold">{formatMoneyNumber(draft.totalAmount)} ج.م</span>
                   </div>
                   {draft.receiptComment && (
                     <div className="mb-3 flex gap-2 rounded-xl bg-muted/60 p-3 text-sm">
@@ -309,7 +309,7 @@ export function SalesDraftsPage() {
                       <span className="nums">{formatTime(session.startTime, locale)}</span>
                       {session.endTime ? <span className="nums">— {formatTime(session.endTime, locale)}</span> : null}
                       <Badge variant="outline">{toArabicDigits(posted.length)} {ui('فاتورة')}</Badge>
-                      <Badge variant="outline" className="nums">{toArabicDigits(session.completedValue.toFixed(2))} ج.م</Badge>
+                      <Badge variant="outline" className="nums">{formatMoneyNumber(session.completedValue)} ج.م</Badge>
                     </span>
                   </CardTitle>
                 </CardHeader>
@@ -338,7 +338,7 @@ export function SalesDraftsPage() {
                               <td className="p-3 font-medium">{invoice.customerName}</td>
                               <td className="nums p-3 text-center">{toArabicDigits((invoice.items ?? []).length)}</td>
                               <td className="p-3 text-center"><InvoiceStatus status={invoice.status} /></td>
-                              <td className="nums p-3 text-end font-bold">{toArabicDigits(invoice.totalAmount.toFixed(2))} ج.م</td>
+                              <td className="nums p-3 text-end font-bold">{formatMoneyNumber(invoice.totalAmount)} ج.م</td>
                               <td className="p-3 text-end">
                                 <Button variant="outline" size="sm" onClick={() => openInvoice(invoice)}>
                                   <ReceiptText className="size-4" />{ui('فتح الفاتورة')}
@@ -371,7 +371,7 @@ export function SalesDraftsPage() {
                 <div><p className="text-xs text-muted-foreground">{ui('العميل')}</p><p className="font-semibold">{selected.customerName}</p></div>
                 <div><p className="text-xs text-muted-foreground">{ui('الوقت')}</p><p className="nums font-semibold">{formatTime(selected.saleTime, locale)}</p></div>
                 <div><p className="text-xs text-muted-foreground">{ui('رقم النظام')}</p><p className="nums font-semibold">{selected.saleNumber}</p></div>
-                <div><p className="text-xs text-muted-foreground">{ui('الإجمالي')}</p><p className="nums text-lg font-black text-primary">{toArabicDigits(selected.totalAmount.toFixed(2))} ج.م</p></div>
+                <div><p className="text-xs text-muted-foreground">{ui('الإجمالي')}</p><p className="nums text-lg font-black text-primary">{formatMoneyNumber(selected.totalAmount)} ج.م</p></div>
               </div>
               <div className="space-y-3">
                 {(selected.items ?? []).map((item) => {
@@ -382,9 +382,9 @@ export function SalesDraftsPage() {
                         <p className="font-bold">{item.name}</p>
                         {item.variantName ? <p className="mt-0.5 text-xs font-semibold text-primary">{item.variantName}</p> : null}
                         <div className="mt-2 grid grid-cols-3 gap-2 text-xs">
-                          <span className="rounded-lg bg-muted p-2">{ui('السعر')} <strong className="nums block text-sm">{toArabicDigits(item.unitPrice.toFixed(2))}</strong></span>
+                          <span className="rounded-lg bg-muted p-2">{ui('السعر')} <strong className="nums block text-sm">{formatMoneyNumber(item.unitPrice)}</strong></span>
                           <span className="rounded-lg bg-muted p-2">{ui('الكمية')} <strong className="nums block text-sm">{toArabicDigits(item.quantity)}</strong></span>
-                          <span className="rounded-lg bg-muted p-2">{ui('الإجمالي')} <strong className="nums block text-sm">{toArabicDigits(item.lineTotal.toFixed(2))}</strong></span>
+                          <span className="rounded-lg bg-muted p-2">{ui('الإجمالي')} <strong className="nums block text-sm">{formatMoneyNumber(item.lineTotal)}</strong></span>
                         </div>
                       </div>
                       <div>

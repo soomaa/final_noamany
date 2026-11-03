@@ -30,7 +30,7 @@ import { useBranches } from "@/hooks/use-branches";
 import { useCurrentShiftSession } from "@/hooks/use-shift-session";
 import { api, apiError } from "@/lib/api";
 import { confirmWithPreview } from "@/lib/confirm";
-import { formatTime } from "@/lib/formatters";
+import { formatTime, formatMoneyNumber } from "@/lib/formatters";
 import { toArabicDigits } from "@/lib/utils";
 import { isDryRunResponse } from "@/lib/validators";
 import { useAuth } from "@/store/auth";
@@ -601,7 +601,7 @@ export function PosShiftSwitcher() {
             <div className="rounded-xl border bg-muted/20 p-3 text-sm">
               <div className="flex justify-between gap-3">
                 <span className="text-muted-foreground">{ui("الرصيد المتوقع في الدرج")}</span>
-                <b className="nums">{toArabicDigits(Number(current?.expectedClosingBalance ?? 0).toFixed(2))} EGP</b>
+                <b className="nums">{formatMoneyNumber(Number(current?.expectedClosingBalance ?? 0))} EGP</b>
               </div>
             </div>
             <div className="grid gap-2">
@@ -620,7 +620,7 @@ export function PosShiftSwitcher() {
                 <div className="flex items-center justify-between gap-3">
                   <Label className="font-bold text-destructive">{ui("سبب عجز النقدية")}</Label>
                   <b className="nums text-sm text-destructive">
-                    -{toArabicDigits(endDayShortage.toFixed(2))} EGP
+                    -{formatMoneyNumber(endDayShortage)} EGP
                   </b>
                 </div>
                 <Textarea
@@ -714,7 +714,7 @@ export function PosShiftSwitcher() {
                     {ui("مبيعات نقدية")}
                   </span>
                   <b className="nums">
-                    {toArabicDigits(Number(current?.totalCash ?? 0).toFixed(2))}{" "}
+                    {formatMoneyNumber(Number(current?.totalCash ?? 0))}{" "}
                     EGP
                   </b>
                 </div>
@@ -742,7 +742,7 @@ export function PosShiftSwitcher() {
                   <div className="flex items-center justify-between gap-3">
                     <Label className="font-bold text-destructive">{ui("سبب عجز النقدية")}</Label>
                     <b className="nums text-sm text-destructive">
-                      -{toArabicDigits(handoverShortage.toFixed(2))} EGP
+                      -{formatMoneyNumber(handoverShortage)} EGP
                     </b>
                   </div>
                   <Textarea
@@ -815,9 +815,9 @@ export function PosShiftSwitcher() {
                     {ui("التوزيع متوازن تلقائياً")}
                   </span>
                   <b className="nums">
-                    {toArabicDigits(Number(transferAmount || 0).toFixed(2))} +{" "}
-                    {toArabicDigits(Number(cashDropAmount || 0).toFixed(2))} ={" "}
-                    {toArabicDigits(Number(closingBalance || 0).toFixed(2))} EGP
+                    {formatMoneyNumber(Number(transferAmount || 0))} +{" "}
+                    {formatMoneyNumber(Number(cashDropAmount || 0))} ={" "}
+                    {formatMoneyNumber(Number(closingBalance || 0))} EGP
                   </b>
                 </div>
               </div>

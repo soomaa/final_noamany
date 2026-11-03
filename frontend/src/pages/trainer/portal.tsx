@@ -21,7 +21,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { api, apiError } from '@/lib/api';
-import { localDateStr } from '@/lib/formatters';
+import { localDateStr, formatMoneyNumber } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useAuth } from '@/store/auth';
 
@@ -63,7 +63,7 @@ interface TrainerPortalData {
   };
 }
 
-const money = (value: number) => `${toArabicDigits(value.toFixed(2))} ج.م`;
+const money = (value: number) => `${formatMoneyNumber(value)} ج.م`;
 
 export function TrainerPortalPage() {
   const { user, logout } = useAuth();
@@ -225,7 +225,7 @@ export function TrainerPortalPage() {
                             <td className="p-3 nums">{toArabicDigits(row.attended)}</td>
                             <td className="p-3 nums">{money(row.unitPrice)}</td>
                             <td className="p-3 nums">{money(row.revenue)}</td>
-                            <td className="p-3 nums">{toArabicDigits(row.commissionPercentage.toFixed(2))}%</td>
+                            <td className="p-3 nums">{formatMoneyNumber(row.commissionPercentage)}%</td>
                             <td className="p-3 font-bold text-primary nums">{money(row.amount)}</td>
                           </tr>
                         ))}

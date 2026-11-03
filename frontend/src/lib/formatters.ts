@@ -28,9 +28,11 @@ export function formatMoney(
   if (Number.isNaN(n)) return '—';
   const numLocale = locale === 'en' ? 'en-US' : 'ar-EG';
   const curr = currency ?? (locale === 'en' ? 'EGP' : 'ج.م');
+  // Piastres only when there are any: 4,240 ج.م, but 12.50 ج.م.
+  const hasPiastres = Math.abs(Math.round(n * 100) % 100) !== 0;
   const formatted = new Intl.NumberFormat(numLocale, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
+    minimumFractionDigits: hasPiastres ? 2 : 0,
+    maximumFractionDigits: hasPiastres ? 2 : 0,
   }).format(n);
   return `${formatDigits(formatted, locale)} ${curr}`;
 }

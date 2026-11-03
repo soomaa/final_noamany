@@ -28,7 +28,7 @@ import { Label } from "@/components/ui/label";
 import { useBranches } from "@/hooks/use-branches";
 import { usePosEmployeeOptions } from "@/hooks/use-pos-employee-options";
 import { api, apiError } from "@/lib/api";
-import { localToday } from "@/lib/formatters";
+import { localToday, formatMoneyNumber } from "@/lib/formatters";
 import { toArabicDigits } from "@/lib/utils";
 import { useLocale } from "@/store/locale";
 import { GymSalesPageShell } from "../gym-sales/shell";
@@ -454,7 +454,7 @@ export function SalesSettlementsPage() {
                   {ui("إجمالي المشتريات")}
                 </p>
                 <b className="nums mt-1 block text-xl">
-                  {toArabicDigits(totals.purchases.toFixed(2))} EGP
+                  {formatMoneyNumber(totals.purchases)} EGP
                 </b>
               </div>
               <div className="rounded-2xl border bg-amber-50/70 p-4">
@@ -463,7 +463,7 @@ export function SalesSettlementsPage() {
                   {ui("المبلغ المستحق")}
                 </p>
                 <b className="nums mt-1 block text-xl text-amber-800">
-                  {toArabicDigits(totals.outstanding.toFixed(2))} EGP
+                  {formatMoneyNumber(totals.outstanding)} EGP
                 </b>
               </div>
               <div className="rounded-2xl border bg-emerald-50/70 p-4">
@@ -472,7 +472,7 @@ export function SalesSettlementsPage() {
                   {ui("مدفوع / مسوّى")}
                 </p>
                 <b className="nums mt-1 block text-xl text-emerald-800">
-                  {toArabicDigits(totals.settled.toFixed(2))} EGP
+                  {formatMoneyNumber(totals.settled)} EGP
                 </b>
               </div>
               <div className="sm:col-span-3 flex items-center justify-between rounded-xl border border-primary/15 bg-primary/[0.035] px-4 py-3">
@@ -551,10 +551,10 @@ export function SalesSettlementsPage() {
                       {cycleLabel(sale.billingCycle)}
                     </td>
                     <td className="nums text-center font-bold">
-                      {toArabicDigits(sale.totalAmount.toFixed(2))}
+                      {formatMoneyNumber(sale.totalAmount)}
                     </td>
                     <td className="nums text-center">
-                      {toArabicDigits(sale.collectedAmount.toFixed(2))}
+                      {formatMoneyNumber(sale.collectedAmount)}
                     </td>
                     <td className="p-2 text-center">
                       <span
@@ -599,7 +599,7 @@ export function SalesSettlementsPage() {
                 </div>
                 <div className="text-end">
                   <p className="nums text-2xl font-black text-primary">
-                    {toArabicDigits(selectedTotal.toFixed(2))} EGP
+                    {formatMoneyNumber(selectedTotal)} EGP
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {ui("الإجمالي المختار")}
@@ -637,7 +637,7 @@ export function SalesSettlementsPage() {
                           </p>
                         </div>
                         <b className="nums">
-                          {toArabicDigits(sale.amount.toFixed(2))}
+                          {formatMoneyNumber(sale.amount)}
                         </b>
                       </label>
                     ))}
@@ -715,7 +715,7 @@ export function SalesSettlementsPage() {
                       {statement.periodStart} — {statement.periodEnd}
                     </td>
                     <td className="nums text-center font-bold">
-                      {toArabicDigits(statement.totalAmount.toFixed(2))}
+                      {formatMoneyNumber(statement.totalAmount)}
                     </td>
                     <td className="text-center">
                       {cycleLabel(statement.billingCycle)}
@@ -787,7 +787,7 @@ export function SalesSettlementsPage() {
             <DialogTitle>{ui("تسوية كشف الحساب")}</DialogTitle>
             <DialogDescription>
               {settleTarget?.statementNumber} ·{" "}
-              {toArabicDigits((settleTarget?.totalAmount ?? 0).toFixed(2))} EGP
+              {formatMoneyNumber((settleTarget?.totalAmount ?? 0))} EGP
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

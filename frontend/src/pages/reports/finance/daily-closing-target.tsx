@@ -12,6 +12,7 @@ import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
 import { isBranchManagerUser, isSystemAdminUser } from '@/lib/user-scope';
+import { formatMoneyNumber } from '@/lib/formatters';
 
 type ReceiptTotals = { total: string; cash: string; knet: string };
 type AmountTotals = { total: string };
@@ -383,7 +384,7 @@ function sortText(row: TargetRow, key: TargetColumnKey, ui: (text: string) => st
   if (key === 'kind') return ui(TARGET_KIND[targetKind(row)].label);
   return String(row[key as keyof TargetRow] ?? '');
 }
-const money2 = (value: string | number | undefined) => toArabicDigits(Number(value ?? 0).toFixed(2));
+const money2 = (value: string | number | undefined) => formatMoneyNumber(Number(value ?? 0));
 
 /** Totals under the table: a label cell beside its value, in the same calm palette as the report. */
 function TargetSummary({ rows }: { rows: Array<Array<{ label: string; value: string | undefined }>> }) {

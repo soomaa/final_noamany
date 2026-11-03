@@ -29,7 +29,7 @@ import { useBranches } from '@/hooks/use-branches';
 import { usePosEmployeeOptions } from '@/hooks/use-pos-employee-options';
 import { useCurrentShiftSession } from '@/hooks/use-shift-session';
 import { api, apiError } from '@/lib/api';
-import { formatDate, formatTimeFromDate, localToday } from '@/lib/formatters';
+import { formatDate, formatTimeFromDate, localToday, formatMoneyNumber } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
@@ -249,7 +249,7 @@ export function SalesTreasuryPage() {
 
       {isError ? <div className="mb-5 flex items-center justify-between rounded-xl border border-destructive/40 bg-destructive/5 p-4"><span>{ui('تعذر تحميل بيانات الخزينة')}</span><Button variant="outline" onClick={() => void refetch()}>{ui('إعادة المحاولة')}</Button></div> : null}
       <div className="mb-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map((card) => <Card key={card.label}><CardContent className="flex items-center gap-3 p-4"><span className="grid size-11 place-items-center rounded-xl bg-muted"><card.icon className={`size-5 ${card.tone}`} /></span><div><p className="text-xs text-muted-foreground">{card.label}</p><p className={`nums text-xl font-black ${card.tone}`}>{isLoading ? '…' : toArabicDigits(card.value.toFixed(2))} <small>EGP</small></p></div></CardContent></Card>)}
+        {cards.map((card) => <Card key={card.label}><CardContent className="flex items-center gap-3 p-4"><span className="grid size-11 place-items-center rounded-xl bg-muted"><card.icon className={`size-5 ${card.tone}`} /></span><div><p className="text-xs text-muted-foreground">{card.label}</p><p className={`nums text-xl font-black ${card.tone}`}>{isLoading ? '…' : formatMoneyNumber(card.value)} <small>EGP</small></p></div></CardContent></Card>)}
       </div>
 
       <section className="mb-5 overflow-hidden rounded-2xl border">
@@ -260,9 +260,9 @@ export function SalesTreasuryPage() {
         <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
           {(custodies?.data ?? []).map((custody) => (
             <div key={custody.id} className="rounded-xl border bg-card p-3">
-              <div className="flex items-start justify-between gap-2"><div><b>{custody.employee?.employee ?? ui('موظف غير محدد')}</b><p className="nums text-xs text-muted-foreground">{custody.reference} · {formatDate(custody.issuedAt)}</p></div><Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">{toArabicDigits(custody.outstandingAmount.toFixed(2))} EGP</Badge></div>
+              <div className="flex items-start justify-between gap-2"><div><b>{custody.employee?.employee ?? ui('موظف غير محدد')}</b><p className="nums text-xs text-muted-foreground">{custody.reference} · {formatDate(custody.issuedAt)}</p></div><Badge className="bg-amber-100 text-amber-800 hover:bg-amber-100">{formatMoneyNumber(custody.outstandingAmount)} EGP</Badge></div>
               <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">{custody.description}</p>
-              <div className="mt-3 flex items-center justify-between text-xs"><span>{ui('المصروف')}: <b className="nums">{toArabicDigits(custody.issuedAmount.toFixed(2))}</b></span><span>{ui('المردود')}: <b className="nums text-emerald-600">{toArabicDigits(custody.returnedAmount.toFixed(2))}</b></span></div>
+              <div className="mt-3 flex items-center justify-between text-xs"><span>{ui('المصروف')}: <b className="nums">{formatMoneyNumber(custody.issuedAmount)}</b></span><span>{ui('المردود')}: <b className="nums text-emerald-600">{formatMoneyNumber(custody.returnedAmount)}</b></span></div>
               <Button className="mt-3 w-full" size="sm" variant="outline" disabled={!current} onClick={() => openMovement('custody_return', custody)}><RotateCcw className="me-2 size-3.5" />{ui('تسجيل رد')}</Button>
             </div>
           ))}
@@ -292,12 +292,12 @@ export function SalesTreasuryPage() {
                   return (
                     <tr key={session.id} className="border-b last:border-0">
                       <td className="p-3 font-semibold">{session.shift?.shiftName ?? `#${session.id}`}</td>
-                      <td className="nums text-center">{toArabicDigits(session.openingBalance.toFixed(2))}</td>
-                      <td className="nums text-center">{toArabicDigits(session.totalCash.toFixed(2))}</td>
-                      <td className="nums text-center">{toArabicDigits(session.cashDropAmount.toFixed(2))}</td>
-                      <td className="nums text-center">{toArabicDigits(session.retainedAmount.toFixed(2))}</td>
+                      <td className="nums text-center">{formatMoneyNumber(session.openingBalance)}</td>
+                      <td className="nums text-center">{formatMoneyNumber(session.totalCash)}</td>
+                      <td className="nums text-center">{formatMoneyNumber(session.cashDropAmount)}</td>
+                      <td className="nums text-center">{formatMoneyNumber(session.retainedAmount)}</td>
                       <td className={`nums text-center font-bold ${hasShortage ? 'text-destructive' : ''}`}>
-                        {toArabicDigits((session.cashDifference ?? 0).toFixed(2))}
+                        {formatMoneyNumber((session.cashDifference ?? 0))}
                       </td>
                       <td className="max-w-64 p-3 text-start">
                         {hasShortage ? (
@@ -323,7 +323,7 @@ export function SalesTreasuryPage() {
         <section className="overflow-hidden rounded-2xl border">
           <div className="border-b bg-muted/30 px-4 py-3 font-bold">{ui('سجل حركات الدرج')}</div>
           <div className="max-h-[460px] divide-y overflow-y-auto">
-            {(movements?.data ?? []).map((movement) => <div key={movement.id} className="flex items-center gap-3 p-3"><span className={`grid size-9 place-items-center rounded-full ${movement.direction === 'in' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>{movement.direction === 'in' ? <ArrowDownLeft className="size-4" /> : <ArrowUpRight className="size-4" />}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><p className="truncate text-sm font-semibold">{movementLabels[movement.movement_type] ? ui(movementLabels[movement.movement_type]) : movement.movement_type}</p>{movement.employee?.employee ? <Badge variant="secondary" className="text-[10px]">{movement.employee.employee}</Badge> : null}</div><p className="truncate text-xs text-muted-foreground">{movement.description}</p><p className="nums text-[10px] text-muted-foreground">{movement.reference}{movement.sourceReference ? ` ← ${movement.sourceReference}` : ''} · {formatTimeFromDate(movement.created_at)}</p></div><b className={`nums ${movement.direction === 'in' ? 'text-emerald-600' : 'text-rose-600'}`}>{movement.direction === 'in' ? '+' : '-'}{toArabicDigits(movement.amount.toFixed(2))}</b></div>)}
+            {(movements?.data ?? []).map((movement) => <div key={movement.id} className="flex items-center gap-3 p-3"><span className={`grid size-9 place-items-center rounded-full ${movement.direction === 'in' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'}`}>{movement.direction === 'in' ? <ArrowDownLeft className="size-4" /> : <ArrowUpRight className="size-4" />}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-1"><p className="truncate text-sm font-semibold">{movementLabels[movement.movement_type] ? ui(movementLabels[movement.movement_type]) : movement.movement_type}</p>{movement.employee?.employee ? <Badge variant="secondary" className="text-[10px]">{movement.employee.employee}</Badge> : null}</div><p className="truncate text-xs text-muted-foreground">{movement.description}</p><p className="nums text-[10px] text-muted-foreground">{movement.reference}{movement.sourceReference ? ` ← ${movement.sourceReference}` : ''} · {formatTimeFromDate(movement.created_at)}</p></div><b className={`nums ${movement.direction === 'in' ? 'text-emerald-600' : 'text-rose-600'}`}>{movement.direction === 'in' ? '+' : '-'}{formatMoneyNumber(movement.amount)}</b></div>)}
             {!movements?.data?.length ? <p className="p-8 text-center text-sm text-muted-foreground">{ui('لا توجد حركات درج')}</p> : null}
           </div>
         </section>
@@ -336,7 +336,7 @@ export function SalesTreasuryPage() {
             <div className="grid grid-cols-3 gap-1 rounded-xl bg-muted p-1">{([['petty_expense', ui('مصروف')], ['custody_issue', ui('صرف عهدة')], ['custody_return', ui('رد عهدة')]] as const).map(([value, label]) => <Button key={value} type="button" size="sm" variant={movementType === value ? 'default' : 'ghost'} onClick={() => openMovement(value)}>{label}</Button>)}</div>
             {movementType === 'custody_return' ? <div><Label>{ui('العهدة المطلوب ردها')}</Label><select className="mt-1 h-11 w-full rounded-md border bg-background px-3" value={sourceTransactionId} onChange={(event) => chooseCustody(event.target.value)}><option value="">{ui('اختر من العهد المصروفة')}</option>{(custodies?.data ?? []).map((custody) => <option key={custody.id} value={custody.id}>{custody.employee?.employee ?? ui('موظف')} · {custody.reference} · {custody.outstandingAmount.toFixed(2)} EGP</option>)}</select></div> : null}
             {movementType === 'custody_issue' ? <div><Label>{ui('الموظف صاحب العهدة')}</Label><select className="mt-1 h-11 w-full rounded-md border bg-background px-3" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}><option value="">{ui('اختر الموظف')}</option>{employees.map((employee) => <option key={employee.value} value={employee.value}>{employee.label} · {employee.description}</option>)}</select></div> : null}
-            {selectedCustody ? <div className="grid grid-cols-3 gap-2 rounded-xl border bg-amber-50/60 p-3 text-center text-xs dark:bg-amber-950/10"><div><span className="text-muted-foreground">{ui('المصروف')}</span><b className="nums mt-1 block">{toArabicDigits(selectedCustody.issuedAmount.toFixed(2))}</b></div><div><span className="text-muted-foreground">{ui('تم رده')}</span><b className="nums mt-1 block text-emerald-600">{toArabicDigits(selectedCustody.returnedAmount.toFixed(2))}</b></div><div><span className="text-muted-foreground">{ui('المتبقي')}</span><b className="nums mt-1 block text-amber-700">{toArabicDigits(selectedCustody.outstandingAmount.toFixed(2))}</b></div></div> : null}
+            {selectedCustody ? <div className="grid grid-cols-3 gap-2 rounded-xl border bg-amber-50/60 p-3 text-center text-xs dark:bg-amber-950/10"><div><span className="text-muted-foreground">{ui('المصروف')}</span><b className="nums mt-1 block">{formatMoneyNumber(selectedCustody.issuedAmount)}</b></div><div><span className="text-muted-foreground">{ui('تم رده')}</span><b className="nums mt-1 block text-emerald-600">{formatMoneyNumber(selectedCustody.returnedAmount)}</b></div><div><span className="text-muted-foreground">{ui('المتبقي')}</span><b className="nums mt-1 block text-amber-700">{formatMoneyNumber(selectedCustody.outstandingAmount)}</b></div></div> : null}
             <div><Label>{ui(movementType === 'custody_return' ? 'المبلغ المُراد رده' : 'المبلغ')}</Label><Input className="nums mt-1" type="number" min={0.01} max={selectedCustody?.outstandingAmount} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /></div>
             {movementType === 'petty_expense' ? <div><Label>{ui('نوع المصروف')}</Label><select className="mt-1 h-11 w-full rounded-md border bg-background px-3" value={category} onChange={(event) => setCategory(event.target.value)}><option value="maintenance">{ui('صيانة')}</option><option value="emergency_service">{ui('خدمة طارئة')}</option><option value="urgent_purchase">{ui('مشتريات عاجلة')}</option><option value="supplies">{ui('مستلزمات سريعة')}</option><option value="other">{ui('أخرى')}</option></select></div> : null}
             <div><Label>{ui('البيان / السبب')}</Label><Textarea className="mt-1" rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder={ui('اكتب سبب واضح يظهر في السجل والمحاسبة')} /></div>

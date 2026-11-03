@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
 import { api } from '@/lib/api';
-import { localToday } from '@/lib/formatters';
+import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { financeQueryDates, normalizeFinanceDashboard } from '@/lib/finance-api';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
@@ -84,7 +84,7 @@ export function FinanceDashboardBody() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title={ui('إجمالي الإيرادات')}
-          value={isLoading ? '…' : toArabicDigits((data?.totalRevenue ?? 0).toFixed(2))}
+          value={isLoading ? '…' : formatMoneyNumber((data?.totalRevenue ?? 0))}
           subtitle={isLoading ? undefined : `${toArabicDigits(data?.revenueCount ?? 0)} ${ui('إيراد')}`}
           icon={<TrendingUp className="h-5 w-5" />}
           colorIndex={2}
@@ -92,7 +92,7 @@ export function FinanceDashboardBody() {
         />
         <StatCard
           title={ui('إجمالي المصروفات')}
-          value={isLoading ? '…' : toArabicDigits((data?.totalExpenses ?? 0).toFixed(2))}
+          value={isLoading ? '…' : formatMoneyNumber((data?.totalExpenses ?? 0))}
           subtitle={isLoading ? undefined : `${toArabicDigits(data?.expenseCount ?? 0)} ${ui('مصروف')}`}
           icon={<TrendingDown className="h-5 w-5" />}
           colorIndex={4}
@@ -100,7 +100,7 @@ export function FinanceDashboardBody() {
         />
         <StatCard
           title={ui('صافي الربح')}
-          value={isLoading ? '…' : toArabicDigits((data?.netProfit ?? 0).toFixed(2))}
+          value={isLoading ? '…' : formatMoneyNumber((data?.netProfit ?? 0))}
           subtitle={isLoading ? undefined : `${toArabicDigits((data?.profitMargin ?? 0).toFixed(1))}% ${ui('هامش')}`}
           icon={<DollarSign className="h-5 w-5" />}
           colorIndex={0}
@@ -133,7 +133,7 @@ export function FinanceDashboardBody() {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" tick={{ fontSize: 11 }} />
                 <YAxis tickFormatter={(v) => toArabicDigits(v)} />
-                <Tooltip formatter={(v: number) => toArabicDigits(v.toFixed(2))} />
+                <Tooltip formatter={(v: number) => formatMoneyNumber(v)} />
                 <Legend />
                 <Bar dataKey="revenue" name={ui('الإيرادات')} fill="#16a34a" radius={[4, 4, 0, 0]} />
                 <Bar dataKey="expense" name={ui('المصروفات')} fill="#dc2626" radius={[4, 4, 0, 0]} />
@@ -155,7 +155,7 @@ export function FinanceDashboardBody() {
                     <span>{cat.category}</span>
                     <div className="flex items-center gap-3">
                       <span className="text-muted-foreground">{toArabicDigits(cat.count)}</span>
-                      <span className="nums font-bold text-red-600">{toArabicDigits(cat.total.toFixed(2))}</span>
+                      <span className="nums font-bold text-red-600">{formatMoneyNumber(cat.total)}</span>
                     </div>
                   </div>
                 ))}
@@ -174,7 +174,7 @@ export function FinanceDashboardBody() {
                     <span>{src.source}</span>
                     <div className="flex items-center gap-3">
                       <span className="text-muted-foreground">{toArabicDigits(src.count)}</span>
-                      <span className="nums font-bold text-green-600">{toArabicDigits(src.total.toFixed(2))}</span>
+                      <span className="nums font-bold text-green-600">{formatMoneyNumber(src.total)}</span>
                     </div>
                   </div>
                 ))}

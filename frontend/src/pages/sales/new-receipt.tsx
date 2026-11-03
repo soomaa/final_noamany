@@ -30,7 +30,7 @@ import {
 } from "@/components/sales/pos-receipt-print";
 import { WarehouseSelect } from '@/components/inventory/warehouse-select';
 import { LOGO_SRC } from '@/components/brand/logo';
-import { localToday } from '@/lib/formatters';
+import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { PosCategoryGrid } from "@/components/cafe/pos-category-grid";
 import { Combobox } from "@/components/common/combobox";
 import {
@@ -1414,7 +1414,7 @@ export function SalesNewReceiptPage() {
                                 {ui("سعر الوحدة")}
                               </span>
                               <span className="nums shrink-0 font-black text-primary">
-                                {toArabicDigits(l.unitPrice.toFixed(2))}{" "}
+                                {formatMoneyNumber(l.unitPrice)}{" "}
                                 <small className="text-[9px] font-medium text-muted-foreground">
                                   {currency}
                                 </small>
@@ -1425,7 +1425,7 @@ export function SalesNewReceiptPage() {
                                 {ui("إجمالي الصنف")}
                               </p>
                               <p className="nums text-lg font-black text-primary">
-                                {toArabicDigits(lineTotal.toFixed(2))}{" "}
+                                {formatMoneyNumber(lineTotal)}{" "}
                                 <span className="text-[10px] font-medium">
                                   {currency}
                                 </span>
@@ -1578,7 +1578,7 @@ export function SalesNewReceiptPage() {
                 >
                   {mixedPaymentValid
                     ? ui("تم توزيع إجمالي الفاتورة بالكامل")
-                    : `${ui("المتبقي")}: ${toArabicDigits(mixedRemaining.toFixed(2))} ${currency}`}
+                    : `${ui("المتبقي")}: ${formatMoneyNumber(mixedRemaining)} ${currency}`}
                 </p>
               </div>
             )}
@@ -1634,7 +1634,7 @@ export function SalesNewReceiptPage() {
                     {ui("المجموع")}
                   </dt>
                   <dd className="nums mt-0.5 font-bold">
-                    {toArabicDigits(subtotal.toFixed(2))}
+                    {formatMoneyNumber(subtotal)}
                   </dd>
                 </div>
                 <div>
@@ -1642,7 +1642,7 @@ export function SalesNewReceiptPage() {
                     {ui("الخصم")}
                   </dt>
                   <dd className="nums mt-0.5 font-bold text-rose-600">
-                    -{toArabicDigits(discountAmount.toFixed(2))}
+                    -{formatMoneyNumber(discountAmount)}
                   </dd>
                 </div>
                 <div>
@@ -1650,7 +1650,7 @@ export function SalesNewReceiptPage() {
                     {ui("الضريبة")}
                   </dt>
                   <dd className="nums mt-0.5 font-bold">
-                    {toArabicDigits(taxAmount.toFixed(2))}
+                    {formatMoneyNumber(taxAmount)}
                   </dd>
                 </div>
               </dl>
@@ -1661,7 +1661,7 @@ export function SalesNewReceiptPage() {
                     : ui("الإجمالي")}
                 </span>
                 <span className="nums text-2xl font-black">
-                  {toArabicDigits(total.toFixed(2))}{" "}
+                  {formatMoneyNumber(total)}{" "}
                   <span className="text-xs font-medium opacity-80">
                     {currency}
                   </span>
@@ -1755,7 +1755,7 @@ export function SalesNewReceiptPage() {
                     ) : null}
                   </span>
                   <span className="nums mt-3 block text-xl font-black text-primary">
-                    {toArabicDigits(variant.sellPrice.toFixed(2))}{" "}
+                    {formatMoneyNumber(variant.sellPrice)}{" "}
                     <span className="text-xs font-medium">{currency}</span>
                   </span>
                 </button>

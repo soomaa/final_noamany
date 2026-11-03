@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
 import { api } from '@/lib/api';
-import { localToday } from '@/lib/formatters';
+import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
@@ -116,7 +116,7 @@ export function SalesRevenuePage() {
         <CardContent className="pt-4">
           <p className="text-sm text-muted-foreground">{ui('إجمالي الإيراد')}</p>
           <p className="nums text-3xl font-bold text-primary">
-            {isLoading ? '…' : toArabicDigits((data?.grandTotal ?? 0).toFixed(2))}
+            {isLoading ? '…' : formatMoneyNumber((data?.grandTotal ?? 0))}
           </p>
         </CardContent>
       </Card>
@@ -127,7 +127,7 @@ export function SalesRevenuePage() {
             <div className="flex justify-between">
               <h3 className="font-semibold">{s.shiftName}</h3>
               <span className="nums font-bold text-primary">
-                {toArabicDigits((s.totalRevenue ?? 0).toFixed(2))}
+                {formatMoneyNumber((s.totalRevenue ?? 0))}
               </span>
             </div>
             <p className="text-sm text-muted-foreground">
@@ -136,7 +136,7 @@ export function SalesRevenuePage() {
             <div className="mt-2 flex flex-wrap gap-3 text-sm">
               {Object.entries(s.byPaymentMethod ?? {}).map(([method, amount]) => (
                 <span key={method}>
-                  {paymentLabel(method)}: <span className="nums font-medium">{toArabicDigits((amount ?? 0).toFixed(2))}</span>
+                  {paymentLabel(method)}: <span className="nums font-medium">{formatMoneyNumber((amount ?? 0))}</span>
                 </span>
               ))}
             </div>

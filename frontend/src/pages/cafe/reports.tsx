@@ -14,6 +14,7 @@ import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '@/pages/gym-sales/shell';
 import { useBranches } from '@/hooks/use-branches';
 import { useAuth } from '@/store/auth';
+import { formatMoneyNumber } from '@/lib/formatters';
 
 interface ProductMetric { productId: number; name: string; quantity: number; revenue: number; cost: number; profit: number }
 interface CafeReport {
@@ -50,7 +51,7 @@ function presetRange(preset: Preset) {
   return { from: iso(startOfMonth(today)), to: iso(endOfMonth(today)) };
 }
 
-const money = (value: number) => `${toArabicDigits((value ?? 0).toFixed(2))} ج.م`;
+const money = (value: number) => `${formatMoneyNumber((value ?? 0))} ج.م`;
 
 export function CafeReportsPage() {
   const { ui } = useLocale();

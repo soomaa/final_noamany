@@ -15,6 +15,7 @@ import { toArabicDigits } from '@/lib/utils';
 import { InventoryPageShell } from '@/pages/inventory/inventory-shell';
 import { useAuth } from '@/store/auth';
 import { useLocale } from '@/store/locale';
+import { formatMoneyNumber } from '@/lib/formatters';
 
 interface StatementLine {
   date: string;
@@ -47,7 +48,7 @@ interface StatementFilters {
   dateTo: string;
 }
 
-const amount = (value: number) => toArabicDigits(value.toFixed(2));
+const amount = (value: number) => formatMoneyNumber(value);
 
 export function CafeSupplierStatementPage() {
   const { ui } = useLocale();
