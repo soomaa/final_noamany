@@ -307,10 +307,9 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: CR.cafe.purchases },
           { to: CR.cafe.supplierPayments },
           { to: CR.cafe.supplierStatement },
-          { to: GS.procurement.requisitions },
-          { to: GS.procurement.purchaseOrders },
-          { to: GS.procurement.goodsReceipts },
-          { to: GS.procurement.invoices },
+          // The café buys through مشتريات الكافيه only. Requisitions → orders → receipts → three-way
+          // invoices never reached the supplier balance, so those screens are off the sidebar
+          // (still reachable by link for their old records).
           { to: GS.procurement.returns },
           { to: GS.procurement.dashboard },
           { to: GS.procurement.settings },

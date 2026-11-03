@@ -16,6 +16,8 @@ export interface ShiftSessionCurrent {
   userId: number;
   shift?: { id: number; shiftName: string; startTime: string; endTime: string; color: string; isLastShiftOfDay: boolean };
   drawerAdjustments?: number;
+  /** Net cash paid to suppliers out of this drawer (already taken off the expected balance). */
+  supplierCashPayments?: number;
   transferredIn?: number;
 }
 

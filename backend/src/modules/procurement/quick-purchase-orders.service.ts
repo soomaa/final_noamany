@@ -238,35 +238,8 @@ export class QuickPurchaseOrdersService {
       }
 
       if (oldStatus !== 'مؤكد' && newStatus === 'مؤكد') {
-        // Guarded claim: conditional updateMany inside the tx so two concurrent confirms can't
-        // both apply the stock movement — the loser sees count === 0.
-        const claimed = await tx.prc_quick_purchase_orders.updateMany({
-          where: { id, ...notDeletedFilter(), stock_posted: false },
-          data: {
-            status: newStatus,
-            stock_posted: true,
-            posted_at: new Date(),
-          },
-        });
-        if (claimed.count === 0) {
-          throw new BadRequestException('تم ترحيل المخزون مسبقاً');
-        }
-        await this.stock.applyMovement(
-          {
-            productId: order.product_id,
-            warehouseId: order.warehouse_id,
-            direction: MovementDirection.in,
-            quantity: order.quantity,
-            txnType: InventoryTxnType.receipt,
-            unitCost: order.unit_price,
-            docType: 'quick_purchase_order',
-            docRef: order.order_number,
-            branchId: order.branch_id,
-            createdBy: userId,
-          },
-          tx,
-        );
-        return tx.prc_quick_purchase_orders.findFirstOrThrow({ where: { id } });
+        // Confirming used to put stock in with no supplier debt or journal entry; purchases go through مشتريات الكافيه.
+        throw new BadRequestException('أوامر الشراء السريعة اتقفلت؛ سجّل الشراء من مشتريات الكافيه');
       }
 
       if (oldStatus === 'مؤكد' && newStatus !== 'مؤكد') {

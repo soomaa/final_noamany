@@ -119,6 +119,7 @@ interface ShiftReport {
     custodyIssued: number;
     custodyReturned: number;
     pettyExpenses: number;
+    supplierPayments?: number;
     mismatchRate: number;
   };
   insights: string[];
@@ -707,6 +708,15 @@ export function SalesShiftsPage() {
                       )}{" "}
                       EGP
                     </p>
+                    {currentSession.supplierCashPayments ? (
+                      <p className="nums mt-0.5 text-xs text-rose-600">
+                        {ui("بعد سداد موردين نقدي")}{" "}
+                        {formatDigits(
+                          currentSession.supplierCashPayments.toFixed(2),
+                          locale,
+                        )}
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               </div>
@@ -991,6 +1001,16 @@ export function SalesShiftsPage() {
                   </b>
                 </div>
                 <div className="bg-card p-4">
+                  <span className="text-xs text-muted-foreground">
+                    {ui("سداد موردين نقدي")}
+                  </span>
+                  <b className="nums mt-1 block text-rose-600">
+                    {toArabicDigits(
+                      (report?.summary.supplierPayments ?? 0).toFixed(2),
+                    )}
+                  </b>
+                </div>
+                <div className="col-span-2 bg-card p-4 sm:col-span-3">
                   <span className="text-xs text-muted-foreground">
                     {ui("توريد للخزنة")}
                   </span>

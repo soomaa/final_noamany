@@ -172,9 +172,17 @@ export class GoodsReceiptsService {
     return branchId;
   }
 
+  /** A direct purchase order already put its goods in stock through its supplier invoice. */
+  private assertNotAlreadyReceived(po: { po_number: string; supplier_invoice_id: number | null }) {
+    if (po.supplier_invoice_id) {
+      throw new BadRequestException(`أمر الشراء ${po.po_number} اتضاف للمخزن مع فاتورته؛ مايتعملوش إذن استلام تاني`);
+    }
+  }
+
   async create(dto: UpsertGoodsReceiptDto, user: JwtUser) {
     const userId = user.sub;
     const po = await this.scope.loadPurchaseOrder(user, dto.purchaseOrderId);
+    this.assertNotAlreadyReceived(po);
     const branchId = await this.resolveReceiptLocation(user, dto.branchId ?? po.branch_id, dto.warehouseId);
     await this.validateReceiptQuantities(dto.purchaseOrderId, dto.items);
 
@@ -217,7 +225,7 @@ export class GoodsReceiptsService {
     if (!existing) throw new NotFoundException('إذن الاستلام غير موجود');
     await this.scope.assertDocument(user, existing);
     if (dto.purchaseOrderId != null && dto.purchaseOrderId !== existing.purchase_order_id) {
-      await this.scope.loadPurchaseOrder(user, dto.purchaseOrderId);
+      this.assertNotAlreadyReceived(await this.scope.loadPurchaseOrder(user, dto.purchaseOrderId));
     }
     if (dto.branchId != null || dto.warehouseId != null) {
       await this.resolveReceiptLocation(user, dto.branchId ?? existing.branch_id, dto.warehouseId ?? existing.warehouse_id);
@@ -482,6 +490,7 @@ export class GoodsReceiptsService {
             include: { items: true },
           });
           if (!po) throw new NotFoundException('أمر الشراء غير موجود');
+          this.assertNotAlreadyReceived(po);
           await this.postStock(grn, po, userId, tx);
           const totalValue = this.computeGrnValue(grn, po);
           await this.moduleLedger.postGrnInventory(

@@ -612,7 +612,7 @@ function SupplierPaymentsTab() {
   const [supplierId, setSupplierId] = useState('');
   const [invoiceId, setInvoiceId] = useState('');
   const [paymentAmount, setPaymentAmount] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState(uiStatic('نقدي'));
+  const [paymentMethod, setPaymentMethod] = useState('cash');
   const [paymentDate, setPaymentDate] = useState('');
   const [saving, setSaving] = useState(false);
 
@@ -633,7 +633,8 @@ function SupplierPaymentsTab() {
       const { data: r } = await api.get<PaginatedResponse<SupplierInvoiceOption>>('/supplier-invoices', {
         params: { page: 1, pageSize: 200, supplierId },
       });
-      return r.data;
+      // Only invoices that still owe something can take a payment.
+      return r.data.filter((invoice) => invoice.remainingAmount > 0);
     },
   });
 
@@ -647,7 +648,15 @@ function SupplierPaymentsTab() {
         header: uiStatic('المبلغ'),
         cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as number)}</span>,
       },
-      { accessorKey: 'paymentMethod', header: uiStatic('طريقة الدفع') },
+      {
+        accessorKey: 'paymentMethod',
+        header: uiStatic('طريقة الدفع'),
+        cell: ({ getValue }) => {
+          const method = String(getValue() ?? '');
+          const label = ({ cash: 'نقدي', bank: 'تحويل بنكي', card: 'بطاقة', wallet: 'محفظة' } as Record<string, string>)[method];
+          return label ? uiStatic(label) : method;
+        },
+      },
       { accessorKey: 'status', header: uiStatic('الحالة') },
       { accessorKey: 'paymentDate', header: uiStatic('التاريخ'), cell: ({ getValue }) => getValue() ?? '—' },
     ],
@@ -657,6 +666,10 @@ function SupplierPaymentsTab() {
   const save = async () => {
     if (!supplierId || !paymentMethod) {
       toast.error(uiStatic('يرجى تعبئة الحقول المطلوبة'));
+      return;
+    }
+    if (!invoiceId) {
+      toast.error(uiStatic('اختر فاتورة المورد، أو سدد من شاشة سداد مديونية الموردين'));
       return;
     }
     const amount = Number(paymentAmount);
@@ -680,6 +693,8 @@ function SupplierPaymentsTab() {
         paymentAmount: amount,
         paymentMethod,
         paymentDate: paymentDate || undefined,
+        // Recorded payments are paid: they reduce the invoice and the supplier balance right away.
+        status: 'مدفوع',
       });
       toast.success(uiStatic('تم تسجيل الدفعة'));
       setOpen(false);
@@ -699,7 +714,7 @@ function SupplierPaymentsTab() {
             setSupplierId('');
             setInvoiceId('');
             setPaymentAmount('');
-            setPaymentMethod(uiStatic('نقدي'));
+            setPaymentMethod('cash');
             setPaymentDate('');
             setOpen(true);
           }}
@@ -776,9 +791,10 @@ function SupplierPaymentsTab() {
                   value={paymentMethod}
                   onChange={(e) => setPaymentMethod(e.target.value)}
                 >
-                  <option value="نقدي">{uiStatic('نقدي')}</option>
-                  <option value="تحويل">{uiStatic('تحويل')}</option>
-                  <option value="شيك">{uiStatic('شيك')}</option>
+                  <option value="cash">{uiStatic('نقدي')}</option>
+                  <option value="bank">{uiStatic('تحويل بنكي')}</option>
+                  <option value="card">{uiStatic('بطاقة')}</option>
+                  <option value="wallet">{uiStatic('محفظة')}</option>
                 </select>
               </div>
             </div>

@@ -39,6 +39,7 @@ import {
   drawerDifference,
   expectedDrawerBalance,
 } from "./cash-drawer.math";
+import { SUPPLIER_DRAWER_MOVEMENT } from "./supplier-drawer";
 
 type SessionRow = Prisma.sales_shift_sessionsGetPayload<{
   include: { shift: true };
@@ -513,6 +514,7 @@ export class ShiftSessionsService {
             "custody_issue",
             "custody_return",
             "adjustment",
+            SUPPLIER_DRAWER_MOVEMENT,
           ],
         },
       },
@@ -523,6 +525,29 @@ export class ShiftSessionsService {
         sum +
         (row.direction === "in" ? toNumber(row.amount) : -toNumber(row.amount)),
       0,
+    );
+  }
+
+  /** Net cash paid to suppliers out of this drawer (supplier refunds count back in). */
+  private async supplierDrawerPayments(
+    sessionId: number,
+    tx: Prisma.TransactionClient | PrismaService = this.prisma,
+  ) {
+    const rows = await tx.sales_cash_drawer_transactions.findMany({
+      where: {
+        shift_session_id: sessionId,
+        status: "posted",
+        movement_type: SUPPLIER_DRAWER_MOVEMENT,
+      },
+      select: { direction: true, amount: true },
+    });
+    return roundMoney(
+      rows.reduce(
+        (sum, row) =>
+          sum +
+          (row.direction === "out" ? toNumber(row.amount) : -toNumber(row.amount)),
+        0,
+      ),
     );
   }
 
@@ -647,6 +672,7 @@ export class ShiftSessionsService {
 
     const salesData = await this.calculateSessionSales(row);
     const drawerAdjustments = await this.drawerAdjustments(row.id);
+    const supplierCashPayments = await this.supplierDrawerPayments(row.id);
     const mapped = this.mapSession(row);
     return {
       ...mapped,
@@ -657,6 +683,7 @@ export class ShiftSessionsService {
         drawerAdjustments,
       ),
       drawerAdjustments,
+      supplierCashPayments,
     };
   }
 
@@ -742,6 +769,7 @@ export class ShiftSessionsService {
 
     const salesData = await this.calculateSessionSales(session);
     const drawerAdjustments = await this.drawerAdjustments(session.id);
+    const supplierCashPayments = await this.supplierDrawerPayments(session.id);
     const expectedClosing = expectedDrawerBalance(
       toNumber(session.opening_balance),
       salesData.totalCash,
@@ -774,6 +802,14 @@ export class ShiftSessionsService {
         label: "إجمالي النقدي",
         after: `${salesData.totalCash.toFixed(2)} ج.م`,
       },
+      ...(Math.abs(supplierCashPayments) > 0.001
+        ? [
+            {
+              label: "سداد موردين نقدي من الدرج",
+              after: `${(-supplierCashPayments).toFixed(2)} ج.م`,
+            },
+          ]
+        : []),
       { label: "الرصيد المتوقع", after: `${expectedClosing.toFixed(2)} ج.م` },
       { label: "الرصيد الفعلي", after: `${closingBalance.toFixed(2)} ج.م` },
       {
@@ -1418,8 +1454,14 @@ export class ShiftSessionsService {
     const movementBySession = new Map<number, Record<string, number>>();
     for (const movement of movementGroups) {
       const bucket = movementBySession.get(movement.shift_session_id) ?? {};
+      // Supplier payments can come back in (refunds, voided purchases), so they are kept net of direction.
+      const amount =
+        movement.movement_type === SUPPLIER_DRAWER_MOVEMENT &&
+        movement.direction === "in"
+          ? -toNumber(movement._sum.amount)
+          : toNumber(movement._sum.amount);
       bucket[movement.movement_type] =
-        (bucket[movement.movement_type] ?? 0) + toNumber(movement._sum.amount);
+        (bucket[movement.movement_type] ?? 0) + amount;
       movementBySession.set(movement.shift_session_id, bucket);
     }
     const rows = differenceFiltered.map((session) => ({
@@ -1478,6 +1520,9 @@ export class ShiftSessionsService {
       custodyIssued: sum((row) => row.movements.custody_issue ?? 0),
       custodyReturned: sum((row) => row.movements.custody_return ?? 0),
       pettyExpenses: sum((row) => row.movements.petty_expense ?? 0),
+      supplierPayments: sum(
+        (row) => row.movements[SUPPLIER_DRAWER_MOVEMENT] ?? 0,
+      ),
       mismatchRate: closed.length
         ? (mismatched.length / closed.length) * 100
         : 0,

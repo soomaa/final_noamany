@@ -12,5 +12,5 @@ export { ProcurementReturnsDebitPage } from './returns-debit';
 export { ProcurementDashboardPage } from './dashboard';
 
 export function ProcurementIndexPage() {
-  return <Navigate to={GYM_SALES_ROUTES.procurement.requisitions} replace />;
+  return <Navigate to={GYM_SALES_ROUTES.cafe.purchases} replace />;
 }

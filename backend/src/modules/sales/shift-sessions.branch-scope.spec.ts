@@ -34,6 +34,9 @@ function makeService(session: { user_id: number; branch_id: number }) {
   jest
     .spyOn(service as unknown as { drawerAdjustments: () => Promise<number> }, "drawerAdjustments")
     .mockResolvedValue(0);
+  jest
+    .spyOn(service as unknown as { supplierDrawerPayments: () => Promise<number> }, "supplierDrawerPayments")
+    .mockResolvedValue(0);
   return { service, prisma };
 }
 

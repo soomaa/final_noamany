@@ -177,6 +177,9 @@ describe("shift session financial attribution", () => {
     jest
       .spyOn(service as unknown as { drawerAdjustments: () => Promise<number> }, "drawerAdjustments")
       .mockResolvedValue(0);
+    jest
+      .spyOn(service as unknown as { supplierDrawerPayments: () => Promise<number> }, "supplierDrawerPayments")
+      .mockResolvedValue(0);
 
     await expect(
       service.close(

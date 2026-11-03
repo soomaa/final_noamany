@@ -11,6 +11,7 @@ import { LedgerService } from '../accounting/ledger.service';
 import { ListSupplierInvoicesDto, SupplierInvoiceItemDto, UpsertSupplierInvoiceDto } from './dto/procurement-ext.dto';
 import { INITIAL_PURCHASE_PAYMENT_NOTE, lineTotal, nextDocNumber, notDeletedFilter, toNumber } from './procurement.utils';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
+import { returnSupplierPaymentsToDrawer, takeSupplierPaymentFromDrawer } from '../sales/supplier-drawer';
 
 @Injectable()
 export class SupplierInvoicesService {
@@ -387,6 +388,15 @@ export class SupplierInvoicesService {
           paymentMethod: dto.initialPaymentMethod?.trim() || 'cash',
           createdBy: userId,
         }, tx);
+        if (this.moduleLedger.paymentKeyFromString(dto.initialPaymentMethod?.trim() || 'cash') === 'cash') {
+          await takeSupplierPaymentFromDrawer(tx, {
+            branchId,
+            userId,
+            paymentNumber,
+            amount: totals.paidAmount,
+            description: `مشتريات ${supplier.name_ar} - ${invoiceNumber}`,
+          });
+        }
       }
       return created;
     };
@@ -470,6 +480,7 @@ export class SupplierInvoicesService {
 
     if (payments.length) {
       await tx.prc_supplier_payments.updateMany({ where: { id: { in: payments.map((p) => p.id) } }, data: { is_deleted: true } });
+      await returnSupplierPaymentsToDrawer(tx, payments.map((p) => p.payment_number), userId);
     }
     await tx.prc_supplier_invoices.update({ where: { id: invoice.id }, data: { is_deleted: true } });
     return { invoiceNumber: invoice.invoice_number, paidAmount: payments.reduce((s, p) => s + toNumber(p.payment_amount), 0) };

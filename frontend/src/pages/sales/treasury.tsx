@@ -101,6 +101,7 @@ const movementLabels: Record<string, string> = {
   shift_transfer_in: 'استلام من وردية',
   shift_transfer_out: 'تسليم لوردية',
   cash_drop: 'توريد للخزنة',
+  supplier_payment: 'سداد مورد نقدي',
 };
 
 export function SalesTreasuryPage() {

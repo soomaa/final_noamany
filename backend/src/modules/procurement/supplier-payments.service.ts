@@ -8,6 +8,7 @@ import { ListSupplierPaymentsDto, SettleSupplierDebtDto, UpsertSupplierPaymentDt
 import { nextDocNumber, notDeletedFilter, toNumber } from './procurement.utils';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import type { JwtUser } from '../../common/types/jwt-user';
+import { takeSupplierPaymentFromDrawer } from '../sales/supplier-drawer';
 
 @Injectable()
 export class SupplierPaymentsService {
@@ -36,6 +37,23 @@ export class SupplierPaymentsService {
         remaining_amount: remaining,
         status: remaining === 0 ? 'مدفوعة' : invoice.stock_applied ? 'مستلمة' : invoice.status,
       },
+    });
+  }
+
+  /** Cash handed over by the cashier comes out of their open shift drawer. */
+  private async takeFromDrawer(
+    tx: Prisma.TransactionClient,
+    input: { branchId: number; userId: number; paymentNumber: string; amount: number; paymentMethod?: string | null; supplierId: number; refund?: boolean },
+  ) {
+    if (this.moduleLedger.paymentKeyFromString(input.paymentMethod) !== 'cash') return;
+    const supplier = await tx.inv_suppliers.findUnique({ where: { id: input.supplierId }, select: { name_ar: true } });
+    await takeSupplierPaymentFromDrawer(tx, {
+      branchId: input.branchId,
+      userId: input.userId,
+      paymentNumber: input.paymentNumber,
+      amount: input.amount,
+      refund: input.refund,
+      description: `${input.refund ? 'استرداد من المورد' : 'سداد مورد'} ${supplier?.name_ar ?? ''} - ${input.paymentNumber}`.trim(),
     });
   }
 
@@ -255,6 +273,11 @@ export class SupplierPaymentsService {
   }
 
   async create(dto: UpsertSupplierPaymentDto, userId: number, user?: JwtUser) {
+    // A payment is paid when it is recorded; drafts never reduced the supplier balance and no screen posts them.
+    const status = dto.status ?? 'مدفوع';
+    if (status === 'مدفوع' && !dto.invoiceId) {
+      throw new BadRequestException('اختر فاتورة المورد، أو سدد من شاشة سداد مديونية الموردين');
+    }
     await this.assertPaymentAgainstInvoice(dto);
     const invoice = dto.invoiceId
       ? await this.prisma.prc_supplier_invoices.findFirst({ where: { id: dto.invoiceId, is_deleted: false } })
@@ -278,18 +301,19 @@ export class SupplierPaymentsService {
           supplier_id: dto.supplierId,
           invoice_id: dto.invoiceId ?? null,
           branch_id: branchId,
-          payment_date: dto.paymentDate ?? null,
+          // The daily closing finds payments by date, so an undated payment would never show there.
+          payment_date: dto.paymentDate || new Date().toISOString().slice(0, 10),
           payment_amount: dto.paymentAmount,
           original_amount: originalAmount,
           remaining_amount: remainingAmount,
           currency: dto.currency ?? 'EGP',
           payment_method: dto.paymentMethod,
-          status: dto.status ?? 'مسودة',
+          status,
           notes: dto.notes?.trim() ?? null,
           created_by: userId,
         },
       });
-      if ((dto.status ?? 'مسودة') === 'مدفوع') {
+      if (status === 'مدفوع') {
         const invoice = created.invoice_id
           ? await tx.prc_supplier_invoices.findUnique({ where: { id: created.invoice_id } })
           : null;
@@ -304,6 +328,14 @@ export class SupplierPaymentsService {
           },
           tx,
         );
+        await this.takeFromDrawer(tx, {
+          branchId,
+          userId,
+          paymentNumber: created.payment_number,
+          amount: toNumber(created.payment_amount),
+          paymentMethod: created.payment_method,
+          supplierId: created.supplier_id,
+        });
       }
       await this.syncInvoiceBalance(tx, created.invoice_id);
       return created;
@@ -365,6 +397,14 @@ export class SupplierPaymentsService {
           },
           tx,
         );
+        await this.takeFromDrawer(tx, {
+          branchId: updated.branch_id ?? invoice?.branch_id ?? existingBranchId,
+          userId: user?.sub ?? existing.created_by ?? 1,
+          paymentNumber: updated.payment_number,
+          amount: toNumber(updated.payment_amount),
+          paymentMethod: updated.payment_method,
+          supplierId: updated.supplier_id,
+        });
       }
       await this.syncInvoiceBalance(tx, existing.invoice_id);
       if (updated.invoice_id !== existing.invoice_id) {
@@ -455,6 +495,7 @@ export class SupplierPaymentsService {
           paymentMethod: dto.paymentMethod,
           createdBy: userId,
         }, tx);
+        await this.takeFromDrawer(tx, { branchId, userId, paymentNumber, amount, paymentMethod: dto.paymentMethod, supplierId: dto.supplierId });
         allocations.push({ invoiceId: invoice.id, invoiceNumber: invoice.invoice_number, amount, paymentNumber });
         pending = Math.round((pending - amount) * 100) / 100;
       }
@@ -486,6 +527,7 @@ export class SupplierPaymentsService {
         await tx.prc_supplier_payments.create({data:{payment_number:reference,supplier_id:dto.supplierId,invoice_id:invoice.id,branch_id:branchId,payment_date:dto.paymentDate,payment_amount:-amount,payment_method:dto.paymentMethod,status:'مدفوع',created_by:user.sub,notes:'استلام مبلغ مسترد من المورد'}});
         await this.syncInvoiceBalance(tx,invoice.id);
         await this.moduleLedger.postSupplierPayment({paymentNumber:reference,branchId,paymentDate:dto.paymentDate??new Date().toISOString().slice(0,10),amount,paymentMethod:dto.paymentMethod,createdBy:user.sub,isRefund:true},tx);
+        await this.takeFromDrawer(tx,{branchId,userId:user.sub,paymentNumber:reference,amount,paymentMethod:dto.paymentMethod,supplierId:dto.supplierId,refund:true});
         pending=Math.round((pending-amount)*100)/100;
       }
       return {remaining:Math.round((net+dto.paymentAmount)*100)/100};
