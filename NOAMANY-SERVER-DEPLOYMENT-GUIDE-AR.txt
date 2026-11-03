@@ -702,7 +702,7 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   ومالهمش مديونية عند أي مورد؛ ووردية مفتوحة من 22 يوليو (فرع 1، user 1).
 - المرجع للرفع اللي جاي: system.html = 77c6a652e36af760b0c9be70f8288a3504db9b1938ba179e2561107487440a3e.
 
-آخر تثبيت مؤكد: 20261103-r7 (شيل دليل الافتتاح الأول + عرض شاشة إضافة اشتراك)، 3 نوفمبر 2026
+تثبيت مؤكد: 20261103-r7 (شيل دليل الافتتاح الأول + عرض شاشة إضافة اشتراك)، 3 نوفمبر 2026
 ------------------------------------------------------------
 - المحتوى: واجهة الإدارة بس (906084f). مافيش ملفات backend ولا قاعدة بيانات.
   - اتشال "دليل الافتتاح الأول" (مربع "فهمت") من صفحة الأعضاء، قائمة الاشتراكات، وفورم إضافة اشتراك؛ واتمسح
@@ -718,3 +718,24 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - أمر الرجوع لهذا التثبيت فقط:
   bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r7/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r7-update-backup.9Lb80B
 - المرجع للرفع اللي جاي: system.html = 41df1f0faff1f318c8acae07689f7f3473b41e718ca400acc40eb96fd6a4fbe1.
+
+آخر تثبيت مؤكد: 20261103-r8 (إشعارات تطبيق الموظفين)، 3 نوفمبر 2026
+------------------------------------------------------------
+- المحتوى: 3 ملفات backend بس (3fb75e9). مافيش تغيير في واجهة الإدارة ولا قاعدة البيانات.
+  - common/utils/legacy-notification.util.js، modules/mobile/mobile.service.js، modules/push/push.service.js.
+  - api/mobile/notifications (وApi/today_notification) بقت بترجع title وmessage وfromName. قبل كده كانت بترجع رقم
+    الكود بس فالإشعار كان فاضي في التطبيق. العنوان من tbl_sys_notifications_settings، ولو مالوش صف (الجدول ده فاضي
+    على الإنتاج) من LEGACY_NOTIFICATION_TITLES؛ والنص من users_notifications لإشعارات PushService.
+  - PushService بقى بيبعت FCM HTTP v1 لو FIREBASE_SERVICE_ACCOUNT_FILE متحدد (مسار ملف مفتاح حساب خدمة)؛ من غيره
+    بيسجل في الـ log بس زي الأول. على الإنتاج لسه مش متحدد.
+  - تنبيه: تطبيق أندرويد للموظفين متسجل على مشروع Firebase رقم 542773224115 والـ token بيفشل (FIS_AUTH_ERROR)،
+    والآيفون والسيرفر القديم على hrms-fca3f. لازم google-services.json الصح ومفتاح من نفس المشروع.
+- اتبنى من أساس 03-r7 (97f4aa2 + 0d21edd e64ccd4 0ad6093 2a2dd1c c2ef717 e006ed1 4512791 0b880d4 906084f؛ في 0ad6093
+  اتشال release-tools/cafe-from-old-20261103/fix-cafe-from-old.sh) + 3fb75e9، بـ npm ci في شجرة البناء. baseline الثلاث
+  ملفات طابق dist الإنتاج. مافيش بناء frontend (الواجهة ماتغيرتش).
+- اختبارات backend في شجرة الإصدار (mobile push leaves permissions loans hr-warnings tasks circulars): 14 suite، 71 test ناجحين.
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r8، والعملية اتغيرت من 2016541 لـ 2035643.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r8-update-backup.2RX3rZ
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r8/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r8-update-backup.2RX3rZ
+- المرجع للرفع اللي جاي: system.html = 41df1f0faff1f318c8acae07689f7f3473b41e718ca400acc40eb96fd6a4fbe1 (زي 03-r7).
