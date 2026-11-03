@@ -168,6 +168,8 @@ export class TargetReportQueryDto {
   operation?: 'subscriptions' | 'sales' | 'all';
   @IsOptional() @IsDateString() fromDate?: string;
   @IsOptional() @IsDateString() toDate?: string;
+  /** Section (رجالي / حريمي) of the subscription, locker or sale. */
+  @IsOptional() @IsIn(['male', 'female']) gender?: 'male' | 'female';
 }
 
 export class ProfitLossQueryDto {

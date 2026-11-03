@@ -62,6 +62,20 @@ function StatusReport({ status, title, description }: { status: StatusFilter; ti
     [ui],
   );
 
+  // Old "تقرير الاشتراكات الفعالة لكل فرع": the count per branch, split by section.
+  const byBranch = useMemo(() => {
+    const map = new Map<string, { branch: string; male: number; female: number; total: number }>();
+    for (const r of rows) {
+      const key = r.branchName ?? '—';
+      const row = map.get(key) ?? { branch: key, male: 0, female: 0, total: 0 };
+      if (r.gender === 'male') row.male += 1;
+      if (r.gender === 'female') row.female += 1;
+      row.total += 1;
+      map.set(key, row);
+    }
+    return [...map.values()].sort((a, b) => b.total - a.total);
+  }, [rows]);
+
   const exportCsv = () => {
     downloadCsv(`subs-${status}`, [
       [ui('رقم الاشتراك'), ui('العميل'), ui('النوع'), ui('الفرع'), ui('الفئة'), ui('تاريخ الانتهاء'), ui('المتبقي')],
@@ -85,6 +99,30 @@ function StatusReport({ status, title, description }: { status: StatusFilter; ti
       stats={<ClubStatCard label={ui('العدد')} value={rows.length} />}
       onExport={exportCsv}
     >
+      {byBranch.length > 1 && (
+        <div className="overflow-x-auto rounded-xl border bg-card">
+          <table className="w-full text-sm">
+            <thead className="bg-muted/60">
+              <tr>
+                <th className="p-2 text-start">{ui('الفرع')}</th>
+                <th className="p-2 text-start">{ui('رجالي')}</th>
+                <th className="p-2 text-start">{ui('حريمي')}</th>
+                <th className="p-2 text-start">{ui('الإجمالي')}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {byBranch.map((b) => (
+                <tr key={b.branch} className="border-t">
+                  <td className="p-2">{b.branch}</td>
+                  <td className="p-2 nums">{toArabicDigits(b.male)}</td>
+                  <td className="p-2 nums">{toArabicDigits(b.female)}</td>
+                  <td className="p-2 nums font-semibold">{toArabicDigits(b.total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
       <DataTable
         columns={columns}
         data={rows}

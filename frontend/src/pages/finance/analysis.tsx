@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQueries, useQuery } from '@tanstack/react-query';
 import { Download, Printer } from 'lucide-react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ErrorState } from '@/components/common/states';
 import type { PaginatedResponse } from '@/components/common/data-table';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,24 @@ interface MonthlyAnalysis {
 function monthStart() {
   const today = new Date();
   return localDateStr(new Date(today.getFullYear(), today.getMonth(), 1));
+}
+
+/** Month slices of [from, to] (at most 12), each clipped to the range: the old per-month view. */
+function monthSlices(from: string, to: string) {
+  const slices: Array<{ month: string; from: string; to: string }> = [];
+  if (!from || !to || from > to) return slices;
+  let [y, m] = from.slice(0, 7).split('-').map(Number);
+  while (slices.length < 12) {
+    const month = `${y}-${String(m).padStart(2, '0')}`;
+    if (`${month}-01` > to) break;
+    const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const start = `${month}-01` < from ? from : `${month}-01`;
+    const end = `${month}-${String(last).padStart(2, '0')}` > to ? to : `${month}-${String(last).padStart(2, '0')}`;
+    slices.push({ month, from: start, to: end });
+    m += 1;
+    if (m > 12) { m = 1; y += 1; }
+  }
+  return slices;
 }
 
 function csvValue(value: string | number) {
@@ -69,6 +87,21 @@ export function FinanceAnalysisPage() {
       });
       return report;
     },
+  });
+
+  const filterParams = {
+    ...(branchId !== 'all' ? { branchId } : {}),
+    ...(cafeCategoryId !== 'all' ? { cafeCategoryId } : {}),
+    ...(gender !== 'all' ? { gender } : {}),
+  };
+  const slices = useMemo(() => monthSlices(dateFrom, dateTo), [dateFrom, dateTo]);
+  const perMonth = useQueries({
+    queries: slices.length > 1
+      ? slices.map((slice) => ({
+          queryKey: ['finance', 'monthly-analysis', slice.from, slice.to, branchId, cafeCategoryId, gender],
+          queryFn: async () => (await api.get<MonthlyAnalysis>('/finance/analysis', { params: { dateFrom: slice.from, dateTo: slice.to, ...filterParams } })).data,
+        }))
+      : [],
   });
 
   const rows = [
@@ -118,6 +151,19 @@ export function FinanceAnalysisPage() {
             {rows.map((row) => <tr key={row.label} className={row.net ? 'bg-emerald-100 font-bold dark:bg-emerald-950' : row.total ? 'bg-muted font-semibold' : 'border-b'}><td className="p-3">{row.label}</td><td className="nums p-3 text-end">{isLoading ? '…' : value(row.revenue)}</td><td className="nums p-3 text-end">{row.net ? '—' : isLoading ? '…' : value(row.expense)}</td></tr>)}
           </tbody></table></div>
           <p className="mt-3 text-xs text-muted-foreground">{ui('مبيعات الكافيه تعرض صافي المبيعات بعد الخصم؛ تكلفة المبيعات تستند إلى آخر بند فاتورة شراء لنفس المنتج.')}</p>
+        </section>
+      )}
+
+      {slices.length > 1 && (
+        <section className="mt-6 rounded-xl border bg-card p-4">
+          <h2 className="mb-4 font-semibold">{ui('شهر بشهر')}</h2>
+          <div className="overflow-x-auto"><table className="w-full min-w-[560px] text-sm"><thead className="bg-muted"><tr><th className="p-3 text-start">{ui('الشهر')}</th><th className="p-3 text-end">{ui('الإيرادات')}</th><th className="p-3 text-end">{ui('المصروفات')}</th><th className="p-3 text-end">{ui('صافي الربح / الخسارة')}</th></tr></thead><tbody>
+            {slices.map((slice, index) => {
+              const result = perMonth[index]?.data;
+              return <tr key={slice.month} className="border-b"><td className="nums p-3">{toArabicDigits(slice.month)}</td><td className="nums p-3 text-end">{result ? value(result.totalRevenue) : '…'}</td><td className="nums p-3 text-end">{result ? value(result.totalExpenses) : '…'}</td><td className={`nums p-3 text-end font-semibold ${result && result.netProfit < 0 ? 'text-destructive' : ''}`}>{result ? value(result.netProfit) : '…'}</td></tr>;
+            })}
+          </tbody></table></div>
+          {slices.length === 12 && <p className="mt-2 text-xs text-muted-foreground">{ui('يعرض أول ١٢ شهرًا من الفترة.')}</p>}
         </section>
       )}
     </FinancePageShell>

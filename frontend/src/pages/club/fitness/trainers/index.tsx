@@ -10,6 +10,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Combobox } from '@/components/common/combobox';
+import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import { useFitnessT } from '@/hooks/use-fitness-t';
 import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList, useArrayResource } from '@/lib/api-hooks';
@@ -35,6 +37,7 @@ export function FitnessTrainersPage() {
     specialization: '',
     experience: '',
     bio: '',
+    isActive: true,
   });
 
   const deleteMutation = useMutationWithToast(
@@ -44,7 +47,7 @@ export function FitnessTrainersPage() {
 
   const openCreate = () => {
     setEditId(null);
-    setForm({ name: '', employeeId: '', email: '', phone: '', specialization: '', experience: '', bio: '' });
+    setForm({ name: '', employeeId: '', email: '', phone: '', specialization: '', experience: '', bio: '', isActive: true });
     setOpen(true);
   };
 
@@ -58,6 +61,7 @@ export function FitnessTrainersPage() {
       specialization: row.specialization ?? '',
       experience: row.experience ?? '',
       bio: row.bio ?? '',
+      isActive: row.isActive,
     });
     setOpen(true);
   };
@@ -69,14 +73,16 @@ export function FitnessTrainersPage() {
     }
     setSaving(true);
     try {
+      // Empty strings / null clear a field on edit (e.g. removing the employee link).
       const payload = {
         name: form.name.trim(),
-        employeeId: form.employeeId ? Number(form.employeeId) : undefined,
-        email: form.email || undefined,
-        phone: form.phone || undefined,
-        specialization: form.specialization || undefined,
-        experience: form.experience || undefined,
-        bio: form.bio || undefined,
+        employeeId: form.employeeId ? Number(form.employeeId) : null,
+        email: form.email.trim() || null,
+        phone: form.phone.trim() || null,
+        specialization: form.specialization.trim() || null,
+        experience: form.experience.trim() || null,
+        bio: form.bio.trim() || null,
+        isActive: form.isActive,
       };
       if (editId) await api.put(`/club-trainers/${editId}`, payload);
       else await api.post('/club-trainers', payload);
@@ -94,14 +100,14 @@ export function FitnessTrainersPage() {
     () => [
       { accessorKey: 'name', header: ft('common.name') },
       { accessorKey: 'specialization', header: ft('trainers.specialization'), cell: ({ getValue }) => (getValue() as string | null) ?? '—' },
-      { accessorKey: 'phone', header: ft('common.search'), cell: ({ getValue }) => {
+      { accessorKey: 'phone', header: 'الهاتف', cell: ({ getValue }) => {
         const v = getValue() as string | null;
         return v ? <span className="nums">{toArabicDigits(v)}</span> : '—';
       }},
       {
-        accessorKey: 'ratingAvg',
-        header: ft('trainers.rating'),
-        cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as number)}</span>,
+        id: 'link',
+        header: 'النوع',
+        cell: ({ row }) => (row.original.employeeId ? 'موظف' : 'كابتن خارجي'),
       },
       {
         accessorKey: 'isActive',
@@ -169,7 +175,7 @@ export function FitnessTrainersPage() {
                 value={form.employeeId}
                 onValueChange={(v) => setForm((f) => ({ ...f, employeeId: v }))}
                 options={[
-                  { value: '', label: '—' },
+                  { value: '', label: 'بدون ربط (كابتن خارجي)' },
                   ...(employees ?? []).map((e) => ({ value: String(e.id), label: e.employee })),
                 ]}
                 placeholder="اختر موظفاً…"
@@ -185,13 +191,24 @@ export function FitnessTrainersPage() {
               <Input value={form.experience} onChange={(e) => setForm((f) => ({ ...f, experience: e.target.value }))} />
             </div>
             <div className="grid gap-2">
-              <Label>Email</Label>
+              <Label>نبذة</Label>
+              <Textarea rows={3} value={form.bio} onChange={(e) => setForm((f) => ({ ...f, bio: e.target.value }))} />
+            </div>
+            <div className="grid gap-2">
+              <Label>البريد الإلكتروني</Label>
               <Input dir="ltr" value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} />
             </div>
             <div className="grid gap-2">
-              <Label>Phone</Label>
+              <Label>الهاتف</Label>
               <Input className="nums" dir="ltr" value={form.phone} onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))} />
             </div>
+            <label className="flex items-center justify-between rounded-lg border p-3">
+              <span className="text-sm">
+                <span className="font-medium">نشط</span>
+                <span className="block text-xs text-muted-foreground">المدرب غير النشط لا يظهر عند جدولة الحصص ولا في التارجت والتقييم.</span>
+              </span>
+              <Switch checked={form.isActive} onCheckedChange={(v) => setForm((f) => ({ ...f, isActive: v }))} />
+            </label>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{ft('common.cancel')}</Button>

@@ -14,6 +14,7 @@ import {
   resolveRoleIdForJobTitleId,
 } from '../rbac/job-title-role.util';
 import { syncEmployeeTrainer } from '../club-fitness/trainer-sync.util';
+import { localDateString } from '../club-fitness/club-fitness.utils';
 import { PutWeeklyScheduleDto, WeeklyScheduleSlotDto } from './dto/weekly-schedule.dto';
 import { resolveSettingsIdsToTitles, resolveSettingsTitlesToIds } from './employees.lookup-resolver';
 import {
@@ -409,6 +410,7 @@ export class EmployeesService {
           take: 1,
           select: { class_commission_percentage: true, monthly_target: true },
         },
+        performance_target: { select: { private_sales_target: true } },
       },
     }).catch((error: unknown) => {
       this.logger.warn(
@@ -419,7 +421,11 @@ export class EmployeesService {
     resolved.class_commission_percentage = trainer?.salaries[0]
       ? String(trainer.salaries[0].class_commission_percentage)
       : '0';
-    resolved.monthly_target = trainer?.salaries[0] ? String(trainer.salaries[0].monthly_target) : '0';
+    // The trainer target lives in club_trainer_targets (same as تارجت المدربين); the salary
+    // column is only a fallback for trainers saved before that.
+    resolved.monthly_target = trainer?.performance_target
+      ? String(trainer.performance_target.private_sales_target)
+      : trainer?.salaries[0] ? String(trainer.salaries[0].monthly_target) : '0';
     return { id: Number(row.id), ...resolved };
   }
 
@@ -444,7 +450,8 @@ export class EmployeesService {
     const trainer = await this.prisma.club_trainers.findUnique({ where: { id: trainerId } });
     if (!trainer?.is_active) return;
     const commission = Number(body.class_commission_percentage ?? body.classCommissionPercentage ?? 0);
-    const monthlyTarget = Number(body.monthly_target ?? body.monthlyTarget ?? 0);
+    const rawTarget = body.monthly_target ?? body.monthlyTarget;
+    const monthlyTarget = Number(rawTarget ?? 0);
     const rawBasicSalary = String(body.basic_salary ?? '').trim();
     const basicSalary = rawBasicSalary === '' ? null : Number(rawBasicSalary);
     if (!Number.isFinite(commission) || commission < 0 || commission > 100) {
@@ -456,6 +463,13 @@ export class EmployeesService {
     if (basicSalary != null && (!Number.isFinite(basicSalary) || basicSalary <= 0)) {
       throw new BadRequestException('الراتب الأساسي يجب أن يكون رقمًا أكبر من صفر');
     }
+    if (rawTarget !== undefined) {
+      await this.prisma.club_trainer_targets.upsert({
+        where: { trainer_id: trainerId },
+        create: { trainer_id: trainerId, private_sales_target: monthlyTarget },
+        update: { private_sales_target: monthlyTarget },
+      });
+    }
     const active = await this.prisma.club_trainer_salaries.findFirst({
       where: { trainer_id: trainerId, is_active: true },
       orderBy: { effective_date: 'desc' },
@@ -466,7 +480,6 @@ export class EmployeesService {
         data: {
           base_salary: basicSalary ?? active.base_salary,
           class_commission_percentage: commission,
-          monthly_target: monthlyTarget,
         },
       });
       return;
@@ -476,9 +489,8 @@ export class EmployeesService {
         trainer_id: trainerId,
         base_salary: basicSalary ?? 0,
         class_commission_percentage: commission,
-        monthly_target: monthlyTarget,
         subscription_commission_percentage: 0,
-        effective_date: new Date().toISOString().slice(0, 10),
+        effective_date: localDateString(),
         is_active: true,
       },
     });

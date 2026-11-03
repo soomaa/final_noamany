@@ -191,7 +191,9 @@ describe('TrainerPortalService', () => {
         ]),
       },
       club_trainer_salaries: {
-        findFirst: jest.fn().mockResolvedValue({ class_commission_percentage: 15 }),
+        findMany: jest.fn().mockResolvedValue([
+          { effective_date: '2026-01-01', end_date: null, class_commission_percentage: 15 },
+        ]),
       },
       club_trainer_earning_payments: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: null } }),
@@ -243,7 +245,7 @@ describe('TrainerPortalService', () => {
           },
         ]),
       },
-      club_trainer_salaries: { findFirst: jest.fn() },
+      club_trainer_salaries: { findMany: jest.fn().mockResolvedValue([]) },
       club_trainer_earning_payments: {
         aggregate: jest.fn().mockResolvedValue({ _sum: { amount: null } }),
         findMany: jest.fn().mockResolvedValue([]),
@@ -259,6 +261,5 @@ describe('TrainerPortalService', () => {
     expect(result.statistics.completedClasses).toBe(0);
     expect(result.earnings.total).toBe(0);
     expect(result.earnings.items).toEqual([]);
-    expect(prisma.club_trainer_salaries.findFirst).not.toHaveBeenCalled();
   });
 });

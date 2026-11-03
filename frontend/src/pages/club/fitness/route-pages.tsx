@@ -17,7 +17,6 @@ export { FitnessPersonalSessionsPage } from './personal-sessions';
 export { FitnessTrainersPage } from './trainers/index';
 export { FitnessTrainerPaymentsPage } from './trainers/payments';
 export { FitnessTrainerSearchPage } from './trainers/search';
-export { FitnessTrainerRatingsPage } from './trainers/ratings';
 export { FitnessTrainerSettingsPage } from './trainers/settings';
 export {
   FitnessBranchAnalysisPage,

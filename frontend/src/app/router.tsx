@@ -239,7 +239,6 @@ import {
   FitnessTrainerPaymentsPage,
   FitnessTrainersPage,
   FitnessTrainerSearchPage,
-  FitnessTrainerRatingsPage,
   FitnessTrainerSettingsPage,
   FitnessTrainerTargetsPage,
   FitnessTrainerEvaluationsPage,
@@ -540,7 +539,8 @@ export function AppRouter() {
           <Route path="club/fitness/trainer-payments" element={<Lazy><FitnessTrainerPaymentsPage /></Lazy>} />
           <Route path="club/fitness/trainers" element={<Lazy><FitnessTrainersPage /></Lazy>} />
           <Route path="club/fitness/trainer-search" element={<Lazy><FitnessTrainerSearchPage /></Lazy>} />
-          <Route path="club/fitness/trainer-ratings" element={<Lazy><FitnessTrainerRatingsPage /></Lazy>} />
+          {/* Member ratings had no screen that records them; the monthly evaluation replaces the page. */}
+          <Route path="club/fitness/trainer-ratings" element={<Navigate to="/club/fitness/trainer-evaluations" replace />} />
           <Route path="club/fitness/trainer-settings" element={<Lazy><FitnessTrainerSettingsPage /></Lazy>} />
           <Route path="club/fitness/trainer-targets" element={<Lazy><FitnessTrainerTargetsPage /></Lazy>} />
           <Route path="club/fitness/trainer-evaluations" element={<Lazy><FitnessTrainerEvaluationsPage /></Lazy>} />

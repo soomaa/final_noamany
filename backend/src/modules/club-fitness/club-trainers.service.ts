@@ -8,17 +8,50 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertDateOrder, assertNoOverlap } from '../../common/validators';
 import { paginated } from '../../common/dto/list-result';
-import { isActiveEnrollment, localDateString, toNum } from './club-fitness.utils';
+import { localDateString, toNum } from './club-fitness.utils';
 import { ListClubTrainerSalariesDto, ListClubTrainersDto } from './dto/list-club-trainers.dto';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
 import { recordSystemExpense } from '../finance/system-expense.util';
+import { JwtUser } from '../../common/types/jwt-user';
+import { TrainerPerformanceService } from './trainer-performance.service';
+import { trainerBranchMap } from './trainer-branches.util';
+import {
+  assertNoPayoutConflict,
+  attendedCount,
+  computeTrainerEarnings,
+  overlappingPaymentsWhere,
+  payoutPeriodConflicts,
+} from './trainer-earnings.util';
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const previousDay = (date: string) => {
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
 
 @Injectable()
 export class ClubTrainersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly moduleLedger: ModuleLedgerService,
+    private readonly access: TrainerPerformanceService,
   ) {}
+
+  /** Trainer ids the user may see (branch scope, or self-only trainers); null = all. */
+  private visibleIds(user?: JwtUser) {
+    return user ? this.access.visibleTrainerIds(user) : Promise.resolve(null);
+  }
+
+  private async assertAccess(user: JwtUser | undefined, trainerId: number) {
+    if (user) await this.access.assertTrainerAccess(user, trainerId);
+  }
+
+  /** Branch a trainer's expense/ledger lines belong to: the employee's branch, or the only branch they work in. */
+  private async payoutBranch(trainerId: number): Promise<number | undefined> {
+    const branches = (await trainerBranchMap(this.prisma, [trainerId])).get(trainerId) ?? [];
+    return branches.length === 1 ? branches[0] : undefined;
+  }
 
   private mapTrainer(row: {
     id: number;
@@ -90,8 +123,10 @@ export class ClubTrainersService {
     };
   }
 
-  async list(q: ListClubTrainersDto) {
+  async list(q: ListClubTrainersDto, user?: JwtUser) {
     const and: Prisma.club_trainersWhereInput[] = [{ is_deleted: false }];
+    const ids = await this.visibleIds(user);
+    if (ids !== null) and.push({ id: { in: ids } });
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -118,15 +153,18 @@ export class ClubTrainersService {
     return paginated(rows.map((r) => this.mapTrainer(r)), total, q.page, q.pageSize);
   }
 
-  async statistics() {
+  async statistics(user?: JwtUser) {
+    const ids = await this.visibleIds(user);
+    const scope = ids === null ? {} : { id: { in: ids } };
     const [total, active] = await Promise.all([
-      this.prisma.club_trainers.count({ where: { is_deleted: false } }),
-      this.prisma.club_trainers.count({ where: { is_deleted: false, is_active: true } }),
+      this.prisma.club_trainers.count({ where: { is_deleted: false, ...scope } }),
+      this.prisma.club_trainers.count({ where: { is_deleted: false, is_active: true, ...scope } }),
     ]);
     return { total, active, inactive: total - active };
   }
 
-  async findOne(id: number) {
+  async findOne(id: number, user?: JwtUser) {
+    await this.assertAccess(user, id);
     const row = await this.prisma.club_trainers.findFirst({
       where: { id, is_deleted: false },
     });
@@ -216,9 +254,11 @@ export class ClubTrainersService {
     return this.getDefaultSchedule(trainerId, classTypeId);
   }
 
-  async listEarningPayments(trainerId?: number) {
+  async listEarningPayments(trainerId?: number, user?: JwtUser) {
+    if (trainerId) await this.assertAccess(user, trainerId);
+    const ids = trainerId ? null : await this.visibleIds(user);
     const rows = await this.prisma.club_trainer_earning_payments.findMany({
-      where: trainerId ? { trainer_id: trainerId } : undefined,
+      where: trainerId ? { trainer_id: trainerId } : ids === null ? undefined : { trainer_id: { in: ids } },
       include: { trainer: { select: { id: true, name: true } } },
       orderBy: [{ payment_date: 'desc' }, { id: 'desc' }],
     });
@@ -239,41 +279,36 @@ export class ClubTrainersService {
     trainerId: number,
     body: { amount?: number; paymentDate?: string; periodFrom?: string; periodTo?: string; notes?: string },
     userId?: number,
+    user?: JwtUser,
   ) {
+    await this.assertAccess(user, trainerId);
     const trainer = await this.prisma.club_trainers.findFirst({
       where: { id: trainerId, is_deleted: false },
-      select: { id: true, name: true, employee_id: true },
+      select: { id: true, name: true },
     });
     if (!trainer) throw new NotFoundException('المدرب غير موجود');
     const amount = Number(body.amount);
     if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestException('مبلغ الصرف غير صالح');
     const paymentDate = body.paymentDate || localDateString();
-    if (!body.periodFrom || !body.periodTo) throw new BadRequestException('فترة الاستحقاق مطلوبة');
-    assertDateOrder(body.periodFrom, body.periodTo, 'تاريخ بداية الفترة يجب أن يسبق نهايتها');
-    const earnings = await this.earningsSummary(trainerId, body.periodFrom, body.periodTo);
-    if (amount > earnings.remaining + 0.001) {
-      throw new BadRequestException(`المبلغ أكبر من المستحق المتبقي (${earnings.remaining.toFixed(2)})`);
+    if (!DATE_RE.test(paymentDate)) throw new BadRequestException('تاريخ الصرف غير صالح');
+    const periodFrom = body.periodFrom;
+    const periodTo = body.periodTo;
+    if (!periodFrom || !periodTo || !DATE_RE.test(periodFrom) || !DATE_RE.test(periodTo)) {
+      throw new BadRequestException('فترة الاستحقاق مطلوبة');
     }
-    const employee = trainer.employee_id
-      ? await this.prisma.employees.findUnique({
-          where: { id: trainer.employee_id },
-          select: { branch_id_fk: true },
-        })
-      : null;
+    assertDateOrder(periodFrom, periodTo, 'تاريخ بداية الفترة يجب أن يسبق نهايتها');
+    const earnings = await computeTrainerEarnings(this.prisma, trainerId, periodFrom, periodTo);
+    const branchId = await this.payoutBranch(trainerId);
     await this.moduleLedger.ensureChart();
     const row = await this.prisma.$transaction(async (tx) => {
+      // Serialises payouts per trainer so two cashiers cannot both pay the same remaining amount.
       await tx.$queryRaw`SELECT id FROM club_trainers WHERE id = ${trainerId} FOR UPDATE`;
+      assertNoPayoutConflict(await payoutPeriodConflicts(tx, trainerId, periodFrom, periodTo));
       const paidNow = await tx.club_trainer_earning_payments.aggregate({
-        where: {
-          trainer_id: trainerId,
-          OR: [
-            { period_from: body.periodFrom, period_to: body.periodTo },
-            { period_from: null, period_to: null, payment_date: { gte: body.periodFrom, lte: body.periodTo } },
-          ],
-        },
+        where: overlappingPaymentsWhere(trainerId, periodFrom, periodTo),
         _sum: { amount: true },
       });
-      const remainingNow = Math.max(0, earnings.earned - toNum(paidNow._sum.amount));
+      const remainingNow = Math.max(0, Math.round((earnings.earned - toNum(paidNow._sum.amount)) * 100) / 100);
       if (amount > remainingNow + 0.001) {
         throw new BadRequestException(`المبلغ أكبر من المستحق المتبقي (${remainingNow.toFixed(2)})`);
       }
@@ -282,8 +317,8 @@ export class ClubTrainersService {
           trainer_id: trainerId,
           amount,
           payment_date: paymentDate,
-          period_from: body.periodFrom,
-          period_to: body.periodTo,
+          period_from: periodFrom,
+          period_to: periodTo,
           notes: body.notes?.trim() || null,
           created_by: userId ?? null,
         },
@@ -291,7 +326,7 @@ export class ClubTrainersService {
       await this.moduleLedger.postTrainerEarningPayment(
         {
           paymentId: created.id,
-          branchId: employee?.branch_id_fk ?? undefined,
+          branchId,
           date: paymentDate,
           amount,
           trainerName: trainer.name,
@@ -307,7 +342,7 @@ export class ClubTrainersService {
         amount,
         description: `صرف أتعاب المدرب ${trainer.name}`,
         vendor: trainer.name,
-        branchId: employee?.branch_id_fk ?? undefined,
+        branchId,
         createdBy: userId,
       });
       return created;
@@ -323,101 +358,44 @@ export class ClubTrainersService {
     };
   }
 
-  async earningsSummary(trainerId: number, periodFrom: string, periodTo: string) {
+  /** Earned / paid / remaining for one payout period. Same calculation as the trainer portal. */
+  async earningsSummary(trainerId: number, periodFrom: string, periodTo: string, user?: JwtUser) {
+    if (!periodFrom || !periodTo || !DATE_RE.test(periodFrom) || !DATE_RE.test(periodTo)) {
+      throw new BadRequestException('فترة الاستحقاق مطلوبة');
+    }
     assertDateOrder(periodFrom, periodTo, 'تاريخ بداية الفترة يجب أن يسبق نهايتها');
+    await this.assertAccess(user, trainerId);
     const trainer = await this.prisma.club_trainers.findFirst({
       where: { id: trainerId, is_deleted: false },
-      select: { id: true, employee_id: true },
+      select: { id: true },
     });
     if (!trainer) throw new NotFoundException('المدرب غير موجود');
 
-    const [classes, receipts, privateCommissions, paid] = await Promise.all([
-      this.prisma.club_classes.findMany({
-        where: {
-          trainer_id: trainerId,
-          class_date: { gte: periodFrom, lte: periodTo },
-          is_deleted: false,
-          OR: [
-            { status: 'completed' },
-            { enrollments: { some: { attendance_status: 'attended' } } },
-          ],
-        },
-        include: { enrollments: { where: { attendance_status: { not: 'cancelled' } } } },
-      }),
-      trainer.employee_id
-        ? this.prisma.club_receipts.findMany({
-            where: {
-              receipt_date: { gte: periodFrom, lte: periodTo },
-              status: { in: ['مدفوعة', 'paid'] },
-              subscription: { is: { employee_id: trainer.employee_id } },
-            },
-            select: { amount: true, receipt_date: true },
-          })
-        : Promise.resolve([]),
-      this.prisma.club_private_attendance_commissions.findMany({
-        where: {
-          trainer_id: trainerId,
-          attendance_date: { gte: periodFrom, lte: periodTo },
-        },
-        select: { revenue_base: true, commission_amount: true },
-      }),
+    const [earnings, paid, conflicts] = await Promise.all([
+      computeTrainerEarnings(this.prisma, trainerId, periodFrom, periodTo),
       this.prisma.club_trainer_earning_payments.aggregate({
-        where: {
-          trainer_id: trainerId,
-          OR: [
-            { period_from: periodFrom, period_to: periodTo },
-            { period_from: null, period_to: null, payment_date: { gte: periodFrom, lte: periodTo } },
-          ],
-        },
+        where: overlappingPaymentsWhere(trainerId, periodFrom, periodTo),
         _sum: { amount: true },
       }),
+      payoutPeriodConflicts(this.prisma, trainerId, periodFrom, periodTo),
     ]);
-
-    let classRevenue = 0;
-    let classCommission = 0;
-    for (const cls of classes) {
-      const revenue = cls.enrollments.length * toNum(cls.price);
-      classRevenue += revenue;
-      const salary = await this.salaryForClassDate(trainerId, cls.class_date);
-      classCommission += revenue * (toNum(salary?.class_commission_percentage) / 100);
-    }
-    let subscriptionRevenue = 0;
-    let subscriptionCommission = 0;
-    for (const receipt of receipts) {
-      const amount = toNum(receipt.amount);
-      subscriptionRevenue += amount;
-      const salary = await this.salaryForClassDate(trainerId, receipt.receipt_date);
-      subscriptionCommission += amount * (toNum(salary?.subscription_commission_percentage) / 100);
-    }
-    const privateRevenue = privateCommissions.reduce((sum, row) => sum + toNum(row.revenue_base), 0);
-    const privateCommission = privateCommissions.reduce((sum, row) => sum + toNum(row.commission_amount), 0);
-    subscriptionRevenue += privateRevenue;
-    subscriptionCommission += privateCommission;
-    const earned = Math.round((classCommission + subscriptionCommission) * 100) / 100;
     const paidAmount = toNum(paid._sum.amount);
     return {
       trainerId,
       periodFrom,
       periodTo,
-      classRevenue,
-      classCommission,
-      subscriptionRevenue,
-      subscriptionCommission,
-      earned,
+      classRevenue: earnings.classRevenue,
+      classCommission: earnings.classCommission,
+      privateRevenue: earnings.privateRevenue,
+      privateCommission: earnings.privateCommission,
+      // Kept for older clients: private sessions are the only "subscription" earnings now.
+      subscriptionRevenue: earnings.privateRevenue,
+      subscriptionCommission: earnings.privateCommission,
+      earned: earnings.earned,
       paid: paidAmount,
-      remaining: Math.max(0, Math.round((earned - paidAmount) * 100) / 100),
+      remaining: conflicts.length ? 0 : Math.max(0, Math.round((earnings.earned - paidAmount) * 100) / 100),
+      conflicts,
     };
-  }
-
-  private async salaryForClassDate(trainerId: number, classDate: string) {
-    return this.prisma.club_trainer_salaries.findFirst({
-      where: {
-        trainer_id: trainerId,
-        effective_date: { lte: classDate },
-        OR: [{ end_date: null }, { end_date: { gte: classDate } }],
-      },
-      orderBy: { effective_date: 'desc' },
-    });
   }
 
   private async recalculateRatingAvg(trainerId: number, tx?: Prisma.TransactionClient) {
@@ -480,64 +458,63 @@ export class ClubTrainersService {
     }));
   }
 
-  async findDetails(id: number, query?: { dateFrom?: string; dateTo?: string }) {
-    const trainer = await this.findOne(id);
+  async findDetails(id: number, query?: { dateFrom?: string; dateTo?: string }, user?: JwtUser) {
+    const trainer = await this.findOne(id, user);
+    const dateFrom = query?.dateFrom && DATE_RE.test(query.dateFrom) ? query.dateFrom : undefined;
+    const dateTo = query?.dateTo && DATE_RE.test(query.dateTo) ? query.dateTo : undefined;
     const classWhere: Prisma.club_classesWhereInput = {
       trainer_id: id,
       is_deleted: false,
+      ...(dateFrom || dateTo
+        ? { class_date: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
+        : {}),
     };
-    if (query?.dateFrom && query?.dateTo) {
-      classWhere.class_date = { gte: query.dateFrom, lte: query.dateTo };
-    } else if (query?.dateFrom) {
-      classWhere.class_date = { gte: query.dateFrom };
-    } else if (query?.dateTo) {
-      classWhere.class_date = { lte: query.dateTo };
-    }
 
-    const classes = await this.prisma.club_classes.findMany({
-      where: classWhere,
-      include: {
-        enrollments: {
-          where: { attendance_status: { not: 'cancelled' } },
-        },
-      },
-      orderBy: [{ class_date: 'desc' }, { start_time: 'asc' }],
-    });
+    const [classes, activeSalary, earnings] = await Promise.all([
+      this.prisma.club_classes.findMany({
+        where: classWhere,
+        include: { enrollments: { where: { attendance_status: { not: 'cancelled' } } } },
+        orderBy: [{ class_date: 'desc' }, { start_time: 'asc' }],
+      }),
+      this.prisma.club_trainer_salaries.findFirst({
+        where: { trainer_id: id, is_active: true },
+        orderBy: { effective_date: 'desc' },
+      }),
+      computeTrainerEarnings(this.prisma, id, dateFrom, dateTo),
+    ]);
 
-    const activeSalary = await this.prisma.club_trainer_salaries.findFirst({
-      where: { trainer_id: id, is_active: true },
-      orderBy: { effective_date: 'desc' },
-    });
-
-    const totalClasses = classes.length;
-    const uniqueDates = new Set(classes.map((c) => c.class_date));
+    const held = classes.filter((c) => c.status !== 'cancelled');
+    const uniqueDates = new Set(held.map((c) => c.class_date));
     const uniqueMembers = new Set<number>();
-    let totalEnrollments = 0;
-    let totalClassRevenue = 0;
-    let totalClassCommission = 0;
-
-    for (const cls of classes) {
-      const activeEnrollments = cls.enrollments.filter((e) => isActiveEnrollment(e.attendance_status));
-      totalEnrollments += activeEnrollments.length;
-      activeEnrollments.forEach((e) => uniqueMembers.add(e.member_id));
-      const revenue = activeEnrollments.length * toNum(cls.price);
-      totalClassRevenue += revenue;
-      const salaryAtClass = await this.salaryForClassDate(id, cls.class_date);
-      if (salaryAtClass) {
-        totalClassCommission += revenue * (toNum(salaryAtClass.class_commission_percentage) / 100);
+    let totalRegistered = 0;
+    let totalAttended = 0;
+    for (const cls of held) {
+      totalRegistered += cls.enrollments.length;
+      for (const e of cls.enrollments) {
+        if (e.attendance_status !== 'attended') continue;
+        totalAttended += 1;
+        uniqueMembers.add(e.member_id);
       }
     }
+    for (const row of earnings.privateItems) if (row.memberId) uniqueMembers.add(row.memberId);
 
     return {
       trainer,
       activeSalary: activeSalary ? this.mapSalary(activeSalary) : null,
       statistics: {
-        totalClasses,
+        totalClasses: held.length,
+        cancelledClasses: classes.length - held.length,
         totalDays: uniqueDates.size,
-        totalEnrollments,
+        // Registered = booked and not cancelled; only attended members count for revenue.
+        totalEnrollments: totalRegistered,
+        totalAttended,
         uniqueMembers: uniqueMembers.size,
-        totalClassRevenue,
-        totalClassCommission,
+        privateSessions: earnings.privateItems.length,
+        totalClassRevenue: earnings.classRevenue,
+        totalClassCommission: earnings.classCommission,
+        privateRevenue: earnings.privateRevenue,
+        privateCommission: earnings.privateCommission,
+        earned: earnings.earned,
       },
       classes: classes.map((c) => ({
         id: c.id,
@@ -548,7 +525,8 @@ export class ClubTrainersService {
         status: c.status,
         price: toNum(c.price),
         maxCapacity: c.max_capacity,
-        enrollmentCount: c.enrollments.filter((e) => isActiveEnrollment(e.attendance_status)).length,
+        enrollmentCount: c.enrollments.length,
+        attendedCount: attendedCount(c),
       })),
     };
   }
@@ -557,9 +535,11 @@ export class ClubTrainersService {
     if (!body.name || !String(body.name).trim()) {
       throw new BadRequestException('اسم المدرب مطلوب');
     }
+    const employeeId = this.parseEmployeeId(body.employeeId);
+    await this.assertEmployeeFree(employeeId);
     const row = await this.prisma.club_trainers.create({
       data: {
-        employee_id: body.employeeId != null ? Number(body.employeeId) : null,
+        employee_id: employeeId,
         name: String(body.name).trim(),
         email: body.email ? String(body.email).trim() : null,
         phone: body.phone ? String(body.phone).trim() : null,
@@ -628,12 +608,33 @@ export class ClubTrainersService {
     };
   }
 
-  async update(id: number, body: Record<string, unknown>) {
-    await this.findOne(id);
+  private parseEmployeeId(value: unknown): number | null {
+    if (value == null || value === '' || Number(value) === 0) return null;
+    const id = Number(value);
+    if (!Number.isInteger(id) || id < 0) throw new BadRequestException('الموظف غير صالح');
+    return id;
+  }
+
+  private async assertEmployeeFree(employeeId: number | null, trainerId?: number) {
+    if (employeeId == null) return;
+    const [employee, other] = await Promise.all([
+      this.prisma.employees.findUnique({ where: { id: employeeId }, select: { id: true } }),
+      this.prisma.club_trainers.findFirst({ where: { employee_id: employeeId, ...(trainerId ? { id: { not: trainerId } } : {}) }, select: { id: true, name: true } }),
+    ]);
+    if (!employee) throw new BadRequestException('الموظف غير موجود');
+    if (other) throw new ConflictException(`هذا الموظف مرتبط بالفعل بالمدرب ${other.name}`);
+  }
+
+  async update(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    await this.findOne(id, user);
+    // `employeeId: null` (or '') removes the link; omitting the key leaves it unchanged.
+    const employeeId = body.employeeId !== undefined ? this.parseEmployeeId(body.employeeId) : undefined;
+    if (employeeId !== undefined) await this.assertEmployeeFree(employeeId, id);
+    if (body.name !== undefined && !String(body.name ?? '').trim()) throw new BadRequestException('اسم المدرب مطلوب');
     const row = await this.prisma.club_trainers.update({
       where: { id },
       data: {
-        ...(body.employeeId !== undefined ? { employee_id: body.employeeId != null ? Number(body.employeeId) : null } : {}),
+        ...(employeeId !== undefined ? { employee_id: employeeId } : {}),
         ...(body.name != null ? { name: String(body.name).trim() } : {}),
         ...(body.email !== undefined ? { email: body.email ? String(body.email).trim() : null } : {}),
         ...(body.phone !== undefined ? { phone: body.phone ? String(body.phone).trim() : null } : {}),
@@ -647,8 +648,8 @@ export class ClubTrainersService {
     return this.mapTrainer(row);
   }
 
-  async remove(id: number) {
-    await this.findOne(id);
+  async remove(id: number, user?: JwtUser) {
+    await this.findOne(id, user);
     const today = localDateString();
     await this.prisma.$transaction(async (tx) => {
       await tx.club_trainer_salaries.updateMany({
@@ -674,9 +675,15 @@ export class ClubTrainersService {
 
   // --- Trainer salaries ---
 
-  async listSalaries(q: ListClubTrainerSalariesDto) {
+  async listSalaries(q: ListClubTrainerSalariesDto, user?: JwtUser) {
     const where: Prisma.club_trainer_salariesWhereInput = {};
-    if (q.trainerId) where.trainer_id = q.trainerId;
+    const ids = await this.visibleIds(user);
+    if (q.trainerId) {
+      if (ids !== null && !ids.includes(q.trainerId)) return paginated([], 0, q.page, q.pageSize);
+      where.trainer_id = q.trainerId;
+    } else if (ids !== null) {
+      where.trainer_id = { in: ids };
+    }
     if (q.isActive !== undefined) where.is_active = q.isActive;
 
     const [rows, total] = await Promise.all([
@@ -696,7 +703,7 @@ export class ClubTrainersService {
     return paginated(rows.map((r) => this.mapSalary(r)), total, q.page, q.pageSize);
   }
 
-  async findSalary(id: number) {
+  async findSalary(id: number, user?: JwtUser) {
     const row = await this.prisma.club_trainer_salaries.findUnique({
       where: { id },
       include: {
@@ -706,85 +713,105 @@ export class ClubTrainersService {
       },
     });
     if (!row) throw new NotFoundException('راتب المدرب غير موجود');
+    await this.assertAccess(user, row.trainer_id);
     return this.mapSalary(row);
   }
 
-  async createSalary(body: Record<string, unknown>) {
+  private parsePercentage(value: unknown, message: string): number {
+    const pct = Number(value ?? 0);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) throw new BadRequestException(message);
+    return pct;
+  }
+
+  /**
+   * A new compensation record starts on `effectiveDate`. The record open at that date is closed the
+   * day before, so commission history stays correct for earlier classes and sessions. A record that
+   * starts on the same date is updated in place instead of being duplicated.
+   */
+  async createSalary(body: Record<string, unknown>, user?: JwtUser) {
     const trainerId = Number(body.trainerId);
     if (!trainerId) throw new BadRequestException('معرف المدرب مطلوب');
-    if (body.baseSalary == null) throw new BadRequestException('الراتب الأساسي مطلوب');
+    await this.assertAccess(user, trainerId);
+    const baseSalary = Number(body.baseSalary ?? 0);
+    if (!Number.isFinite(baseSalary) || baseSalary < 0) throw new BadRequestException('الراتب الأساسي غير صالح');
 
     const trainer = await this.prisma.club_trainers.findFirst({
       where: { id: trainerId, is_deleted: false },
     });
     if (!trainer) throw new NotFoundException('المدرب غير موجود');
 
-    const classPct = Number(body.classCommissionPercentage ?? 0);
-    const subPct = Number(body.subscriptionCommissionPercentage ?? 0);
-    if (classPct < 0 || classPct > 100) {
-      throw new BadRequestException('نسبة عمولة الحصص يجب أن تكون بين 0 و 100');
-    }
-    if (subPct < 0 || subPct > 100) {
-      throw new BadRequestException('نسبة عمولة الاشتراكات يجب أن تكون بين 0 و 100');
-    }
+    const classPct = this.parsePercentage(body.classCommissionPercentage, 'نسبة عمولة الحصص يجب أن تكون بين 0 و 100');
+    const subPct = this.parsePercentage(body.subscriptionCommissionPercentage, 'نسبة البرايفت يجب أن تكون بين 0 و 100');
 
-    const isActive = body.isActive !== false;
     const effectiveDate = body.effectiveDate ? String(body.effectiveDate) : localDateString();
+    if (!DATE_RE.test(effectiveDate)) throw new BadRequestException('تاريخ السريان غير صالح');
     const endDate = body.endDate ? String(body.endDate) : null;
     if (endDate) assertDateOrder(effectiveDate, endDate, 'تاريخ نهاية الراتب يجب أن يكون بعد تاريخ السريان');
-
-    const existingSalaries = await this.prisma.club_trainer_salaries.findMany({
-      where: { trainer_id: trainerId },
-      select: { id: true, effective_date: true, end_date: true },
-    });
-    assertNoOverlap(
-      { start: effectiveDate, end: endDate ?? '9999-12-31' },
-      existingSalaries.map((s) => ({
-        start: s.effective_date,
-        end: s.end_date ?? '9999-12-31',
-        id: s.id,
-      })),
-      'فترة الراتب تتداخل مع سجل موجود',
-    );
+    const notes = body.notes ? String(body.notes) : null;
+    const include = {
+      trainer: { select: { id: true, name: true, email: true, phone: true, specialization: true } },
+    } as const;
 
     const row = await this.prisma.$transaction(async (tx) => {
-      if (isActive) {
-        await tx.club_trainer_salaries.updateMany({
-          where: { trainer_id: trainerId, is_active: true },
-          data: { is_active: false, end_date: localDateString() },
+      await tx.$queryRaw`SELECT id FROM club_trainers WHERE id = ${trainerId} FOR UPDATE`;
+      const existing = await tx.club_trainer_salaries.findMany({
+        where: { trainer_id: trainerId },
+        select: { id: true, effective_date: true, end_date: true, monthly_target: true },
+      });
+      const sameDay = existing.find((s) => s.effective_date === effectiveDate);
+      const others = existing.filter((s) => s.id !== sameDay?.id);
+      // The record running at the new start date (open-ended or not) ends the day before.
+      const running = others.find(
+        (s) => s.effective_date < effectiveDate && (s.end_date == null || s.end_date >= effectiveDate),
+      );
+      if (running) {
+        await tx.club_trainer_salaries.update({
+          where: { id: running.id },
+          data: { end_date: previousDay(effectiveDate), is_active: false },
         });
       }
+      assertNoOverlap(
+        { start: effectiveDate, end: endDate ?? '9999-12-31', id: sameDay?.id },
+        others
+          .filter((s) => s.id !== running?.id)
+          .map((s) => ({ start: s.effective_date, end: s.end_date ?? '9999-12-31', id: s.id })),
+        'فترة الراتب تتداخل مع سجل لاحق؛ عدّل السجل اللاحق أو اختر تاريخًا بعده',
+      );
+      // `is_active` marks the latest record (what the employee form edits); commission for a
+      // given day always comes from the record whose dates cover that day.
+      await tx.club_trainer_salaries.updateMany({
+        where: { trainer_id: trainerId, is_active: true, ...(sameDay ? { id: { not: sameDay.id } } : {}) },
+        data: { is_active: false },
+      });
+      const data = {
+        base_salary: baseSalary,
+        class_commission_percentage: classPct,
+        subscription_commission_percentage: subPct,
+        effective_date: effectiveDate,
+        end_date: endDate,
+        is_active: true,
+        notes,
+      };
+      if (sameDay) return tx.club_trainer_salaries.update({ where: { id: sameDay.id }, data, include });
       return tx.club_trainer_salaries.create({
-        data: {
-          trainer_id: trainerId,
-          base_salary: Number(body.baseSalary),
-          class_commission_percentage: classPct,
-          subscription_commission_percentage: subPct,
-          effective_date: effectiveDate,
-          end_date: endDate,
-          is_active: isActive,
-          notes: body.notes ? String(body.notes) : null,
-        },
-        include: {
-          trainer: {
-            select: { id: true, name: true, email: true, phone: true, specialization: true },
-          },
-        },
+        data: { trainer_id: trainerId, ...data, monthly_target: running?.monthly_target ?? 0 },
+        include,
       });
     });
 
     return this.mapSalary(row);
   }
 
-  async updateSalary(id: number, body: Record<string, unknown>) {
-    const existing = await this.findSalary(id);
-    const classPct = body.classCommissionPercentage != null ? Number(body.classCommissionPercentage) : null;
-    const subPct = body.subscriptionCommissionPercentage != null ? Number(body.subscriptionCommissionPercentage) : null;
-    if (classPct != null && (classPct < 0 || classPct > 100)) {
-      throw new BadRequestException('نسبة عمولة الحصص يجب أن تكون بين 0 و 100');
-    }
-    if (subPct != null && (subPct < 0 || subPct > 100)) {
-      throw new BadRequestException('نسبة عمولة الاشتراكات يجب أن تكون بين 0 و 100');
+  async updateSalary(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const existing = await this.findSalary(id, user);
+    const classPct = body.classCommissionPercentage != null
+      ? this.parsePercentage(body.classCommissionPercentage, 'نسبة عمولة الحصص يجب أن تكون بين 0 و 100')
+      : null;
+    const subPct = body.subscriptionCommissionPercentage != null
+      ? this.parsePercentage(body.subscriptionCommissionPercentage, 'نسبة البرايفت يجب أن تكون بين 0 و 100')
+      : null;
+    if (body.baseSalary != null && (!Number.isFinite(Number(body.baseSalary)) || Number(body.baseSalary) < 0)) {
+      throw new BadRequestException('الراتب الأساسي غير صالح');
     }
 
     const activating = body.isActive === true && !existing.isActive;
@@ -810,7 +837,7 @@ export class ClubTrainersService {
       if (activating) {
         await tx.club_trainer_salaries.updateMany({
           where: { trainer_id: existing.trainerId, is_active: true, id: { not: id } },
-          data: { is_active: false, end_date: localDateString() },
+          data: { is_active: false },
         });
       }
       return tx.club_trainer_salaries.update({
@@ -835,8 +862,8 @@ export class ClubTrainersService {
     return this.mapSalary(row);
   }
 
-  async removeSalary(id: number) {
-    await this.findSalary(id);
+  async removeSalary(id: number, user?: JwtUser) {
+    await this.findSalary(id, user);
     await this.prisma.club_trainer_salaries.delete({ where: { id } });
     return { success: true };
   }

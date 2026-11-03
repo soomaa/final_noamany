@@ -270,7 +270,6 @@ export const FitnessPersonalSessionsPage = lazyPage(() => import('@/pages/club/f
 export const FitnessTrainersPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainersPage');
 export const FitnessTrainerPaymentsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerPaymentsPage');
 export const FitnessTrainerSearchPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerSearchPage');
-export const FitnessTrainerRatingsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerRatingsPage');
 export const FitnessTrainerSettingsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerSettingsPage');
 export const FitnessTrainerTargetsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerTargetsPage');
 export const FitnessTrainerEvaluationsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerEvaluationsPage');

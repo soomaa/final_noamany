@@ -208,7 +208,6 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: FIT.trainers.list },
           { to: FIT.trainers.payments },
           { to: FIT.trainers.search },
-          { to: FIT.trainers.ratings },
           { to: FIT.trainers.settings },
           { to: FIT.trainers.targets },
           { to: FIT.trainers.evaluations },

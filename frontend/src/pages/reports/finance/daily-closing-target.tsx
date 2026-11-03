@@ -54,8 +54,22 @@ interface TargetRow {
   memberCode?: string | null;
 }
 
+type CaptainBucket = { count: number; afterDiscount: string; paid: string };
+interface CaptainSummaryRow {
+  employeeId: number;
+  employeeName: string | null;
+  subscriptions: CaptainBucket;
+  protein: CaptainBucket;
+  bar: CaptainBucket;
+  otherSales: CaptainBucket;
+  lockers: CaptainBucket;
+  totalPaid: string;
+}
+
 interface TargetReportResponse {
   rows: TargetRow[];
+  /** Per captain (older API responses omit it). */
+  byCaptain?: CaptainSummaryRow[];
   totals: Omit<TargetRow, 'operation' | 'type' | 'date'>;
   subscriptionTotal: string;
   lockerTotal: string;
@@ -244,6 +258,7 @@ export function TargetReportPage() {
   const [branch, setBranch] = useState('all');
   const [employeeId, setEmployeeId] = useState('');
   const [operation, setOperation] = useState('all');
+  const [gender, setGender] = useState('');
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
   // A regular employee only ever sees their own monthly target; admins and branch managers choose.
@@ -261,8 +276,8 @@ export function TargetReportPage() {
     [employees.data, ui],
   );
   const report = useQuery({
-    queryKey: ['target-report', branch, employeeId, operation, startDate, endDate],
-    queryFn: async () => (await api.get<TargetReportResponse>('/finance/target-report', { params: { ...(employeeId ? { employeeId } : {}), operationType: operation, fromDate: startDate, toDate: endDate, ...(normalizeBranchParam(branch) ? { branchId: branch } : {}) } })).data,
+    queryKey: ['target-report', branch, employeeId, operation, gender, startDate, endDate],
+    queryFn: async () => (await api.get<TargetReportResponse>('/finance/target-report', { params: { ...(employeeId ? { employeeId } : {}), ...(gender ? { gender } : {}), operationType: operation, fromDate: startDate, toDate: endDate, ...(normalizeBranchParam(branch) ? { branchId: branch } : {}) } })).data,
   });
   const rows = useMemo(() => report.data?.rows ?? [], [report.data?.rows]);
   const [search, setSearch] = useState('');
@@ -296,8 +311,9 @@ export function TargetReportPage() {
     ? <Combobox value={employeeId} onValueChange={setEmployeeId} options={employeeOptions} className="h-10 min-w-56" placeholder={ui('كل الموظفين')} searchPlaceholder={ui('بحث باسم الموظف أو كوده…')} emptyText={ui('لا يوجد موظف مطابق')} aria-label={ui('بحث واختيار الموظف')} />
     : <Input value={user?.name ?? ''} readOnly disabled className="h-10 min-w-56" aria-label={ui('الموظف')} />;
   return <ReportShell title={ui('تقرير التارجت')} description={canPickEmployee ? ui('تارجت الموظفين بالتفصيل: العميل ونوع الاشتراك والمبلغ') : ui('تارجتك للشهر الحالي بالتفصيل')}
-    filters={<DateRangeFilter startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} extra={<><BranchFilter value={branch} onChange={setBranch} /><label className="grid gap-1.5 text-xs text-muted-foreground">{ui('الموظف')}{employeeField}</label><label className="grid gap-1.5 text-xs text-muted-foreground">{ui('نوع العملية')}<select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={operation} onChange={(e) => setOperation(e.target.value)}><option value="all">{ui('الكل')}</option><option value="subscriptions">{ui('اشتراكات')}</option><option value="sales">{ui('مبيعات')}</option></select></label></>} />}
+    filters={<DateRangeFilter startDate={startDate} endDate={endDate} onStartChange={setStartDate} onEndChange={setEndDate} extra={<><BranchFilter value={branch} onChange={setBranch} /><label className="grid gap-1.5 text-xs text-muted-foreground">{ui('الموظف')}{employeeField}</label><label className="grid gap-1.5 text-xs text-muted-foreground">{ui('نوع العملية')}<select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={operation} onChange={(e) => setOperation(e.target.value)}><option value="all">{ui('الكل')}</option><option value="subscriptions">{ui('اشتراكات')}</option><option value="sales">{ui('مبيعات')}</option></select></label><label className="grid gap-1.5 text-xs text-muted-foreground">{ui('القسم')}<select className="h-10 rounded-md border border-input bg-background px-3 text-sm" value={gender} onChange={(e) => setGender(e.target.value)}><option value="">{ui('الكل')}</option><option value="male">{ui('رجالى')}</option><option value="female">{ui('حريمى')}</option></select></label></>} />}
     onExport={exportCsv} extraActions={<><Button variant="outline" onClick={() => void copyReport()}>{ui('نسخ')}</Button><Button variant="outline" onClick={() => window.print()}>{ui('طباعة')}</Button></>}>
+    {canPickEmployee && (report.data?.byCaptain?.length ?? 0) > 0 && <CaptainSummary rows={report.data!.byCaptain!} />}
     <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3">
         <h3 className="text-base font-bold">{ui('نتيجة تقرير التارجت')}</h3>
@@ -385,6 +401,50 @@ function sortText(row: TargetRow, key: TargetColumnKey, ui: (text: string) => st
   return String(row[key as keyof TargetRow] ?? '');
 }
 const money2 = (value: string | number | undefined) => formatMoneyNumber(Number(value ?? 0));
+
+/** Old "تقرير الكباتن خلال فترة": count and paid amount per captain for each kind of target operation. */
+function CaptainSummary({ rows }: { rows: CaptainSummaryRow[] }) {
+  const { ui } = useLocale();
+  const cell = (b: CaptainBucket) => (
+    <td className="nums px-3 py-2">{b.count ? <>{toArabicDigits(b.count)} <span className="text-muted-foreground">/</span> {money2(b.paid)}</> : '—'}</td>
+  );
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
+      <div className="border-b border-border px-4 py-3">
+        <h3 className="text-base font-bold">{ui('ملخص الكباتن')}</h3>
+        <p className="text-xs text-muted-foreground">{ui('العدد / المدفوع لكل كابتن خلال الفترة. فواتير InBody لا تحمل اسم كابتن فلا تظهر هنا.')}</p>
+      </div>
+      <div className="overflow-x-auto p-3">
+        <table className="w-full min-w-[820px] text-center text-sm">
+          <thead>
+            <tr className="bg-muted/70">
+              <th className="px-3 py-2">{ui('الكابتن')}</th>
+              <th className="px-3 py-2">{ui('اشتراكات التارجت')}</th>
+              <th className="px-3 py-2">{ui('بروتين')}</th>
+              <th className="px-3 py-2">{ui('بار')}</th>
+              <th className="px-3 py-2">{ui('مبيعات أخرى')}</th>
+              <th className="px-3 py-2">{ui('لوكر')}</th>
+              <th className="px-3 py-2">{ui('الإجمالي')}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.employeeId} className="border-t border-border">
+                <td className="px-3 py-2 font-semibold">{row.employeeName ?? `#${row.employeeId}`}</td>
+                {cell(row.subscriptions)}
+                {cell(row.protein)}
+                {cell(row.bar)}
+                {cell(row.otherSales)}
+                {cell(row.lockers)}
+                <td className="nums px-3 py-2 font-extrabold">{money2(row.totalPaid)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
 
 /** Totals under the table: a label cell beside its value, in the same calm palette as the report. */
 function TargetSummary({ rows }: { rows: Array<Array<{ label: string; value: string | undefined }>> }) {

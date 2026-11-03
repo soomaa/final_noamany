@@ -12,7 +12,6 @@ const requiredRoutes = [
   '/club/fitness/trainers',
   '/club/fitness/trainer-payments',
   '/club/fitness/trainer-search',
-  '/club/fitness/trainer-ratings',
   '/club/fitness/trainer-settings',
   '/club/fitness/trainer-targets',
   '/club/fitness/trainer-evaluations',

@@ -19,46 +19,75 @@ import { useLocale } from '@/store/locale';
 export function ClubSubscriptionSessionsReportPage() {
   const { ui } = useLocale();
   const [branch, setBranch] = useState('all');
+  const [gender, setGender] = useState('all');
+  const [status, setStatus] = useState('active');
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-sub-sessions', branch],
+    queryKey: ['reports', 'club-sub-sessions', branch, gender, status],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
+      const params: Record<string, string> = { isLinkedToSessions: 'true' };
+      if (branchId) params.branch = String(branchId);
+      if (gender !== 'all') params.gender = gender;
+      if (status !== 'all') params.status = status;
       const data = await fetchAllReportRows<{
         id: number;
         subscriptionNumber: string;
         customerName: string | null;
         subscriptionType: string | null;
-        sessionsCount: number;
+        branchName?: string | null;
+        subscriptionEndDate?: string | null;
+        sessionsCount: number | null;
+        sessionsUsed: number | null;
         isLinkedToSessions: boolean;
-      }>('/club-subscriptions', branchId ? { branch: String(branchId) } : {});
+      }>('/club-subscriptions', params);
       return { data, total: data.length };
     },
   });
 
-  const rows = (data?.data ?? []).filter((r) => r.isLinkedToSessions);
+  // Old "حصص الاشتراكات الحالية": allowed, attended and remaining sessions per subscription.
+  const rows = useMemo(
+    () => (data?.data ?? [])
+      .filter((r) => r.isLinkedToSessions)
+      .map((r) => {
+        const allowed = Number(r.sessionsCount ?? 0);
+        const used = Number(r.sessionsUsed ?? 0);
+        return { ...r, allowed, used, remaining: Math.max(0, allowed - used) };
+      }),
+    [data],
+  );
+  const table = useMemo(() => rows.reduce((t, r) => ({ allowed: t.allowed + r.allowed, used: t.used + r.used, remaining: t.remaining + r.remaining }), { allowed: 0, used: 0, remaining: 0 }), [rows]);
 
   const columns = useMemo<ColumnDef<(typeof rows)[number]>[]>(
     () => [
       { accessorKey: 'subscriptionNumber', header: ui('رقم الاشتراك') },
       { accessorKey: 'customerName', header: ui('العميل'), cell: ({ getValue }) => getValue() ?? '—' },
       { accessorKey: 'subscriptionType', header: ui('النوع'), cell: ({ getValue }) => getValue() ?? '—' },
-      { accessorKey: 'sessionsCount', header: ui('عدد الحصص'), cell: ({ getValue }) => toArabicDigits(getValue() as number) },
+      { accessorKey: 'branchName', header: ui('الفرع'), cell: ({ getValue }) => getValue() ?? '—' },
+      { accessorKey: 'subscriptionEndDate', header: ui('تاريخ الانتهاء'), cell: ({ getValue }) => toArabicDigits(String(getValue() ?? '—')) },
+      { accessorKey: 'allowed', header: ui('عدد الحصص'), cell: ({ getValue }) => toArabicDigits(getValue() as number) },
+      { accessorKey: 'used', header: ui('الحصص المستخدمة'), cell: ({ getValue }) => toArabicDigits(getValue() as number) },
+      { accessorKey: 'remaining', header: ui('الحصص المتبقية'), cell: ({ getValue }) => <b className="nums">{toArabicDigits(getValue() as number)}</b> },
     ],
     [ui],
   );
 
   const exportCsv = () =>
     downloadCsv('subscription-sessions', [
-      [ui('رقم الاشتراك'), ui('العميل'), ui('النوع'), ui('عدد الحصص')],
-      ...rows.map((r) => [r.subscriptionNumber, r.customerName ?? '', r.subscriptionType ?? '', r.sessionsCount]),
+      [ui('رقم الاشتراك'), ui('العميل'), ui('النوع'), ui('الفرع'), ui('تاريخ الانتهاء'), ui('عدد الحصص'), ui('الحصص المستخدمة'), ui('الحصص المتبقية')],
+      ...rows.map((r) => [r.subscriptionNumber, r.customerName ?? '', r.subscriptionType ?? '', r.branchName ?? '', r.subscriptionEndDate ?? '', r.allowed, r.used, r.remaining]),
     ]);
 
+  const selectCls = 'h-9 rounded-md border bg-background px-2 text-sm';
   return (
     <ReportShell
       title={ui('تقرير حصص الاشتراكات')}
-      description={ui('الاشتراكات المرتبطة بعدد حصص محدد')}
-      filters={<BranchFilter value={branch} onChange={setBranch} />}
-      stats={<ClubStatCard label={ui('العدد')} value={rows.length} />}
+      description={ui('الاشتراكات المرتبطة بعدد حصص: المسموح والمستخدم والمتبقي')}
+      filters={<div className="flex flex-wrap gap-2">
+        <BranchFilter value={branch} onChange={setBranch} />
+        <select aria-label={ui('الفئة')} value={gender} onChange={(event) => setGender(event.target.value)} className={selectCls}><option value="all">{ui('الكل')}</option><option value="male">{ui('رجالي')}</option><option value="female">{ui('حريمي')}</option></select>
+        <select aria-label={ui('الحالة')} value={status} onChange={(event) => setStatus(event.target.value)} className={selectCls}><option value="active">{ui('السارية حالياً')}</option><option value="all">{ui('كل الاشتراكات')}</option></select>
+      </div>}
+      stats={<div className="grid gap-3 sm:grid-cols-4"><ClubStatCard label={ui('العدد')} value={rows.length} /><ClubStatCard label={ui('عدد الحصص')} value={table.allowed} /><ClubStatCard label={ui('الحصص المستخدمة')} value={table.used} /><ClubStatCard label={ui('الحصص المتبقية')} value={table.remaining} /></div>}
       onExport={exportCsv}
     >
       <DataTable

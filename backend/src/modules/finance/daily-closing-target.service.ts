@@ -27,7 +27,18 @@ type TargetReportQuery = {
   operation?: 'subscriptions' | 'sales' | 'all';
   fromDate?: string;
   toDate?: string;
+  gender?: 'male' | 'female';
 };
+
+type CaptainBucket = { count: number; afterDiscount: Prisma.Decimal; paid: Prisma.Decimal };
+
+/** Café category name → target bucket (same naming rule as the daily closing). */
+function saleBucket(categoryName: string | null | undefined): 'protein' | 'bar' | 'other' {
+  const name = String(categoryName ?? '').trim();
+  if (/بروتين|protein/i.test(name)) return 'protein';
+  if (/بار|bar/i.test(name)) return 'bar';
+  return 'other';
+}
 
 @Injectable()
 export class DailyClosingTargetService {
@@ -411,6 +422,7 @@ export class DailyClosingTargetService {
     const branchWhere = branchIds == null ? {} : { in: branchIds };
     const range = (field: string) => ({ [field]: { gte: fromDate, lte: toDate } });
     const operation = query.operationType ?? query.operation ?? 'all';
+    const genderWhere = query.gender === 'male' || query.gender === 'female' ? { gender: query.gender } : {};
     const [subscriptions, lockers, sales] = await Promise.all([
       operation === 'sales'
         ? Promise.resolve([])
@@ -419,6 +431,7 @@ export class DailyClosingTargetService {
               ...range('registration_date'),
               ...(employeeId == null ? { employee_id: { not: null } } : { employee_id: employeeId }),
               ...(branchIds == null ? {} : { branch_id: branchWhere }),
+              ...genderWhere,
             },
             include: {
               type: { select: { name: true, is_part_of_target: true } },
@@ -432,6 +445,7 @@ export class DailyClosingTargetService {
               ...range('subscription_start_date'),
               ...(employeeId == null ? { recommended_employee_id: { not: null } } : { recommended_employee_id: employeeId }),
               ...(branchIds == null ? {} : { sub_branch_id: branchWhere }),
+              ...genderWhere,
             },
             include: { type: { select: { name: true } }, member: { select: { member_code: true } } },
           }),
@@ -443,6 +457,7 @@ export class DailyClosingTargetService {
               ...range('sale_date'),
               ...(employeeId == null ? { target_employee_id: { not: null } } : { target_employee_id: employeeId }),
               ...(branchIds == null ? {} : { branch_id: branchWhere }),
+              ...genderWhere,
             },
             include: { cafe_category: { select: { name_ar: true } } },
           }),
@@ -485,6 +500,7 @@ export class DailyClosingTargetService {
         memberCode: null as string | null,
         // The product category (بار / بروتين …) identifies a sale for target follow-up.
         type: row.cafe_category?.name_ar ?? 'مبيعات كافيه',
+        saleBucket: saleBucket(row.cafe_category?.name_ar),
         beforeDiscount: this.format(this.money(row.subtotal)),
         discount: this.format(this.money(row.discount_amount)),
         afterDiscount: this.format(this.money(row.subtotal).minus(this.money(row.discount_amount))),
@@ -512,11 +528,53 @@ export class DailyClosingTargetService {
         paid: new Prisma.Decimal(0),
       },
     );
+    // Old "تقرير الكباتن خلال فترة": per captain, target-plan subscriptions, protein and other
+    // café sales they recommended, and lockers. InBody invoices have no captain field, so they
+    // cannot be attributed to a captain yet.
+    const empty = (): CaptainBucket => ({ count: 0, afterDiscount: new Prisma.Decimal(0), paid: new Prisma.Decimal(0) });
+    const captains = new Map<number, { employeeId: number; employeeName: string | null; subscriptions: CaptainBucket; protein: CaptainBucket; bar: CaptainBucket; otherSales: CaptainBucket; lockers: CaptainBucket }>();
+    for (const row of rows) {
+      if (row.employeeId == null) continue;
+      let captain = captains.get(row.employeeId);
+      if (!captain) {
+        captain = { employeeId: row.employeeId, employeeName: row.employeeName, subscriptions: empty(), protein: empty(), bar: empty(), otherSales: empty(), lockers: empty() };
+        captains.set(row.employeeId, captain);
+      }
+      const bucket = row.kind === 'subscription'
+        ? captain.subscriptions
+        : row.kind === 'locker'
+          ? captain.lockers
+          : (row as { saleBucket?: string }).saleBucket === 'protein'
+            ? captain.protein
+            : (row as { saleBucket?: string }).saleBucket === 'bar' ? captain.bar : captain.otherSales;
+      bucket.count += 1;
+      bucket.afterDiscount = bucket.afterDiscount.plus(row.afterDiscount);
+      bucket.paid = bucket.paid.plus(row.paid);
+    }
+    const fmtBucket = (b: CaptainBucket) => ({ count: b.count, afterDiscount: this.format(b.afterDiscount), paid: this.format(b.paid) });
+    const byCaptain = [...captains.values()]
+      .map((c) => {
+        const total = c.subscriptions.paid.plus(c.protein.paid).plus(c.bar.paid).plus(c.otherSales.paid).plus(c.lockers.paid);
+        return {
+          employeeId: c.employeeId,
+          employeeName: c.employeeName,
+          subscriptions: fmtBucket(c.subscriptions),
+          protein: fmtBucket(c.protein),
+          bar: fmtBucket(c.bar),
+          otherSales: fmtBucket(c.otherSales),
+          lockers: fmtBucket(c.lockers),
+          totalPaid: this.format(total),
+          _sort: Number(total),
+        };
+      })
+      .sort((a, b) => b._sort - a._sort)
+      .map(({ _sort: _ignored, ...row }) => row);
     return {
       period: { fromDate, toDate },
       branchIds,
       employeeId,
       rows,
+      byCaptain,
       subscriptionTotal: this.format(this.total(rows.filter((row) => row.operation === 'اشتراك نادي'), 'paid')),
       lockerTotal: this.format(this.total(rows.filter((row) => row.operation === 'اشتراك لوكر'), 'paid')),
       salesTotal: this.format(this.total(rows.filter((row) => row.operation === 'مبيعات كافيه'), 'paid')),

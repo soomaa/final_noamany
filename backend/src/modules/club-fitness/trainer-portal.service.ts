@@ -3,8 +3,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { toNum } from './club-fitness.utils';
+import { attendedCount, computeTrainerEarnings, isExecutedClass, overlappingPaymentsWhere } from './trainer-earnings.util';
 
-const roundMoney = (value: number) => Math.round((value + Number.EPSILON) * 100) / 100;
 
 @Injectable()
 export class TrainerPortalService {
@@ -62,17 +62,6 @@ export class TrainerPortalService {
       ...(dateFrom ? { gte: dateFrom } : {}),
       ...(dateTo ? { lte: dateTo } : {}),
     };
-  }
-
-  private async salaryForDate(trainerId: number, classDate: string) {
-    return this.prisma.club_trainer_salaries.findFirst({
-      where: {
-        trainer_id: trainerId,
-        effective_date: { lte: classDate },
-        OR: [{ end_date: null }, { end_date: { gte: classDate } }],
-      },
-      orderBy: { effective_date: 'desc' },
-    });
   }
 
   async schedule(user: JwtUser, query?: { dateFrom?: string; dateTo?: string }) {
@@ -190,7 +179,6 @@ export class TrainerPortalService {
       orderBy: [{ class_date: 'asc' }, { start_time: 'asc' }],
     });
 
-    let totalEarnings = 0;
     let totalAttendance = 0;
     let totalAbsent = 0;
     const memberIds = new Set<number>();
@@ -203,48 +191,15 @@ export class TrainerPortalService {
       registered: number;
       attendanceRate: number;
     }> = [];
-    const earningItems: Array<{
-      classId: number;
-      className: string;
-      classDate: string;
-      attended: number;
-      unitPrice: number;
-      commissionPercentage: number;
-      revenue: number;
-      amount: number;
-    }> = [];
-    const executedClassIds = new Set<number>();
+    let executed = 0;
     for (const cls of classes) {
       const active = cls.enrollments.filter((row) => row.attendance_status !== 'cancelled');
-      const attended = active.filter((row) => row.attendance_status === 'attended').length;
+      const attended = attendedCount(cls);
       const absent = active.filter((row) => row.attendance_status === 'absent').length;
       totalAttendance += attended;
       totalAbsent += absent;
       active.forEach((row) => memberIds.add(row.member_id));
-
-      // Reception can record attendance while a class is still scheduled/ongoing.
-      // Once real attendance exists, the class is considered executed for the
-      // trainer's statistics and commission, without waiting for the status cron.
-      const isExecuted = cls.status !== 'cancelled' && (cls.status === 'completed' || attended > 0);
-      if (isExecuted) {
-        executedClassIds.add(cls.id);
-        const salary = await this.salaryForDate(trainer.id, cls.class_date);
-        const unitPrice = toNum(cls.price);
-        const commissionPercentage = toNum(salary?.class_commission_percentage);
-        const revenue = roundMoney(attended * unitPrice);
-        const amount = roundMoney(revenue * (commissionPercentage / 100));
-        totalEarnings = roundMoney(totalEarnings + amount);
-        earningItems.push({
-          classId: cls.id,
-          className: cls.class_name,
-          classDate: cls.class_date,
-          attended,
-          unitPrice,
-          commissionPercentage,
-          revenue,
-          amount,
-        });
-      }
+      if (isExecutedClass(cls)) executed += 1;
       attendance.push({
         classId: cls.id,
         className: cls.class_name,
@@ -256,18 +211,11 @@ export class TrainerPortalService {
       });
     }
 
-    const paymentWhere: Prisma.club_trainer_earning_paymentsWhereInput = {
-      trainer_id: trainer.id,
-      ...(query?.dateFrom || query?.dateTo
-        ? {
-            payment_date: {
-              ...(query.dateFrom ? { gte: query.dateFrom } : {}),
-              ...(query.dateTo ? { lte: query.dateTo } : {}),
-            },
-          }
-        : {}),
-    };
-    const [paidAgg, payments, privateCommissions] = await Promise.all([
+    // Same calculation as the admin payout screen (trainer-earnings.util), and the same rule for
+    // which payments are deducted: every payment whose period covers a day of this range.
+    const paymentWhere = overlappingPaymentsWhere(trainer.id, query?.dateFrom, query?.dateTo);
+    const [earnings, paidAgg, payments] = await Promise.all([
+      computeTrainerEarnings(this.prisma, trainer.id, query?.dateFrom, query?.dateTo),
       this.prisma.club_trainer_earning_payments.aggregate({
         where: paymentWhere,
         _sum: { amount: true },
@@ -276,29 +224,13 @@ export class TrainerPortalService {
         where: paymentWhere,
         orderBy: [{ payment_date: 'desc' }, { id: 'desc' }],
       }),
-      this.prisma.club_private_attendance_commissions.findMany({
-        where: {
-          trainer_id: trainer.id,
-          ...(query?.dateFrom || query?.dateTo ? {
-            attendance_date: {
-              ...(query.dateFrom ? { gte: query.dateFrom } : {}),
-              ...(query.dateTo ? { lte: query.dateTo } : {}),
-            },
-          } : {}),
-        },
-        include: {
-          subscription: { select: { subscription_type: true, member_id: true } },
-        },
-        orderBy: [{ attendance_date: 'desc' }, { id: 'desc' }],
-      }),
     ]);
-    const privateEarnings = privateCommissions.reduce((sum, row) => sum + toNum(row.commission_amount), 0);
-    totalEarnings = roundMoney(totalEarnings + privateEarnings);
-    privateCommissions.forEach((row) => {
-      if (row.subscription.member_id) memberIds.add(row.subscription.member_id);
+    const totalEarnings = earnings.earned;
+    const privateEarnings = earnings.privateCommission;
+    earnings.privateItems.forEach((row) => {
+      if (row.memberId) memberIds.add(row.memberId);
     });
     const paid = toNum(paidAgg._sum.amount);
-    const executed = executedClassIds.size;
     const cancelled = classes.filter((row) => row.status === 'cancelled').length;
     const eligibleForAdherence = executed + cancelled;
 
@@ -340,22 +272,15 @@ export class TrainerPortalService {
       earnings: {
         total: totalEarnings,
         paid,
-        remaining: roundMoney(Math.max(0, totalEarnings - paid)),
-        items: earningItems,
-        privateItems: privateCommissions.map((row) => ({
-          id: row.id,
-          subscriptionId: row.subscription_id,
-          subscriptionType: row.subscription.subscription_type,
-          attendanceDate: row.attendance_date,
-          sequence: row.commission_sequence,
-          revenue: toNum(row.revenue_base),
-          commissionPercentage: toNum(row.commission_percentage),
-          amount: toNum(row.commission_amount),
-        })),
+        remaining: Math.max(0, Math.round((totalEarnings - paid) * 100) / 100),
+        items: earnings.classItems,
+        privateItems: earnings.privateItems.map(({ memberId: _memberId, ...row }) => row),
         payments: payments.map((row) => ({
           id: row.id,
           amount: toNum(row.amount),
           paymentDate: row.payment_date,
+          periodFrom: row.period_from,
+          periodTo: row.period_to,
           notes: row.notes,
         })),
       },

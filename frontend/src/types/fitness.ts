@@ -259,11 +259,18 @@ export interface ClubTrainerDetails {
   activeSalary: ClubTrainerSalaryRow | null;
   statistics: {
     totalClasses: number;
+    cancelledClasses: number;
     totalDays: number;
+    /** Booked and not cancelled. */
     totalEnrollments: number;
+    totalAttended: number;
     uniqueMembers: number;
+    privateSessions: number;
     totalClassRevenue: number;
     totalClassCommission: number;
+    privateRevenue: number;
+    privateCommission: number;
+    earned: number;
   };
   classes: Array<{
     id: number;
@@ -275,6 +282,7 @@ export interface ClubTrainerDetails {
     price: number;
     maxCapacity: number;
     enrollmentCount: number;
+    attendedCount: number;
   }>;
 }
 
