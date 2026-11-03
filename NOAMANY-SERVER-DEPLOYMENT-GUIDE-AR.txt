@@ -618,3 +618,25 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - أمر الرجوع لهذا التثبيت فقط:
   bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r3/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r3-update-backup.a0701C
 - المرجع للرفع اللي جاي: system.html = cf41e3741961aa5ba8402a14d62d73207e39d0e7a2e217735c2261396179e23c.
+
+آخر تثبيت مؤكد: 20261103-r4 (مخزون الكافيه)، 3 نوفمبر 2026
+------------------------------------------------------------
+- المحتوى: 5 ملفات backend (inventory/stock-taking.service، inventory/inventory-location.service، inventory/dto/inventory.dto،
+  cafe/cafe-products.service، sales/pos-admin/pos-reports-notifications.service) + واجهة الإدارة. الكود: c2ef717.
+  - الجرد: الاعتماد بيحط "المعدود + اللي اتحرك بعد فتح الورقة" (مش أقل من صفر) بدل ما يرفض لو اتباع حاجة بعد العد.
+    الورقة بتعرض كل أصناف النوع (بصفر لو مالهاش رصيد في المخزن). زرار "إعادة فتح للتعديل" للجرد اللي مستني الاعتماد.
+  - مخزن البيع: إعداد لكل فرع في إعدادات نقطة البيع (sales_pos_settings: category stock، key sale_warehouse_id).
+    كل الأماكن اللي مابتحددش مخزن بتستخدمه (البيع، المسحوبات، المشتريات، رصيد أول المدة، الجرد). من غيره: أول مخزن نشط زي الأول.
+  - إيصال بيع جديد: اللي ينفع يتباع الأول ثم بالاسم، الترتيب قبل التقسيم لصفحات، رقم الصفحة صح، والرصيد رصيد مخزن البيع بس.
+- اتبنى من 97f4aa2 + 0d21edd + e64ccd4 + 0ad6093 + 2a2dd1c (= 03-r3) + c2ef717، والأساس طابق system.html بتاع 03-r3 بالبايت.
+  (المساحة على الماك كانت قليلة: npm ci مرة واحدة لكل جزء في شجرة الأساس، والشجرة الجديدة استخدمت نفس node_modules.)
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r4، والعملية اتغيرت من 1812301 لـ 1955121.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r4-update-backup.SX3a6N
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r4/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r4-update-backup.SX3a6N
+- بعده (بيانات، 04:16): set-sale-warehouses.sh (release-tools/cafe-sale-warehouse-20261103) حط بار كل فرع:
+  2→LEG-WH-3، 3→LEG-WH-4، 4→LEG-WH-5، 5→LEG-WH-8، 6→LEG-WH-9. النسخة: tmp/pos-settings-before-sale-warehouse-20261103-041623.sql.gz
+  الرجوع: DELETE FROM sales_pos_settings WHERE category='stock' AND setting_key='sale_warehouse_id';
+  ملحوظة: فرع 3 فيه كمان "بار البر الشرقى" (WH000001، اتعمل 20 أكتوبر، فيه صنفين بس). الإعداد على LEG-WH-4 (رصيد القديم اتنقل له)؛
+  يتغير من إعدادات نقطة البيع لو البار الحقيقي هو WH000001.
+- المرجع للرفع اللي جاي: system.html = f3d441d5dd5e265c469edc02548c14e15fe78dd66d055d5156617e27951764eb.
