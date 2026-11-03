@@ -98,4 +98,18 @@ describe('JwtStrategy', () => {
 
     expect(user.member_sections).toEqual(['male', 'female']);
   });
+
+  it("reads the tab's Bearer token before the cookie that another login overwrote", () => {
+    const strategy = new JwtStrategy(
+      { get: jest.fn().mockReturnValue('test-access-secret') } as never,
+      {} as never,
+    );
+    const extract = (strategy as unknown as { _jwtFromRequest: (req: unknown) => string | null })._jwtFromRequest;
+
+    expect(
+      extract({ headers: { authorization: 'Bearer tab-token' }, cookies: { one80_access: 'last-login-token' } }),
+    ).toBe('tab-token');
+    // Links and downloads that send no header keep working from the cookie.
+    expect(extract({ headers: {}, cookies: { one80_access: 'last-login-token' } })).toBe('last-login-token');
+  });
 });

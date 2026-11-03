@@ -26,9 +26,12 @@ function legacyMobileExtractor(req: Request): string | null {
 export class JwtStrategy extends PassportStrategy(Strategy, 'jwt') {
   constructor(config: ConfigService, private readonly prisma: PrismaService) {
     super({
+      // The tab's own Bearer token wins over the shared cookie. Every login overwrites the
+      // cookie for all tabs of the browser, so reading it first made an open tab silently act
+      // (and get the sidebar) as whichever account signed in last.
       jwtFromRequest: ExtractJwt.fromExtractors([
-        cookieExtractor,
         ExtractJwt.fromAuthHeaderAsBearerToken(),
+        cookieExtractor,
         legacyMobileExtractor,
       ]),
       ignoreExpiration: false,

@@ -24,6 +24,18 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+/** The account id (`sub`) inside an access token, or null when it cannot be read. */
+function tokenSubject(token: string | null): number | null {
+  try {
+    const part = token?.split('.')[1];
+    if (!part) return null;
+    const sub = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/'))).sub;
+    return typeof sub === 'number' ? sub : null;
+  } catch {
+    return null;
+  }
+}
+
 let refreshing: Promise<string | null> | null = null;
 
 api.interceptors.response.use(
@@ -32,6 +44,7 @@ api.interceptors.response.use(
     const original = error.config as (typeof error.config & { _retry?: boolean }) | undefined;
     if (error.response?.status === 401 && original && !original._retry && !original.url?.includes('/auth/')) {
       original._retry = true;
+      const previousSubject = tokenSubject(getAccessToken());
       try {
         refreshing =
           refreshing ??
@@ -42,6 +55,13 @@ api.interceptors.response.use(
           });
         const newToken = await refreshing;
         refreshing = null;
+        // The refresh cookie is shared by every tab. If another tab signed in with a different
+        // account meanwhile, reload so this tab's name, sidebar and data all follow that account.
+        const nextSubject = tokenSubject(newToken);
+        if (previousSubject != null && nextSubject != null && nextSubject !== previousSubject) {
+          location.reload();
+          return new Promise(() => {});
+        }
         if (newToken) {
           original.headers = original.headers ?? {};
           original.headers.Authorization = `Bearer ${newToken}`;
