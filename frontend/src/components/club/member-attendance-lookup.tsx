@@ -23,6 +23,13 @@ import { useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import axios from 'axios';
 import { MemberAvatar } from '@/components/club/member-avatar';
+import {
+  CLUB_MEMBER_SEARCH_MIN_CHARS,
+  ClubMemberSearchHits,
+  exactCodeHit,
+  preferredSearchHit,
+  searchClubMembersUniversal,
+} from '@/components/club/club-member-search';
 import { StatusBadge } from '@/components/common/status-badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,6 +47,7 @@ import type {
   ClubMemberOverview,
   ClubMemberOverviewSubscription,
 } from '@/types/club';
+import type { ClubSearchHit } from '@/types/gym-ops';
 
 type OverviewStatus = 'active' | 'expired' | 'upcoming' | 'frozen';
 
@@ -212,7 +220,11 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
   const lookupRequestRef = useRef(0);
   const mutationRef = useRef(false);
   const [code, setCode] = useState('');
-  const [committedCode, setCommittedCode] = useState<string | null>(null);
+  const [committedMemberId, setCommittedMemberId] = useState<number | null>(null);
+  // Name/mobile matches wait for a pick; only an exact code or card (a scan) opens straight away.
+  const [hits, setHits] = useState<ClubSearchHit[]>([]);
+  // A scanned code checks the member in on the barcode desk; a pick by name or mobile asks first.
+  const [pickedByCode, setPickedByCode] = useState(false);
   const [overview, setOverview] = useState<ClubMemberOverview | null>(null);
   // The visit before this scan. Kept from the first lookup: the auto check-in makes the refreshed
   // overview report today's entry, which would hide how long the member had been away.
@@ -294,11 +306,11 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
     if (!checkingIn) inputRef.current?.focus();
   }, [checkingIn]);
 
-  const lookup = async (rawCode: string, notifyError = false) => {
-    const value = rawCode.trim();
+  const lookup = async (rawQuery: string, notifyError = false) => {
+    const value = rawQuery.trim();
     cancelPendingLookup();
-    if (!value) {
-      if (notifyError) toast.error(ui('أدخل كود العضو'));
+    if (value.length < CLUB_MEMBER_SEARCH_MIN_CHARS) {
+      if (notifyError) toast.error(ui('أدخل كود العضو أو اسمه أو رقم الموبايل'));
       setSearching(false);
       return;
     }
@@ -309,42 +321,26 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
     setNotFound(false);
     setErrorMessage(null);
     try {
-      const { data } = await api.get<ClubMemberOverview>('/club-attendance/member-overview', {
-        params: { code: value },
-        signal: controller.signal,
-      });
+      const result = await searchClubMembersUniversal(value, { signal: controller.signal });
       if (requestId !== lookupRequestRef.current) return;
-      setOverview(data);
-      setPreviousVisit(data.member.lastCheckIn ?? null);
-      setCommittedCode(value);
-      if (autoCheckIn && mode === 'attendance') {
-        setCode('');
-        if (canConfirm && !mutationRef.current) {
-          mutationRef.current = true;
-          setCheckingIn(true);
-          try {
-            await api.post('/club-attendance/check-in', {
-              memberId: data.member.id, attendanceType: 'normal', consumeSession: false,
-              ...(user?.branch ? { branchId: user.branch } : {}),
-            });
-            toast.success(ct('members.checkInNamed', { name: data.member.name }));
-            void qc.invalidateQueries({ queryKey: ['club-attendance'] });
-            void qc.invalidateQueries({ queryKey: ['barcode-scan-times'] });
-            await refresh(value, data.member.id);
-          } catch (error) {
-            toast.error(checkInError(error, locale === 'en'));
-          } finally {
-            mutationRef.current = false;
-            setCheckingIn(false);
-            inputRef.current?.focus();
-          }
+      const byCode = exactCodeHit(result, value);
+      const hit = byCode ?? (notifyError ? preferredSearchHit(result, value) : null);
+      if (!hit) {
+        setHits(result.hits);
+        if (!result.hits.length) {
+          setOverview(null);
+          setCommittedMemberId(null);
+          setNotFound(true);
+          if (notifyError) toast.error(ct('members.noMemberFound'));
         }
+        return;
       }
+      await openMember(hit, byCode != null, requestId, controller.signal);
     } catch (error) {
       if (controller.signal.aborted || requestId !== lookupRequestRef.current) return;
       const message = apiError(error);
       setOverview(null);
-      setCommittedCode(null);
+      setCommittedMemberId(null);
       setNotFound(true);
       setErrorMessage(message);
       if (notifyError) toast.error(message);
@@ -356,21 +352,83 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
     }
   };
 
+  /** Loads the member's desk profile; a scanned code also records normal entry on the barcode desk. */
+  const openMember = async (hit: ClubSearchHit, byCode: boolean, requestId: number, signal: AbortSignal) => {
+    const { data } = await api.get<ClubMemberOverview>('/club-attendance/member-overview', {
+      params: { memberId: hit.id },
+      signal,
+    });
+    if (requestId !== lookupRequestRef.current) return;
+    setHits([]);
+    setOverview(data);
+    setPreviousVisit(data.member.lastCheckIn ?? null);
+    setCommittedMemberId(data.member.id);
+    setPickedByCode(byCode);
+    if (!byCode) {
+      setCode(data.member.memberCode);
+      return;
+    }
+    if (autoCheckIn && mode === 'attendance') {
+      setCode('');
+      if (canConfirm && !mutationRef.current) {
+        mutationRef.current = true;
+        setCheckingIn(true);
+        try {
+          await api.post('/club-attendance/check-in', {
+            memberId: data.member.id, attendanceType: 'normal', consumeSession: false,
+            ...(user?.branch ? { branchId: user.branch } : {}),
+          });
+          toast.success(ct('members.checkInNamed', { name: data.member.name }));
+          void qc.invalidateQueries({ queryKey: ['club-attendance'] });
+          void qc.invalidateQueries({ queryKey: ['barcode-scan-times'] });
+          await refresh(data.member.id);
+        } catch (error) {
+          toast.error(checkInError(error, locale === 'en'));
+        } finally {
+          mutationRef.current = false;
+          setCheckingIn(false);
+          inputRef.current?.focus();
+        }
+      }
+    }
+  };
+
+  /** A member picked from the result list (name or mobile search). */
+  const selectHit = async (hit: ClubSearchHit) => {
+    cancelPendingLookup();
+    const requestId = lookupRequestRef.current;
+    const controller = new AbortController();
+    lookupControllerRef.current = controller;
+    setSearching(true);
+    try {
+      await openMember(hit, false, requestId, controller.signal);
+    } catch (error) {
+      if (!controller.signal.aborted && requestId === lookupRequestRef.current) toast.error(apiError(error));
+    } finally {
+      if (requestId === lookupRequestRef.current) {
+        lookupControllerRef.current = null;
+        setSearching(false);
+      }
+      inputRef.current?.focus();
+    }
+  };
+
   const handleCodeChange = (value: string) => {
     setCode(value);
     cancelPendingLookup();
     setSearching(false);
     setNotFound(false);
     setErrorMessage(null);
-    if (value.trim()) {
+    if (!value.trim()) setHits([]);
+    else if (value.trim().length >= CLUB_MEMBER_SEARCH_MIN_CHARS) {
       lookupTimerRef.current = setTimeout(() => void lookup(value), 450);
     }
   };
 
-  const refresh = async (value: string, memberId: number) => {
+  const refresh = async (memberId: number) => {
     try {
       const { data } = await api.get<ClubMemberOverview>('/club-attendance/member-overview', {
-        params: { code: value },
+        params: { memberId },
       });
       setOverview((current) => current?.member.id === memberId ? data : current);
     } catch {
@@ -411,7 +469,7 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
         toast.success(ct('members.checkInNamed', { name: overview.member.name }));
         void qc.invalidateQueries({ queryKey: ['club-attendance'] });
       }
-      if (committedCode) await refresh(committedCode, overview.member.id);
+      if (committedMemberId) await refresh(committedMemberId);
       setCode('');
     } catch (error) {
       toast.error(checkInError(error, locale === 'en'));
@@ -434,7 +492,7 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
       for (const key of ['club-attendance', 'barcode-scan-times', 'club-classes', 'club-spa-attendance', 'club-subscriptions', 'club-inbody']) {
         void qc.invalidateQueries({ queryKey: [key] });
       }
-      if (committedCode) await refresh(committedCode, overview.member.id);
+      if (committedMemberId) await refresh(committedMemberId);
     } catch (error) {
       toast.error(checkInError(error, locale === 'en'));
     } finally {
@@ -472,7 +530,9 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
     setSearching(false);
     setOverview(null);
     setPreviousVisit(null);
-    setCommittedCode(null);
+    setCommittedMemberId(null);
+    setPickedByCode(false);
+    setHits([]);
     setNotFound(false);
     setErrorMessage(null);
     setCode('');
@@ -492,9 +552,9 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
             <Search className="pointer-events-none absolute inset-y-0 start-3 my-auto size-4 text-muted-foreground" />
             <Input
               ref={inputRef}
-              className="nums ps-9 font-mono"
-              dir="ltr"
-              placeholder={ct('members.barcodePlaceholder')}
+              className="nums ps-9"
+              dir="auto"
+              placeholder={ui('اسم · موبايل · كود · باركود · رقم قومي')}
               value={code}
               autoFocus
               disabled={checkingIn}
@@ -519,11 +579,12 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           {mode === 'spa'
-            ? ui('اكتب كود العضو أو امسحه لعرض رصيد السبا تلقائيًا، ثم اضغط «تسجيل زيارة السبا» لتأكيد الدخول.')
+            ? ui('امسح الكود أو ابحث بالاسم أو الموبايل لعرض رصيد السبا، ثم اضغط «تسجيل زيارة السبا» لتأكيد الدخول.')
             : mode === 'class'
-              ? ui('اكتب كود العضو أو امسحه لعرض الحصص المتبقية تلقائيًا، ثم اضغط «تسجيل حضور الحصة» لتأكيد الدخول.')
-              : autoCheckIn ? ui('امسح باركود العضو لتسجيل دخوله تلقائيًا. تظل بياناته ظاهرة حتى اسكان العضو التالي.') : ui('اكتب كود العضو أو امسحه لعرض بياناته تلقائيًا قبل تسجيل الدخول.')}
+              ? ui('امسح الكود أو ابحث بالاسم أو الموبايل لعرض الحصص المتبقية، ثم اضغط «تسجيل حضور الحصة» لتأكيد الدخول.')
+              : autoCheckIn ? ui('امسح باركود العضو لتسجيل دخوله تلقائيًا، أو ابحث بالاسم أو الموبايل واختر العضو ثم أكّد الدخول.') : ui('امسح الكود أو ابحث بالاسم أو الموبايل لعرض بيانات العضو قبل تسجيل الدخول.')}
         </p>
+        {hits.length > 0 && <ClubMemberSearchHits hits={hits} onSelect={(hit) => void selectHit(hit)} />}
       </section>
 
       {notFound && !overview && (
@@ -532,7 +593,7 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
           <div className="min-w-0">
             <p className="font-medium text-destructive">{ct('members.noMemberFound')}</p>
             <p className="mt-1 break-words text-xs text-muted-foreground">
-              {ui('الكود المُدخل')}: <span className="nums font-mono" dir="ltr">{code.trim()}</span>
+              {ui('البحث')}: <span className="nums" dir="auto">{code.trim()}</span>
               {errorMessage ? ` — ${errorMessage}` : ''}
             </p>
           </div>
@@ -919,7 +980,7 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
                 <Pencil className="size-4" /> {ui('تعديل بيانات العضو')}
               </Button>
             )}
-            {canConfirm && !(autoCheckIn && mode === 'attendance') && (
+            {canConfirm && !(autoCheckIn && mode === 'attendance' && pickedByCode) && (
               <Button variant="brand" onClick={() => void handleConfirm()} disabled={checkingIn}>
                 {checkingIn ? (
                   <Loader2 className="size-4 animate-spin" />

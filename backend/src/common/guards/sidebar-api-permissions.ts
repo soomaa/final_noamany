@@ -493,6 +493,13 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
     "termination.archive:view",
     "club.fitness.trainers:view"
   ],
+  "ClubOpsController.universalSearch": [
+    "club.members:view",
+    "club.reception:view",
+    "club.members.barcode.member_check_in:view",
+    "club.members.barcode.spa_check_in:view",
+    "club.members.barcode.classes_check_in:view"
+  ],
   "ClubOpsController.branchOptions": [
     "hr.hub:view",
     "employees.list:view",

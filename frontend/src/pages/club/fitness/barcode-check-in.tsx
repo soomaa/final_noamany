@@ -7,7 +7,7 @@ export function MemberBarcodeCheckInPanel() {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        امسح باركود بطاقة العضو لتسجيل الدخول تلقائيًا وعرض بياناته واشتراكاته وأيام الوقف. تظل البيانات ظاهرة حتى اسكان العضو التالي.
+        امسح باركود بطاقة العضو لتسجيل الدخول تلقائيًا وعرض بياناته واشتراكاته وأيام الوقف، أو ابحث بالاسم أو الموبايل. تظل البيانات ظاهرة حتى اسكان العضو التالي.
       </p>
       <MemberAttendanceLookup autoCheckIn />
     </div>
@@ -23,7 +23,7 @@ export function SpaBarcodeCheckInPanel() {
         <h2 className="font-semibold">دخول السبا بالباركود</h2>
       </div>
       <p className="text-sm text-muted-foreground">
-        يظهر رصيد السبا تلقائيًا بعد إدخال كود العضو؛ اضغط «تسجيل زيارة السبا» لتأكيد الدخول.
+        يظهر رصيد السبا بعد مسح الكود أو اختيار العضو بالاسم أو الموبايل؛ اضغط «تسجيل زيارة السبا» لتأكيد الدخول.
       </p>
       <MemberAttendanceLookup mode="spa" />
     </div>
@@ -39,7 +39,7 @@ export function ClassBarcodeCheckInPanel() {
         <h2 className="font-semibold">حضور الحصص بالباركود</h2>
       </div>
       <p className="text-sm text-muted-foreground">
-        امسح كود العضو لعرض حصصه المتبقية تلقائيًا؛ يحدد النظام الحصة الجارية الآن في الفرع، ثم أكّد الحضور.
+        امسح كود العضو أو ابحث بالاسم أو الموبايل لعرض حصصه المتبقية؛ يحدد النظام الحصة الجارية الآن في الفرع، ثم أكّد الحضور.
       </p>
       <MemberAttendanceLookup mode="class" />
     </div>

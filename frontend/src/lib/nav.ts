@@ -126,11 +126,11 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: Users,
         items: [
           { to: CR.members.reception },
+          { to: CR.members.checkIn },
           { to: CR.members.quickServices },
           { to: CR.members.management },
           { to: CR.members.measurements, label: 'قياسات الأعضاء' },
           { to: CR.members.attendance },
-          { to: CR.members.checkIn },
         ],
       },
       {

@@ -7,8 +7,8 @@ const ts = require('typescript');
 
 function desk(permissions) {
   const slots = []; let cursor = 0; let timerId = 0;
-  const timers = new Map(); const posts = []; const errors = [];
-  const profiles = new Map(['A', 'B'].map((code, index) => [code, {
+  const timers = new Map(); const posts = []; const errors = []; const gets = [];
+  const profiles = new Map(['A1', 'B1'].map((code, index) => [code, {
     member: { id: index + 1, memberCode: code, name: `Member ${code}`, branchId: 2, isActive: true },
     subscriptions: [{ id: index + 20, status: 'active', isLinkedToSessions: true, sessionsCount: 4, sessionsUsed: 0,
       isLinkedToSpa: true, spaCount: 4, spaUsed: 0, inbodyCount: 4, inbodyUsed: 0 }],
@@ -21,7 +21,20 @@ function desk(permissions) {
     useEffect() {},
   };
   const api = {
-    async get(url, { params }) { return { data: structuredClone(profiles.get(params.code)) }; },
+    async get(url, { params }) {
+      if (url === '/club/search') {
+        const q = params.q.toLowerCase();
+        // Mirrors the server ranking: exact code first, then name matches.
+        const hits = [...profiles.values()].map(({ member }) => ({ ...member, phone: null,
+          matchType: member.memberCode.toLowerCase() === q ? 'code' : 'name',
+          score: member.memberCode.toLowerCase() === q ? 100 : 50 }))
+          .filter((hit) => hit.matchType === 'code' || hit.name.toLowerCase().includes(q))
+          .sort((a, b) => b.score - a.score);
+        return { data: hits };
+      }
+      gets.push(params);
+      return { data: structuredClone([...profiles.values()].find((p) => p.member.id === params.memberId)) };
+    },
     async post(url, body) {
       posts.push({ url, body });
       if (desk.rejectEntry && url.endsWith('/check-in')) throw Error('Entry denied');
@@ -48,6 +61,19 @@ function desk(permissions) {
     '@/lib/utils': { toArabicDigits: (value) => String(value) },
     '@/lib/formatters': { formatDateTime: String },
   };
+  const load = (file) => {
+    const module = { exports: {} };
+    const source = fs.readFileSync(path.join(__dirname, '../src', file), 'utf8');
+    const code = ts.transpileModule(source, { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS } }).outputText;
+    vm.runInNewContext(code, {
+      module, exports: module.exports, AbortController,
+      require(name) { return imports[name] ?? new Proxy({}, { get: (_, key) => String(key) }); },
+      setTimeout(callback) { timers.set(++timerId, callback); return timerId; },
+      clearTimeout(id) { timers.delete(id); },
+    });
+    return module.exports;
+  };
+  imports['@/components/club/club-member-search'] = load('components/club/club-member-search.tsx');
   const module = { exports: {} };
   const source = fs.readFileSync(path.join(__dirname, '../src/components/club/member-attendance-lookup.tsx'), 'utf8');
   const code = ts.transpileModule(source, { compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS } }).outputText;
@@ -65,7 +91,7 @@ function desk(permissions) {
   }
   const input = () => all(render(), (node) => node.type === 'Input')[0];
   const flush = () => new Promise((resolve) => setImmediate(resolve));
-  return { posts, profiles, errors, render, input, all, flush,
+  return { posts, gets, profiles, errors, render, input, all, flush,
     async scan(code, enter = true) {
       input().props.onChange({ target: { value: code } });
       if (enter) input().props.onKeyDown({ key: 'Enter', preventDefault() {}, currentTarget: { value: code } });
@@ -81,22 +107,22 @@ function desk(permissions) {
 }
 
 test('barcode entry auto records normal attendance, clears the input and retains the profile until the next scan', async () => {
-  const ui = desk(); await ui.scan('A');
+  const ui = desk(); await ui.scan('A1');
   assert.equal(ui.posts.length, 1);
   assert.equal(ui.posts[0].body.attendanceType, 'normal');
   assert.equal(ui.posts[0].body.consumeSession, false);
   assert.equal(ui.input().props.value, '');
   assert.ok(JSON.stringify(ui.render()).includes('Member A'));
-  ui.input().props.onChange({ target: { value: 'B' } });
+  ui.input().props.onChange({ target: { value: 'B1' } });
   assert.ok(JSON.stringify(ui.render()).includes('Member A'));
-  await ui.scan('B', false);
+  await ui.scan('B1', false);
   assert.equal(ui.posts.length, 2);
   assert.ok(JSON.stringify(ui.render()).includes('Member B'));
   assert.ok(!JSON.stringify(ui.render()).includes('Member A'));
 });
 
 test('service buttons send distinct types and update the selected subscription without reloading', async () => {
-  const ui = desk(); await ui.scan('A');
+  const ui = desk(); await ui.scan('A1');
   for (const [type, label, field] of [['class', 'تسجيل حضور الحصص', 'sessionsUsed'], ['spa', 'تسجيل حضور السبا', 'spaUsed'], ['inbody', 'تسجيل حضور الإنبودي', 'inbodyUsed']]) {
     await ui.attend(label);
     assert.equal(ui.posts.at(-1).url, '/club-attendance/service-check-in');
@@ -111,7 +137,7 @@ test('service buttons send distinct types and update the selected subscription w
 test('rejected automatic entry reports the error and keeps member details visible', async () => {
   desk.rejectEntry = true;
   try {
-    const ui = desk(); await ui.scan('A');
+    const ui = desk(); await ui.scan('A1');
     assert.deepEqual(ui.errors, ['Entry denied']);
     assert.ok(JSON.stringify(ui.render()).includes('Member A'));
   } finally { desk.rejectEntry = false; }
@@ -119,9 +145,9 @@ test('rejected automatic entry reports the error and keeps member details visibl
 
 test('active subscriptions appear first without mutating the lookup response order', async () => {
   const ui = desk();
-  const profile = ui.profiles.get('A');
+  const profile = ui.profiles.get('A1');
   profile.subscriptions.unshift({ ...profile.subscriptions[0], id: 21, status: 'expired' });
-  await ui.scan('A');
+  await ui.scan('A1');
   const rows = ui.all(ui.render(), (node) => node.type === 'tr' && node.props.children?.some((cell) => cell?.props?.children?.type?.name === 'SubStatusBadge'));
   const statuses = rows.map((row) => row.props.children.find((cell) => cell?.props?.children?.type?.name === 'SubStatusBadge').props.children.props.status);
   assert.deepEqual(statuses, ['active', 'expired']);
@@ -129,7 +155,7 @@ test('active subscriptions appear first without mutating the lookup response ord
 });
 
 test('reception attendance permission exposes the three accessible service icons and records each service', async () => {
-  const ui = desk(['club.reception:create']); await ui.scan('A');
+  const ui = desk(['club.reception:create']); await ui.scan('A1');
   for (const label of ['تسجيل حضور الحصص', 'تسجيل حضور السبا', 'تسجيل حضور الإنبودي']) {
     const button = ui.all(ui.render(), (node) => node.type === 'Button' && node.props['aria-label'] === label)[0];
     assert.ok(button); assert.equal(button.props.size, 'icon');
@@ -141,10 +167,32 @@ test('reception attendance permission exposes the three accessible service icons
 
 test('expired subscriptions and exhausted balances cannot register another service', async () => {
   const ui = desk(['club.reception:create']);
-  const subscription = ui.profiles.get('A').subscriptions[0];
+  const subscription = ui.profiles.get('A1').subscriptions[0];
   subscription.sessionsUsed = 4; subscription.spaUsed = 4; subscription.inbodyUsed = 4;
-  await ui.scan('A');
+  await ui.scan('A1');
   const buttons = ui.all(ui.render(), (node) => node.type === 'Button' && node.props['aria-label']?.startsWith('تسجيل حضور'));
   assert.equal(buttons.length, 3);
   assert.ok(buttons.every((button) => button.props.disabled));
+});
+
+test('a name search lists the members and waits for a pick; the picked member is not checked in automatically', async () => {
+  const ui = desk(); await ui.scan('Member', false);
+  const list = ui.all(ui.render(), (node) => typeof node.type === 'function' && node.type.name === 'ClubMemberSearchHits')[0];
+  assert.deepEqual(list.props.hits.map((hit) => hit.memberCode), ['A1', 'B1']);
+  assert.equal(ui.posts.length, 0);
+  list.props.onSelect(list.props.hits[1]); await ui.flush();
+  assert.ok(JSON.stringify(ui.render()).includes('Member B1'));
+  assert.equal(ui.posts.length, 0);
+  assert.equal(ui.input().props.value, 'B1');
+  const confirm = ui.all(ui.render(), (node) => node.type === 'Button' && node.props.variant === 'brand' && JSON.stringify(node.props.children).includes('LogIn'));
+  assert.equal(confirm.length, 1);
+});
+
+test('Enter on a name opens the best match, and an exact code always wins', async () => {
+  const ui = desk();
+  ui.profiles.get('B1').member.name = 'Member a1 cousin';
+  await ui.scan('a1');
+  assert.deepEqual(ui.gets.map((params) => params.memberId), [1, 1]);
+  assert.equal(ui.posts.length, 1);
+  assert.ok(JSON.stringify(ui.render()).includes('Member A1'));
 });

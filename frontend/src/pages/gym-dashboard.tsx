@@ -322,7 +322,7 @@ export function DashboardPage() {
 
   const quickActions = [
     { label: ui('اشتراك جديد'), icon: UserPlus, href: '/club/subscriptions/new', tone: 'bg-emerald-500/10 text-emerald-600' },
-    { label: ui('تسجيل حضور'), icon: ScanLine, href: '/club/members/attendance', tone: 'bg-sky-500/10 text-sky-600' },
+    { label: ui('تسجيل حضور'), icon: ScanLine, href: '/club/attendance', tone: 'bg-sky-500/10 text-sky-600' },
     { label: ui('إيصال اشتراك'), icon: ReceiptText, href: '/club/subscriptions/receipts', tone: 'bg-amber-500/10 text-amber-600' },
     { label: ui('فاتورة InBody'), icon: HeartPulse, href: '/club/subscriptions/inbody-invoices', tone: 'bg-violet-500/10 text-violet-600' },
     { label: ui('إدارة الإيرادات'), icon: TrendingUp, href: '/finance/revenues', tone: 'bg-teal-500/10 text-teal-600' },

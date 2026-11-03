@@ -48,10 +48,14 @@ export class ClubSearchService {
     matchType: ClubSearchHit['matchType'],
   ): number {
     const lower = q.toLowerCase();
-    if (row.member_code === q) return 100;
+    const code = row.member_code.toLowerCase();
+    // The member code always wins: exact code, then card, then codes starting with the query.
+    if (code === lower) return 100;
     if (row.card_number === q || row.card_number === normalizeCardNumber(q)) return 95;
+    if (code.startsWith(lower)) return 92;
     if (row.phone && this.phoneSearchVariants(q).includes(row.phone)) return 90;
     if (matchType === 'name' && row.name.toLowerCase() === lower) return 80;
+    if (code.includes(lower)) return 60;
     if (matchType === 'name') return 50;
     return 40;
   }
@@ -80,16 +84,24 @@ export class ClubSearchService {
       or.push({ phone: p }, { phone: { contains: p } });
     }
 
-    const and: Prisma.club_membersWhereInput[] = [{ is_deleted: false }, { OR: or }];
-    if (branchIds !== null) and.push({ branch_id: { in: branchIds } });
+    const scope: Prisma.club_membersWhereInput[] = [{ is_deleted: false }];
+    if (branchIds !== null) scope.push({ branch_id: { in: branchIds } });
     // Men/women section isolation: a single-section employee never sees the other section's members.
-    if (gender) and.push({ gender });
+    if (gender) scope.push({ gender });
 
-    const members = await this.prisma.club_members.findMany({
-      where: { AND: and },
-      take: take * 3,
-      orderBy: { updated_at: 'desc' },
-    });
+    const [exact, candidates] = await Promise.all([
+      // A scanned code must never fall outside the candidate window below.
+      this.prisma.club_members.findMany({
+        where: { AND: [...scope, { OR: [{ member_code: query }, { card_number: query }, { card_number: cardNorm }] }] },
+        take: 5,
+      }),
+      this.prisma.club_members.findMany({
+        where: { AND: [...scope, { OR: or }] },
+        take: take * 3,
+        orderBy: { updated_at: 'desc' },
+      }),
+    ]);
+    const members = [...exact, ...candidates.filter((m) => !exact.some((e) => e.id === m.id))];
 
     const memberIds = members.map((m) => m.id);
     const [subs, lastAtt] = await Promise.all([
@@ -127,7 +139,7 @@ export class ClubSearchService {
 
     const hits: ClubSearchHit[] = members.map((m) => {
       let matchType: ClubSearchHit['matchType'] = 'partial';
-      if (m.member_code === query) matchType = 'code';
+      if (m.member_code.toLowerCase() === query.toLowerCase()) matchType = 'code';
       else if (m.card_number === query || m.card_number === cardNorm) matchType = 'card';
       else if (m.phone && phoneVariants.includes(m.phone)) matchType = 'phone';
       else if (m.name.toLowerCase().includes(query.toLowerCase())) matchType = 'name';

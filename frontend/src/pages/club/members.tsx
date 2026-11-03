@@ -1223,7 +1223,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   return (
     <div className="space-y-6">
       <PageHeader
-        title={singleView === 'attendance' ? ui('الحضور اليومي') : ct('members.title')}
+        title={singleView === 'attendance' ? ui('تقارير حضور') : ct('members.title')}
         description={
           singleView === 'attendance'
             ? ui('متابعة الموجودين داخل الجيم وسجل خروج اليوم حسب فرع الحساب')

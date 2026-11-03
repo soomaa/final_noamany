@@ -62,16 +62,18 @@ export function ClubAttendancePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="حضور" description="تسجيل حضور الأعضاء والسبا والحصص بالباركود من شاشة واحدة." />
+      <PageHeader title="تسجيل حضور" description="تسجيل حضور الأعضاء والسبا والحصص من شاشة واحدة: امسح الكود أو ابحث بالاسم أو الموبايل." />
       <Tabs value={active.value} onValueChange={selectTab}>
-        <TabsList className="h-11 w-full flex-wrap">
-          {tabs.map(({ value, label, icon: Icon }) => (
-            <TabsTrigger key={value} value={value} className="gap-2 px-4">
-              <Icon className="size-4" />
-              {label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        <div className="flex justify-center">
+          <TabsList>
+            {tabs.map(({ value, label, icon: Icon }) => (
+              <TabsTrigger key={value} value={value}>
+                <Icon />
+                {label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
         <div ref={panelsRef}>
           {tabs.filter((tab) => tab.value === active.value || opened.has(tab.value)).map(({ value, Panel }) => (
             <TabsContent key={value} value={value} forceMount data-attendance-tab={value} className="data-[state=inactive]:hidden">

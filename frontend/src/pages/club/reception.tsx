@@ -23,6 +23,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { MemberAvatar } from '@/components/club/member-avatar';
+import { ClubMemberSearchHits, preferredSearchHit, searchClubMembersUniversal } from '@/components/club/club-member-search';
 import { ReceptionMemberProfile } from '@/components/club/reception-member-profile';
 import type { ClubPaymentMethod } from '@/components/club/club-payment-method-select';
 import {
@@ -353,20 +354,7 @@ export function ClubReceptionPage() {
   const { data: searchResult, isFetching: searching } = useQuery({
     queryKey: ['club-universal-search', effectiveReceptionBranch || 'all', query],
     enabled: query.trim().length >= 2 && !memberOpen,
-    queryFn: async () => {
-      const { data } = await api.get<{
-        hits: ClubSearchHit[];
-        entitlement: EntitlementResult | null;
-        topMatch: ClubSearchHit | null;
-      }>('/club/search', {
-        params: {
-          q: query.trim(),
-          withEntitlement: true,
-          branchId: effectiveReceptionBranch || undefined,
-        },
-      });
-      return data;
-    },
+    queryFn: () => searchClubMembersUniversal(query, { withEntitlement: true, branchId: effectiveReceptionBranch || undefined }),
   });
 
   const { data: overview, refetch: refetchOverview, isPending: loadingOverview, isFetching: loadingMember, isError: overviewError, error: profileError } = useQuery({
@@ -641,10 +629,8 @@ export function ClubReceptionPage() {
       return;
     }
     try {
-      const { data } = await api.get<{ topMatch: ClubSearchHit | null; hits: ClubSearchHit[] }>('/club/search', {
-        params: { q, withEntitlement: true, branchId: effectiveReceptionBranch || undefined },
-      });
-      const hit = data.topMatch ?? data.hits[0];
+      const data = await searchClubMembersUniversal(q, { withEntitlement: true, branchId: effectiveReceptionBranch || undefined });
+      const hit = preferredSearchHit(data, q);
       if (hit) await selectMember(hit);
       else toast.error(ct('members.noMemberFound'));
     } catch (error) {
@@ -1383,37 +1369,13 @@ export function ClubReceptionPage() {
         </div>
 
         {showHits && (
-          <div className="mt-4 max-h-72 space-y-2 overflow-y-auto rounded-2xl border bg-muted/20 p-2">
-            {hits.map((h) => (
-              <button
-                key={h.id}
-                type="button"
-                onClick={() => void selectMember(h)}
-                className="flex w-full items-center gap-3 rounded-xl border border-transparent bg-card px-3 py-3 text-start transition hover:border-primary/30 hover:bg-primary/5"
-              >
-                <MemberAvatar name={h.name} size="md" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium">{h.name}</p>
-                  <p className="text-xs text-muted-foreground nums">
-                    {h.memberCode}
-                    {h.phone ? ` · ${toArabicDigits(h.phone)}` : ''}
-                  </p>
-                </div>
-                {isSystemAdmin && !effectiveReceptionBranch ? (
-                  <span className="hidden items-center gap-1 rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground md:inline-flex">
-                    <Building2 className="size-3" />
-                    {branches.find((branch) => branch.id === h.branchId)?.name?.trim()
-                      || `${ui('فرع رقم')} ${toArabicDigits(h.branchId)}`}
-                  </span>
-                ) : null}
-                {h.activeSubscriptionType && (
-                  <span className="hidden rounded-full bg-primary/10 px-2.5 py-1 text-xs text-primary sm:inline">
-                    {h.activeSubscriptionType}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
+          <ClubMemberSearchHits
+            hits={hits}
+            onSelect={(h) => void selectMember(h)}
+            branchLabel={isSystemAdmin && !effectiveReceptionBranch
+              ? (h) => branches.find((branch) => branch.id === h.branchId)?.name?.trim() || `${ui('فرع رقم')} ${toArabicDigits(h.branchId)}`
+              : undefined}
+          />
         )}
 
 
