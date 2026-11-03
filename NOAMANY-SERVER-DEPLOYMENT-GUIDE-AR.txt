@@ -751,3 +751,18 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - أمر الرجوع لهذا التثبيت فقط:
   bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r9/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r9-update-backup.TPyU0P
 - المرجع للرفع اللي جاي: الأساس = 16f7aa9 (كل الكود لحد هنا متثبت)، system.html = 5bc4057ffad1b65aeceb2830f64eb7fd5f22f1dc3cf6f37eb443ca2c46ef2b04.
+
+آخر تثبيت مؤكد: 20261103-r10، 3 نوفمبر 2026
+------------------------------------------
+- المحتوى: فجوات محاسبة الكافيه (4c94595)، تسجيل حضور تحت الاستقبال + بحث الاستقبال بالكود الأول (c22b98d)،
+  تصليحات المدربين وتحليلات الجيم وتقارير ناقصة (ca5218a). 19 ملف backend متغير + 2 جداد (trainer-branches/
+  trainer-earnings utils) + الواجهة. مافيش تغيير في هيكل قاعدة البيانات؛ الحسابين 5.01.013 و5.01.014 بيتعملوا
+  تلقائي أول استخدام.
+- الأساس 16f7aa9 (= 03-r9)، والجديد ca5218a. بناء الأساس طابق system.html بتاع 03-r9 (5bc4057f…).
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r10، والعملية اتغيرت من 2107162 لـ 2181346. القيود متزنة بعد التثبيت.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r10-update-backup.0UKm8B
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r10/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r10-update-backup.0UKm8B
+- مستني موافقة المستخدم: عمود club_trainers.branch_id (18 من 23 مدرب مالهمش موظف)، حقل كابتن للإنبودي،
+  عمود acc_journal_entries.entry_type، وتصليح ربط الحسابات المكررة 5.01.011/5.01.012.
+- المرجع للرفع اللي جاي: الأساس = ca5218a، system.html = 61a7de15035a3f8e0a5bcaa1ab17f8673a7339bc983ba328e0a8bd5798a77bfe.
