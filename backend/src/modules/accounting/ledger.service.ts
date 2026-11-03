@@ -26,7 +26,10 @@ export interface LedgerPostInput {
   date: string;
   description: string;
   lines: LedgerLineInput[];
+  /** Business-document creator; retained across corrections for finance ownership scopes. */
   createdBy?: number;
+  /** Actor performing this posting, which may be a different approving user. */
+  postedBy?: number;
   entryPrefix?: 'A' | 'D' | 'M';
 }
 
@@ -120,7 +123,7 @@ export class LedgerService {
           total_debit: totalDebit,
           total_credit: totalCredit,
           created_by: input.createdBy ?? null,
-          posted_by: input.createdBy ?? null,
+          posted_by: input.postedBy ?? input.createdBy ?? null,
           posted_at: new Date(),
           lines: { create: resolvedLines },
         },
@@ -151,7 +154,7 @@ export class LedgerService {
   async reverseEntry(
     entryId: number,
     reason: string,
-    postedBy: number,
+    postedBy: number | undefined,
     tx?: Tx,
   ): Promise<JournalEntryDto> {
     const run = async (client: Tx) => {
@@ -195,8 +198,8 @@ export class LedgerService {
           total_credit: original.total_debit,
           reverses_id: original.id,
           reversal_reason: reason,
-          created_by: postedBy,
-          posted_by: postedBy,
+          created_by: original.created_by,
+          posted_by: postedBy ?? null,
           posted_at: new Date(),
           lines: {
             create: original.lines.map((l, idx) => ({
@@ -268,8 +271,13 @@ export class LedgerService {
     if (lines.length < 2) {
       throw new BadRequestException('يجب أن يحتوي القيد على سطرين على الأقل');
     }
-    const totalDebit = roundMoney(lines.reduce((s, l) => s + (l.debit ?? 0), 0));
-    const totalCredit = roundMoney(lines.reduce((s, l) => s + (l.credit ?? 0), 0));
+    for (const line of lines) {
+      if (![line.debit, line.credit].every((amount) => Number.isFinite(amount) && amount >= 0)) {
+        throw new BadRequestException('مبالغ القيد يجب أن تكون أرقامًا غير سالبة');
+      }
+    }
+    const totalDebit = roundMoney(lines.reduce((s, l) => s + roundMoney(l.debit), 0));
+    const totalCredit = roundMoney(lines.reduce((s, l) => s + roundMoney(l.credit), 0));
     if (!isBalanced(totalDebit, totalCredit)) {
       throw new BadRequestException('القيد غير متوازن');
     }
@@ -313,11 +321,15 @@ export class LedgerService {
 
   private async nextEntryNo(client: Tx, date: string, prefix: 'A' | 'D' | 'M') {
     const bucket = date.replace(/-/g, '');
-    const like = `JE-${prefix}-${bucket}-%`;
-    const count = await client.acc_journal_entries.count({
+    // The highest number, not the row count: a deleted draft leaves a gap, and counting
+    // would hand out a number that already exists.
+    const latest = await client.acc_journal_entries.findFirst({
       where: { entry_no: { startsWith: `JE-${prefix}-${bucket}-` } },
+      orderBy: { entry_no: 'desc' },
+      select: { entry_no: true },
     });
-    const seq = String(count + 1).padStart(4, '0');
+    const latestSequence = latest ? Number(latest.entry_no.split('-').at(-1)) : 0;
+    const seq = String((Number.isSafeInteger(latestSequence) ? latestSequence : 0) + 1).padStart(4, '0');
     return `JE-${prefix}-${bucket}-${seq}`;
   }
 
@@ -345,7 +357,7 @@ export class LedgerService {
     return this.nextEntryNo(client as Tx, date, 'M');
   }
 
-  async assertPeriodOpenForDate(date: string) {
-    return this.assertPeriodOpen(this.prisma as unknown as Tx, date);
+  async assertPeriodOpenForDate(date: string, tx?: Tx) {
+    return this.assertPeriodOpen(tx ?? this.prisma as unknown as Tx, date);
   }
 }

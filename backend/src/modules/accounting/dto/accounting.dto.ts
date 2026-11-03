@@ -47,6 +47,14 @@ export class CreateAccountDto {
   @MaxLength(255)
   name!: string;
 
+  /**
+   * Only meaningful for a root account: a child always inherits its parent's type,
+   * so sending a conflicting value on a child is rejected rather than silently ignored.
+   */
+  @IsOptional()
+  @IsIn(["asset", "liability", "equity", "revenue", "expense"])
+  type?: AccountType;
+
   @IsOptional()
   @Transform(({ value }) =>
     value != null && value !== "" ? parseInt(value, 10) : undefined,
@@ -133,6 +141,8 @@ export class JournalLineDto {
 export class UpsertJournalEntryDto {
   @IsString()
   @MaxLength(10)
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: "صيغة التاريخ يجب أن تكون YYYY-MM-DD" })
+  @IsDateString({ strict: true }, { message: "التاريخ غير صحيح" })
   date!: string;
 
   @IsOptional()

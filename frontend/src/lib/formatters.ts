@@ -35,6 +35,19 @@ export function formatMoney(
   return `${formatDigits(formatted, locale)} ${curr}`;
 }
 
+/** Amount without a currency: thousands grouped, piastres only when there are any. */
+export function formatMoneyNumber(value: number | string, locale: Locale = getStoredLocale()): string {
+  const n = typeof value === 'string' ? parseFloat(value) : value;
+  if (!Number.isFinite(n)) return '—';
+  const cents = Math.round(n * 100);
+  const hasPiastres = Math.abs(cents % 100) !== 0;
+  const formatted = new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: hasPiastres ? 2 : 0,
+    maximumFractionDigits: hasPiastres ? 2 : 0,
+  }).format(cents / 100);
+  return formatDigits(formatted, locale);
+}
+
 export function formatNum(
   value: number | string | null | undefined,
   locale: Locale = getStoredLocale(),

@@ -1,3 +1,4 @@
+import { formatMoneyNumber } from '@/lib/formatters';
 import { useQuery } from '@tanstack/react-query';
 import { BookOpen, Calculator, Scale, TrendingDown, TrendingUp } from 'lucide-react';
 import { useState } from 'react';
@@ -91,13 +92,13 @@ export function AccountingDashboardBody() {
         />
         <StatCard
           title={ui('إجمالي الأصول')}
-          value={isLoading ? '…' : toArabicDigits((data?.totalAssets ?? 0).toFixed(2))}
+          value={isLoading ? '…' : formatMoneyNumber((data?.totalAssets ?? 0))}
           icon={<Scale className="h-5 w-5" />}
           to={ACCOUNTING_ROUTES.statements.balanceSheet}
         />
         <StatCard
           title={ui('صافي الربح')}
-          value={isLoading ? '…' : toArabicDigits((data?.netProfit ?? 0).toFixed(2))}
+          value={isLoading ? '…' : formatMoneyNumber((data?.netProfit ?? 0))}
           icon={(data?.netProfit ?? 0) >= 0 ? <TrendingUp className="h-5 w-5" /> : <TrendingDown className="h-5 w-5" />}
           to={ACCOUNTING_ROUTES.statements.incomeStatement}
         />
@@ -106,13 +107,13 @@ export function AccountingDashboardBody() {
       <div className="grid gap-4 md:grid-cols-3">
         <StatCard
           title={ui('الإيرادات')}
-          value={toArabicDigits((data?.revenue ?? 0).toFixed(2))}
+          value={formatMoneyNumber((data?.revenue ?? 0))}
           icon={<TrendingUp className="h-5 w-5" />}
           to={ACCOUNTING_ROUTES.statements.incomeStatement}
         />
         <StatCard
           title={ui('المصروفات')}
-          value={toArabicDigits((data?.expenses ?? 0).toFixed(2))}
+          value={formatMoneyNumber((data?.expenses ?? 0))}
           icon={<TrendingDown className="h-5 w-5" />}
           to={ACCOUNTING_ROUTES.statements.incomeStatement}
         />
@@ -145,8 +146,8 @@ export function AccountingDashboardBody() {
                   <td className="p-3 nums">{e.date}</td>
                   <td className="p-3">{e.description ?? '—'}</td>
                   <td className="p-3">{e.status}</td>
-                  <td className="p-3 nums">{toArabicDigits(e.totalDebit.toFixed(2))}</td>
-                  <td className="p-3 nums">{toArabicDigits(e.totalCredit.toFixed(2))}</td>
+                  <td className="p-3 nums">{formatMoneyNumber(e.totalDebit)}</td>
+                  <td className="p-3 nums">{formatMoneyNumber(e.totalCredit)}</td>
                 </tr>
               ))}
               {!isLoading && (data?.recentEntries?.length ?? 0) === 0 && (

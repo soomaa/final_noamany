@@ -153,7 +153,8 @@ export class JournalEntriesService {
     return this.mapEntry(row);
   }
 
-  private async buildLines(dto: UpsertJournalEntryDto, branchId?: number) {
+  private async buildLines(dto: UpsertJournalEntryDto, branchId?: number, client: Prisma.TransactionClient = this.prisma) {
+    if (dto.lines.length < 2) throw new BadRequestException('يجب أن يحتوي القيد على سطرين على الأقل');
     const resolved: Array<{
       account_id: number;
       debit: number;
@@ -163,13 +164,16 @@ export class JournalEntriesService {
     }> = [];
     for (let i = 0; i < dto.lines.length; i++) {
       const line = dto.lines[i]!;
+      if (![line.debit ?? 0, line.credit ?? 0].every((amount) => Number.isFinite(amount) && amount >= 0)) {
+        throw new BadRequestException('مبالغ القيد يجب أن تكون أرقامًا غير سالبة');
+      }
       const debit = roundMoney(line.debit ?? 0);
       const credit = roundMoney(line.credit ?? 0);
       if ((debit > 0 && credit > 0) || (debit === 0 && credit === 0)) {
         throw new BadRequestException('كل سطر يجب أن يكون مدين أو دائن فقط');
       }
       const accountId = await this.ledger.resolveAccountIdByCodeOrKey(
-        this.prisma,
+        client,
         line.accountId,
         line.accountCode,
         branchId ?? dto.branchId,
@@ -196,48 +200,52 @@ export class JournalEntriesService {
     const effectiveDto = { ...dto, branchId };
     await this.ledger.assertPeriodOpenForDate(effectiveDto.date);
     const { resolved, totalDebit, totalCredit } = await this.buildLines(effectiveDto);
-    const entryNo = await this.ledger.nextManualEntryNo(effectiveDto.date);
-    const row = await this.prisma.acc_journal_entries.create({
-      data: {
-        entry_no: entryNo,
-        date: effectiveDto.date,
-        branch_id: effectiveDto.branchId ?? null,
-        description: effectiveDto.description ?? null,
-        reference: effectiveDto.reference ?? null,
-        status: 'draft',
-        source_module: 'manual',
-        source_doc_type: 'manual',
-        source_doc_id: entryNo,
-        total_debit: totalDebit,
-        total_credit: totalCredit,
-        created_by: userId,
-        lines: { create: resolved },
-      },
-      include: {
-        lines: {
-          include: { account: { select: { code: true, name: true } } },
-          orderBy: { line_order: 'asc' },
-        },
-      },
-    });
+    const row = await (async () => {
+      for (let attempt = 0; ; attempt++) {
+        const entryNo = await this.ledger.nextManualEntryNo(effectiveDto.date);
+        try {
+          return await this.prisma.acc_journal_entries.create({
+          data: {
+            entry_no: entryNo,
+            date: effectiveDto.date,
+            branch_id: effectiveDto.branchId ?? null,
+            description: effectiveDto.description ?? null,
+            reference: effectiveDto.reference ?? null,
+            status: 'draft',
+            source_module: 'manual',
+            source_doc_type: 'manual',
+            source_doc_id: entryNo,
+            total_debit: totalDebit,
+            total_credit: totalCredit,
+            created_by: userId,
+            lines: { create: resolved },
+          },
+          include: {
+            lines: {
+              include: { account: { select: { code: true, name: true } } },
+              orderBy: { line_order: 'asc' },
+            },
+          },
+          });
+        } catch (error) {
+          const collision = error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
+          if (!collision || attempt >= 4) throw error;
+        }
+      }
+    })();
     return this.mapEntry(row);
   }
 
   async update(id: number, dto: UpsertJournalEntryDto, user?: JwtUser) {
-    const existing = await this.prisma.acc_journal_entries.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException('القيد غير موجود');
-    this.assertEntryAccess(user, existing.branch_id);
-    if (existing.status !== 'draft') {
-      throw new BadRequestException('لا يمكن تعديل قيد مرحّل');
-    }
-    const branchId = this.effectiveBranchId(user, dto.branchId ?? existing.branch_id);
-    if (branchId != null) this.assertEntryAccess(user, branchId);
-    const effectiveDto = { ...dto, branchId };
-    await this.ledger.assertPeriodOpenForDate(effectiveDto.date);
-    const { resolved, totalDebit, totalCredit } = await this.buildLines(effectiveDto);
-    const [, row] = await this.prisma.$transaction([
-      this.prisma.acc_journal_entry_lines.deleteMany({ where: { entry_id: id } }),
-      this.prisma.acc_journal_entries.update({
+    const row = await this.prisma.$transaction(async (tx) => {
+      const existing = await this.lockDraft(tx, id, user);
+      const branchId = this.effectiveBranchId(user, dto.branchId ?? existing.branch_id);
+      if (branchId != null) this.assertEntryAccess(user, branchId);
+      const effectiveDto = { ...dto, branchId };
+      await this.ledger.assertPeriodOpenForDate(effectiveDto.date, tx);
+      const { resolved, totalDebit, totalCredit } = await this.buildLines(effectiveDto, branchId, tx);
+      await tx.acc_journal_entry_lines.deleteMany({ where: { entry_id: id } });
+      return tx.acc_journal_entries.update({
         where: { id },
         data: {
           date: effectiveDto.date,
@@ -254,59 +262,67 @@ export class JournalEntriesService {
             orderBy: { line_order: 'asc' },
           },
         },
-      }),
-    ]);
+      });
+    });
     return this.mapEntry(row);
   }
 
   async remove(id: number, user?: JwtUser) {
-    const existing = await this.prisma.acc_journal_entries.findUnique({ where: { id } });
-    if (!existing) throw new NotFoundException('القيد غير موجود');
-    this.assertEntryAccess(user, existing.branch_id);
-    if (existing.status !== 'draft') {
-      throw new BadRequestException('لا يمكن حذف قيد مرحّل');
-    }
-    await this.prisma.acc_journal_entries.delete({ where: { id } });
+    await this.prisma.$transaction(async (tx) => {
+      await this.lockDraft(tx, id, user);
+      await tx.acc_journal_entries.delete({ where: { id } });
+    });
     return { ok: true };
   }
 
   async post(id: number, userId: number, user?: JwtUser) {
-    const existing = await this.prisma.acc_journal_entries.findUnique({
-      where: { id },
-      include: { lines: true },
-    });
-    if (!existing) throw new NotFoundException('القيد غير موجود');
-    this.assertEntryAccess(user, existing.branch_id);
-    if (existing.status !== 'draft') {
-      throw new BadRequestException('القيد مرحّل بالفعل');
-    }
-    await this.ledger.assertPeriodOpenForDate(existing.date);
-    if (!isBalanced(roundMoney(existing.total_debit), roundMoney(existing.total_credit))) {
-      throw new BadRequestException('القيد غير متوازن');
-    }
-    // Atomic conditional claim: only a draft can be posted, and only once. Two concurrent
-    // posts race on this updateMany — the loser sees count === 0 and is rejected.
-    const claimed = await this.prisma.acc_journal_entries.updateMany({
-      where: { id, status: 'draft' },
-      data: {
-        status: 'posted',
-        posted_by: userId,
-        posted_at: new Date(),
-      },
-    });
-    if (claimed.count === 0) {
-      throw new BadRequestException('القيد مرحّل بالفعل');
-    }
-    const row = await this.prisma.acc_journal_entries.findUniqueOrThrow({
-      where: { id },
-      include: {
-        lines: {
-          include: { account: { select: { code: true, name: true } } },
-          orderBy: { line_order: 'asc' },
+    const row = await this.prisma.$transaction(async (tx) => {
+      const existing = await this.lockDraft(tx, id, user);
+      await this.ledger.assertPeriodOpenForDate(existing.date, tx);
+      const totals = await this.buildLines({
+        date: existing.date,
+        lines: existing.lines.map((line) => ({
+          accountId: line.account_id, debit: Number(line.debit), credit: Number(line.credit),
+        })),
+      }, existing.branch_id ?? undefined, tx);
+      if (!isBalanced(totals.totalDebit, Number(existing.total_debit))
+        || !isBalanced(totals.totalCredit, Number(existing.total_credit))) {
+        throw new BadRequestException('القيد غير متوازن');
+      }
+      // Atomic conditional claim: only a draft can be posted, and only once. Two concurrent
+      // posts race on this updateMany — the loser sees count === 0 and is rejected.
+      const claimed = await tx.acc_journal_entries.updateMany({
+        where: { id, status: 'draft' },
+        data: {
+          status: 'posted',
+          posted_by: userId,
+          posted_at: new Date(),
         },
-      },
+      });
+      if (claimed.count === 0) {
+        throw new BadRequestException('القيد مرحّل بالفعل');
+      }
+      return tx.acc_journal_entries.findUniqueOrThrow({
+        where: { id },
+        include: {
+          lines: {
+            include: { account: { select: { code: true, name: true } } },
+            orderBy: { line_order: 'asc' },
+          },
+        },
+      });
     });
     return this.mapEntry(row);
+  }
+
+  /** Serialize edit/delete/post before reading the state or lines being changed. */
+  private async lockDraft(tx: Prisma.TransactionClient, id: number, user?: JwtUser) {
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM acc_journal_entries WHERE id = ${id} FOR UPDATE`);
+    const entry = await tx.acc_journal_entries.findUnique({ where: { id }, include: { lines: true } });
+    if (!entry) throw new NotFoundException('القيد غير موجود');
+    this.assertEntryAccess(user, entry.branch_id);
+    if (entry.status !== 'draft') throw new BadRequestException('لا يمكن تغيير قيد مرحّل');
+    return entry;
   }
 
   async reverse(
