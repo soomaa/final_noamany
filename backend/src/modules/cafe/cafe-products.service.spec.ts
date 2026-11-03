@@ -315,6 +315,37 @@ describe('CafeProductsService', () => {
     });
   });
 
+  describe('sale screen list', () => {
+    it('puts sellable items first, by name, pages after sorting and counts the sale warehouse stock', async () => {
+      const products = prismaMock.cafe_products as { findMany: jest.Mock };
+      const all = [
+        { id: 30, name: 'ب جديد نافد', product_type: 'ready', inventory_product_id: 300 },
+        { id: 20, name: 'ج موجود', product_type: 'ready', inventory_product_id: 200 },
+        { id: 10, name: 'أ مشروب محضر', product_type: 'prepared', inventory_product_id: null },
+        { id: 5, name: 'أ موجود', product_type: 'ready', inventory_product_id: 50 },
+      ];
+      const full = (id: number) => ({ ...all.find((r) => r.id === id), product_code: `P${id}`, sell_price: 1, is_active: true, category_id: 3, recipes: [], variants: [], _count: { recipes: 0 } });
+      products.findMany.mockImplementation(async (args: { where: { id?: { in: number[] } } }) =>
+        args.where.id?.in ? args.where.id.in.slice().reverse().map(full) : all.map((r) => ({ ...r })));
+      const groupBy = jest.fn().mockResolvedValue([
+        { product_id: 200, _sum: { current_stock: 4 } },
+        { product_id: 50, _sum: { current_stock: 1 } },
+        { product_id: 300, _sum: { current_stock: 0 } },
+      ]);
+      prismaMock.inv_stock_balances = { groupBy };
+
+      const first = await service.list({ skip: 0, take: 2, branchId: 1, sellableOnly: true });
+      expect(first.data.map((r: { id: number }) => r.id)).toEqual([10, 5]);
+      expect(first).toMatchObject({ total: 4, page: 1, pageSize: 2 });
+      expect(groupBy.mock.calls[0][0].where.warehouse_id).toBe(5);
+      expect(locationMock.resolveBranchStockLocation).toHaveBeenCalledWith(1, prismaMock);
+
+      const second = await service.list({ skip: 2, take: 2, branchId: 1, sellableOnly: true });
+      expect(second.data.map((r: { id: number; currentStock: number | null }) => [r.id, r.currentStock])).toEqual([[20, 4], [30, 0]]);
+      expect(second.page).toBe(2);
+    });
+  });
+
   describe('findOne', () => {
     it('throws when missing', async () => {
       (prismaMock.cafe_products as { findUnique: jest.Mock }).findUnique.mockResolvedValue(null);

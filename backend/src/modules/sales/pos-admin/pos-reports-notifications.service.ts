@@ -1,9 +1,10 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { paginated } from '../../../common/dto/list-result';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../../common/branch-scope/branch-scope.service';
 import type { JwtUser } from '../../../common/types/jwt-user';
+import { SALE_WAREHOUSE_SETTING } from '../../inventory/inventory-location.service';
 import {
   PosListQueryDto, ScheduleReportDto, TestNotificationDto,
   UpsertPosNotificationRuleDto, UpsertPosReportTemplateDto,
@@ -327,6 +328,7 @@ export class PosSettingsService {
 
   async saveCategory(category: string, settings: Array<{ key: string; value: unknown; type?: string; description?: string }>, branchId?: number, userId?: number, user?: JwtUser) {
     branchId = this.resolveBranch(user, branchId);
+    if (category === SALE_WAREHOUSE_SETTING.category) await this.assertSaleWarehouse(settings, branchId);
     await this.prisma.sales_pos_settings.deleteMany({ where: { category, branch_id: branchId ?? null } });
     await this.prisma.sales_pos_settings.createMany({
       data: settings.map((s, i) => ({
@@ -341,6 +343,18 @@ export class PosSettingsService {
       })),
     });
     return this.getCategory(category, branchId, user);
+  }
+
+  /** A branch's sale warehouse must be one of that branch's active warehouses. */
+  private async assertSaleWarehouse(settings: Array<{ key: string; value: unknown }>, branchId?: number) {
+    const value = settings.find((s) => s.key === SALE_WAREHOUSE_SETTING.key)?.value;
+    if (value == null || value === '') return;
+    if (branchId == null) throw new BadRequestException('اختر الفرع قبل تحديد مخزن البيع');
+    const warehouse = await this.prisma.inv_warehouses.findFirst({
+      where: { id: Number(value), branch_id: branchId, status: 'active', is_deleted: false },
+      select: { id: true },
+    });
+    if (!warehouse) throw new BadRequestException('مخزن البيع لازم يكون مخزن نشط تابع للفرع');
   }
 
   async copyToBranch(category: string, fromBranchId: number, toBranchId: number, userId?: number, user?: JwtUser) {

@@ -393,6 +393,8 @@ export class UpsertOpeningStockDto {
 export class CountSheetLineDto {
   @IsInt() productId!: number;
   @IsNumber() @Min(0) countedQuantity!: number;
+  /** The available quantity shown on the sheet when the count started. */
+  @IsOptional() @IsNumber() systemQuantity?: number;
   @IsOptional() @IsString() @MaxLength(255) notes?: string;
 }
 

@@ -95,27 +95,41 @@ export class StockTakingService {
     }));
   }
 
-  /** Every active product of the category stocked in the warehouse, with its current (available) quantity. */
+  /**
+   * Every active stock product of the category, with its current (available) quantity in the warehouse.
+   * Products the warehouse has never held are listed at 0, so a found item can still be counted in.
+   */
   async countSheet(warehouseId: number, categoryId: number | undefined, user: JwtUser) {
     const selected = await this.location.resolveSelection(user, warehouseId);
-    const balances = await this.prisma.inv_stock_balances.findMany({
+    const products = await this.prisma.inv_products.findMany({
       where: {
-        warehouse_id: selected.warehouseId,
-        product: { is_deleted: false, status: 'active', ...(categoryId ? { category_id: categoryId } : {}) },
+        is_deleted: false,
+        status: 'active',
+        inventory_kind: { not: 'manufactured_internal' },
+        ...(categoryId ? { category_id: categoryId } : {}),
       },
-      select: { product_id: true, current_stock: true, product: { select: { name_ar: true, product_code: true, unit_of_measure: true } } },
-      orderBy: { product: { name_ar: 'asc' } },
+      select: {
+        id: true,
+        name_ar: true,
+        product_code: true,
+        unit_of_measure: true,
+        balances: { where: { warehouse_id: selected.warehouseId }, select: { current_stock: true } },
+      },
+      orderBy: { name_ar: 'asc' },
     });
-    return balances.map((b) => ({
-      productId: b.product_id,
-      productCode: b.product.product_code,
-      productName: b.product.name_ar,
-      unit: b.product.unit_of_measure,
-      availableQuantity: toNumber(b.current_stock),
+    return products.map((p) => ({
+      productId: p.id,
+      productCode: p.product_code,
+      productName: p.name_ar,
+      unit: p.unit_of_measure,
+      availableQuantity: toNumber(p.balances[0]?.current_stock),
     }));
   }
 
-  /** Replaces the session's items with the submitted sheet, snapshotting the current system quantity. */
+  /**
+   * Replaces the session's items with the submitted sheet. The system quantity is the one shown on the
+   * sheet when it was opened (or the current balance when the client sends none).
+   */
   private async writeSheet(tx: Prisma.TransactionClient, sessionId: number, warehouseId: number, lines: NonNullable<UpsertCountSessionDto['items']>) {
     if (!lines.length) throw new BadRequestException('يجب إضافة صنف واحد على الأقل للجرد');
     const productIds = [...new Set(lines.map((l) => l.productId))];
@@ -130,7 +144,8 @@ export class StockTakingService {
     await tx.inv_count_items.deleteMany({ where: { session_id: sessionId } });
     await tx.inv_count_items.createMany({
       data: lines.map((l) => {
-        const systemQty = stockById.get(l.productId) ?? 0;
+        // The quantity the counter saw on the sheet; sales made while counting are applied on approval.
+        const systemQty = l.systemQuantity ?? stockById.get(l.productId) ?? 0;
         const product = productById.get(l.productId)!;
         return {
           session_id: sessionId,
@@ -325,18 +340,24 @@ export class StockTakingService {
     if (!session) throw new BadRequestException('جلسة الجرد غير مرتبطة');
     if (user && !new BranchScopeService().isBranchAllowed(user,session.branch_id ?? 0)) throw new ForbiddenException('التسوية خارج صلاحيات المستخدم');
 
-    const previewRows: PreviewRow[] = session.items
-      .filter((i) => i.product_id)
-      .map((i) => ({
-        label: i.item_name ?? i.item_code ?? `#${i.product_id}`,
-        before: String(toNumber(i.system_quantity)),
-        after: String(toNumber(i.counted_quantity)),
-      }));
-
+    const items = session.items.filter((i): i is typeof i & { product_id: number } => i.product_id != null);
     if (isDryRun(dryRun)) {
+      const balances = await this.prisma.inv_stock_balances.findMany({
+        where: { warehouse_id: session.warehouse_id, product_id: { in: items.map((i) => i.product_id) } },
+        select: { product_id: true, current_stock: true },
+      });
+      const currentById = new Map(balances.map((b) => [b.product_id, toNumber(b.current_stock)]));
+      const previewRows: PreviewRow[] = items.map((i) => {
+        const current = currentById.get(i.product_id) ?? 0;
+        return {
+          label: i.item_name ?? i.item_code ?? `#${i.product_id}`,
+          before: String(current),
+          after: String(countedBalance(toNumber(i.counted_quantity), toNumber(i.system_quantity), current)),
+        };
+      });
       return previewResponse(
         { adjustmentId, itemCount: previewRows.length },
-        { rows: previewRows, warning: 'سيتم استبدال أرصدة المخزون بالكميات المعدودة' },
+        { rows: previewRows, warning: COUNT_APPLY_WARNING },
       );
     }
 
@@ -350,28 +371,31 @@ export class StockTakingService {
       if (claimed.count === 0) {
         throw new BadRequestException('التسوية معتمدة بالفعل');
       }
-      const productIds = session.items.flatMap((item) => (item.product_id ? [item.product_id] : []));
       const products = await tx.inv_products.findMany({
-        where: { id: { in: productIds } },
+        where: { id: { in: items.map((item) => item.product_id) } },
         select: { id: true, cost_price: true },
       });
       const costByProduct = new Map(products.map((product) => [product.id, toNumber(product.cost_price)]));
       let gainAmount = 0;
       let lossAmount = 0;
-      for (const item of session.items) {
-        if (!item.product_id) continue;
+      for (const item of items) {
         await tx.$queryRaw`SELECT id FROM inv_stock_balances WHERE product_id = ${item.product_id} AND warehouse_id = ${session.warehouse_id} FOR UPDATE`;
-        const current=await tx.inv_stock_balances.findUnique({where:{product_id_warehouse_id:{product_id:item.product_id,warehouse_id:session.warehouse_id}}});
-        if (Math.abs(toNumber(current?.current_stock)-toNumber(item.system_quantity))>0.000001) throw new BadRequestException('حدثت حركة مخزنية بعد العد؛ أعد الجرد قبل اعتماد التسوية');
-        const value = Math.abs(toNumber(item.variance)) * (costByProduct.get(item.product_id) ?? 0);
-        if (toNumber(item.variance) > 0) gainAmount += value;
-        if (toNumber(item.variance) < 0) lossAmount += value;
+        const current = await tx.inv_stock_balances.findUnique({ where: { product_id_warehouse_id: { product_id: item.product_id, warehouse_id: session.warehouse_id } } });
+        const currentQty = toNumber(current?.current_stock);
+        // Stock moved since the count (sales, receipts …) is kept: the counted quantity plus those movements.
+        const target = countedBalance(toNumber(item.counted_quantity), toNumber(item.system_quantity), currentQty);
+        const change = target - currentQty;
+        if (Math.abs(change) < 0.000001) continue;
+        // The entry follows the stock actually changed (equals the variance unless the balance was floored at 0).
+        const value = Math.abs(change) * (costByProduct.get(item.product_id) ?? 0);
+        if (change > 0) gainAmount += value;
+        if (change < 0) lossAmount += value;
         await this.stock.applyMovement(
           {
             productId: item.product_id,
             warehouseId: session.warehouse_id,
             direction: MovementDirection.in,
-            quantity: toNumber(item.counted_quantity),
+            quantity: target,
             operation: 'set',
             txnType: InventoryTxnType.count,
             docType: 'stock_taking',
@@ -397,8 +421,20 @@ export class StockTakingService {
         where: { id: session.id },
         data: { status: 'completed' },
       });
-    });
+    }, { maxWait: 10_000, timeout: 60_000 });
 
     return { success: true, adjustmentId };
   }
+}
+
+export const COUNT_APPLY_WARNING = 'سيتم تطبيق فرق الجرد على الرصيد الحالي: الكمية المعدودة + ما اتباع أو اتورد بعد العد';
+
+/**
+ * The balance a count sets: what was counted plus the net stock movement since the sheet was taken
+ * (current − system quantity on the sheet). Never below zero: selling more than was counted means the
+ * shelf is empty now.
+ */
+export function countedBalance(counted: number, systemAtCount: number, current: number): number {
+  const target = counted + (current - systemAtCount);
+  return Math.max(0, Math.round(target * 1e6) / 1e6);
 }

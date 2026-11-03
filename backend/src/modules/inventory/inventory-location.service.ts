@@ -76,11 +76,19 @@ export class InventoryLocationService {
     return branchId;
   }
 
+  /**
+   * The branch's default stock location, used whenever a request names no warehouse: café sales,
+   * drawings, purchases, opening stock and stock counts. It is the branch's sale warehouse (its bar)
+   * set in POS settings (category `stock`, key `sale_warehouse_id`); a branch without a valid
+   * setting falls back to its first active warehouse.
+   */
   async resolveBranchStockLocation(
     branchId: number,
     tx?: Prisma.TransactionClient,
   ): Promise<number> {
     const db = tx ?? this.prisma;
+    const configured = await this.configuredSaleWarehouse(db, branchId);
+    if (configured) return configured;
     const location = await db.inv_warehouses.findFirst({
       where: { branch_id: branchId, status: 'active', ...notDeletedFilter() },
       orderBy: [{ type: 'asc' }, { id: 'asc' }],
@@ -107,4 +115,22 @@ export class InventoryLocationService {
     });
     return internal.id;
   }
+
+  /** The branch's `sale_warehouse_id` POS setting, when it names an active warehouse of that branch. */
+  private async configuredSaleWarehouse(db: Prisma.TransactionClient | PrismaService, branchId: number): Promise<number | null> {
+    const setting = await db.sales_pos_settings.findFirst({
+      where: { category: SALE_WAREHOUSE_SETTING.category, setting_key: SALE_WAREHOUSE_SETTING.key, branch_id: branchId, is_active: true },
+      select: { setting_value: true },
+    });
+    const warehouseId = Number(setting?.setting_value?.replace(/"/g, ''));
+    if (!Number.isInteger(warehouseId) || warehouseId <= 0) return null;
+    const location = await db.inv_warehouses.findFirst({
+      where: { id: warehouseId, branch_id: branchId, status: 'active', ...notDeletedFilter() },
+      select: { id: true },
+    });
+    return location?.id ?? null;
+  }
 }
+
+/** Where each branch's sale warehouse (its bar) is stored in sales_pos_settings. */
+export const SALE_WAREHOUSE_SETTING = { category: 'stock', key: 'sale_warehouse_id' } as const;

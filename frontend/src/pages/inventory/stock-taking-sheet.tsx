@@ -1,5 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Check, Eye, Pencil, Save, Search, Trash2 } from 'lucide-react';
+import { Check, Eye, Pencil, RotateCcw, Save, Search, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -89,6 +89,10 @@ export function StockTakingSheet() {
     setFilter('');
   };
 
+  // Editing keeps the quantity the sheet showed when it was counted; approval adds what moved since.
+  const savedSystem = useMemo(() => new Map((editing?.items ?? []).map((i) => [i.productId, i.systemQuantity])), [editing]);
+  const systemQty = (p: SheetProduct) => savedSystem.get(p.productId) ?? p.availableQuantity;
+
   const shownSheet = filter.trim()
     ? sheet.filter((p) => p.productName.includes(filter.trim()) || p.productCode.includes(filter.trim()))
     : sheet;
@@ -104,6 +108,7 @@ export function StockTakingSheet() {
       items: sheet.map((p) => ({
         productId: p.productId,
         countedQuantity: Number(counts[p.productId]),
+        systemQuantity: systemQty(p),
         notes: lineNotes[p.productId] || undefined,
       })),
     };
@@ -165,12 +170,30 @@ export function StockTakingSheet() {
     }
   };
 
-  // Approving replaces stock balances with the counted quantities and posts the variance entry.
+  // A count awaiting approval goes back to draft so it can be corrected (or deleted).
+  const reopen = async (row: CountSession) => {
+    const ok = await confirm({ title: ui('إعادة فتح محضر الجرد للتعديل'), description: row.sessionNumber, confirmLabel: ui('إعادة فتح') });
+    if (!ok) return;
+    setBusyId(row.id);
+    try {
+      await api.post(`/stock-taking/${row.id}/reopen`);
+      toast.success(ui('اتفتح المحضر تاني، عدّل واحفظ'));
+      void refetch();
+      await startEdit({ ...row, status: 'draft' });
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  // Approving applies each item's difference (counted − shown) to its current balance, so sales made
+  // after the count stay deducted, and posts the variance entry.
   const approve = async (row: CountSession) => {
     const ok = await confirm({
       title: ui('اعتماد محضر الجرد'),
       description: row.sessionNumber,
-      warning: ui('سيتم استبدال أرصدة المخزون بالكميات المعدودة'),
+      warning: ui('سيتم تطبيق فرق الجرد على الرصيد الحالي: الكمية المعدودة + ما اتباع أو اتورد بعد العد'),
       confirmLabel: ui('اعتماد'),
     });
     if (!ok) return;
@@ -230,6 +253,11 @@ export function StockTakingSheet() {
               {r.status === 'draft' && (
                 <Button variant="ghost" size="icon" title={ui('تعديل')} onClick={() => void startEdit(r)}>
                   <Pencil className="h-4 w-4 text-primary" />
+                </Button>
+              )}
+              {r.status === 'awaiting_approval' && (
+                <Button variant="ghost" size="icon" title={ui('إعادة فتح للتعديل')} disabled={busy} onClick={() => void reopen(r)}>
+                  <RotateCcw className="h-4 w-4 text-amber-600" />
                 </Button>
               )}
               {!isApproved(r.status) && (
@@ -323,12 +351,13 @@ export function StockTakingSheet() {
                 </thead>
                 <tbody>
                   {shownSheet.map((p, idx) => {
-                    const variance = (Number(counts[p.productId]) || 0) - p.availableQuantity;
+                    const shown = systemQty(p);
+                    const variance = (Number(counts[p.productId]) || 0) - shown;
                     return (
                       <tr key={p.productId} className="border-t text-center even:bg-muted/30">
                         <td className="p-2 nums">{toArabicDigits(idx + 1)}</td>
                         <td className="p-2 text-start">{p.productName}<span className="ms-1 text-xs text-muted-foreground">({p.unit})</span></td>
-                        <td className="p-2"><Input readOnly value={p.availableQuantity} className={`${cellInput} bg-muted/50`} /></td>
+                        <td className="p-2"><Input readOnly value={shown} className={`${cellInput} bg-muted/50`} /></td>
                         <td className="p-2">
                           <Input
                             type="number"

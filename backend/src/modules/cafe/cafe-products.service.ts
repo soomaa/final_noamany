@@ -762,12 +762,19 @@ export class CafeProductsService {
       }];
     }
 
-    const [rows, total] = await Promise.all([
-      this.prisma.cafe_products.findMany({
-        where,
+    const include = {
+      category: { select: { name_ar: true } },
+      inventory_product: { select: { cost_price: true } },
+      recipes: {
+        select: {
+          quantity: true,
+          unit: true,
+          ingredient: { select: { unit_of_measure: true, cost_price: true } },
+        },
+      },
+      variants: {
+        orderBy: { sort_order: 'asc' },
         include: {
-          category: { select: { name_ar: true } },
-          inventory_product: { select: { cost_price: true } },
           recipes: {
             select: {
               quantity: true,
@@ -775,55 +782,60 @@ export class CafeProductsService {
               ingredient: { select: { unit_of_measure: true, cost_price: true } },
             },
           },
-          variants: {
-            orderBy: { sort_order: 'asc' },
-            include: {
-              recipes: {
-                select: {
-                  quantity: true,
-                  unit: true,
-                  ingredient: { select: { unit_of_measure: true, cost_price: true } },
-                },
-              },
-            },
-          },
-          _count: { select: { recipes: true } },
         },
-        orderBy: { id: 'desc' },
-        skip: q.skip,
-        take: q.take,
-      }),
-      this.prisma.cafe_products.count({ where }),
-    ]);
-    const inventoryProductIds = rows
-      .map((row) => row.inventory_product_id)
-      .filter((id): id is number => id != null);
-    const balances = inventoryProductIds.length
-      ? await this.prisma.inv_stock_balances.groupBy({
-          by: ['product_id'],
-          where: {
-            product_id: { in: inventoryProductIds },
-            ...(q.warehouseId
-              ? {
-                  warehouse_id: q.warehouseId,
-                  ...(scopedBranches ? { warehouse: { branch_id: { in: scopedBranches }, is_deleted: false } } : {}),
-                }
-              : scopedBranches
-                ? { warehouse: { branch_id: { in: scopedBranches }, is_deleted: false } }
-                : {}),
-          },
-          _sum: { current_stock: true },
-        })
-      : [];
-    const stockByProduct = new Map(
-      balances.map((balance) => [balance.product_id, invToNumber(balance._sum.current_stock)]),
-    );
+      },
+      _count: { select: { recipes: true } },
+    } satisfies Prisma.cafe_productsInclude;
+    // The sale screen shows (and sells from) one warehouse: the picked one, else the branch's sale warehouse.
+    const stockWarehouseId = q.warehouseId
+      ?? (q.sellableOnly && q.branchId ? await this.resolveWarehouse(this.prisma, q.branchId) : undefined);
+    const stockFor = async (inventoryProductIds: number[]) => {
+      if (!inventoryProductIds.length) return new Map<number, number>();
+      const balances = await this.prisma.inv_stock_balances.groupBy({
+        by: ['product_id'],
+        where: {
+          product_id: { in: inventoryProductIds },
+          ...(stockWarehouseId ? { warehouse_id: stockWarehouseId } : {}),
+          ...(scopedBranches ? { warehouse: { branch_id: { in: scopedBranches }, is_deleted: false } } : {}),
+        },
+        _sum: { current_stock: true },
+      });
+      return new Map(balances.map((balance) => [balance.product_id, invToNumber(balance._sum.current_stock)]));
+    };
+
+    let rows: Prisma.cafe_productsGetPayload<{ include: typeof include }>[];
+    let total: number;
+    let stockByProduct: Map<number, number>;
+    if (q.sellableOnly) {
+      // Sale screen: items that can be sold now first (prepared items, or ready items in stock), each
+      // group by name, so the cashier does not scroll past out-of-stock cards. Sorted before paging.
+      where.category_id ??= { not: null };
+      const all = await this.prisma.cafe_products.findMany({
+        where,
+        select: { id: true, name: true, product_type: true, inventory_product_id: true },
+      });
+      stockByProduct = await stockFor(all.flatMap((r) => (r.inventory_product_id != null ? [r.inventory_product_id] : [])));
+      const sellable = (r: (typeof all)[number]) =>
+        r.product_type !== 'ready' || (r.inventory_product_id != null && (stockByProduct.get(r.inventory_product_id) ?? 0) > 0);
+      all.sort((x, y) => Number(sellable(y)) - Number(sellable(x)) || x.name.trim().localeCompare(y.name.trim(), 'ar') || x.id - y.id);
+      const pageIds = all.slice(q.skip ?? 0, (q.skip ?? 0) + (q.take ?? all.length)).map((r) => r.id);
+      const pageRows = await this.prisma.cafe_products.findMany({ where: { id: { in: pageIds } }, include });
+      const byId = new Map(pageRows.map((r) => [r.id, r]));
+      rows = pageIds.flatMap((id) => byId.get(id) ?? []);
+      total = all.length;
+    } else {
+      [rows, total] = await Promise.all([
+        this.prisma.cafe_products.findMany({ where, include, orderBy: { id: 'desc' }, skip: q.skip, take: q.take }),
+        this.prisma.cafe_products.count({ where }),
+      ]);
+      stockByProduct = await stockFor(rows.flatMap((r) => (r.inventory_product_id != null ? [r.inventory_product_id] : [])));
+    }
     return paginated(rows.map((row) => ({
       ...this.mapProduct(row),
       currentStock: row.inventory_product_id != null
         ? stockByProduct.get(row.inventory_product_id) ?? 0
         : null,
-    })), total, 1, q.take ?? rows.length);
+    })), total, q.take ? Math.floor((q.skip ?? 0) / q.take) + 1 : 1, q.take ?? rows.length);
   }
 
   async findOne(id: number) {

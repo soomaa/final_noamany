@@ -15,6 +15,7 @@ import { GymSalesPageShell } from '../gym-sales/shell';
 import { useBranches } from '@/hooks/use-branches';
 import { useAuth } from '@/store/auth';
 import { PosInvoiceTemplatesEditor } from '@/components/sales/pos-invoice-templates-editor';
+import { WarehouseSelect } from '@/components/inventory/warehouse-select';
 
 type Tab = 'devices' | 'payments' | 'invoices' | 'reports' | 'notifications' | 'settings' | 'shifts';
 
@@ -164,6 +165,17 @@ function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
       (await api.get<PosSettingRow[]>('/pos-settings/general', { params: effectiveBranchId ? { branchId: effectiveBranchId } : undefined })).data,
     enabled: !!effectiveBranchId || !branches.length,
   });
+  // The branch's sale warehouse (its bar): café sales, drawings and stock forms use it when no warehouse is picked.
+  const { data: stockSettings } = useQuery({
+    queryKey: ['pos-settings', 'stock', effectiveBranchId],
+    queryFn: async () => (await api.get<PosSettingRow[]>('/pos-settings/stock', { params: { branchId: effectiveBranchId } })).data,
+    enabled: !!effectiveBranchId,
+  });
+  const [saleWarehouseId, setSaleWarehouseId] = useState('');
+  useEffect(() => {
+    const value = stockSettings?.find((s) => s.key === 'sale_warehouse_id')?.value;
+    setSaleWarehouseId(value ? String(value) : '');
+  }, [stockSettings]);
 
   const [enableTax, setEnableTax] = useState(true);
   const [allowMixedCategories, setAllowMixedCategories] = useState(false);
@@ -193,6 +205,13 @@ function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
 
   const save = useMutation({
     mutationFn: async () => {
+      if (effectiveBranchId) {
+        await api.post('/pos-settings/stock', {
+          category: 'stock',
+          branchId: Number(effectiveBranchId),
+          settings: saleWarehouseId ? [{ key: 'sale_warehouse_id', value: Number(saleWarehouseId), type: 'number' }] : [],
+        });
+      }
       const next: PosSettingRow[] = [
         { key: 'default_discount_percentage', value: Math.min(100, Math.max(0, Number(customerDiscount) || 0)), type: 'number' },
         { key: 'employee_discount_percentage', value: Math.min(100, Math.max(0, Number(employeeDiscount) || 0)), type: 'number' },
@@ -233,6 +252,18 @@ function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
           <Label>{ui('الفرع الذي تطبق عليه الإعدادات')}</Label>
           {user?.branch ? <Input value={user.branch_name || `${ui('فرع رقم')} ${user.branch}`} readOnly disabled /> : <select className="rounded-md border bg-background px-3 py-2" value={selectedBranchId} onChange={(event) => setSelectedBranchId(event.target.value)}><option value="">{ui('اختر الفرع')}</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>}
         </div>
+        {effectiveBranchId && (
+          <div className="grid gap-1.5 rounded-lg border p-3 sm:max-w-md">
+            <WarehouseSelect
+              branchId={effectiveBranchId}
+              value={saleWarehouseId}
+              onChange={setSaleWarehouseId}
+              label="مخزن البيع الافتراضي (البار)"
+              emptyLabel="غير محدد (أول مخزن في الفرع)"
+            />
+            <p className="text-xs text-muted-foreground">{ui('بيع الكافيه والمسحوبات بتخصم منه لما الكاشير مايختارش مخزن، وهو الافتراضي في المشتريات والجرد.')}</p>
+          </div>
+        )}
         <p className="text-sm text-muted-foreground">
           {ui('هذه النسبة تظهر في /sales/new كحقل «ضريبة %» وهي غير قابلة للتعديل من شاشة البيع نفسها.')}
         </p>
