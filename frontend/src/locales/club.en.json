@@ -448,31 +448,6 @@
     "noCurrentBooking": "No active booking — locker is available",
     "noBookingHistory": "No booking history for this locker"
   },
-  "onboarding": {
-    "title": "Soft-opening guide",
-    "dismiss": "Close guide",
-    "gotIt": "Got it",
-    "members": {
-      "description": "Three steps to add a member and continue directly to subscription setup.",
-      "step1Title": "Enter member details",
-      "step1Body": "Name, mobile number, and branch are required; duplicates are checked before saving.",
-      "step2Title": "Member code is automatic",
-      "step2Body": "On save, the server creates the branch prefix plus a 6-digit sequence; the preview does not reserve a code.",
-      "step3Title": "Save and continue",
-      "step3Body": "“Save & add subscription” saves once, then opens subscription setup with the member preselected.",
-      "start": "Add first member"
-    },
-    "subscriptions": {
-      "description": "Link the member to a plan and record collection in one flow.",
-      "step1Title": "Confirm the member",
-      "step1Body": "A member arriving from the add-member screen is preselected; you can also search by code or name.",
-      "step2Title": "Choose the right plan",
-      "step2Body": "Selecting a package fills its value, duration, and end date from the plan settings.",
-      "step3Title": "Record payment and save",
-      "step3Body": "Enter the paid amount and payment method; the outstanding balance appears before confirmation.",
-      "start": "Add subscription"
-    }
-  },
   "payments": {
     "cash": "Cash",
     "card": "Card",

@@ -36,10 +36,6 @@ import { DialogFormGrid, DialogFormSection, DialogFormSummary, FormDialogBody, F
 import { FieldWrapper } from '@/components/common/form-fields';
 import { MemberSearchCombobox } from '@/components/club/member-search-combobox';
 import { SubscriptionReceiptCreateDialog } from '@/pages/club/subscription-receipt-create-dialog';
-import {
-  MemberOnboardingGuide,
-  useFirstVisitGuide,
-} from '@/components/club/member-onboarding-guide';
 import { SubscriptionTypeSelect, TransferPlanPicker } from '@/components/club/subscription-type-select';
 import {
   calculateSubscriptionDiscount,
@@ -242,7 +238,6 @@ export function ClubSubscriptionsPage({
     return { dateFrom: statsCustomFrom || undefined, dateTo: statsCustomTo || undefined };
   }, [statsPreset, statsCustomFrom, statsCustomTo]);
   const { user } = useAuth();
-  const subscriptionOnboarding = useFirstVisitGuide('subscriptions', user?.sub);
   const qc = useQueryClient();
   const location = useLocation();
   const navigate = useNavigate();
@@ -446,6 +441,9 @@ export function ClubSubscriptionsPage({
     enabled: tab === 'waivers',
   });
   const [dialogOpen, setDialogOpen] = useState(!!openCreateOnMount);
+  // The full-page form (/club/subscriptions/new) is wide enough for four fields per row on large screens.
+  const pageFormGridCls = openCreateOnMount ? '2xl:grid-cols-4' : undefined;
+  const pagePaddingCls = openCreateOnMount ? 'px-4 sm:px-8' : undefined;
   const [editSubId, setEditSubId] = useState<number | null>(null);
   const [editOriginal, setEditOriginal] = useState<{ startDate: string; typeId: string } | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
@@ -1631,17 +1629,6 @@ export function ClubSubscriptionsPage({
         ) : undefined}
       />
 
-      {subscriptionOnboarding.visible && !dialogOpen && showNewSubButton && canCreateSubscriptions && (
-        <MemberOnboardingGuide
-          scope="subscriptions"
-          onDismiss={subscriptionOnboarding.dismiss}
-          onStart={() => {
-            subscriptionOnboarding.dismiss();
-            openCreate();
-          }}
-        />
-      )}
-
       <div className="space-y-3">
         {canChangeStatsFilter && (
           <div className="flex flex-wrap items-center gap-2">
@@ -2027,25 +2014,18 @@ export function ClubSubscriptionsPage({
         }
         setDialogOpen(open);
       }}>
-        <DialogContent inline={!!openCreateOnMount} className={cn(FORM_DIALOG_CONTENT_CLASS, openCreateOnMount && 'min-h-screen w-full max-w-none rounded-none')} aria-describedby={undefined}>
-          <FormDialogHeader>
+        <DialogContent inline={!!openCreateOnMount} className={cn(FORM_DIALOG_CONTENT_CLASS, openCreateOnMount && 'max-h-none min-h-screen w-full max-w-none overflow-visible rounded-none sm:max-w-none')} aria-describedby={undefined}>
+          <FormDialogHeader className={pagePaddingCls}>
             <DialogTitle>{editSubId ? ct('subscriptions.editSub') : ct('subscriptions.newSub')}</DialogTitle>
           </FormDialogHeader>
 
-          <FormDialogBody>
-            {subscriptionOnboarding.visible && !editSubId && (
-              <MemberOnboardingGuide
-                scope="subscriptions"
-                compact
-                onDismiss={subscriptionOnboarding.dismiss}
-              />
-            )}
+          <FormDialogBody className={pagePaddingCls}>
             <section className="rounded-2xl border bg-muted/15 p-4 sm:p-5">
               <div className="mb-3">
                 <p className="font-semibold">نوع الاشتراك</p>
                 <p className="mt-1 text-sm text-muted-foreground">اختر المسار أولًا لإظهار الباقات أو الحصص المطلوبة.</p>
               </div>
-              <div className="mx-auto grid w-full max-w-5xl gap-3 sm:grid-cols-3">
+              <div className="grid w-full gap-3 sm:grid-cols-3">
                 {([
                   { value: 'package', label: 'اشتراك', description: 'الباقات العادية', icon: Package },
                   { value: 'private', label: 'اشتراكات برايفت', description: 'اشتراكات وحصص برايفت مع مدرب خاص', icon: ContactRound },
@@ -2074,7 +2054,7 @@ export function ClubSubscriptionsPage({
             </section>
 
             <DialogFormSection title={ct('subscriptions.sectionCustomer')} icon={User}>
-              <DialogFormGrid>
+              <DialogFormGrid className={pageFormGridCls}>
                 <FieldWrapper label={ct('common.branch')} required>
                   <select
                     className={selectCls}
@@ -2184,7 +2164,7 @@ export function ClubSubscriptionsPage({
             <div className="space-y-5">
             {subscriptionKind === 'special' ? (
               <DialogFormSection title="الاشتراك الخاص" icon={CalendarDays}>
-                <DialogFormGrid>
+                <DialogFormGrid className={pageFormGridCls}>
                   <FieldWrapper label="نوع الاشتراك الخاص" required>
                     <select
                       className={selectCls}
@@ -2291,7 +2271,7 @@ export function ClubSubscriptionsPage({
               </DialogFormSection>
             ) : subscriptionKind === 'private' ? (
               <DialogFormSection title="اشتراك برايفت مع مدرب خاص" icon={ContactRound}>
-                <DialogFormGrid>
+                <DialogFormGrid className={pageFormGridCls}>
                   <FieldWrapper label="نوع الاشتراك" required className="sm:col-span-2">
                     <Combobox
                       value={form.privatePackageId}
@@ -2348,7 +2328,7 @@ export function ClubSubscriptionsPage({
               </DialogFormSection>
             ) : (
             <DialogFormSection title={ct('subscriptions.sectionSubscription')} icon={CalendarDays}>
-              <DialogFormGrid>
+              <DialogFormGrid className={pageFormGridCls}>
                 <FieldWrapper label={ct('subscriptions.subType')} required>
                   <Combobox
                     value={form.subscriptionTypeId}
@@ -2567,7 +2547,7 @@ export function ClubSubscriptionsPage({
             </div>
           </FormDialogBody>
 
-          <FormDialogFooter>
+          <FormDialogFooter className={pagePaddingCls}>
             <Button variant="outline" onClick={() => openCreateOnMount ? navigate('/club/subscriptions', { replace: true }) : setDialogOpen(false)}>{ct('common.cancel')}</Button>
             {(editSubId ? canUpdateSubscriptions : canCreateSubscriptions) ? (
               <Button variant="brand" onClick={() => void saveSub()} disabled={saving}>{saving ? ct('common.saving') : ct('common.save')}</Button>

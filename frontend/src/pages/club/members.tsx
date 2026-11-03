@@ -15,10 +15,6 @@ import {
   AttendanceSummaryCards,
   useClubAttendanceStatistics,
 } from '@/components/club/attendance-summary-cards';
-import {
-  MemberOnboardingGuide,
-  useFirstVisitGuide,
-} from '@/components/club/member-onboarding-guide';
 import { MemberCell } from '@/components/club/member-cell';
 import { DialogFormGrid, DialogFormSection, DialogFormToggle, FormDialogBody, FormDialogFooter, FormDialogHeader, FORM_DIALOG_CONTENT_CLASS } from '@/components/common/dialog-form-layout';
 import { FieldWrapper } from '@/components/common/form-fields';
@@ -268,7 +264,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   const canCreateLockerSubscriptions = can('club.lockers:create');
   const { user } = useAuth();
   const isSystemAdmin = user?.level === 1;
-  const memberOnboarding = useFirstVisitGuide('members', user?.sub);
   const genderOptions = useMemo(
     () => [
       { value: 'male', label: ct('common.male') },
@@ -1240,17 +1235,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
           </Button> : undefined
         }
       />
-
-      {memberOnboarding.visible && canCreateMembers && singleView !== 'attendance' && (
-        <MemberOnboardingGuide
-          scope="members"
-          onDismiss={memberOnboarding.dismiss}
-          onStart={() => {
-            memberOnboarding.dismiss();
-            openCreate();
-          }}
-        />
-      )}
 
       {tab === 'members' && (
         <section className="rounded-2xl border border-primary/15 bg-card p-4 shadow-sm md:p-5" aria-live="polite">
