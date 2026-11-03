@@ -675,3 +675,29 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - أمر الرجوع لهذا التثبيت فقط:
   bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r5/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r5-update-backup.eLF2YX
 - المرجع للرفع اللي جاي: system.html = 8247ec0d65220114b14333f50e8eb3d5a9c7ee46f3538e7b5c0c2438ac45a9db.
+
+آخر تثبيت مؤكد: 20261103-r6 (مشتريات الكافيه وسداد الموردين ودرج الوردية)، 3 نوفمبر 2026
+------------------------------------------------------------
+- 5 ملفات backend متغيرة + ملف جديد + واجهة الإدارة. الكود: 0b880d4. مافيش تغيير في قاعدة البيانات.
+  - modules/procurement/{goods-receipts,quick-purchase-orders,supplier-invoices,supplier-payments}.service.js،
+    modules/sales/shift-sessions.service.js، والجديد modules/sales/supplier-drawer.js.
+  - دفعات الموردين (POST /supplier-payments) بتتسجل "مدفوع" فبتقلل باقي الفاتورة ورصيد المورد، ولازم فاتورة،
+    وpayment_date الافتراضي النهارده (التقفيل اليومي بيدور بالتاريخ). قبل كده كانت بتتحفظ "مسودة" ومافيش شاشة بتعتمدها.
+  - القائمة الجانبية: طلبات/أوامر الشراء والاستلام وفواتير المطابقة الثلاثية اتشالوا (لسه بيفتحوا باللينك)؛ /procurement
+    بيحوّل لـ /club/cafe/purchases. إذن استلام على أمر شراء ليه supplier_invoice_id بيترفض (مخزون مرتين)، وتأكيد أمر
+    الشراء السريع بيترفض.
+  - الكاش المدفوع لمورد بيعمل حركة درج supplier_payment (مرجع SUP-<رقم الدفعة>) في الوردية المفتوحة بتاعة اللي دفع بس؛
+    إلغاء الشراء بيلغي الحركة (أو بيرجّع الفلوس لورديته الحالية لو الأصلية اتقفلت). بيظهر في معاينة القفل وسجل الدرج
+    وتقرير الورديات ("سداد موردين نقدي").
+- اتبنى من أساس 03-r5 (97f4aa2 + 0d21edd e64ccd4 0ad6093 2a2dd1c c2ef717 e006ed1 4512791) + 0b880d4. الأساس طابق
+  system.html بتاع 03-r5 بالبايت، وbaseline الخمس ملفات طابق dist الإنتاج.
+  ملحوظة بناء: node_modules بتاع frontend في الـ checkout الرئيسي فيه react-router-dom 7 (الـ lockfile بيقول 6)، فالبناء بيه
+  مابيطابقش الإنتاج؛ لازم npm ci في شجرة البناء.
+- اختبارات sales + procurement في شجرة الإصدار: 12 suite، 42 test ناجحين (منهم shift-sessions.accounting وbranch-scope).
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r6، والعملية اتغيرت من 1970616 لـ 2002540.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r6-update-backup.wVeg0I
+- أمر الرجوع لهذا التثبيت فقط:
+  bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r6/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r6-update-backup.wVeg0I
+- بيانات في الإنتاج محتاجة قرار (ماتغيرتش): GRN-000003/4 دخّلوا مخزون بـ 750 + 1975 ج.م على أوامر شراء مسودة 4 و5 (فرع 3)
+  ومالهمش مديونية عند أي مورد؛ ووردية مفتوحة من 22 يوليو (فرع 1، user 1).
+- المرجع للرفع اللي جاي: system.html = 77c6a652e36af760b0c9be70f8288a3504db9b1938ba179e2561107487440a3e.
