@@ -11,7 +11,8 @@
 # the one the counts agree with. A negative figure is taken as 0.
 # Each bar's balance in its new warehouse (LEG-WH-<sub-branch>, made by the 2 Aug import) is set to that
 # figure for every item imported from the old system (cafe_products LEG-CAFE-<old id>), with one
-# adjustment movement per change (doc_type legacy_stock_sync), and the per-branch totals recomputed.
+# adjustment movement per change (doc_type legacy_stock_sync, signed quantity as the app writes it), and the
+# per-branch totals recomputed.
 # Items made in the new system and the store warehouses are not touched. Safe to run again: a second run
 # brings the bars back to the old system's figures (for example on the night the café moves over).
 set -euo pipefail
@@ -70,7 +71,7 @@ START TRANSACTION;
 INSERT INTO \`$N\`.inv_movements (movement_date, txn_type, direction, product_id, warehouse_id, quantity, unit_cost,
     balance_after, doc_type, doc_ref, branch_id, notes, created_at)
   SELECT NOW(3), 'adjustment', IF(s.target > s.current, 'in', 'out'), s.product_id, s.warehouse_id,
-         ABS(s.target - s.current), s.cost_price, s.target, 'legacy_stock_sync', DATE_FORMAT(NOW(), '%Y%m%d'),
+         s.target - s.current, s.cost_price, s.target, 'legacy_stock_sync', DATE_FORMAT(NOW(), '%Y%m%d'),
          s.branch_id, 'رصيد البار من السيستم القديم', NOW(3)
   FROM bar_sync s WHERE ABS(s.target - s.current) > 0.0005;
 INSERT INTO \`$N\`.inv_stock_balances (product_id, warehouse_id, current_stock, last_updated, created_at)
