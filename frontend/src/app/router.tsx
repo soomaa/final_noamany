@@ -131,6 +131,7 @@ import {
   ClubReceptionPage,
   ClubReceptionQuickServicesPage,
   ClubBarcodeManagementPage,
+  ClubAttendancePage,
   ClubBarcodeScanTimesPage,
   ClubMemberGroupsPage,
   ClubSurveysPage,
@@ -485,10 +486,11 @@ export function AppRouter() {
           <Route path="club/reception" element={<Lazy><ClubReceptionPage /></Lazy>} />
           <Route path="club/reception/quick-services" element={<Lazy><ClubReceptionQuickServicesPage /></Lazy>} />
           <Route path="club/members/cards" element={<Navigate to="/club/members/barcode-management?tab=membership" replace />} />
-          <Route path="club/members/barcode-management/member-check-in" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
+          <Route path="club/attendance" element={<Lazy><ClubAttendancePage /></Lazy>} />
+          <Route path="club/members/barcode-management/member-check-in" element={<Navigate to="/club/attendance?tab=members" replace />} />
           <Route path="club/members/barcode-management/print-range" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
-          <Route path="club/members/barcode-management/spa-check-in" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
-          <Route path="club/members/barcode-management/classes-check-in" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
+          <Route path="club/members/barcode-management/spa-check-in" element={<Navigate to="/club/attendance?tab=spa" replace />} />
+          <Route path="club/members/barcode-management/classes-check-in" element={<Navigate to="/club/attendance?tab=classes" replace />} />
           <Route path="club/members/barcode-management/spa-attendance" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
           <Route path="club/members/barcode-management/classes-attendance" element={<Lazy><ClubBarcodeManagementPage /></Lazy>} />
           <Route path="club/members/barcode-management/scan-times" element={<Lazy><ClubBarcodeScanTimesPage /></Lazy>} />
@@ -548,7 +550,7 @@ export function AppRouter() {
           <Route path="club/fitness/shift-analysis" element={<Lazy><FitnessShiftAnalysisPage /></Lazy>} />
           <Route path="club/fitness/equipment-maintenance" element={<Lazy><FitnessMaintenancePage /></Lazy>} />
           <Route path="club/fitness/spa-invoices" element={<Lazy><FitnessSpaInvoicesPage /></Lazy>} />
-          <Route path="club/fitness/barcode-check-in" element={<Navigate to="/club/members/barcode-management?tab=spa" replace />} />
+          <Route path="club/fitness/barcode-check-in" element={<Navigate to="/club/attendance?tab=spa" replace />} />
           <Route path="club/fitness/spa-attendance" element={<Navigate to="/club/members/barcode-management?tab=spa-attendance" replace />} />
           <Route path="club/fitness/classes-attendance" element={<Navigate to="/club/members/barcode-management?tab=class-attendance" replace />} />
           <Route path="club/fitness/spa-bookings" element={<Lazy><FitnessSpaBookingsPage /></Lazy>} />

@@ -27,6 +27,7 @@ const nav = load(path.join(root, 'frontend/src/lib/nav.ts'));
 const backend = load(path.join(root, 'backend/src/modules/rbac/catalog/rbac.catalog.ts'));
 const projection = load(path.join(root, 'frontend/src/lib/rbac-nav-order.ts'));
 const labels = load(path.join(root, 'frontend/src/locales/ar.json')).nav;
+const aliases = load(path.join(root, 'frontend/src/lib/route-permission-aliases.ts'));
 const dto = (nodes) => nodes.map((n, i) => ({ ...n, nameEn: n.nameEn ?? null, route: n.route ?? null, icon: n.icon ?? null, sortOrder: i, children: dto(n.children ?? []) }));
 const original = { actions: backend.ACTIONS, tree: dto(backend.RESOURCE_TREE) };
 const ordered = projection.orderRbacCatalogForSidebar(original);
@@ -41,7 +42,7 @@ test('every sidebar department, group and page appears in permissions with the s
     const landing = nav.navSectionLandingPath(section.id);
     expected.push({ type: 'page', route: landing, name: labels.sections[section.id] });
     for (const item of section.items ?? []) if (item.to !== landing) expected.push({ type: 'page', route: item.to, name: labels.routes[item.to] ?? item.label ?? item.to.split('/').filter(Boolean).pop().replace(/-/g, ' ') });
-    for (const group of section.groups ?? []) expected.push({ type: 'group', name: labels.groups[group.id] ?? group.id, pages: group.items.map(item => ({ route: item.to, name: labels.routes[item.to] ?? item.label ?? item.to.split('/').filter(Boolean).pop().replace(/-/g, ' ') })) });
+    for (const group of section.groups ?? []) expected.push({ type: 'group', name: labels.groups[group.id] ?? group.id, pages: group.items.flatMap(item => (aliases.routePermissionAlias(item.to) ?? [item.to]).map(route => ({ route, name: labels.routes[route] ?? item.label ?? route.split('/').filter(Boolean).pop().replace(/-/g, ' ') }))) });
     const actual = module.children.map(node => node.type === 'group'
       ? { type: 'group', name: node.nameAr, pages: node.children.map(page => ({ route: page.route, name: page.nameAr })) }
       : { type: 'page', route: node.route, name: node.nameAr });

@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useMemo } from 'react';
 import { api } from '@/lib/api';
+import { routePermissionAlias } from '@/lib/route-permission-aliases';
 import { useAuth } from '@/store/auth';
 
 export interface MyPermissions {
@@ -116,26 +117,39 @@ export function usePermission(): PermissionApi {
     [routeMap],
   );
 
+  const canViewRoutes = useCallback(
+    (routes: readonly string[]) =>
+      routes.some((route) => {
+        const key = resourceForRoute(route);
+        return !!key && keys.has(`${key}:view`);
+      }),
+    [keys, resourceForRoute],
+  );
+
   const canRoute = useCallback(
     (pathname: string) => {
       if (!data) return false;
       if (data.superAdmin) return true;
+      const alias = routePermissionAlias(pathname);
+      if (alias) return canViewRoutes(alias);
       const bestKey = resourceForRoute(pathname);
       if (!bestKey) return true; // unmapped route → open (utility pages: /profile, /notifications…)
       return keys.has(`${bestKey}:view`);
     },
-    [data, keys, resourceForRoute],
+    [data, keys, resourceForRoute, canViewRoutes],
   );
 
   const canNavRoute = useCallback(
     (pathname: string) => {
       if (!data) return false;
       if (data.superAdmin) return true;
+      const alias = routePermissionAlias(pathname);
+      if (alias) return canViewRoutes(alias);
       const bestKey = resourceForRoute(pathname);
       if (!bestKey) return false; // unmapped → hidden from the menu (must be catalogued to appear)
       return keys.has(`${bestKey}:view`);
     },
-    [data, keys, resourceForRoute],
+    [data, keys, resourceForRoute, canViewRoutes],
   );
 
   const refresh = useCallback(async () => {

@@ -154,6 +154,7 @@ export const ClubMemberFinancialPage = lazyPage(() => import('@/pages/club/route
 export const ClubReceptionPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubReceptionPage');
 export const ClubReceptionQuickServicesPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubReceptionQuickServicesPage');
 export const ClubBarcodeManagementPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubBarcodeManagementPage');
+export const ClubAttendancePage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubAttendancePage');
 export const ClubBarcodeScanTimesPage = lazyPage(() => import('@/pages/club/barcode-scan-times'), 'ClubBarcodeScanTimesPage');
 export const ClubMemberGroupsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubMemberGroupsPage');
 export const ClubSurveysPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSurveysPage');

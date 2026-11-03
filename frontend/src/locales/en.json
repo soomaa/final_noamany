@@ -137,6 +137,7 @@
       "/club/fitness/barcode-check-in": "SPA & Class Barcode Check-in",
       "/club/fitness/spa-attendance": "SPA Attendance Report",
       "/club/members/attendance": "Member Attendance",
+      "/club/attendance": "Attendance",
       "/club/members/groups": "Groups & Categories",
       "/club/members/surveys": "Surveys",
       "/club/packages/settings": "Packages & Pricing",

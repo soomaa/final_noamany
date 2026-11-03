@@ -1,5 +1,6 @@
 import ar from '@/locales/ar.json';
 import { NAV_SECTIONS, navSectionLandingPath } from '@/lib/nav';
+import { routePermissionAlias } from '@/lib/route-permission-aliases';
 import type { RbacCatalog, RbacNode } from '@/types/rbac';
 
 /** RBAC module keys whose sidebar section has a different identifier. */
@@ -60,8 +61,11 @@ export function orderRbacCatalogForSidebar(catalog: RbacCatalog): RbacCatalog {
     for (const group of section.groups ?? []) {
       const groupChildren: RbacNode[] = [];
       for (const item of group.items) {
-        const page = pagesByRoute.get(item.to);
-        if (page) groupChildren.push(sidebarPage(page, labels.routes[item.to] ?? item.label ?? item.to.split('/').filter(Boolean).pop()!.replace(/-/g, ' '), position++));
+        // A combined (tabbed) page is granted through its tabs' own pages.
+        for (const route of routePermissionAlias(item.to) ?? [item.to]) {
+          const page = pagesByRoute.get(route);
+          if (page) groupChildren.push(sidebarPage(page, labels.routes[route] ?? item.label ?? route.split('/').filter(Boolean).pop()!.replace(/-/g, ' '), position++));
+        }
       }
       if (!groupChildren.length) continue;
 

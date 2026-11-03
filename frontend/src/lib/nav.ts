@@ -130,15 +130,13 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: CR.members.management },
           { to: CR.members.measurements, label: 'قياسات الأعضاء' },
           { to: CR.members.attendance },
+          { to: CR.members.checkIn },
         ],
       },
       {
         id: 'club-barcode-management',
         icon: ScanLine,
         items: [
-          { to: CR.members.barcodeMemberCheckIn },
-          { to: CR.members.barcodeSpaCheckIn },
-          { to: CR.members.barcodeClassesCheckIn },
           { to: CR.members.barcodeManagement },
           { to: CR.members.barcodePrintRange },
           { to: CR.members.barcodeSpaAttendance },

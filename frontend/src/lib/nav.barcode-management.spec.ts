@@ -6,9 +6,6 @@ const barcodeManagement = NAV_SECTIONS
 
 const routes = barcodeManagement?.items.map((item) => item.to) ?? [];
 const expectedRoutes = [
-  '/club/members/barcode-management/member-check-in',
-  '/club/members/barcode-management/spa-check-in',
-  '/club/members/barcode-management/classes-check-in',
   '/club/members/barcode-management',
   '/club/members/barcode-management/print-range',
   '/club/members/barcode-management/spa-attendance',

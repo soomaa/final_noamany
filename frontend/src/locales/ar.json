@@ -137,6 +137,7 @@
       "/club/fitness/barcode-check-in": "تسجيل حضور السبا والحصص بالباركود",
       "/club/fitness/spa-attendance": "تقرير حضور السبا",
       "/club/members/attendance": "حضور الأعضاء",
+      "/club/attendance": "حضور",
       "/club/members/groups": "المجموعات والفئات",
       "/club/members/surveys": "الاستبيانات",
       "/club/packages/settings": "الباقات والأسعار",

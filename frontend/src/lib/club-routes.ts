@@ -34,6 +34,8 @@ export const CLUB_ROUTES = {
     barcodeClassesAttendance: '/club/members/barcode-management/classes-attendance',
     barcodeScanTimes: '/club/members/barcode-management/scan-times',
     attendance: '/club/members/attendance',
+    /** Member, SPA and class barcode check-in as tabs of one page. */
+    checkIn: '/club/attendance',
     groups: '/club/members/groups',
     surveys: '/club/members/surveys',
   },

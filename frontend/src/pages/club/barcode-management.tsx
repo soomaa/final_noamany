@@ -1,6 +1,6 @@
-import { CreditCard, FileText, IdCard, LayoutGrid, Printer, ScanBarcode, Search, Sparkles, Table2, UsersRound } from 'lucide-react';
+import { CreditCard, IdCard, LayoutGrid, Printer, ScanBarcode, Search, Table2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
 import { EmptyState, ErrorState } from '@/components/common/states';
@@ -23,15 +23,18 @@ import { useClubT } from '@/hooks/use-club-t';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
 import { api, apiError } from '@/lib/api';
+import { CLUB_ROUTES } from '@/lib/club-routes';
 import { cn, toArabicDigits } from '@/lib/utils';
 import type { ClubMemberListItem } from '@/types/club';
 import { MemberAvatar, memberInitials } from '@/components/club/member-avatar';
 import type { ColumnDef } from '@tanstack/react-table';
-import { ClassBarcodeCheckInPanel, MemberBarcodeCheckInPanel, SpaBarcodeCheckInPanel } from './fitness/barcode-check-in';
 import { FitnessSpaAttendanceReportPanel } from './fitness/spa-attendance';
 import { FitnessClassAttendanceReportPanel } from './fitness/class-attendance';
 
-type ViewTab = 'barcodes' | 'membership' | 'table' | 'member-check-in' | 'print-range' | 'spa' | 'classes' | 'spa-attendance' | 'class-attendance';
+type ViewTab = 'barcodes' | 'membership' | 'table' | 'print-range' | 'spa-attendance' | 'class-attendance';
+
+/** Old check-in tabs of this page, now tabs of the حضور page. */
+const CHECK_IN_TABS: Record<string, string> = { 'member-check-in': 'members', spa: 'spa', classes: 'classes' };
 
 function MemberBarcodeCard({
   member,
@@ -164,14 +167,11 @@ export function ClubBarcodeManagementPage() {
   const navigate = useNavigate();
   const tabParam =
     pathname.endsWith('/print-range') ? 'print-range'
-      : pathname.endsWith('/member-check-in') ? 'member-check-in'
-      : pathname.endsWith('/spa-check-in') ? 'spa'
-      : pathname.endsWith('/classes-check-in') ? 'classes'
       : pathname.endsWith('/spa-attendance') ? 'spa-attendance'
       : pathname.endsWith('/classes-attendance') ? 'class-attendance'
       : searchParams.get('tab');
   const view: ViewTab =
-    tabParam === 'membership' || tabParam === 'table' || tabParam === 'member-check-in' || tabParam === 'print-range' || tabParam === 'spa' || tabParam === 'classes' || tabParam === 'spa-attendance' || tabParam === 'class-attendance' || tabParam === 'barcodes' ? tabParam : 'barcodes';
+    tabParam === 'membership' || tabParam === 'table' || tabParam === 'print-range' || tabParam === 'spa-attendance' || tabParam === 'class-attendance' || tabParam === 'barcodes' ? tabParam : 'barcodes';
 
   const setView = (next: ViewTab) => {
     const p = new URLSearchParams(searchParams);
@@ -266,6 +266,9 @@ export function ClubBarcodeManagementPage() {
     [ct],
   );
 
+  const checkInTab = tabParam ? CHECK_IN_TABS[tabParam] : undefined;
+  if (checkInTab) return <Navigate to={`${CLUB_ROUTES.members.checkIn}?tab=${checkInTab}`} replace />;
+
   const printLabel =
     view === 'membership' ? ct('members.cardsPrintPage') : ct('members.barcodePrintPage');
 
@@ -286,18 +289,6 @@ export function ClubBarcodeManagementPage() {
       <Tabs value={view} onValueChange={(v) => setView(v as ViewTab)}>
         <div className="flex flex-col gap-4 print:hidden">
           <TabsList className="h-11 w-full flex-wrap">
-            <TabsTrigger value="member-check-in" className="gap-2 px-4">
-              <UsersRound className="size-4" />
-              حضور الأعضاء
-            </TabsTrigger>
-            <TabsTrigger value="spa" className="gap-2 px-4">
-              <Sparkles className="size-4" />
-              حضور السبا
-            </TabsTrigger>
-            <TabsTrigger value="classes" className="gap-2 px-4">
-              <ScanBarcode className="size-4" />
-              حضور الحصص
-            </TabsTrigger>
             <TabsTrigger value="barcodes" className="gap-2 px-4">
               <ScanBarcode className="size-4" />
               {ct('members.barcodeTabCards')}
@@ -338,9 +329,6 @@ export function ClubBarcodeManagementPage() {
           <p className="text-center text-sm text-muted-foreground">تُطبع الأكواد الواقعة بين كود البداية وكود النهاية فقط.</p>
         </TabsContent>
 
-        <TabsContent value="member-check-in"><MemberBarcodeCheckInPanel /></TabsContent>
-        <TabsContent value="spa"><SpaBarcodeCheckInPanel /></TabsContent>
-        <TabsContent value="classes"><ClassBarcodeCheckInPanel /></TabsContent>
         <TabsContent value="spa-attendance"><FitnessSpaAttendanceReportPanel /></TabsContent>
         <TabsContent value="class-attendance"><FitnessClassAttendanceReportPanel /></TabsContent>
 

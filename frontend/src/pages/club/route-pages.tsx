@@ -9,6 +9,7 @@ import { SpecialClassesPage } from './special-classes';
 export { ClubReceptionPage } from './reception';
 export { ClubReceptionQuickServicesPage } from './reception-quick-services';
 export { ClubBarcodeManagementPage } from './barcode-management';
+export { ClubAttendancePage } from './attendance';
 export { ClubMemberFormPage } from './member-form';
 export { ClubMemberGroupsPage } from './member-groups';
 export { ClubSurveysPage } from './surveys';
