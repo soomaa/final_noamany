@@ -1,11 +1,11 @@
-import { CreditCard, IdCard, LayoutGrid, Printer, ScanBarcode, Search, Table2 } from 'lucide-react';
+import { Copy, CreditCard, IdCard, LayoutGrid, Printer, ScanBarcode, Search, Table2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
 import { EmptyState, ErrorState } from '@/components/common/states';
 import { PageHeader } from '@/components/common/page-header';
-import { BarcodeLabel, BarcodePreview, printBarcodeLabels, type BarcodeLabelData } from '@/components/club/barcode-label';
+import { BarcodeLabel, BarcodePreview, barcodeLabelPng, printBarcodeLabels, type BarcodeLabelData } from '@/components/club/barcode-label';
 import { ClubStatCard } from '@/components/club/stat-card';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,6 +23,7 @@ import { useClubT } from '@/hooks/use-club-t';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
 import { api, apiError } from '@/lib/api';
+import { writePngImageToClipboard } from '@/lib/clipboard-image';
 import { CLUB_ROUTES } from '@/lib/club-routes';
 import { cn, toArabicDigits } from '@/lib/utils';
 import type { ClubMemberListItem } from '@/types/club';
@@ -36,15 +37,50 @@ type ViewTab = 'barcodes' | 'membership' | 'table' | 'print-range' | 'spa-attend
 /** Old check-in tabs of this page, now tabs of the حضور page. */
 const CHECK_IN_TABS: Record<string, string> = { 'member-check-in': 'members', spa: 'spa', classes: 'classes' };
 
+/**
+ * Copies the rendered member label to the clipboard as an image, falling back to a
+ * PNG download when the browser refuses image clipboard writes.
+ */
+async function copyBarcodeImage(
+  label: BarcodeLabelData,
+  messages: { copied: string; downloaded: string; failed: string },
+): Promise<void> {
+  const png = barcodeLabelPng(label);
+  try {
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      throw new Error('Image clipboard is not supported');
+    }
+    await writePngImageToClipboard(png, navigator.clipboard, ClipboardItem);
+    toast.success(messages.copied);
+  } catch {
+    try {
+      const blob = await png;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `member-barcode-${label.code}.png`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+      toast.info(messages.downloaded);
+    } catch {
+      toast.error(messages.failed);
+    }
+  }
+}
+
 function MemberBarcodeCard({
   member,
   branch,
+  onCopy,
   onPrint,
+  copyLabel,
   printLabel,
 }: {
   member: ClubMemberListItem;
   branch: string | null;
+  onCopy: () => void;
   onPrint: () => void;
+  copyLabel: string;
   printLabel: string;
 }) {
   const ct = useClubT();
@@ -98,16 +134,16 @@ function MemberBarcodeCard({
           </p>
         )}
 
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="w-full opacity-90 transition-opacity group-hover:opacity-100"
-          onClick={onPrint}
-        >
-          <Printer className="size-4" />
-          {printLabel}
-        </Button>
+        <div className="flex gap-2 opacity-90 transition-opacity group-hover:opacity-100">
+          <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onCopy}>
+            <Copy className="size-4" />
+            {copyLabel}
+          </Button>
+          <Button type="button" variant="outline" size="sm" className="flex-1" onClick={onPrint}>
+            <Printer className="size-4" />
+            {printLabel}
+          </Button>
+        </div>
       </div>
     </article>
   );
@@ -197,6 +233,12 @@ export function ClubBarcodeManagementPage() {
     name: m.name,
     branch: branchName(m.branchId),
   });
+
+  const copyMessages = {
+    copied: ct('members.barcodeCopied'),
+    downloaded: ct('members.barcodeDownloaded'),
+    failed: ct('members.barcodeCopyFailed'),
+  };
 
   const printBarcodes = () => {
     if (!members.length) return;
@@ -350,7 +392,9 @@ export function ClubBarcodeManagementPage() {
                   key={member.id}
                   member={member}
                   branch={branchName(member.branchId)}
+                  copyLabel={ct('members.copy')}
                   printLabel={ct('common.print')}
+                  onCopy={() => void copyBarcodeImage(toLabel(member), copyMessages)}
                   onPrint={() => setPrintMember(member)}
                 />
               ))}
@@ -430,9 +474,14 @@ export function ClubBarcodeManagementPage() {
                 name={printMember.name}
                 branch={branchName(printMember.branchId)}
               />
-              <Button variant="brand" onClick={() => printBarcodeLabels([toLabel(printMember)])}>
-                <Printer className="size-4" /> {ct('common.print')}
-              </Button>
+              <div className="flex w-full flex-col gap-2 sm:flex-row">
+                <Button className="flex-1" variant="brand" onClick={() => printBarcodeLabels([toLabel(printMember)])}>
+                  <Printer className="size-4" /> {ct('common.print')}
+                </Button>
+                <Button className="flex-1" variant="outline" onClick={() => void copyBarcodeImage(toLabel(printMember), copyMessages)}>
+                  <Copy className="size-4" /> {ct('members.copyBarcodeImage')}
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>
