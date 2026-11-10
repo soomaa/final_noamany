@@ -776,3 +776,15 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r11-update-backup.ZeW5ZQ
 - الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r11/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r11-update-backup.ZeW5ZQ
 - المرجع للرفع اللي جاي: الأساس = 695cdda، system.html = 61a7de15035a3f8e0a5bcaa1ab17f8673a7339bc983ba328e0a8bd5798a77bfe (ماتغيرش).
+
+آخر تثبيت مؤكد: 20261103-r12، 10 نوفمبر 2026 (الفجر)
+--------------------------------------------------
+- المحتوى: f61555b — jwt.strategy: الـ Authorization header بتاع التاب بقى قبل كوكي one80_access (كان التاب بيشتغل
+  بآخر أكاونت عمل دخول في أي تاب، فإدارات القايمة الجانبية للريسيبشن بتتغير مع الريفرش). والواجهة بتعمل ريلود
+  لو الـ refresh رجع بأكاونت تاني. ملف backend واحد + الواجهة.
+- اتأكد: UPDATE VERIFIED: 2026-11-03-r12، والعملية اتغيرت من 216400 لـ 3838616.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r12-update-backup.GOF6xE
+- الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261103-r12/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov03-r12-update-backup.GOF6xE
+- المرجع للرفع اللي جاي: الأساس = f61555b، system.html = 27f9ddf25164f3fa146d08af73c6dc515907d4f42353faaa9cdffe356138c34c.
+- ملحوظة للتجربة المحاكية: schema السيرفر (63f965a8…) غير schema الـ git (b81782d9…)؛ في السيرفر المحاكي بس بتتغير
+  البصمة المتوقعة، والحزمة الحقيقية بتفضل بفحص schema السيرفر.
