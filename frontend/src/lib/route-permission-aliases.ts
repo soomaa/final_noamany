@@ -11,6 +11,8 @@ export const ROUTE_PERMISSION_ALIASES: Record<string, readonly string[]> = {
     CR.members.barcodeSpaCheckIn,
     CR.members.barcodeClassesCheckIn,
   ],
+  // Roles list (delete unused roles) is part of the roles & permissions page.
+  '/admin/role-list': ['/admin/roles'],
 };
 
 /** The routes whose View grants access to `pathname`, when it is a combined page. */

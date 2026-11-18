@@ -26,6 +26,7 @@ import {
   formatBranchMemberCode,
   getEmailValidationError,
   getNationalIdFormatError,
+  getNationalIdValidationError,
   getPhoneValidationError,
   localDateString,
   normalizeName,
@@ -1159,6 +1160,9 @@ export class ClubMembersService {
     if (user.branch && user.branch > 0) {
       dto.branchId = user.branch;
     }
+    // A new member must have a national ID (older members without one can still be edited).
+    const nationalIdErr = getNationalIdValidationError(dto.cardNumber);
+    if (nationalIdErr) throw new BadRequestException(nationalIdErr);
     await this.validateMemberInput(dto);
     this.assertBranchAccess(user, dto.branchId);
     dto.branchId = canonicalClubMemberBranchId(dto.branchId);

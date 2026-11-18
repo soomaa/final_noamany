@@ -1,5 +1,5 @@
 import { RotateCcw, Save, ShieldCheck, Users } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useEffect, useMemo, useState } from 'react';
 import { PageHeader } from '@/components/common/page-header';
 import { EmptyState, ErrorState } from '@/components/common/states';
@@ -28,13 +28,15 @@ export function RolesPage() {
     String(value).replace(/\d/g, (digit) => localizedDigits[Number(digit)] ?? digit);
   const catalog = useCatalog();
   const rolesQ = useRoles();
-  const [roleId, setRoleId] = useState<number | null>(null);
+  const [searchParams] = useSearchParams();
+  // Opened from the roles list with ?role=<id>.
+  const [roleId, setRoleId] = useState<number | null>(() => Number(searchParams.get('role')) || null);
   const [draft, setDraft] = useState<Map<string, TriState>>(new Map());
   const [showUsers, setShowUsers] = useState(false);
 
   const roles = rolesQ.data?.roles ?? [];
   useEffect(() => {
-    if (roleId == null && roles.length) setRoleId(roles[0].id);
+    if (roles.length && (roleId == null || !roles.some((r) => r.id === roleId))) setRoleId(roles[0].id);
   }, [roles, roleId]);
 
   const matrixQ = useRoleMatrix(roleId);

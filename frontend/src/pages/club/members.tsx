@@ -48,7 +48,7 @@ import {
 } from '@/lib/api-hooks';
 import { confirm, afterMenuClose } from '@/lib/confirm';
 import { listQueryToApiParams, useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
+import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
 import type { ClubMembersView } from '@/lib/club-routes';
@@ -116,6 +116,22 @@ type MemberDocument = {
 
 function normalizeMemberPhone(phone: string) {
   return phone.trim().replace(/[\s\-()+]/g, '');
+}
+
+/** National ID as stored: Arabic digits → Latin, no spaces, upper case (child suffix "-C01"). */
+function normalizeNationalId(value: string) {
+  return value
+    .replace(/[٠-٩]/g, (d) => String('٠١٢٣٤٥٦٧٨٩'.indexOf(d)))
+    .replace(/\s+/g, '')
+    .toUpperCase();
+}
+
+/** Same rule as the server: 14 digits, or for a child the guardian's 14 digits + "-C" + 2 digits. */
+function nationalIdError(value: string): string | null {
+  const id = normalizeNationalId(value);
+  if (!id) return 'الرقم القومي مطلوب';
+  if (/^\d{14}$/.test(id) || /^\d{14}-C\d{2}$/.test(id)) return null;
+  return 'الرقم القومي غير صحيح — يجب أن يكون 14 رقمًا، أو للأطفال: رقم ولي الأمر + كود (مثال: 29801010101234-C01)';
 }
 
 const EMPTY_FORM: ClubMemberFormData = {
@@ -412,6 +428,8 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState<ClubMemberFormData>(EMPTY_FORM);
   const [phoneValidationError, setPhoneValidationError] = useState<string | null>(null);
+  // Format hint while typing; the "required" message only appears on save.
+  const nationalIdFieldError = form.cardNumber.trim() ? nationalIdError(form.cardNumber) : null;
   const [checkingPhone, setCheckingPhone] = useState(false);
 
   const formBranchName = useMemo(
@@ -649,6 +667,15 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       toast.error(MEMBER_PHONE_FORMAT_ERROR);
       return;
     }
+    // Required when adding a member; older members without one can still be edited.
+    const cardNumber = normalizeNationalId(form.cardNumber);
+    if (!editId || cardNumber) {
+      const idErr = nationalIdError(cardNumber);
+      if (idErr) {
+        toast.error(idErr);
+        return;
+      }
+    }
     if (!form.gender) {
       toast.error('اختر النوع');
       return;
@@ -664,8 +691,6 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       toast.error(ct('members.branchRequired'));
       return;
     }
-
-    const cardNumber = form.cardNumber.trim();
 
     saveMemberInFlight.current = true;
     setSaving(true);
@@ -1862,7 +1887,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       </Dialog>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className={FORM_DIALOG_CONTENT_CLASS} aria-describedby={undefined}>
+        <DialogContent className={cn(FORM_DIALOG_CONTENT_CLASS, 'sm:max-w-[min(96vw,80rem)]')} aria-describedby={undefined}>
           <FormDialogHeader>
             <DialogTitle>{editId ? ct('members.editMember') : ct('members.newMember')}</DialogTitle>
           </FormDialogHeader>
@@ -1918,7 +1943,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
 
           <div className="space-y-4">
             <DialogFormSection title={ct('members.sectionBasic')} icon={User}>
-              <DialogFormGrid>
+              <DialogFormGrid columns={3}>
                 <FieldWrapper label={ct('common.branch')} required>
                   {isSystemAdmin && !editId ? (
                     <select
@@ -1963,6 +1988,20 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                   />
                   {checkingPhone && <p className="mt-1 text-xs text-muted-foreground">جارٍ التحقق من الرقم…</p>}
                   {phoneValidationError && <p className="mt-1 flex items-center gap-1 text-xs text-destructive"><AlertTriangle className="size-3.5" />{phoneValidationError}</p>}
+                </FieldWrapper>
+                <FieldWrapper label={ct('members.nationalId')} required={!editId}>
+                  <Input
+                    className="nums font-mono"
+                    dir="ltr"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={form.cardNumber}
+                    maxLength={20}
+                    placeholder="14 رقم"
+                    aria-invalid={!!nationalIdFieldError}
+                    onChange={(e) => setForm((f) => ({ ...f, cardNumber: e.target.value }))}
+                  />
+                  {nationalIdFieldError && <p className="mt-1 flex items-center gap-1 text-xs text-destructive"><AlertTriangle className="size-3.5" />{nationalIdFieldError}</p>}
                 </FieldWrapper>
                 <FieldWrapper label={ct('members.gender')} required>
                   <select
@@ -2042,7 +2081,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
             </DialogFormSection>
 
             <DialogFormSection title={ct('members.sectionContact')} icon={Phone}>
-              <DialogFormGrid>
+              <DialogFormGrid columns={3}>
                 <FieldWrapper label={ct('members.email')}>
                   <Input
                     type="email"
@@ -2065,7 +2104,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                     <option value="widowed">{ct('members.widowed')}</option>
                   </select>
                 </FieldWrapper>
-                <FieldWrapper label={ct('members.address')} className="sm:col-span-2">
+                <FieldWrapper label={ct('members.address')} className="sm:col-span-2 lg:col-span-1">
                   <Input value={form.address ?? ''} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
                 </FieldWrapper>
                 <FieldWrapper label={ct('members.jobTitle')}>

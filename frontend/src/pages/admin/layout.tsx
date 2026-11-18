@@ -1,4 +1,4 @@
-import { ListChecks, ScrollText, ShieldCheck, UserCog } from 'lucide-react';
+import { ListChecks, ListTree, ScrollText, ShieldCheck, UserCog } from 'lucide-react';
 import type { ComponentType } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { usePermission } from '@/hooks/use-permission';
@@ -15,6 +15,7 @@ interface Tab {
 
 const TABS: Tab[] = [
   { to: '/admin/roles', label: uiStatic('الأدوار والصلاحيات'), require: 'admin.roles:view', icon: ShieldCheck },
+  { to: '/admin/role-list', label: uiStatic('قائمة الأدوار'), require: 'admin.roles:view', icon: ListTree },
   { to: '/admin/exceptions', label: uiStatic('استثناءات المستخدمين'), require: 'admin.exceptions:view', icon: UserCog },
   { to: '/users', label: uiStatic('المستخدمون'), require: 'admin.users:view', icon: ListChecks },
   { to: '/admin/audit', label: uiStatic('سجل التدقيق'), require: 'admin.audit:view', icon: ScrollText },

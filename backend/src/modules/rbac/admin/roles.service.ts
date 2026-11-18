@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { flattenCatalog, permKey } from '../catalog/rbac.catalog';
-import { ensureRoleForJobTitle, isJobTitleRoleKey } from '../job-title-role.util';
+import { ensureRoleForJobTitle, isJobTitleRoleKey, JOB_TITLE_ROLE_PREFIX } from '../job-title-role.util';
 import { PermissionEngineService } from '../engine/permission-engine.service';
 import { effectiveForRole, StoredCell } from '../engine/permission-resolver';
 import { RbacAuditService } from './audit.service';
@@ -31,24 +31,38 @@ export class RbacRolesService {
   async list() {
     // Reading the permissions screen must not replace employee role assignments.
     // Job-title provisioning belongs to explicit job/employee changes, not GET.
-    const [allRoles, counts] = await Promise.all([
+    const [allRoles, counts, jobs, employeesPerJob] = await Promise.all([
       this.prisma.rbac_roles.findMany({ orderBy: [{ id: 'asc' }] }),
       this.prisma.rbac_user_roles.groupBy({ by: ['role_id'], _count: { _all: true } }),
+      this.prisma.department_jobs.findMany({ select: { id: true } }),
+      this.prisma.employees.groupBy({
+        by: ['mosma_wazefy_code'],
+        where: { mosma_wazefy_code: { not: null } },
+        _count: { _all: true },
+      }),
     ]);
     const roles = allRoles.filter((r) => isJobTitleRoleKey(r.key));
     const userCount = new Map(counts.map((c) => [c.role_id, c._count._all]));
+    const jobIds = new Set(jobs.map((j) => j.id));
+    const employeeCount = new Map(employeesPerJob.map((e) => [e.mosma_wazefy_code, e._count._all]));
     return {
       totalSlots: this.engine.getAllKeys().size,
-      roles: roles.map((r) => ({
-        id: r.id,
-        key: r.key,
-        nameAr: r.name_ar,
-        nameEn: r.name_en,
-        description: r.description,
-        isSystem: r.is_system,
-        isSuperAdmin: r.is_super_admin,
-        users: userCount.get(r.id) ?? 0,
-      })),
+      roles: roles.map((r) => {
+        const jobTitleId = jobTitleIdOf(r.key);
+        return {
+          id: r.id,
+          key: r.key,
+          nameAr: r.name_ar,
+          nameEn: r.name_en,
+          description: r.description,
+          isSystem: r.is_system,
+          isSuperAdmin: r.is_super_admin,
+          users: userCount.get(r.id) ?? 0,
+          jobTitleId,
+          jobTitleExists: jobTitleId != null && jobIds.has(jobTitleId),
+          employees: jobTitleId != null ? employeeCount.get(jobTitleId) ?? 0 : 0,
+        };
+      }),
     };
   }
 
@@ -66,17 +80,44 @@ export class RbacRolesService {
     throw new BadRequestException('لا يمكن نسخ الأدوار — كل مسمى وظيفي له دور واحد مرتبط به');
   }
 
+  /**
+   * Delete a role that nobody uses. A job-title role is deleted together with its job title
+   * (each job title owns exactly one role), and only when no user account has the role and no
+   * employee (active or stopped) holds that job title.
+   */
   async remove(id: number, actorUserId?: number) {
     const role = await this.getRoleOrThrow(id);
-    if (isJobTitleRoleKey(role.key)) {
-      throw new BadRequestException('يمكن حذف الدور من صفحة المسميات الوظيفية فقط');
-    }
+    if (role.is_super_admin) throw new BadRequestException('لا يمكن حذف دور المدير العام');
     if (role.is_system) throw new BadRequestException('لا يمكن حذف دور نظامي');
     const users = await this.prisma.rbac_user_roles.count({ where: { role_id: id } });
-    if (users > 0) throw new BadRequestException(`لا يمكن حذف دور لديه ${users} مستخدم`);
-    await this.prisma.rbac_roles.delete({ where: { id } });
-    await this.audit.log({ actorUserId, action: 'role.delete', targetType: 'role', targetId: id, detail: { key: role.key } });
-    return { id };
+    if (users > 0) {
+      throw new BadRequestException(`لا يمكن حذف الدور — عليه ${users} مستخدم. انقلهم لدور تاني الأول.`);
+    }
+    const jobTitleId = jobTitleIdOf(role.key);
+    const job = jobTitleId != null
+      ? await this.prisma.department_jobs.findUnique({ where: { id: jobTitleId }, select: { id: true, name: true } })
+      : null;
+    if (jobTitleId != null) {
+      const employees = await this.prisma.employees.count({ where: { mosma_wazefy_code: jobTitleId } });
+      if (employees > 0) {
+        throw new BadRequestException(
+          `لا يمكن حذف الدور — ${employees} موظف على المسمى الوظيفي «${job?.name ?? role.name_ar}». غيّر مسماهم الأول.`,
+        );
+      }
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.rbac_roles.delete({ where: { id } });
+      if (job) await tx.department_jobs.delete({ where: { id: job.id } });
+    });
+    await this.engine.invalidateRole(id);
+    await this.audit.log({
+      actorUserId,
+      action: 'role.delete',
+      targetType: 'role',
+      targetId: id,
+      detail: { key: role.key, name: role.name_ar, jobTitleId: job?.id ?? null, jobTitleName: job?.name ?? null },
+    });
+    return { id, jobTitleId: job?.id ?? null };
   }
 
   async users(id: number) {
@@ -250,4 +291,11 @@ export class RbacRolesService {
     }
     return key;
   }
+}
+
+/** The job-title id inside a `job_title_<id>` role key, or null for other roles. */
+function jobTitleIdOf(key: string): number | null {
+  if (!isJobTitleRoleKey(key)) return null;
+  const id = Number(key.slice(JOB_TITLE_ROLE_PREFIX.length));
+  return Number.isInteger(id) && id > 0 ? id : null;
 }

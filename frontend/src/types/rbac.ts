@@ -35,6 +35,10 @@ export interface RbacRole {
   isSystem: boolean;
   isSuperAdmin: boolean;
   users: number;
+  /** Role list only: the job title this role belongs to, whether it still exists, and its employees. */
+  jobTitleId?: number | null;
+  jobTitleExists?: boolean;
+  employees?: number;
 }
 
 export interface RolesResponse {

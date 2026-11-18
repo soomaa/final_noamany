@@ -142,6 +142,7 @@ export const PushBroadcastPage = lazyPage(() => import('@/pages/settings/push'),
 // --- Enterprise RBAC admin ---
 export const AdminLayout = lazyPage(() => import('@/pages/admin/layout'), 'AdminLayout');
 export const RolesPage = lazyPage(() => import('@/pages/admin/roles'), 'RolesPage');
+export const RoleListPage = lazyPage(() => import('@/pages/admin/role-list'), 'RoleListPage');
 export const UserExceptionsPage = lazyPage(() => import('@/pages/admin/exceptions'), 'UserExceptionsPage');
 export const AuditPage = lazyPage(() => import('@/pages/admin/audit'), 'AuditPage');
 export const ClubMembersManagementPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubMembersManagementPage');

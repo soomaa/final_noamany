@@ -110,7 +110,8 @@ export function useCloneRole() {
 export function useDeleteRole() {
   return toastMutation((id: number) => api.delete(`/rbac/roles/${id}`), {
     success: uiStatic('تم حذف الدور'),
-    invalidate: [keys.roles],
+    // A job-title role is deleted with its job title.
+    invalidate: [keys.roles, ['departments']],
   });
 }
 

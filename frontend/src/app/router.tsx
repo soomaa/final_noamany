@@ -279,6 +279,7 @@ import {
   // Enterprise RBAC admin
   AdminLayout,
   RolesPage,
+  RoleListPage,
   UserExceptionsPage,
   AuditPage,
 } from '@/app/lazy-pages';
@@ -672,6 +673,7 @@ export function AppRouter() {
           <Route path="admin" element={<Lazy><AdminLayout /></Lazy>}>
             <Route index element={<Navigate to="/admin/roles" replace />} />
             <Route path="roles" element={<Lazy><RolesPage /></Lazy>} />
+            <Route path="role-list" element={<Lazy><RoleListPage /></Lazy>} />
             <Route path="exceptions" element={<Lazy><UserExceptionsPage /></Lazy>} />
             <Route path="audit" element={<Lazy><AuditPage /></Lazy>} />
           </Route>
