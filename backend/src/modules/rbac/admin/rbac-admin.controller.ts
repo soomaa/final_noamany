@@ -74,6 +74,13 @@ export class RbacAdminController {
     return this.roles.clone(id, dto, actor);
   }
 
+  /** Delete the roles whose job title was deleted (only those with no user accounts). */
+  @Post('roles/cleanup-orphans')
+  @RequiresPermission('admin.roles:manage')
+  removeOrphanRoles(@CurrentUser('sub') actor: number) {
+    return this.roles.removeOrphans(actor);
+  }
+
   @Delete('roles/:id')
   @RequiresPermission('admin.roles:manage')
   removeRole(@Param('id', ParseIntPipe) id: number, @CurrentUser('sub') actor: number) {

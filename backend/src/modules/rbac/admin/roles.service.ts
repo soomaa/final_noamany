@@ -55,7 +55,7 @@ export class RbacRolesService {
           nameAr: r.name_ar,
           nameEn: r.name_en,
           description: r.description,
-          isSystem: r.is_system,
+          isSystem: isProtectedSystemRole(r),
           isSuperAdmin: r.is_super_admin,
           users: userCount.get(r.id) ?? 0,
           jobTitleId,
@@ -88,7 +88,7 @@ export class RbacRolesService {
   async remove(id: number, actorUserId?: number) {
     const role = await this.getRoleOrThrow(id);
     if (role.is_super_admin) throw new BadRequestException('لا يمكن حذف دور المدير العام');
-    if (role.is_system) throw new BadRequestException('لا يمكن حذف دور نظامي');
+    if (isProtectedSystemRole(role)) throw new BadRequestException('لا يمكن حذف دور نظامي');
     const users = await this.prisma.rbac_user_roles.count({ where: { role_id: id } });
     if (users > 0) {
       throw new BadRequestException(`لا يمكن حذف الدور — عليه ${users} مستخدم. انقلهم لدور تاني الأول.`);
@@ -118,6 +118,45 @@ export class RbacRolesService {
       detail: { key: role.key, name: role.name_ar, jobTitleId: job?.id ?? null, jobTitleName: job?.name ?? null },
     });
     return { id, jobTitleId: job?.id ?? null };
+  }
+
+  /**
+   * Delete every job-title role whose job title no longer exists («المسمى الوظيفي محذوف»).
+   * A role that still has user accounts is kept (deleting it would strip their permissions) and
+   * reported back so the admin can move those users first.
+   */
+  async removeOrphans(actorUserId?: number) {
+    const [roles, jobs, counts] = await Promise.all([
+      this.prisma.rbac_roles.findMany({ where: { key: { startsWith: JOB_TITLE_ROLE_PREFIX } } }),
+      this.prisma.department_jobs.findMany({ select: { id: true } }),
+      this.prisma.rbac_user_roles.groupBy({ by: ['role_id'], _count: { _all: true } }),
+    ]);
+    const jobIds = new Set(jobs.map((j) => j.id));
+    const userCount = new Map(counts.map((c) => [c.role_id, c._count._all]));
+    const orphans = roles.filter((r) => {
+      const jobId = jobTitleIdOf(r.key);
+      return !r.is_super_admin && (jobId == null || !jobIds.has(jobId));
+    });
+    const deleted: Array<{ id: number; name: string }> = [];
+    const kept: Array<{ id: number; name: string; users: number }> = [];
+    for (const role of orphans) {
+      const users = userCount.get(role.id) ?? 0;
+      if (users > 0) {
+        kept.push({ id: role.id, name: role.name_ar, users });
+        continue;
+      }
+      await this.prisma.rbac_roles.delete({ where: { id: role.id } });
+      await this.engine.invalidateRole(role.id);
+      await this.audit.log({
+        actorUserId,
+        action: 'role.delete',
+        targetType: 'role',
+        targetId: role.id,
+        detail: { key: role.key, name: role.name_ar, jobTitleId: null, jobTitleName: null, reason: 'orphan-cleanup' },
+      });
+      deleted.push({ id: role.id, name: role.name_ar });
+    }
+    return { deleted, kept };
   }
 
   async users(id: number) {
@@ -294,6 +333,15 @@ export class RbacRolesService {
 }
 
 /** The job-title id inside a `job_title_<id>` role key, or null for other roles. */
+/**
+ * Roles the system owns and nobody may delete. Job-title roles are stored with is_system = true
+ * only because they are created automatically with their job title; they are deletable like any
+ * unused role (the job title goes with them).
+ */
+function isProtectedSystemRole(role: { key: string; is_system: boolean }): boolean {
+  return role.is_system && !isJobTitleRoleKey(role.key);
+}
+
 function jobTitleIdOf(key: string): number | null {
   if (!isJobTitleRoleKey(key)) return null;
   const id = Number(key.slice(JOB_TITLE_ROLE_PREFIX.length));

@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { useDeleteRole, useRoles } from '@/hooks/use-rbac';
+import { useCleanupOrphanRoles, useDeleteRole, useRoles } from '@/hooks/use-rbac';
 import { usePermission } from '@/hooks/use-permission';
 import { confirm } from '@/lib/confirm';
 import { useLocale } from '@/store/locale';
@@ -32,6 +32,7 @@ export function RoleListPage() {
   const canManage = can('admin.roles:manage');
   const rolesQ = useRoles();
   const remove = useDeleteRole();
+  const cleanup = useCleanupOrphanRoles();
   const [search, setSearch] = useState('');
   const [unusedOnly, setUnusedOnly] = useState(false);
   const localizedDigits = ui('٠١٢٣٤٥٦٧٨٩');
@@ -39,6 +40,9 @@ export function RoleListPage() {
 
   const roles = rolesQ.data?.roles ?? [];
   const unusedCount = roles.filter((r) => blockReason(r) == null).length;
+  // Roles left behind by a deleted job title («المسمى الوظيفي محذوف»).
+  const orphans = roles.filter((r) => r.jobTitleExists === false && !r.isSuperAdmin);
+  const deletableOrphans = orphans.filter((r) => r.users === 0).length;
   const visible = useMemo(() => {
     const q = search.trim();
     return roles
@@ -58,6 +62,20 @@ export function RoleListPage() {
       variant: 'destructive',
     });
     if (ok) remove.mutate(role.id);
+  };
+
+  const onCleanupOrphans = async () => {
+    const withUsers = orphans.length - deletableOrphans;
+    const ok = await confirm({
+      title: ui('حذف الأدوار اللي مسماها محذوف'),
+      description: `${ui('هيتحذف')} ${fmt(deletableOrphans)} ${ui('دور مسماه الوظيفي محذوف ومافيش عليه مستخدمين.')}`,
+      warning: withUsers > 0
+        ? `${fmt(withUsers)} ${ui('دور عليهم مستخدمين هيفضلوا لحد ما تنقل المستخدمين لدور تاني. الحذف مايترجعش.')}`
+        : ui('الحذف مايترجعش.'),
+      confirmLabel: ui('حذف'),
+      variant: 'destructive',
+    });
+    if (ok) cleanup.mutate(undefined);
   };
 
   return (
@@ -83,6 +101,17 @@ export function RoleListPage() {
           <Switch checked={unusedOnly} onCheckedChange={setUnusedOnly} />
           {ui('غير المستخدمة بس')}
         </label>
+        {canManage && deletableOrphans > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="text-destructive hover:text-destructive"
+            disabled={cleanup.isPending}
+            onClick={() => void onCleanupOrphans()}
+          >
+            <Trash2 className="size-4" /> {ui('احذف الأدوار اللي مسماها محذوف')} ({fmt(deletableOrphans)})
+          </Button>
+        )}
       </Card>
 
       {rolesQ.isError ? (

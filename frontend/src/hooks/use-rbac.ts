@@ -115,6 +115,30 @@ export function useDeleteRole() {
   });
 }
 
+export interface OrphanRoleCleanup {
+  deleted: { id: number; name: string }[];
+  kept: { id: number; name: string; users: number }[];
+}
+
+/** Delete the roles whose job title was deleted; roles that still have users are kept. */
+export function useCleanupOrphanRoles() {
+  return toastMutation(
+    async () => (await api.post<OrphanRoleCleanup>('/rbac/roles/cleanup-orphans')).data,
+    {
+      invalidate: [keys.roles],
+      onSuccess: (data) => {
+        const { deleted, kept } = data as OrphanRoleCleanup;
+        toast.success(`${uiStatic('تم حذف')} ${deleted.length} ${uiStatic('دور مسماه محذوف')}`);
+        if (kept.length) {
+          toast.warning(
+            `${uiStatic('اتسابت أدوار عليها مستخدمين — انقلهم لدور تاني الأول:')} ${kept.map((r) => `${r.name} (${r.users})`).join('، ')}`,
+          );
+        }
+      },
+    },
+  );
+}
+
 // ---- users / exceptions ----------------------------------------------------------------
 
 export function useRbacUsers(search: string) {

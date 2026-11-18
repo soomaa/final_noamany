@@ -46,8 +46,45 @@ describe('RBAC role delete', () => {
     expect(tx.rbac_roles.delete).not.toHaveBeenCalled();
   });
 
-  it('refuses system and super-admin roles', async () => {
-    await expect(setup({ role: { ...jobRole, is_system: true } }).service.remove(9)).rejects.toBeInstanceOf(BadRequestException);
+  it('refuses built-in system and super-admin roles', async () => {
+    await expect(setup({ role: { ...jobRole, key: 'trainer', is_system: true } }).service.remove(9)).rejects.toBeInstanceOf(BadRequestException);
     await expect(setup({ role: { ...jobRole, is_super_admin: true } }).service.remove(9)).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('deletes a job-title role even though it is stored as is_system (auto-created with its job title)', async () => {
+    const { service, tx } = setup({ role: { ...jobRole, is_system: true }, job: null });
+    await expect(service.remove(9, 1)).resolves.toEqual({ id: 9, jobTitleId: null });
+    expect(tx.rbac_roles.delete).toHaveBeenCalledWith({ where: { id: 9 } });
+  });
+});
+
+describe('RBAC orphan role cleanup (المسمى الوظيفي محذوف)', () => {
+  function cleanupSetup() {
+    const prisma = {
+      rbac_roles: {
+        findMany: jest.fn().mockResolvedValue([
+          { id: 1, key: 'job_title_10', name_ar: 'كاشير', is_system: true, is_super_admin: false },
+          { id: 2, key: 'job_title_11', name_ar: 'الإعلام', is_system: true, is_super_admin: false },
+          { id: 3, key: 'job_title_12', name_ar: 'أخصائي مبيعات', is_system: true, is_super_admin: false },
+        ]),
+        delete: jest.fn(),
+      },
+      department_jobs: { findMany: jest.fn().mockResolvedValue([{ id: 10 }]) },
+      rbac_user_roles: { groupBy: jest.fn().mockResolvedValue([{ role_id: 3, _count: { _all: 1 } }]) },
+    };
+    const engine = { getAllKeys: () => new Set<string>(), invalidateRole: jest.fn() };
+    const audit = { log: jest.fn() };
+    return { service: new RbacRolesService(prisma as any, engine as any, audit as any), prisma, engine };
+  }
+
+  it('deletes unused roles whose job title is gone and keeps live or in-use ones', async () => {
+    const { service, prisma, engine } = cleanupSetup();
+    await expect(service.removeOrphans(1)).resolves.toEqual({
+      deleted: [{ id: 2, name: 'الإعلام' }],
+      kept: [{ id: 3, name: 'أخصائي مبيعات', users: 1 }],
+    });
+    expect(prisma.rbac_roles.delete).toHaveBeenCalledTimes(1);
+    expect(prisma.rbac_roles.delete).toHaveBeenCalledWith({ where: { id: 2 } });
+    expect(engine.invalidateRole).toHaveBeenCalledWith(2);
   });
 });
