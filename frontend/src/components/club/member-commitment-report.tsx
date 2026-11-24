@@ -192,11 +192,14 @@ export function MemberCommitmentReport() {
       },
       {
         id: 'entries',
-        header: 'مرات الحضور',
+        header: 'أيام الحضور',
         cell: ({ row }) => (
           <div className="nums">
-            <p className="font-semibold">{toArabicDigits(row.original.attendanceEntries)} مرة</p>
-            <p className="text-xs text-muted-foreground">خلال {toArabicDigits(row.original.attendanceDays)} يوم مختلف</p>
+            {/* One visit per day: re-entries the same day (stepped out and scanned again) do not count (client, 25 Nov). */}
+            <p className="font-semibold">{toArabicDigits(row.original.attendanceDays)} يوم حضور</p>
+            {row.original.attendanceEntries > row.original.attendanceDays ? (
+              <p className="text-xs text-muted-foreground">سجّل دخول {toArabicDigits(row.original.attendanceEntries)} مرة (فيه أيام دخل وخرج ورجع)</p>
+            ) : null}
           </div>
         ),
       },
@@ -284,7 +287,7 @@ export function MemberCommitmentReport() {
           { key: 'startDate', header: 'البداية' },
           { key: 'endDate', header: 'النهاية' },
           { key: 'totalDays', header: 'إجمالي الأيام' },
-          { key: 'attendanceEntries', header: 'مرات الحضور' },
+          { key: 'attendanceEntries', header: 'مرات تسجيل الدخول' },
           { key: 'attendanceDays', header: 'أيام الحضور' },
           { key: 'attendanceRate', header: 'نسبة الحضور' },
           { key: 'level', header: 'مستوى الالتزام' },

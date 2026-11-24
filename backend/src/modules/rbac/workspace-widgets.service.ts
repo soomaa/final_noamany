@@ -59,9 +59,11 @@ export class WorkspaceWidgetsService {
         };
       case 'checkins_today':
         return {
-          count: await this.prisma.club_attendance.count({
+          // One visit per member per day (re-entries after stepping out do not add up).
+          count: (await this.prisma.club_attendance.groupBy({
+            by: ['member_id'],
             where: { attendance_date: today, ...branchWhere },
-          }),
+          })).length,
         };
       case 'my_subscriptions_today': {
         const rows = await this.prisma.club_subscriptions.findMany({
@@ -136,7 +138,9 @@ export class WorkspaceWidgetsService {
         const [members, subs, attendance] = await Promise.all([
           this.prisma.club_members.count({ where: { is_deleted: false, ...branchWhere } }),
           this.prisma.club_subscriptions.count({ where: branchWhere }),
-          this.prisma.club_attendance.count({ where: { attendance_date: today, ...branchWhere } }),
+          this.prisma.club_attendance
+            .groupBy({ by: ['member_id'], where: { attendance_date: today, ...branchWhere } })
+            .then((rows) => rows.length),
         ]);
         return { totalMembers: members, totalSubscriptions: subs, checkInsToday: attendance };
       }

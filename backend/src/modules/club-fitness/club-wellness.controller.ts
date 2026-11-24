@@ -23,7 +23,9 @@ import { JwtUser } from '../../common/types/jwt-user';
 export class ClubInbodyServicesController {
   constructor(private readonly service: ClubWellnessService) {}
 
+  // Reception sells a paid InBody once a plan's allowance is used up (client, 25 Nov).
   @Get('catalog')
+  @RequiresPermission('club.fitness:view', 'club.fitness.inbody_invoices:view', 'club.reception:view')
   catalog() {
     return this.service.listInbodyServicesCatalog();
   }

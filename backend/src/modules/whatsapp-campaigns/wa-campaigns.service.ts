@@ -663,7 +663,8 @@ export class WaCampaignsService {
 
   /**
    * For the members on one page of the attendance list: the last visit before that day, how many
-   * days ago, the colour, and — from the yellow threshold on — the «لم يحضر منذ مدة» message ready
+   * days ago, the colour, and — for every member with an earlier visit, except the first visit on a
+   * new plan — the «لم يحضر منذ مدة» message ready
    * to open in WhatsApp (sent by hand from the reception phone, not by the extension).
    */
   async absenceLookup(q: WaAbsenceLookupDto, user: JwtUser) {
@@ -672,7 +673,7 @@ export class WaCampaignsService {
     const ids = [...new Set(q.members.split(',').map(Number))];
     const { absence } = await readTemplateOptions(this.prisma);
     const scope = this.branches.allowedBranchIds(user);
-    const [members, visits, template] = await Promise.all([
+    const [members, visits, template, currentPlans] = await Promise.all([
       this.prisma.club_members.findMany({
         where: { id: { in: ids }, ...(scope !== null ? { branch_id: { in: scope } } : {}) },
         select: { id: true, name: true, member_code: true, phone: true, branch_id: true },
@@ -683,8 +684,15 @@ export class WaCampaignsService {
         _max: { attendance_date: true },
       }),
       absence.templateId ? this.prisma.wa_templates.findUnique({ where: { id: absence.templateId } }) : null,
+      // The plan the member is on that day: the latest one that has started and not ended.
+      this.prisma.club_subscriptions.groupBy({
+        by: ['member_id'],
+        where: { member_id: { in: ids }, subscription_start_date: { lte: day }, subscription_end_date: { gte: day } },
+        _max: { subscription_start_date: true },
+      }),
     ]);
     const lastVisit = new Map(visits.map((v) => [v.member_id, v._max.attendance_date ?? null]));
+    const planStart = new Map(currentPlans.map((p) => [p.member_id, p._max.subscription_start_date ?? null]));
     const branchNames = new Map<number, string>();
     for (const id of new Set(members.map((m) => m.branch_id))) branchNames.set(id, await this.branchName(id));
     return {
@@ -693,9 +701,14 @@ export class WaCampaignsService {
       rows: members.map((m) => {
         const last = lastVisit.get(m.id) ?? null;
         const days = last ? daysBetween(last, day) : null;
-        const level = days === null ? null : days >= absence.redDays ? 'red' : days >= absence.yellowDays ? 'yellow' : null;
+        // First visit on a new plan (no visit since it started): nothing to follow up — the gap is
+        // the time between subscriptions, not an absence (client, 24 Nov).
+        const start = planStart.get(m.id) ?? null;
+        const newSubscription = !!start && (!last || last < start);
+        const level = days === null || newSubscription ? null : days >= absence.redDays ? 'red' : days >= absence.yellowDays ? 'yellow' : null;
         const phone = toWhatsAppPhone(m.phone);
-        const text = level && template
+        // The message is offered on every row with an earlier visit (not only past the yellow line).
+        const text = last && !newSubscription && template
           ? renderTemplate(varyTemplate(template.body), {
               name: m.name,
               first_name: firstName(m.name),
@@ -705,7 +718,7 @@ export class WaCampaignsService {
               branch: branchNames.get(m.branch_id) ?? '',
             })
           : null;
-        return { memberId: m.id, lastVisit: last, days, level, phone, text };
+        return { memberId: m.id, lastVisit: last, days, level, phone, text, newSubscription };
       }),
     };
   }

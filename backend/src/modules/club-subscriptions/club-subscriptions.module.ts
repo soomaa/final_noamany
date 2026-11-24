@@ -15,6 +15,7 @@ import { ClubSubscriptionTypesService } from './club-subscription-types.service'
 import { ClubSubscriptionsController } from './club-subscriptions.controller';
 import { ClubSubscriptionsService } from './club-subscriptions.service';
 import { SubscriptionReportsService } from './subscription-reports.service';
+import { ClubSubscriptionPurgeService } from './club-subscription-purge.service';
 import { PrivateSubscriptionsController } from './private-subscriptions.controller';
 import { PrivateSubscriptionsService } from './private-subscriptions.service';
 import { ClubWhatsAppTemplatesController } from './club-whatsapp-templates.controller';
@@ -36,6 +37,7 @@ import { ClubPointsModule } from '../club-points/club-points.module';
   providers: [
     ClubSubscriptionsService,
     SubscriptionReportsService,
+    ClubSubscriptionPurgeService,
     ClubSubscriptionTypesService,
     ClubSubscriptionRefundsService,
     ClubSubscriptionTransfersService,

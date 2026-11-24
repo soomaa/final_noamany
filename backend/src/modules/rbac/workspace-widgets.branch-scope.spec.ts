@@ -5,7 +5,7 @@ function makeService() {
     users: { findUnique: jest.fn().mockResolvedValue({ branch_id_fk: 2 }) },
     club_members: { count: jest.fn().mockResolvedValue(4) },
     club_subscriptions: { count: jest.fn().mockResolvedValue(3) },
-    club_attendance: { count: jest.fn().mockResolvedValue(2) },
+    club_attendance: { count: jest.fn().mockResolvedValue(2), groupBy: jest.fn().mockResolvedValue([{ member_id: 1 }, { member_id: 2 }]) },
   };
   const workspace = {
     getWorkspace: jest.fn().mockResolvedValue({ widgets: ['club_kpis'] }),
@@ -30,7 +30,9 @@ describe('workspace widget branch isolation', () => {
     expect(prisma.club_subscriptions.count).toHaveBeenCalledWith({
       where: { branch_id: { in: [2] } },
     });
-    expect(prisma.club_attendance.count).toHaveBeenCalledWith({
+    // Today's attendance counts members once (groupBy member), still within the branch.
+    expect(prisma.club_attendance.groupBy).toHaveBeenCalledWith({
+      by: ['member_id'],
       where: expect.objectContaining({ branch_id: { in: [2] } }),
     });
   });

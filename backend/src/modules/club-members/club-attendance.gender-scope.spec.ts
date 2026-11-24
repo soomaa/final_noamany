@@ -48,7 +48,7 @@ describe('club attendance men/women section isolation', () => {
 
   it('does not limit the attendance list and statistics to the employee section', async () => {
     const prisma = {
-      club_attendance: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
+      club_attendance: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0), groupBy: jest.fn().mockResolvedValue([]) },
       $queryRaw: jest.fn().mockResolvedValue([]),
     };
     const service = makeService(prisma);
@@ -60,7 +60,7 @@ describe('club attendance men/women section isolation', () => {
 
   it('limits the attendance list and statistics to a section the employee picks', async () => {
     const prisma = {
-      club_attendance: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) },
+      club_attendance: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0), groupBy: jest.fn().mockResolvedValue([]) },
       $queryRaw: jest.fn().mockResolvedValue([]),
     };
     const service = makeService(prisma);

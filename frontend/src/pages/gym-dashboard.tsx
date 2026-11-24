@@ -1208,6 +1208,8 @@ export function DashboardPage() {
         </SheetContent>
       </Sheet>
 
+      <BranchComparison rows={branchComparisonRows} ui={ui} demo={!hasRealBranchData && IS_LOCAL_PREVIEW} compact={compact} reducedMotion={reducedMotion} />
+
       {data?.todaySnapshot && <TodayGlance snapshot={data.todaySnapshot} ui={ui} compact={compact} />}
 
       {data && (
@@ -1217,8 +1219,6 @@ export function DashboardPage() {
           {showDiscounts && data.discounts && <DiscountsCard discounts={data.discounts} ui={ui} compact={compact} />}
         </section>
       )}
-
-      <BranchComparison rows={branchComparisonRows} ui={ui} demo={!hasRealBranchData && IS_LOCAL_PREVIEW} compact={compact} reducedMotion={reducedMotion} />
 
       {(salesTeam || captains) && (
         <section className="grid gap-4 md:grid-cols-2 sm:gap-5">

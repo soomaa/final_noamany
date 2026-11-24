@@ -21,6 +21,7 @@ import {
   Snowflake,
   Sun,
   Undo2,
+  Trash2,
   XCircle,
   X as XIcon,
   Zap,
@@ -76,6 +77,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { DialogFormSummary } from '@/components/common/dialog-form-layout';
+import { SubscriptionPurgeDialog, useCanPurgeSubscription } from '@/components/club/subscription-purge-dialog';
 import { FreezeBalance, freezeDays } from '@/components/club/freeze-balance';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -293,6 +295,8 @@ export function ClubReceptionPage() {
     can('club.reception:update') ||
     can('club.subscriptions:update') ||
     can('club.subscriptions.list:update');
+  // «حذف (اتعمل بالغلط)»: the subscriptions delete grant only (reception's own grant is not enough).
+  const canPurgeSubscription = useCanPurgeSubscription();
   const canBlockMember =
     can('club.members:update') ||
     can('club.reception:update');
@@ -350,6 +354,7 @@ export function ClubReceptionPage() {
   const [renewForm, setRenewForm] = useState({ paidAmount: '' });
   const [renewRows, setRenewRows] = useState<ClubPaymentSplitRow[]>(singlePaymentRow());
   const [refundOpen, setRefundOpen] = useState(false);
+  const [purgeSubId, setPurgeSubId] = useState<number | null>(null);
   const [refundSubId, setRefundSubId] = useState<number | null>(null);
   const [refundStopDate, setRefundStopDate] = useState(localToday());
   const [refundReason, setRefundReason] = useState('');
@@ -1246,7 +1251,8 @@ export function ClubReceptionPage() {
         </div>
 
         {/* All subscription actions on one row; compact buttons, sideways scroll only on narrow screens. */}
-        {canUpdateSubscription ? <div className="mt-4 flex flex-nowrap gap-1.5 overflow-x-auto border-t border-border/60 pt-3 [&>button]:h-8 [&>button]:shrink-0 [&>button]:gap-1 [&>button]:whitespace-nowrap [&>button]:px-2.5 [&>button]:text-xs [&>button_svg]:size-3.5">
+        {canUpdateSubscription || canPurgeSubscription ? <div className="mt-4 flex flex-nowrap gap-1.5 overflow-x-auto border-t border-border/60 pt-3 [&>button]:h-8 [&>button]:shrink-0 [&>button]:gap-1 [&>button]:whitespace-nowrap [&>button]:px-2.5 [&>button]:text-xs [&>button_svg]:size-3.5">
+          {canUpdateSubscription ? <>
           {s.remainingAmount > 0 && (
             <Button
               size="sm"
@@ -1364,6 +1370,18 @@ export function ClubReceptionPage() {
             >
               <Undo2 className="size-4" />
               {ct('subscriptions.refundAction')}
+            </Button>
+          )}
+          </> : null}
+          {canPurgeSubscription && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-destructive hover:text-destructive"
+              onClick={() => setPurgeSubId(s.id)}
+            >
+              <Trash2 className="size-4" />
+              {ui('حذف (اتعمل بالغلط)')}
             </Button>
           )}
         </div> : null}
@@ -2285,6 +2303,16 @@ export function ClubReceptionPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <SubscriptionPurgeDialog
+        subscriptionId={purgeSubId}
+        onOpenChange={(open) => !open && setPurgeSubId(null)}
+        onPurged={() => {
+          void refetchSubs();
+          void refetchMember();
+          if (selectedId) void refreshEntitlement(selectedId, member?.branchId);
+        }}
+      />
 
       <Dialog
         open={refundOpen}

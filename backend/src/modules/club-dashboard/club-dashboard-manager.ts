@@ -172,7 +172,10 @@ async function todayAtGlance(ctx: ManagerContext) {
         ${subBranch}
       GROUP BY s.sale_date
     `,
-    prisma.club_attendance.count({ where: { attendance_date: today, ...branchWhere } }),
+    // One visit per member per day, however many times they were scanned in (client, 25 Nov).
+    prisma.club_attendance
+      .groupBy({ by: ['member_id'], where: { attendance_date: today, ...branchWhere } })
+      .then((rows) => rows.length),
     prisma.club_attendance.findMany({
       where: { attendance_date: today, check_in_time: { gte: since }, check_out_time: null, ...branchWhere },
       select: { member_id: true },

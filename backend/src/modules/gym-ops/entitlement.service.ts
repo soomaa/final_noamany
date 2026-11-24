@@ -227,7 +227,38 @@ export class EntitlementService {
       activeSub = usable[0] ?? activeCandidates.find((s) => s.status === 'frozen') ?? activeCandidates[0] ?? null;
     }
 
-    if (requireActiveSubscription && !activeSub) {
+    if (requireActiveSubscription && !activeSub && permittedBranchIds != null && subscriptionId == null) {
+      // An active plan booked at a branch outside this desk's scope: say so instead of the
+      // misleading «لا يوجد اشتراك نشط — آخر اشتراك انتهى في …» (client, 24 Nov).
+      const elsewhere = (await this.prisma.club_subscriptions.findMany({
+        where: { member_id: memberId, branch_id: { notIn: permittedBranchIds } },
+        orderBy: { subscription_end_date: 'desc' },
+      })).find((s) =>
+        s.status !== 'expired' &&
+        deriveSessionAwareStatus({
+          startDate: s.subscription_start_date,
+          endDate: s.subscription_end_date,
+          isLinkedToSessions: s.is_linked_to_sessions,
+          sessionsCount: s.sessions_count,
+          sessionsUsed: s.sessions_used,
+        }) === 'active',
+      );
+      if (elsewhere) {
+        const branch = await this.prisma.tbl_branches
+          .findUnique({ where: { branch_id: elsewhere.branch_id }, select: { branch_name: true } })
+          .catch(() => null);
+        const branchLabel = branch?.branch_name?.trim() || `فرع رقم ${elsewhere.branch_id}`;
+        reasons.push(
+          this.reason(
+            'subscription_other_branch',
+            `العضو عنده اشتراك نشط في ${branchLabel} (لحد ${elsewhere.subscription_end_date}) — مش صالح للدخول من الفرع ده`,
+            `Active subscription at another branch (#${elsewhere.branch_id}, until ${elsewhere.subscription_end_date}) — not valid at this branch`,
+            'block',
+          ),
+        );
+      }
+    }
+    if (requireActiveSubscription && !activeSub && !reasons.some((r) => r.code === 'subscription_other_branch')) {
       const latest = subs[0];
       const endHint = latest?.subscription_end_date
         ? ` — آخر اشتراك انتهى في ${latest.subscription_end_date}`

@@ -1568,9 +1568,10 @@ export class ClubAttendanceService {
       membersByDate,
     ] = await Promise.all([
       this.prisma.club_attendance.count({ where }),
-      this.prisma.club_attendance.count({
-        where: { ...where, attendance_date: today },
-      }),
+      // A member who steps out and is scanned in again is still one visit today (client, 25 Nov).
+      this.prisma.club_attendance
+        .groupBy({ by: ["member_id"], where: { ...where, attendance_date: today } })
+        .then((rows) => rows.length),
       this.prisma.club_attendance.count({
         where: { ...where, attendance_date: today, status: "checked_out" },
       }),
