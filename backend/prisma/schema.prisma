@@ -11173,3 +11173,30 @@ model wa_control_settings {
   selectors  Json?
   updated_at DateTime @updatedAt
 }
+
+/// «الحالات اليومية»: a manager's decision on an abnormal attendance case (migration
+/// 20261124130000_hr_attendance_exceptions). Code reads/writes it with RAW SQL only
+/// (attendance-exceptions/resolutions.repo.ts) — production never regenerates the client.
+/// shift_id 0 = the whole day. decision: present | absent | leave | excused | permission.
+model hr_attendance_exception_resolutions {
+  id               Int      @id @default(autoincrement())
+  emp_code         Int
+  work_date        String   @db.Char(10)
+  shift_id         Int      @default(0)
+  branch_id        Int?
+  case_type        String   @db.VarChar(30)
+  decision         String   @db.VarChar(20)
+  check_in         String?  @db.VarChar(10)
+  check_out        String?  @db.VarChar(10)
+  leave_type_id    Int?
+  reason           String   @db.VarChar(500)
+  attendance_id    Int?
+  created_row      Int      @default(0) @db.TinyInt
+  resolved_by      Int?
+  resolved_by_name String?  @db.VarChar(150)
+  resolved_at      DateTime @default(now()) @db.DateTime(0)
+
+  @@unique([emp_code, work_date, shift_id], map: "uq_attendance_exception_emp_date_shift")
+  @@index([work_date, branch_id], map: "idx_attendance_exception_date_branch")
+  @@map("hr_attendance_exception_resolutions")
+}

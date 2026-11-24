@@ -156,6 +156,7 @@ export const RESOURCE_TREE: ResourceNode[] = [
         actions: ALL,
         children: [
           { key: 'attendance.board', nameAr: 'لوحة الحضور', nameEn: 'Attendance board', type: 'page', route: '/attendance', actions: ['view', 'update', 'export', 'print', 'audit'] },
+          { key: 'attendance.exceptions', nameAr: 'الحالات اليومية', nameEn: 'Daily attendance cases', type: 'page', route: '/attendance/exceptions', actions: ['view', 'update', 'export', 'print', 'audit'] },
           { key: 'attendance.devices', nameAr: 'أجهزة البصمة', nameEn: 'Devices', type: 'page', route: '/attendance/devices', actions: LIST },
           { key: 'attendance.settings', nameAr: 'إعدادات الدوام', nameEn: 'Attendance settings', type: 'page', route: '/attendance/settings', actions: SETTINGS },
           { key: 'attendance.rules', nameAr: 'قواعد الدوام', nameEn: 'Attendance rules', type: 'page', route: '/attendance/rules', actions: SETTINGS },

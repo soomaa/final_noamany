@@ -96,6 +96,7 @@ export const AttendanceBoardPage = lazyPage(() => import('@/pages/attendance/boa
 export const AttendanceSettingsPage = lazyPage(() => import('@/pages/attendance/settings'), 'AttendanceSettingsPage');
 export const AttendanceRulesPage = lazyPage(() => import('@/pages/attendance/rules'), 'AttendanceRulesPage');
 export const AttendanceReportsPage = lazyPage(() => import('@/pages/attendance/reports'), 'AttendanceReportsPage');
+export const AttendanceExceptionsPage = lazyPage(() => import('@/pages/attendance/exceptions'), 'AttendanceExceptionsPage');
 export const AttendanceAdjustmentsPage = lazyPage(() => import('@/pages/attendance/adjustments'), 'AttendanceAdjustmentsPage');
 export const AttendanceImportPage = lazyPage(() => import('@/pages/attendance/import-device-file'), 'AttendanceImportPage');
 export const PayrollSetupPage = lazyPage(() => import('@/pages/payroll/setup'), 'PayrollSetupPage');
