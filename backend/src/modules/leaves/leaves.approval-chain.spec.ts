@@ -114,7 +114,8 @@ describe('Leaves approval chain (24 Nov: direct manager → HR → department ma
     expect(order(prisma, id)).toMatchObject({ agaza_from_date_m: '2026-12-02', agaza_to_date_m: '2026-12-03', num_days: 2 });
     // original range stored (raw SQL column) and in the history
     expect(prisma.$executeRaw).toHaveBeenCalled();
-    const sql = (prisma.$executeRaw.mock.calls[0] as unknown[])[0] as { values: unknown[] };
+    const calls = prisma.$executeRaw.mock.calls.map((c) => (c as unknown[])[0] as { strings: string[]; values: unknown[] });
+    const sql = calls.find((c) => c.strings.join('?').includes('requested_from_date_m'))!;
     expect(sql.values).toEqual(expect.arrayContaining(['2026-12-01', '2026-12-05', 5, id]));
     expect(prisma.hr_all_agzat_history.rows.some((h) => h.talab_msg === 'اعتماد جزئي')).toBe(true);
   });

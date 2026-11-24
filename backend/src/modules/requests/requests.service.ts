@@ -20,6 +20,14 @@ import { LeavesService } from '../leaves/leaves.service';
 import { PermissionsService } from '../permissions/permissions.service';
 import { OvertimeRequestsService } from '../overtime-requests/overtime-requests.service';
 import { PushService } from '../push/push.service';
+import { ExitsService } from '../termination/exits.service';
+import {
+  EXIT_TYPE_LABELS,
+  ExitType,
+  computeNoticeShortfall,
+  defaultRequiredNoticeDays,
+  isIsoDate,
+} from '../termination/exit-types';
 
 /** Who may see which requests: `null` employee set = every request (system admin). */
 type RequestAudience = { empIds: number[] | null };
@@ -47,6 +55,7 @@ export class RequestsService {
     @Optional() private readonly permissions?: PermissionsService,
     @Optional() private readonly overtime?: OvertimeRequestsService,
     @Optional() private readonly push?: PushService,
+    @Optional() private readonly exits?: ExitsService,
   ) {}
 
   /** Best-effort result push (+ in-app row) to the employee; never fails the request. */
@@ -392,13 +401,75 @@ export class RequestsService {
 
     await this.routeToDomain(typeKey, row, payload, userId);
 
+    // Resignation: the exit record is NOT created here (that would mark the employee as left at
+    // once, during the notice period). HR gets the pre-filled exit dialog instead.
+    const exitDraft = typeKey === 'resignation' ? await this.buildExitDraft(row, payload, user) : null;
+
     await this.prisma.hr_requests.update({
       where: { id },
-      data: { status: 4, reason_action: 'approved' },
+      data: { status: 4, reason_action: exitDraft ? 'approved:exit_pending' : 'approved' },
     });
     await this.notifyResult(row.publisher, userId, 'تم اعتماد طلبك', REQUEST_TYPE_LABELS[typeKey] ?? typeKey);
 
-    return { id, status: 'approved' };
+    return { id, status: 'approved', ...(exitDraft ? { exitDraft } : {}) };
+  }
+
+  /**
+   * Pre-filled «تسجيل انتهاء خدمة» for an approved resignation: notice = the request date, last
+   * working day = the one the employee asked for (else notice + required days), type resignation
+   * (or the short-notice / abandonment type the notice rule suggests).
+   */
+  private async buildExitDraft(
+    row: { id: number; emp_id_fk: number | null; emp_code_fk?: number | null; emp_name: string | null; created_at: string | null; payload?: string | null },
+    payload: Record<string, unknown>,
+    user: JwtUser,
+  ) {
+    const emp = await this.requestEmployeeBranch(row);
+    if (emp.id == null) return null;
+    const requiredNoticeDays = defaultRequiredNoticeDays();
+    const created = String(row.created_at ?? '').slice(0, 10);
+    const noticeGivenDate = isIsoDate(created) ? created : new Date().toISOString().slice(0, 10);
+    const asked = String(payload.last_work_day ?? payload.lastWorkingDate ?? '').slice(0, 10);
+    const fallback = new Date(Date.parse(`${noticeGivenDate}T00:00:00Z`) + requiredNoticeDays * 86_400_000).toISOString().slice(0, 10);
+    const lastWorkingDate = isIsoDate(asked) && asked >= noticeGivenDate ? asked : fallback;
+    const shortfall = computeNoticeShortfall({ exitType: 'resignation', noticeGivenDate, lastWorkingDate, requiredNoticeDays });
+    const exitType: ExitType = shortfall.shortfallDays > 0 ? 'resignation_short_notice' : 'resignation';
+    let existingExitId: number | null = null;
+    if (this.exits) {
+      try {
+        const existing = await this.exits.forEmployee(emp.id, user);
+        existingExitId = (existing[0] as { id?: number } | undefined)?.id ?? null;
+      } catch {
+        existingExitId = null;
+      }
+    }
+    return {
+      requestId: row.id,
+      empId: emp.id,
+      employeeName: row.emp_name,
+      exitType,
+      exitTypeLabel: EXIT_TYPE_LABELS[exitType],
+      noticeGivenDate,
+      lastWorkingDate,
+      requiredNoticeDays,
+      noticeDaysGiven: shortfall.noticeDaysGiven,
+      noticeShortfallDays: shortfall.shortfallDays,
+      reason: String(payload.reason ?? payload.notes ?? '').slice(0, 500) || null,
+      existingExitId,
+      message: existingExitId
+        ? 'للموظف سجل انتهاء خدمة بالفعل — راجعه في أرشيف انتهاء الخدمة'
+        : 'تم اعتماد الاستقالة — سجل انتهاء الخدمة (البيانات متعبية) بعد مراجعة آخر يوم عمل',
+    };
+  }
+
+  /** Pre-filled exit dialog for an approved resignation request (HR). */
+  async exitDraft(id: number, user: JwtUser) {
+    const row = await this.prisma.hr_requests.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException('الطلب غير موجود');
+    await this.assertCanSee(user, row, true);
+    if (fromDbRequestType(row.type) !== 'resignation') throw new BadRequestException('الطلب ليس طلب استقالة');
+    if (![1, 4].includes(row.status)) throw new BadRequestException('اعتمد طلب الاستقالة أولًا');
+    return this.buildExitDraft(row, this.parsePayload(row.payload), user);
   }
 
   async reject(id: number, user: JwtUser) {
@@ -614,6 +685,7 @@ export class RequestsService {
       employeeName: row.emp_name,
       status,
       createdAt: row.created_at,
+      exitPending: typeKey === 'resignation' && row.reason_action === 'approved:exit_pending',
       payload,
       timeline: this.buildTimeline(row.created_at, status, row.reason_action),
     };

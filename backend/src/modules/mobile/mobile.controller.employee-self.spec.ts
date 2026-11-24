@@ -10,6 +10,7 @@ describe('MobileController employee self-service lookups', () => {
   };
   const compat = { identity: jest.fn(), shiftChanges: jest.fn(), overtime: jest.fn() };
   const loans = {};
+  const overtime = { managerEntry: jest.fn() };
   const controller = new MobileController(
     mobile as never,
     permissions as never,
@@ -17,7 +18,7 @@ describe('MobileController employee self-service lookups', () => {
     attendance as never,
     compat as never,
     loans as never,
-    {} as never,
+    overtime as never,
   );
   const user = { sub: 44, emp_code: 8, name: 'موظف' } as any;
 
@@ -143,15 +144,17 @@ describe('MobileController employee self-service lookups', () => {
     expect(attendance.absenceReport.mock.calls[0][0].branchId).toBeUndefined();
   });
 
-  it('lists the authenticated employee extra-hours records and forwards a manager target for creation', async () => {
+  it('lists the authenticated employee extra-hours records and sends a manager entry for the target to HR', async () => {
     compat.overtime.mockResolvedValue([{ id: 15 }]);
     mobile.employeeIdByPhone.mockResolvedValue(77);
-    attendance.createExtraHours.mockResolvedValue({ id: 16 });
+    overtime.managerEntry.mockResolvedValue({ id: 16, queued: true, message: 'اتبعت للـ HR للموافقة' });
 
     await expect((controller as any).mobileExtraHours({ page: 1, perPage: 20, dateFrom: '2026-08-01', dateTo: '2026-08-25', search: '3' }, user)).resolves.toEqual([{ id: 15 }]);
-    await expect((controller as any).createMobileExtraHours({ employeePhone: '01000000000', numHours: 2, edafaDate: '2026-08-26' }, user)).resolves.toEqual({ id: 16 });
+    await expect((controller as any).createMobileExtraHours({ employeePhone: '01000000000', numHours: 2, edafaDate: '2026-08-26' }, user)).resolves.toMatchObject({ id: 16, queued: true });
     expect(compat.overtime).toHaveBeenCalledWith(user, { page: 1, per_page: 20, dateFrom: '2026-08-01', dateTo: '2026-08-25', search: '3' });
     expect(mobile.employeeIdByPhone).toHaveBeenCalledWith('01000000000');
-    expect(attendance.createExtraHours).toHaveBeenCalledWith({ empId: 77, employeePhone: '01000000000', numHours: 2, edafaDate: '2026-08-26' }, 44);
+    // Never written directly any more: a request at the HR step (HR / admin record inside managerEntry).
+    expect(attendance.createExtraHours).not.toHaveBeenCalled();
+    expect(overtime.managerEntry).toHaveBeenCalledWith({ empId: 77, date: '2026-08-26', kind: 'hours', hours: 2, reason: undefined }, user);
   });
 });

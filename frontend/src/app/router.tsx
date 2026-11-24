@@ -97,6 +97,7 @@ import {
   RequestNewPage,
   RequestsPage,
   OvertimeRequestsPage,
+  RequestsInboxPage,
   RewardsPage,
   SalaryScalePage,
   SiteVisitsPage,
@@ -467,6 +468,7 @@ export function AppRouter() {
           <Route path="documents" element={<Lazy><DocumentsPage /></Lazy>} />
           <Route path="requests/new/:type" element={<Lazy><RequestNewPage /></Lazy>} />
           <Route path="requests/overtime" element={<Lazy><OvertimeRequestsPage /></Lazy>} />
+          <Route path="requests/inbox" element={<Lazy><RequestsInboxPage /></Lazy>} />
           <Route path="requests/:id" element={<Lazy><RequestDetailPage /></Lazy>} />
           <Route path="requests" element={<Lazy><RequestsPage /></Lazy>} />
           <Route path="notifications" element={<Lazy><NotificationsPage /></Lazy>} />

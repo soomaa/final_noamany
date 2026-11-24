@@ -4,6 +4,7 @@ import {
   Body,
   Controller,
   HttpException,
+  Optional,
   Param,
   Query,
   UploadedFiles,
@@ -29,6 +30,7 @@ import { MobileService } from "./mobile.service";
 import { LegacyMobileCompatService } from "./legacy-mobile-compat.service";
 import { UploadsService } from "../uploads/uploads.service";
 import { LoansService } from "../loans/loans.service";
+import { OvertimeRequestsService } from "../overtime-requests/overtime-requests.service";
 import { Throttle, ThrottlerGuard } from "@nestjs/throttler";
 import { normalizeLegacyTime } from "./legacy-time.util";
 
@@ -51,6 +53,8 @@ export class LegacyMobileController {
     private readonly compat: LegacyMobileCompatService,
     private readonly uploads: UploadsService,
     private readonly loans: LoansService,
+    // Manager overtime / extra-shift entries go to HR approval (optional: specs construct without it).
+    @Optional() private readonly overtime?: OvertimeRequestsService,
   ) {}
 
   private value(input: Input, ...keys: string[]): string | undefined {
@@ -906,27 +910,31 @@ export class LegacyMobileController {
       add_sheft_edafi: async () => {
         const phone = this.value(input, "phone_num", "emp_phone", "employee_phone");
         const empId = phone ? await this.mobile.employeeIdByPhone(phone) : (await this.compat.identity(user)).id;
-        return this.attendance.createShiftSwap(
-          {
-            empId,
-            ttype: this.id(input, "ttype", "sheft_type_id"),
-            dwamIdFk: this.id(input, "dwam_id_fk", "dwam_id"),
-            sheftDate: this.value(input, "sheft_date", "date") ?? "",
-          },
-          user.sub,
-        );
+        const ttype = this.id(input, "ttype", "sheft_type_id");
+        const dwamIdFk = this.id(input, "dwam_id_fk", "dwam_id");
+        const sheftDate = this.value(input, "sheft_date", "date") ?? "";
+        // An extra shift (ttype 2) from a direct manager waits for HR; HR / admin record it directly.
+        if (ttype === 2 && this.overtime) {
+          return this.overtime.managerEntry(
+            { empId, date: sheftDate, kind: "shift", shiftId: dwamIdFk, reason: this.value(input, "reason", "notes") },
+            user,
+          );
+        }
+        return this.attendance.createShiftSwap({ empId, ttype, dwamIdFk, sheftDate }, user.sub);
       },
       add_hours_edafi: async () => {
         const phone = this.value(input, "emp_phone", "phone_num", "employee_phone");
         const empId = phone ? await this.mobile.employeeIdByPhone(phone) : (await this.compat.identity(user)).id;
-        return this.attendance.createExtraHours(
-          {
-            empId,
-            numHours: this.id(input, "num_hours"),
-            edafaDate: this.value(input, "edafa_date", "date") ?? "",
-          },
-          user.sub,
-        );
+        const numHours = this.id(input, "num_hours");
+        const edafaDate = this.value(input, "edafa_date", "date") ?? "";
+        // A direct manager's entry becomes a request at the HR step; HR / admin record it directly.
+        if (this.overtime) {
+          return this.overtime.managerEntry(
+            { empId, date: edafaDate, kind: "hours", hours: numHours, reason: this.value(input, "reason", "notes") },
+            user,
+          );
+        }
+        return this.attendance.createExtraHours({ empId, numHours, edafaDate }, user.sub);
       },
     };
     const operation = operations[action];

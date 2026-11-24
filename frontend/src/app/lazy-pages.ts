@@ -119,6 +119,7 @@ export const DocumentsPage = lazyPage(() => import('@/pages/documents/index'), '
 export const RequestsPage = lazyPage(() => import('@/pages/requests/index'), 'RequestsPage');
 export const RequestNewPage = lazyPage(() => import('@/pages/requests/new'), 'RequestNewPage');
 export const OvertimeRequestsPage = lazyPage(() => import('@/pages/requests/overtime'), 'OvertimeRequestsPage');
+export const RequestsInboxPage = lazyPage(() => import('@/pages/requests/inbox'), 'RequestsInboxPage');
 export const RequestDetailPage = lazyPage(() => import('@/pages/requests/detail'), 'RequestDetailPage');
 export const NotificationsPage = lazyPage(() => import('@/pages/notifications/index'), 'NotificationsPage');
 export const UsersPage = lazyPage(() => import('@/pages/users/index'), 'UsersPage');

@@ -1,5 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Check, Eye, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, Eye, GitBranch, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Combobox } from '@/components/common/combobox';
@@ -28,6 +28,7 @@ import { api, apiError } from '@/lib/api';
 import { confirm } from '@/lib/confirm';
 import { formatTime } from '@/lib/formatters';
 import { isNotImplemented, useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
+import { FlowStatusChip, RequestFlowDialog, type FlowStatus } from '@/components/requests/request-flow';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
@@ -50,6 +51,11 @@ interface PermissionRow {
   status?: string;
   canAction?: boolean;
   canModify?: boolean;
+  canResubmit?: boolean;
+  returned?: boolean;
+  returnComment?: string | null;
+  flowStatus?: FlowStatus;
+  flowStatusLabel?: string;
 }
 
 interface PermissionDetails extends PermissionRow {
@@ -121,6 +127,8 @@ export function PermissionsPage() {
   const { ui } = useLocale();
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<PermissionRow>('permissions', params);
+  // Unified card: status chip, timeline, موافقة / رفض / إرجاع بتعليق, or edit + resubmit.
+  const [flowFor, setFlowFor] = useState<number | null>(null);
   const { data: empOptions } = useEmployeeOptions();
   const { can } = usePermission();
   const canUpdate = can('leaves.permissions:update');
@@ -299,7 +307,8 @@ export function PermissionsPage() {
     {
       accessorKey: 'status',
       header: ui('الحالة'),
-      cell: ({ getValue }) => {
+      cell: ({ row, getValue }) => {
+        if (row.original.flowStatus) return <FlowStatusChip status={row.original.flowStatus} label={row.original.flowStatusLabel} />;
         const s = getValue() as string | undefined;
         return <StatusBadge status={STATUS_KEY[s ?? ''] ?? 'pending'} />;
       },
@@ -312,6 +321,9 @@ export function PermissionsPage() {
           <div className="flex flex-wrap gap-1">
             <Button variant="ghost" size="icon" aria-label={ui('التفاصيل')} onClick={() => void openDetails(row.original.id)}>
               <Eye className="size-4 text-sky-500" />
+            </Button>
+            <Button variant={row.original.canResubmit ? 'brand' : 'outline'} size="sm" onClick={() => setFlowFor(row.original.id)}>
+              <GitBranch className="size-4" /> {row.original.canResubmit ? ui('تعديل وإعادة إرسال') : row.original.canAction ? ui('مراجعة / إرجاع') : ui('المسار')}
             </Button>
             {row.original.canModify && (canUpdate || canDelete) && (
               <>
@@ -511,6 +523,7 @@ export function PermissionsPage() {
           ) : null}
         </DialogContent>
       </Dialog>
+      <RequestFlowDialog target={flowFor != null ? { kind: 'permission', id: flowFor } : null} onOpenChange={(o) => !o && setFlowFor(null)} onChanged={() => void refetch()} />
     </>
   );
 }

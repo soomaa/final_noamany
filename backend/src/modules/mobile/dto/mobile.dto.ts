@@ -198,6 +198,11 @@ export class MobileShiftSwapDto {
   @IsString()
   @IsNotEmpty()
   sheftDate!: string;
+
+  /** Optional reason (extra shift → shown to HR). */
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }
 
 /** Manager/HR overtime entry for an employee under their authority. */
@@ -214,6 +219,11 @@ export class MobileExtraHoursDto {
   @IsString()
   @IsNotEmpty()
   edafaDate!: string;
+
+  /** Optional reason (shown to HR). */
+  @IsOptional()
+  @IsString()
+  reason?: string;
 }
 
 /** Internal message. Recipient IDs are users.user_id values from /mobile/employees. */

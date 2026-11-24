@@ -13,6 +13,7 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -29,12 +30,23 @@ import {
 } from './dto/edafi.dto';
 import { AttendanceReportDto } from './dto/report.dto';
 import { JwtUser } from '../../common/types/jwt-user';
+// Type-only at decoration time; resolved lazily through ModuleRef (OvertimeRequestsModule imports
+// AttendanceModule, so a constructor injection would be a module cycle).
+import { OvertimeRequestsService } from '../overtime-requests/overtime-requests.service';
 
 @UseGuards(JwtAuthGuard)
 @Controller('attendance')
 @RequiresPermission('attendance:view')
 export class AttendanceController {
-  constructor(private readonly attendance: AttendanceService) {}
+  constructor(
+    private readonly attendance: AttendanceService,
+    private readonly moduleRef: ModuleRef,
+  ) {}
+
+  /** Overtime requests service (manager entries go to HR instead of being recorded here). */
+  private overtimeRequests(): OvertimeRequestsService {
+    return this.moduleRef.get(OvertimeRequestsService, { strict: false });
+  }
 
   // -------- rules / settings --------
   @Get('rules')
@@ -100,10 +112,20 @@ export class AttendanceController {
     return this.attendance.listShiftSwaps(query, user);
   }
 
+  /**
+   * ttype 1 (تبديل شيفت) is recorded as before. ttype 2 (إضافة شيفت) is extra paid work: from a
+   * direct manager it becomes a request for HR approval; HR / admin still record it directly.
+   */
   @Post('shift-swaps')
   @RequiresPermission('attendance:view', 'hr:view')
-  createShiftSwap(@Body() dto: CreateShiftSwapDto, @CurrentUser('sub') userId: number) {
-    return this.attendance.createShiftSwap(dto, userId);
+  createShiftSwap(@Body() dto: CreateShiftSwapDto, @CurrentUser() user: JwtUser) {
+    if (Number(dto.ttype) === 2) {
+      return this.overtimeRequests().managerEntry(
+        { empId: dto.empId, date: dto.sheftDate, kind: 'shift', shiftId: dto.dwamIdFk, reason: dto.reason },
+        user,
+      );
+    }
+    return this.attendance.createShiftSwap(dto, user.sub);
   }
 
   @Delete('shift-swaps/:id')
@@ -118,10 +140,18 @@ export class AttendanceController {
     return this.attendance.listExtraHours(query, user);
   }
 
+  /**
+   * Overtime entered by a direct manager is NOT written here any more: it becomes an overtime
+   * request at the HR step (response `{ queued: true, message: 'اتبعت للـ HR للموافقة', id }`).
+   * HR / admin entries are still recorded at once through createExtraHours (auto-approved, logged).
+   */
   @Post('extra-hours')
   @RequiresPermission('attendance:view', 'hr:view')
-  createExtraHours(@Body() dto: CreateExtraHoursDto, @CurrentUser('sub') userId: number) {
-    return this.attendance.createExtraHours(dto, userId);
+  createExtraHours(@Body() dto: CreateExtraHoursDto, @CurrentUser() user: JwtUser) {
+    return this.overtimeRequests().managerEntry(
+      { empId: dto.empId, date: dto.edafaDate, kind: 'hours', hours: dto.numHours, reason: dto.reason },
+      user,
+    );
   }
 
   @Delete('extra-hours/:id')

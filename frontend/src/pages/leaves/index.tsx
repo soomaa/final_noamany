@@ -1,5 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Check, Eye, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { Check, Eye, GitBranch, Pencil, Plus, Trash2, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { DataTable } from '@/components/common/data-table';
@@ -19,6 +19,7 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { FlowStatusChip, RequestFlowDialog, type FlowStatus } from '@/components/requests/request-flow';
 
 interface LeaveRow {
   id: number;
@@ -32,6 +33,11 @@ interface LeaveRow {
   status?: string;
   canAction?: boolean;
   canManage?: boolean;
+  canResubmit?: boolean;
+  returned?: boolean;
+  returnComment?: string | null;
+  flowStatus?: FlowStatus;
+  flowStatusLabel?: string;
   currentTo?: string;
   reason?: string;
   returnToWorkDate?: string;
@@ -51,6 +57,8 @@ export function LeavesPage() {
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<LeaveRow>('leaves', params);
   const [detailsFor, setDetailsFor] = useState<LeaveRow | null>(null);
+  // Unified card: status chip, timeline, موافقة / رفض / إرجاع بتعليق, or edit + resubmit.
+  const [flowFor, setFlowFor] = useState<number | null>(null);
   const [editing, setEditing] = useState<LeaveRow | null>(null);
   const [editForm, setEditForm] = useState({ startDate: '', endDate: '', returnToWorkDate: '', reason: '', addressSinceAgaza: '' });
 
@@ -170,7 +178,8 @@ export function LeavesPage() {
     {
       accessorKey: 'status',
       header: ui('الحالة'),
-      cell: ({ getValue }) => {
+      cell: ({ row, getValue }) => {
+        if (row.original.flowStatus) return <FlowStatusChip status={row.original.flowStatus} label={row.original.flowStatusLabel} />;
         const s = getValue() as string | undefined;
         const key = s === 'approved' ? 'approved' : s === 'rejected' ? 'rejected' : 'pending';
         return <StatusBadge status={key} />;
@@ -195,6 +204,9 @@ export function LeavesPage() {
           <div className="flex gap-1">
             <Button variant="outline" size="sm" onClick={() => setDetailsFor(leave)}>
               <Eye className="size-4" /> {ui('تفاصيل')}
+            </Button>
+            <Button variant={leave.canResubmit ? 'brand' : 'outline'} size="sm" onClick={() => setFlowFor(leave.id)}>
+              <GitBranch className="size-4" /> {leave.canResubmit ? ui('تعديل وإعادة إرسال') : leave.canAction ? ui('مراجعة / إرجاع') : ui('المسار')}
             </Button>
             {leave.canManage && <>
               <Button variant="outline" size="sm" disabled={updateMutation.isPending} onClick={() => openEdit(leave)}>
@@ -360,6 +372,7 @@ export function LeavesPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <RequestFlowDialog target={flowFor != null ? { kind: 'leave', id: flowFor } : null} onOpenChange={(o) => !o && setFlowFor(null)} onChanged={() => void refetch()} />
     </div>
   );
 }
