@@ -1169,3 +1169,20 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261124-r5/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov24-r5-update-backup.PYtGoy
 - على الإنتاج: 198 حضور النهارده، 18 أصفر و7 أحمر برسالة جاهزة.
 - المرجع للرفع اللي جاي: system.html = payload 24-r5، والخلفية = ملفات 24-r5.
+
+آخر تثبيت مؤكد: 20261124-r6 — تعديلات اجتماع 24 نوفمبر + «ملخص الفترة» (24 نوفمبر 2026، ~21:50)
+------------------------------------------------------------------------------------------------
+- الفرع: claude/meeting-followups-20261124 (على GitHub). الأساس 24-r5 (system.html c2d6fd99…، schema cfada630…، Client 11df00a7…).
+- release-tools/daily-update-20261124-r6، الحزمة noamany-daily-update-20261124-r6.zip (sha256 0c93b787…)، المشغّل release/run-install-20261124-r6.sh.
+- قاعدة البيانات: sql/01 (4 جداول club_staff_invitation_* + club_leads.staff_invitation_id / invited_by_employee_id + صفوف صلاحيات
+  الأكواد و«كود الدعوات الخاص بي» لـ 14 دور)، sql/02 (أفعال viewPhone / revealPhone على شاشات العملاء + صفحة admin.period_summary).
+  اتسجلت 20261124150000_staff_invitation_codes في _prisma_migrations.
+- Prisma Client جديد (504 موديل) من schema السيرفر + الإضافات بس، output مخصص زي الحالي، وسطر التوافق متنقل.
+- الخلفية: 13 ملف متغير + 14 جديد (PeriodSummaryModule، ContactMaskingInterceptor كـ APP_INTERCEPTOR، أكواد الدعوات، يومية الاستقبال،
+  ودجتس لوحة المدير). الملفات المعدلة يدوي على السيرفر (10) متلمستش.
+- مهم: club_leads على الإنتاج فيه عمودين NOT NULL منفصلين name و full_name؛ الكود بيكتب الاتنين (leadNameData) لما الـClient فيه full_name.
+- اتأكد: UPDATE VERIFIED: 2026-11-24-r6. backup: tmp/nov24-r6-update-backup.RPS61s (فيه dump كامل 65M)
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261124-r6/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov24-r6-update-backup.RPS61s
+- المرجع للرفع اللي جاي: system.html 78606b70…، schema = payload 24-r6، الخلفية = ملفات 24-r6. أي رفعة من الفولدر الرئيسي من غير دمج
+  الفرع ده هتقف في الفحص (البصمات اتغيرت) — لازم تتبني فوق claude/meeting-followups-20261124.
+- جاهز ومش مرفوع: release-tools/daily-update-20261124-r7 (صورة العضو ومرفقاته من الاستقبال لأي عضو في الفرع) — مستني موافقة.
