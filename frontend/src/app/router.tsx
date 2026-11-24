@@ -207,6 +207,7 @@ import {
   FinanceRevenueReportsPage,
   FinanceAnalysisPage,
   FinanceProfitLossPage,
+  PeriodSummaryPage,
   AccountingIndexPage,
   AccountingDashboardPage,
   JournalEntriesPage,
@@ -488,6 +489,7 @@ export function AppRouter() {
           <Route path="reports/finance/outstanding" element={<Lazy><FinanceOutstandingReportPage /></Lazy>} />
           <Route path="reports/finance/daily-closing" element={<Lazy><DailyClosingReportPage /></Lazy>} />
           <Route path="reports/finance/target" element={<Lazy><TargetReportPage /></Lazy>} />
+          <Route path="reports/period-summary" element={<Lazy><PeriodSummaryPage /></Lazy>} />
           {/* Fallback to legacy HR reports handler */}
           <Route path="reports/:key" element={<Lazy><ReportDetailPage /></Lazy>} />
 

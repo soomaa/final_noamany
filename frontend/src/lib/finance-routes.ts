@@ -10,4 +10,6 @@ export const FINANCE_ROUTES = {
   profitLoss: '/finance/profit-loss',
   dailyClosing: '/reports/finance/daily-closing',
   targetReport: '/reports/finance/target',
+  /** «ملخص الفترة» — owner/admin only (admin.period_summary). */
+  periodSummary: '/reports/period-summary',
 } as const;
