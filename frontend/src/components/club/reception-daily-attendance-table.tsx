@@ -1,6 +1,6 @@
 import type { ColumnDef } from '@tanstack/react-table';
 import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, LogOut, MessageCircle } from 'lucide-react';
+import { LogOut, MessageCircle } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { DataTable, type PaginatedResponse } from '@/components/common/data-table';
@@ -19,6 +19,8 @@ interface AbsenceInfo {
   level: 'yellow' | 'red' | null;
   phone: string | null;
   text: string | null;
+  /** Today is the first visit on a plan that started after the last visit: no «لم يحضر» message. */
+  newSubscription?: boolean;
 }
 
 interface ReceptionAttendanceRow {
@@ -63,15 +65,19 @@ export function ReceptionDailyAttendanceTable({
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [search, setSearch] = useState('');
+  // Branch filter above the table (beside the search) for users who see more than one branch;
+  // follows the reception branch picker until changed here.
+  const [branchFilter, setBranchFilter] = useState(branchId ?? '');
   const [checkingOutId, setCheckingOutId] = useState<number | null>(null);
   const today = localToday();
 
   useEffect(() => {
+    setBranchFilter(branchId ?? '');
     setPage(1);
   }, [branchId]);
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['club-attendance', 'reception-today', today, branchId || 'all', page, pageSize, search],
+    queryKey: ['club-attendance', 'reception-today', today, branchFilter || 'all', page, pageSize, search],
     queryFn: async ({ signal }) => {
       const response = await api.get<PaginatedResponse<ReceptionAttendanceRow>>('/club-attendance', {
         params: {
@@ -80,7 +86,7 @@ export function ReceptionDailyAttendanceTable({
           search: search || undefined,
           startDate: today,
           endDate: today,
-          branch: branchId || undefined,
+          branch: branchFilter || undefined,
         },
         signal,
       });
@@ -145,22 +151,6 @@ export function ReceptionDailyAttendanceTable({
         header: ct('subscriptions.subscriptionType'),
         cell: ({ getValue }) => (getValue() as string | null) ?? '—',
       },
-      ...(showBranch
-        ? [{
-            id: 'branch',
-            header: ct('common.branch'),
-            cell: ({ row }: { row: { original: ReceptionAttendanceRow } }) => {
-              const id = row.original.branchId;
-              const name = branches.find((branch) => branch.id === id)?.name?.trim();
-              return (
-                <span className="inline-flex items-center gap-1.5 whitespace-nowrap font-medium">
-                  <Building2 className="size-3.5 text-primary" />
-                  {name || `${ui('فرع رقم')} ${toArabicDigits(id)}`}
-                </span>
-              );
-            },
-          }]
-        : []),
       {
         accessorKey: 'checkInTime',
         header: ct('members.checkInTime'),
@@ -182,28 +172,21 @@ export function ReceptionDailyAttendanceTable({
         cell: ({ row }) => {
           const info = row.original.memberId ? absenceByMember.get(row.original.memberId) : undefined;
           if (!info) return <span className="text-muted-foreground">—</span>;
-          if (!info.lastVisit) return <span className="text-xs text-muted-foreground">{ui('أول حضور')}</span>;
-          const link = info.level && info.phone && info.text ? `https://wa.me/${info.phone}?text=${encodeURIComponent(info.text)}` : null;
-          return (
-            <span className="inline-flex items-center gap-2 whitespace-nowrap">
+          if (info.newSubscription) {
+            return (
               <span className="grid leading-tight">
-                <span className="nums">{toArabicDigits(info.lastVisit)}</span>
-                <span className={`text-xs ${info.level === 'red' ? 'font-semibold text-red-700 dark:text-red-300' : info.level === 'yellow' ? 'font-semibold text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}>
-                  {info.days === 1 ? ui('امبارح') : `${ui('من')} ${toArabicDigits(info.days ?? 0)} ${ui('يوم')}`}
-                </span>
+                <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">{ui('أول حضور في اشتراك جديد')}</span>
+                {info.lastVisit && <span className="nums text-xs text-muted-foreground">{ui('آخر حضور قبله')} {toArabicDigits(info.lastVisit)}</span>}
               </span>
-              {link && (
-                <a
-                  href={link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-[#25D366] text-white shadow-sm transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  title={ui('إرسال رسالة «لم يحضر منذ مدة» على واتساب')}
-                  aria-label={ui('إرسال رسالة «لم يحضر منذ مدة» على واتساب')}
-                >
-                  <MessageCircle className="size-4" />
-                </a>
-              )}
+            );
+          }
+          if (!info.lastVisit) return <span className="text-xs text-muted-foreground">{ui('أول حضور')}</span>;
+          return (
+            <span className="grid whitespace-nowrap leading-tight">
+              <span className="nums">{toArabicDigits(info.lastVisit)}</span>
+              <span className={`text-xs ${info.level === 'red' ? 'font-semibold text-red-700 dark:text-red-300' : info.level === 'yellow' ? 'font-semibold text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}>
+                {info.days === 1 ? ui('امبارح') : `${ui('من')} ${toArabicDigits(info.days ?? 0)} ${ui('يوم')}`}
+              </span>
             </span>
           );
         },
@@ -211,25 +194,62 @@ export function ReceptionDailyAttendanceTable({
       {
         id: 'actions',
         header: ct('common.actions'),
-        cell: ({ row }) =>
-          row.original.status === 'checked_in' ? (
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={checkingOutId === row.original.id}
-              onClick={() => void checkOut(row.original.id)}
-            >
-              <LogOut className="size-4" />
-              {checkingOutId === row.original.id ? ct('common.saving') : ct('members.checkOut')}
-            </Button>
-          ) : (
-            <span className="inline-flex rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-              {ui('تم تسجيل الخروج')}
-            </span>
-          ),
+        cell: ({ row }) => {
+          const info = row.original.memberId ? absenceByMember.get(row.original.memberId) : undefined;
+          const link = info?.phone && info.text ? `https://wa.me/${info.phone}?text=${encodeURIComponent(info.text)}` : null;
+          const waHint = !info
+            ? ui('جاري تحميل رسالة واتساب…')
+            : info.newSubscription
+              ? ui('أول حضور في اشتراك جديد — مفيش رسالة متابعة')
+              : !info.lastVisit
+                ? ui('أول حضور للعضو — مفيش رسالة متابعة')
+                : !info.phone
+                  ? ui('مفيش رقم موبايل صالح للعضو')
+                  : ui('مفيش قالب «لم يحضر منذ مدة» — حدده من صفحة واتساب');
+          return (
+            <div className="flex items-center gap-2 whitespace-nowrap">
+              {link ? (
+                <a
+                  href={link}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-[#25D366] text-white shadow-sm transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  title={ui('إرسال رسالة «لم يحضر منذ مدة» على واتساب')}
+                  aria-label={ui('إرسال رسالة «لم يحضر منذ مدة» على واتساب')}
+                >
+                  <MessageCircle className="size-4" />
+                </a>
+              ) : (
+                <span
+                  className="inline-flex size-9 shrink-0 cursor-not-allowed items-center justify-center rounded-full bg-muted text-muted-foreground/60"
+                  title={waHint}
+                  aria-label={waHint}
+                  role="img"
+                >
+                  <MessageCircle className="size-4" />
+                </span>
+              )}
+              {row.original.status === 'checked_in' ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={checkingOutId === row.original.id}
+                  onClick={() => void checkOut(row.original.id)}
+                >
+                  <LogOut className="size-4" />
+                  {checkingOutId === row.original.id ? ct('common.saving') : ct('members.checkOut')}
+                </Button>
+              ) : (
+                <span className="inline-flex rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                  {ui('تم تسجيل الخروج')}
+                </span>
+              )}
+            </div>
+          );
+        },
       },
     ],
-    [absenceByMember, branches, checkOut, checkingOutId, ct, locale, showBranch, ui, onOpenMember],
+    [absenceByMember, checkOut, checkingOutId, ct, locale, ui, onOpenMember],
   );
 
   return (
@@ -258,6 +278,22 @@ export function ReceptionDailyAttendanceTable({
           setPage(1);
         }}
         searchPlaceholder={ui('بحث في حضور اليوم…')}
+        toolbar={showBranch && branches.length > 1 ? (
+          <select
+            value={branchFilter}
+            onChange={(event) => {
+              setBranchFilter(event.target.value);
+              setPage(1);
+            }}
+            aria-label={ui('الفرع')}
+            className="h-10 min-w-[11rem] rounded-xl border border-input bg-background px-3 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+          >
+            <option value="">{ui('كل الفروع')}</option>
+            {branches.map((branch) => (
+              <option key={branch.id} value={String(branch.id)}>{branch.name?.trim() || `${ui('فرع رقم')} ${toArabicDigits(branch.id)}`}</option>
+            ))}
+          </select>
+        ) : undefined}
         isLoading={isLoading}
         isError={isError}
         onRetry={() => void refetch()}
@@ -271,7 +307,7 @@ export function ReceptionDailyAttendanceTable({
         <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
           <span className="inline-flex items-center gap-1.5"><span className="size-3 rounded-sm bg-amber-200" />{ui('غايب من')} {toArabicDigits(absence.yellowDays)} {ui('يوم')}</span>
           <span className="inline-flex items-center gap-1.5"><span className="size-3 rounded-sm bg-red-200" />{ui('غايب من')} {toArabicDigits(absence.redDays)} {ui('يوم أو أكتر')}</span>
-          <span className="inline-flex items-center gap-1.5"><MessageCircle className="size-3.5 text-[#25D366]" />{ui('يفتح واتساب برسالة «لم يحضر منذ مدة» جاهزة')}</span>
+          <span className="inline-flex items-center gap-1.5"><MessageCircle className="size-3.5 text-[#25D366]" />{ui('يفتح واتساب برسالة «لم يحضر منذ مدة» جاهزة — مش بتظهر لأول حضور في اشتراك جديد')}</span>
         </p>
       )}
     </section>
