@@ -26,7 +26,6 @@ import {
 } from './dto/edafi.dto';
 import { AttendanceReportDto } from './dto/report.dto';
 import { JwtUser } from '../../common/types/jwt-user';
-import { Workbook } from 'exceljs';
 import { resolveOfflinePunchClock } from './offline-attendance.util';
 import { HrPayrollSettingsService } from '../hr-payroll-settings/hr-payroll-settings.service';
 import { HrPayrollSettings, defaultHrPayrollSettings } from '../hr-payroll-settings/hr-payroll-settings.defaults';
@@ -431,7 +430,7 @@ export class AttendanceService {
     if (r.clamped) { q.dateFrom = r.from; q.dateTo = r.to; }
   }
 
-  private async managerStaffCodes(user?: JwtUser): Promise<number[] | null> {
+  async managerStaffCodes(user?: JwtUser): Promise<number[] | null> {
     if (!managerKind(user)) return null;
     const section = managerSection(user);
     const jobs = await this.prisma.department_jobs.findMany({ select: { id: true, name: true } });
@@ -3061,46 +3060,5 @@ export class AttendanceService {
         absenceWithoutLeave: unexcused, totalAbsence: excused + unexcused }];
     });
     return paginated(rows.slice(q.skip, q.skip + q.take), rows.length, q.page, q.pageSize);
-  }
-
-  /** Exact column mapping used by Hdoor_m::insert_hdoor; target accepts safe XLSX files. */
-  async importDeviceFile(file: Express.Multer.File, userId: number, userName?: string) {
-    if (!file) throw new BadRequestException('الرجاء اختيار ملف Excel لرفعه');
-    if (!file.originalname.toLowerCase().endsWith('.xlsx')) {
-      throw new BadRequestException('صيغة الملف المطلوبة XLSX؛ حوّل ملف XLS القديم إلى XLSX أولاً');
-    }
-    const workbook = new Workbook();
-    await workbook.xlsx.load(file.buffer as unknown as ArrayBuffer);
-    const sheet = workbook.worksheets[0];
-    if (!sheet || sheet.columnCount < 10) throw new BadRequestException('ملف الحضور فارغ أو لا يحتوي الأعمدة العشرة المطلوبة');
-    const value = (cell: unknown) => String(cell ?? '').trim();
-    const normalDate = (raw: string) => {
-      const dmY = raw.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
-      if (dmY) return `${dmY[3]}-${dmY[2].padStart(2, '0')}-${dmY[1].padStart(2, '0')}`;
-      const parsed = new Date(raw);
-      return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 10);
-    };
-    const rows: Prisma.tbl_emp_hdoorCreateManyInput[] = [];
-    sheet.eachRow((row, rowNumber) => {
-      if (rowNumber === 1) return;
-      const code = Number(row.getCell(1).value);
-      if (!Number.isInteger(code) || code <= 0) return;
-      const dateAr = value(row.getCell(3).text || row.getCell(3).value);
-      const date = normalDate(dateAr);
-      if (!date) return;
-      rows.push({ emp_code: code, emp_name: value(row.getCell(2).text), date_ar: dateAr, date,
-        hdoor_time: value(row.getCell(4).text), ensraf_time: value(row.getCell(5).text),
-        actual_hdoor_time: value(row.getCell(6).text), actual_ensraf_time: value(row.getCell(7).text),
-        absent: value(row.getCell(8).text) || null, hour_works: new Prisma.Decimal(Number(row.getCell(9).value) || 0),
-        edara_n: value(row.getCell(10).text), inserted_date: todayIso(), publisher: userId,
-        publisher_name: userName || 'system' });
-    });
-    if (!rows.length) throw new BadRequestException('لم يتم العثور على صفوف حضور صحيحة في الملف');
-    const dates = [...new Set(rows.map((r) => r.date_ar))];
-    await this.prisma.$transaction([
-      this.prisma.tbl_emp_hdoor.deleteMany({ where: { date_ar: { in: dates } } }),
-      this.prisma.tbl_emp_hdoor.createMany({ data: rows }),
-    ]);
-    return { imported: rows.length, replacedDates: dates.length };
   }
 }

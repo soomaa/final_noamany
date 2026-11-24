@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -20,6 +21,7 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { ListQueryDto } from '../../common/dto/list-query.dto';
 import { AttendanceService } from './attendance.service';
+import { AttendanceDeviceAgentService } from './attendance-device-agent.service';
 import { UpsertShiftDto } from './dto/shift.dto';
 import { CheckPunchDto } from './dto/check.dto';
 import {
@@ -34,7 +36,10 @@ import { JwtUser } from '../../common/types/jwt-user';
 @Controller('attendance')
 @RequiresPermission('attendance:view')
 export class AttendanceController {
-  constructor(private readonly attendance: AttendanceService) {}
+  constructor(
+    private readonly attendance: AttendanceService,
+    private readonly deviceAgent: AttendanceDeviceAgentService,
+  ) {}
 
   // -------- rules / settings --------
   @Get('rules')
@@ -209,16 +214,23 @@ export class AttendanceController {
     return this.attendance.manualOptions(user, branchId);
   }
 
-  /** Legacy Hdoor::add_emp_hdoor XLSX import (multipart field: hdoor_file). */
+  /**
+   * Legacy Hdoor::add_emp_hdoor XLSX layout (multipart field: hdoor_file, optional deviceId).
+   * Each actual in/out time is replayed through the attendance engine like a device punch.
+   */
   @Post('imports/device-file')
   @RequiresPermission('attendance:create')
-  @UseInterceptors(FileInterceptor('hdoor_file', { limits: { fileSize: 2 * 1024 * 1024 } }))
+  @UseInterceptors(FileInterceptor('hdoor_file', { limits: { fileSize: 5 * 1024 * 1024 } }))
   importDeviceFile(
     @UploadedFile() file: Express.Multer.File,
-    @CurrentUser('sub') userId: number,
-    @CurrentUser('name') userName?: string,
+    @Body('deviceId') deviceId: string | undefined,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.attendance.importDeviceFile(file, userId, userName);
+    const device = deviceId && deviceId !== '0' ? Number(deviceId) : undefined;
+    if (device !== undefined && (!Number.isInteger(device) || device <= 0)) {
+      throw new BadRequestException('جهاز البصمة المحدد غير صحيح');
+    }
+    return this.deviceAgent.importFile(file, user, device);
   }
 
   @Get()

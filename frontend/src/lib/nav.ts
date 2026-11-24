@@ -469,6 +469,7 @@ export const NAV_SECTIONS: NavSection[] = [
         items: [
           { to: '/attendance' },
           { to: '/attendance/exceptions' },
+          { to: '/attendance/offline-review' },
           { to: '/attendance/reports' },
           { to: '/attendance/adjustments' },
           { to: '/attendance/import' },
