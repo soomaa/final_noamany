@@ -230,3 +230,50 @@ describe('AttendanceExceptionsService.resolve', () => {
       .rejects.toThrow('لا تملك صلاحية');
   });
 });
+
+describe('AttendanceExceptionsService filters and pending summary', () => {
+  it('«قديم مفتوح» keeps only open cases at least STALE_AFTER_DAYS old', async () => {
+    const { service } = setup();
+    const result = await service.list({ from: '2026-11-21', to: '2026-11-24', status: 'stale' }, ADMIN, NOW);
+    expect(result.items.map((item) => item.date).sort()).toEqual(['2026-11-21', '2026-11-22']);
+  });
+
+  it('filters by staff section and lets a section manager open on their own section', async () => {
+    const { service, prisma } = setup();
+    prisma.employees.findMany.mockResolvedValue([{ ...EMPLOYEE, emp_type: 2 }]);
+    expect((await service.list({ date: '2026-11-23', gender: 'male' }, ADMIN, NOW)).items).toHaveLength(0);
+    expect((await service.list({ date: '2026-11-23', gender: 'female' }, ADMIN, NOW)).items[0].section).toBe('female');
+    const menSupervisor = { sub: 4, level: 3, branch: 2, name: 'مشرف', job_title: 'مشرف إدارة رجالي' } as never;
+    const result = await service.list({ date: '2026-11-23' }, menSupervisor, NOW);
+    expect(result.gender).toBe('male');
+    expect(result.items).toHaveLength(0);
+    expect((await service.list({ date: '2026-11-23', gender: 'all' }, menSupervisor, NOW)).items).toHaveLength(1);
+  });
+
+  it('returns only the branches in scope as picker options', async () => {
+    const { service, prisma } = setup();
+    const manager = { sub: 3, level: 3, branch: 2, name: 'مدير', job_title: 'مدير فرع' } as never;
+    await service.list({ date: '2026-11-23' }, manager, NOW);
+    expect(prisma.tbl_branches.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { branch_id: { in: [2, 5, 6] } } }));
+  });
+
+  it('summarizes open cases of the last two weeks, cached per user', async () => {
+    const { service, prisma } = setup();
+    const summary = await service.pendingSummary(ADMIN, NOW);
+    // 11–24 Nov without the two Fridays; today's shift window has closed at noon.
+    expect(summary).toMatchObject({ open: 12, stale: 10, oldestOpenDate: '2026-11-11', since: '2026-11-11' });
+    expect(summary.branches).toEqual([{ branchId: 2, branchName: 'طنطا', open: 12, stale: 10 }]);
+    const calls = prisma.employees.findMany.mock.calls.length;
+    await service.pendingSummary(ADMIN, new Date(NOW.getTime() + 30_000));
+    expect(prisma.employees.findMany.mock.calls.length).toBe(calls);
+    await service.pendingSummary(ADMIN, new Date(NOW.getTime() + 61_000));
+    expect(prisma.employees.findMany.mock.calls.length).toBeGreaterThan(calls);
+  });
+
+  it('a user without a branch gets an empty summary without scanning attendance', async () => {
+    const { service, prisma } = setup();
+    const summary = await service.pendingSummary({ sub: 5, level: 2, branch: 0, name: 'x' } as never, NOW);
+    expect(summary.open).toBe(0);
+    expect(prisma.tbl_hdoor_emps.findMany).not.toHaveBeenCalled();
+  });
+});

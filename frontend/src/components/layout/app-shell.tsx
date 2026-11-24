@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { recordNavVisit } from '@/lib/nav-visit-tracker';
 import { cn } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { AttendancePendingBanner } from './attendance-pending-banner';
 import { Sidebar } from './sidebar';
 import { Topbar } from './topbar';
 
@@ -80,6 +81,7 @@ export function AppShell() {
         </div>
         <main className="app-main-scroll flex-1 overflow-y-auto">
           <div className="mx-auto w-full max-w-[1800px] p-3 sm:p-4 lg:p-5 xl:p-6 animate-fade-in">
+            <AttendancePendingBanner />
             <RouteGuard>
               <Outlet />
             </RouteGuard>

@@ -22,10 +22,21 @@ export class ListAttendanceExceptionsDto {
   @IsString()
   branchId?: string;
 
-  /** open = unresolved only, resolved = resolved only, all (default). */
+  /**
+   * open = unresolved only, stale = unresolved and older than STALE_AFTER_DAYS («قديم مفتوح»),
+   * resolved = resolved only, all (default).
+   */
   @IsOptional()
-  @IsIn(['all', 'open', 'resolved'])
-  status?: 'all' | 'open' | 'resolved';
+  @IsIn(['all', 'open', 'stale', 'resolved'])
+  status?: 'all' | 'open' | 'stale' | 'resolved';
+
+  /**
+   * Staff section: male = رجالي, female = حريمي, all = both. Omitted → the caller's default
+   * (a men/women section manager opens on their own section, everyone else on all).
+   */
+  @IsOptional()
+  @IsIn(['all', 'male', 'female'])
+  gender?: 'all' | 'male' | 'female';
 }
 
 /** POST /attendance/exceptions/resolve */

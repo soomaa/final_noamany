@@ -18,6 +18,12 @@ export class AttendanceExceptionsController {
     return this.exceptions.list(query, user);
   }
 
+  /** Open-case counts for the banner on every page (cached ~60 s per user). */
+  @Get('pending-summary')
+  pendingSummary(@CurrentUser() user: JwtUser) {
+    return this.exceptions.pendingSummary(user);
+  }
+
   @Get('leave-types')
   leaveTypes() {
     return this.exceptions.leaveTypes();

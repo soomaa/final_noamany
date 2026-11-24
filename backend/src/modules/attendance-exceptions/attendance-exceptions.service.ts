@@ -12,6 +12,7 @@ import {
   legacyDateMatchValues,
   todayIso,
 } from '../../common/utils/legacy-date.util';
+import { managerKind, managerSection } from '../../common/utils/manager-scope.util';
 import { SuspendStatus } from '../../common/utils/suspend-status.util';
 import { finalApprovalSuspendFilter, isFinallyApproved } from '../payroll/leave-approval.util';
 import { matchRowsToSlots } from '../payroll/payroll-attendance.util';
@@ -39,6 +40,57 @@ import {
 /** Longest catch-up range one request may scan. */
 export const MAX_RANGE_DAYS = 31;
 
+/** A case still open this many days after its date is «قديم مفتوح» (red banner, HR escalation). */
+export const STALE_AFTER_DAYS = 2;
+
+/** How far back the pending summary, the banner and the reminders look for open cases. */
+export const PENDING_LOOKBACK_DAYS = 14;
+
+/** Per-user cache of GET /attendance/exceptions/pending-summary. */
+const SUMMARY_TTL_MS = 60_000;
+
+export type StaffSection = 'male' | 'female';
+
+/** employees.emp_type: 0/1 رجالي, 2 حريمي, 3 (or anything else) = both sections. */
+export function staffSection(empType: number | null | undefined): StaffSection | null {
+  if (empType === 0 || empType === 1) return 'male';
+  if (empType === 2) return 'female';
+  return null;
+}
+
+/** Open for more than STALE_AFTER_DAYS: the case's day is at least that many days before today. */
+export function isStaleDate(date: string, today: string): boolean {
+  return daysBetween(date, today) >= STALE_AFTER_DAYS;
+}
+
+/** ISO day `days` before `iso`. */
+export function shiftIsoDate(iso: string, days: number): string {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) - days * 86_400_000).toISOString().slice(0, 10);
+}
+
+/** A case belongs to a scope by the branch it was worked in or the employee's home branch. */
+export function caseInScope(
+  item: Pick<AttendanceExceptionItem, 'branchId' | 'homeBranchId' | 'section'>,
+  branches: number[] | null,
+  section: StaffSection | null,
+): boolean {
+  if (section && item.section && item.section !== section) return false;
+  if (!branches) return true;
+  return (item.branchId != null && branches.includes(item.branchId))
+    || (item.homeBranchId != null && branches.includes(item.homeBranchId));
+}
+
+export interface PendingSummary {
+  /** Open (undecided) cases in the caller's scope since `since`. */
+  open: number;
+  /** Of which open for STALE_AFTER_DAYS days or more. */
+  stale: number;
+  oldestOpenDate: string | null;
+  since: string;
+  staleAfterDays: number;
+  branches: Array<{ branchId: number | null; branchName: string | null; open: number; stale: number }>;
+}
+
 /** Order used to pick the case type a resolution is filed under. */
 const CASE_PRIORITY: CaseType[] = ['no_punch', 'missing_checkin', 'missing_checkout', 'late', 'early_leave'];
 
@@ -50,6 +102,10 @@ export interface AttendanceExceptionItem {
   jobTitle: string | null;
   branchId: number | null;
   branchName: string | null;
+  /** The employee's own branch (employees.branch_id_fk); differs from branchId for a visiting shift. */
+  homeBranchId: number | null;
+  /** Staff section from employees.emp_type; null = both. */
+  section: StaffSection | null;
   date: string;
   weekday: string;
   shiftId: number | null;
@@ -92,6 +148,7 @@ type EmployeeRow = {
   employee: string | null;
   mosma_wazefy_n: string | null;
   branch_id_fk: number | null;
+  emp_type?: number | null;
 };
 
 function rowDate(row: { action_date: string | null; action_date_s: string | null }): string {
@@ -144,9 +201,16 @@ export class AttendanceExceptionsService {
       throw new BadRequestException(`الحد الأقصى للفترة ${MAX_RANGE_DAYS} يومًا`);
     }
     const branches = this.scope.resolveListFilter(user, q.branchId);
-    const employees = await this.scopedEmployees(branches);
+    const gender = q.gender ?? this.defaultSection(user) ?? 'all';
+    const section = gender === 'all' ? null : gender;
+    const [employees, branchOptions] = await Promise.all([
+      this.scopedEmployees(branches),
+      this.branchOptions(user),
+    ]);
     let items = await this.computeCases(employees, from, to, branches, now);
+    if (section) items = items.filter((item) => caseInScope(item, null, section));
     if (q.status === 'open') items = items.filter((item) => !item.resolution);
+    if (q.status === 'stale') items = items.filter((item) => !item.resolution && isStaleDate(item.date, today));
     if (q.status === 'resolved') items = items.filter((item) => item.resolution);
 
     const byType: Record<CaseType, number> = { no_punch: 0, missing_checkin: 0, missing_checkout: 0, late: 0, early_leave: 0 };
@@ -154,6 +218,9 @@ export class AttendanceExceptionsService {
     return {
       from,
       to,
+      gender,
+      staleAfterDays: STALE_AFTER_DAYS,
+      branchOptions,
       items,
       counters: {
         total: items.length,
@@ -162,6 +229,61 @@ export class AttendanceExceptionsService {
         byType,
       },
     };
+  }
+
+  /** A men/women section manager (مشرف إدارة حريمي / رجالي) opens on their own section. */
+  defaultSection(user: JwtUser): StaffSection | null {
+    return managerKind(user) === 'section' ? managerSection(user) : null;
+  }
+
+  /** Branches the caller may pick: their scope (branch + sub-branches), or every branch. */
+  private async branchOptions(user: JwtUser): Promise<Array<{ id: number; name: string | null }>> {
+    const allowed = this.scope.allowedBranchIds(user);
+    if (allowed && !allowed.length) return [];
+    const rows = await this.prisma.tbl_branches.findMany({
+      where: allowed ? { branch_id: { in: allowed } } : undefined,
+      select: { branch_id: true, branch_name: true },
+      orderBy: { branch_id: 'asc' },
+    });
+    return rows.map((row) => ({ id: row.branch_id, name: row.branch_name }));
+  }
+
+  // ---------------------------------------------------------------------------
+  // PENDING SUMMARY (banner) / OPEN CASES (reminders)
+  // ---------------------------------------------------------------------------
+
+  private readonly summaryCache = new Map<number, { at: number; value: Promise<PendingSummary> }>();
+
+  /**
+   * Open cases in the caller's scope over the last PENDING_LOOKBACK_DAYS days, for the banner shown
+   * on every page. Cached per user for a minute (and dropped when anyone records a decision).
+   */
+  async pendingSummary(user: JwtUser, now = new Date()): Promise<PendingSummary> {
+    const hit = this.summaryCache.get(user.sub);
+    if (hit && now.getTime() - hit.at < SUMMARY_TTL_MS) return hit.value;
+    const value = this.computePendingSummary(user, now);
+    this.summaryCache.set(user.sub, { at: now.getTime(), value });
+    value.catch(() => this.summaryCache.delete(user.sub));
+    if (this.summaryCache.size > 1000) {
+      const oldest = this.summaryCache.keys().next().value;
+      if (oldest !== undefined) this.summaryCache.delete(oldest);
+    }
+    return value;
+  }
+
+  private async computePendingSummary(user: JwtUser, now: Date): Promise<PendingSummary> {
+    const today = todayIso(now);
+    const since = shiftIsoDate(today, PENDING_LOOKBACK_DAYS - 1);
+    const branches = this.scope.allowedBranchIds(user);
+    const items = branches && !branches.length ? [] : await this.openCases(branches, since, today, now);
+    return summarize(items.filter((item) => caseInScope(item, branches, this.defaultSection(user))), since, today);
+  }
+
+  /** Open (undecided) cases over [from, to] for the branches (null = all). */
+  async openCases(branches: number[] | null, from: string, to: string, now = new Date()): Promise<AttendanceExceptionItem[]> {
+    const employees = await this.scopedEmployees(branches);
+    const items = await this.computeCases(employees, from, to, branches, now);
+    return items.filter((item) => !item.resolution);
   }
 
   /** Leave types (holiday_setting rows that are not official holidays) for the resolve dialog. */
@@ -176,7 +298,7 @@ export class AttendanceExceptionsService {
 
   /** Active employees in scope; with weekly schedules also those with a shift slot in the branch. */
   private async scopedEmployees(branches: number[] | null): Promise<EmployeeRow[]> {
-    const select = { id: true, emp_code: true, employee: true, mosma_wazefy_n: true, branch_id_fk: true } as const;
+    const select = { id: true, emp_code: true, employee: true, mosma_wazefy_n: true, branch_id_fk: true, emp_type: true } as const;
     const base: Prisma.employeesWhereInput = {
       employee_type: EmployeeType.ACTIVE,
       OR: [{ leave_emp: null }, { leave_emp: 0 }],
@@ -377,6 +499,8 @@ export class AttendanceExceptionsService {
             jobTitle: employee.mosma_wazefy_n,
             branchId,
             branchName: branchId != null ? branchName.get(branchId) ?? null : null,
+            homeBranchId: employee.branch_id_fk,
+            section: staffSection(employee.emp_type),
             date,
             weekday: ARABIC_WEEKDAYS[utcWeekday(date)],
             shiftId: slot.shiftId ?? null,
@@ -418,7 +542,7 @@ export class AttendanceExceptionsService {
 
     const employee = await this.prisma.employees.findFirst({
       where: { emp_code: dto.empCode },
-      select: { id: true, emp_code: true, employee: true, mosma_wazefy_n: true, branch_id_fk: true },
+      select: { id: true, emp_code: true, employee: true, mosma_wazefy_n: true, branch_id_fk: true, emp_type: true },
     });
     if (!employee) throw new NotFoundException('الموظف غير موجود');
 
@@ -491,6 +615,8 @@ export class AttendanceExceptionsService {
       const saved = await loadResolutions(tx, [employee.emp_code as number], dto.date, dto.date);
       return saved.find((record) => (record.shiftId ?? 0) === shiftKey) ?? null;
     });
+    // Banners of everyone who sees this case refresh on their next poll.
+    this.summaryCache.clear();
     return { ok: true, resolution: result };
   }
 
@@ -563,4 +689,28 @@ export class AttendanceExceptionsService {
     });
     return { id: created.hodoor_id, created: true };
   }
+}
+
+/** Banner / reminder counts from a list of open cases. */
+export function summarize(items: AttendanceExceptionItem[], since: string, today: string): PendingSummary {
+  const byBranch = new Map<number | null, PendingSummary['branches'][number]>();
+  let stale = 0;
+  let oldest: string | null = null;
+  for (const item of items) {
+    const old = isStaleDate(item.date, today);
+    if (old) stale += 1;
+    if (!oldest || item.date < oldest) oldest = item.date;
+    const row = byBranch.get(item.branchId) ?? { branchId: item.branchId, branchName: item.branchName, open: 0, stale: 0 };
+    row.open += 1;
+    if (old) row.stale += 1;
+    byBranch.set(item.branchId, row);
+  }
+  return {
+    open: items.length,
+    stale,
+    oldestOpenDate: oldest,
+    since,
+    staleAfterDays: STALE_AFTER_DAYS,
+    branches: [...byBranch.values()].sort((a, b) => b.open - a.open),
+  };
 }
