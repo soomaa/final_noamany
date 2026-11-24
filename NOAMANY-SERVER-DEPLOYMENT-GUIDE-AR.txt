@@ -1155,3 +1155,17 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261124-r4/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov24-r4-update-backup.i9mhn8
 - وقت التثبيت: التهنئة التلقائية متشغلة (09:00)، واتعملت حملة 1 لفرع 4 (11:53) بالنص القديم واتلغت يدوي بعد 1 مبعوت + 4 محتاجين مراجعة.
 - المرجع للرفع اللي جاي: system.html = payload 24-r4، والخلفية = ملفات 24-r4.
+
+آخر تثبيت مؤكد: 20261124-r5 — قوالب واتساب بالحقول + «لم يحضر منذ مدة» في سجل حضور اليوم (24 نوفمبر 2026، ~16:15)
+---------------------------------------------------------------------------------------------------------
+- release-tools/daily-update-20261124-r5 (الأساس 24-r4، system.html c8218787…). الحزمة release/noamany-daily-update-20261124-r5.zip
+  (sha256 cebf4847…)، المشغّل release/run-install-20261124-r5.sh. الخلفية: 7 ملفات whatsapp-campaigns + جديد wa-default-templates.js؛
+  مسار جديد GET /api/wa-reminders/absence (صلاحيات قراءة سجل الحضور: club.members/attendance/reception:view).
+  الواجهة: whatsapp.tsx، reception-daily-attendance-table.tsx (عمود «آخر حضور»، من غير عمود التاريخ)، common/data-table.tsx (rowClassName اختياري).
+- wa_control_settings صف 3 = { noOptOutLine, fields{templateId: [{label, options}]}, seeded[], absence{yellowDays 5, redDays 10, templateId} }.
+  أول فتح للقوالب عمل القوالب 2/3/4 وحوّل قالب 1 (أعياد الميلاد) لحقول. المتغيرات بقت شغالة جوه {…|…}.
+- ملحوظة: حملة 1 (الجلاء، 24 نوفمبر) اتبعت بالنص القديم وفيها «{في فرع الجلاء- شبين الكوم|معانا}» حرفيًا: 1 مبعوت + 4 «تحتاج مراجعة».
+- اتأكد: UPDATE VERIFIED: 2026-11-24-r5. backup: tmp/nov24-r5-update-backup.PYtGoy
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261124-r5/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov24-r5-update-backup.PYtGoy
+- على الإنتاج: 198 حضور النهارده، 18 أصفر و7 أحمر برسالة جاهزة.
+- المرجع للرفع اللي جاي: system.html = payload 24-r5، والخلفية = ملفات 24-r5.

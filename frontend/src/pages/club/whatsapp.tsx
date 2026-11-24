@@ -440,6 +440,12 @@ function FieldsEditor({ fields, onChange }: { fields: TemplateField[]; onChange:
   );
 }
 
+/** `{first_name}` → «الاسم الأول» for reading a template. */
+const friendlyVars = (text: string, ui: (s: string) => string) => text.replace(/\{(\w+)\}/g, (m, key: string) => {
+  const v = VARIABLES.find((x) => x.key === key);
+  return v ? `«${ui(v.label)}»` : m;
+});
+
 const fieldsValid = (fields: TemplateField[]) => fields.some((f) => f.options.some((o) => o.trim()));
 
 // ── birthdays ───────────────────────────────────────────────────────────────
@@ -932,7 +938,7 @@ function TemplatesTab() {
               </div>
               <div className="mt-2 grid gap-1 text-sm">
                 {(t.fields ?? []).map((f, i) => (
-                  <p key={i} className="text-muted-foreground"><b className="text-foreground">{f.label || `${ui('السطر')} ${i + 1}`}:</b> {f.options[0]}{f.options.length > 1 && <span className="text-xs"> ({ui('و')} {f.options.length - 1} {ui('صيغ تانية')})</span>}</p>
+                  <p key={i} className="text-muted-foreground"><b className="text-foreground">{f.label || `${ui('السطر')} ${i + 1}`}:</b> {friendlyVars(f.options[0], ui)}{f.options.length > 1 && <span className="text-xs"> ({ui('و')} {f.options.length - 1} {ui('صيغ تانية')})</span>}</p>
                 ))}
               </div>
             </div>

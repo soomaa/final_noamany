@@ -234,7 +234,7 @@ export function ReceptionDailyAttendanceTable({
 
   return (
     // Wider than the reception column on big screens, so every column (and WhatsApp) fits.
-    <section className="space-y-3 2xl:-mx-28 min-[1800px]:-mx-48">
+    <section className="space-y-3 min-[1800px]:-mx-24 min-[2200px]:-mx-48">
       <div>
         <h2 className="text-lg font-semibold">{ui('سجل حضور اليوم')}</h2>
         <p className="text-sm text-muted-foreground">
