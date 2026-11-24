@@ -46,6 +46,13 @@ import { cairoDayRange } from '../../common/utils/cairo-day-range.util';
 import { MemberDocumentStorageService } from './member-document-storage.service';
 import { canonicalClubMemberBranchId, clubMemberIdentityBranchIds, shareClubMemberIdentity } from './club-branch-groups';
 
+/** True when an update carries nothing but the member photo (undefined keys are ignored). */
+export function isPhotoOnlyMemberUpdate(dto: Record<string, unknown> | null | undefined): boolean {
+  if (!dto) return false;
+  const keys = Object.keys(dto).filter((key) => dto[key] !== undefined);
+  return keys.length === 1 && keys[0] === 'profilePicture' && typeof dto.profilePicture === 'string';
+}
+
 /** True when a P2002 unique violation came from a constraint/index whose name contains `needle`. */
 function isUniqueTarget(e: Prisma.PrismaClientKnownRequestError, needle: string): boolean {
   const target = (e.meta as { target?: string | string[] } | undefined)?.target;
@@ -76,13 +83,23 @@ export class ClubMembersService {
     }
   }
 
-  private assertMemberAccess(user: JwtUser | undefined, member: { branch_id: number; gender: string | null; created_at?: Date | null }) {
+  /**
+   * Branch + section access, and for the reception desk (not reception managers/supervisors) the
+   * "today's members only" rule. `anyDay` lifts that rule for the member screen reception works
+   * from every day (attachments listed/opened/uploaded, photo change — client, 24 Nov): the
+   * member is still limited to the user's branch and section.
+   */
+  private assertMemberAccess(
+    user: JwtUser | undefined,
+    member: { branch_id: number; gender: string | null; created_at?: Date | null },
+    options: { anyDay?: boolean } = {},
+  ) {
     this.assertBranchAccess(user, member.branch_id);
     if (!this.branchScope.isMemberGenderAllowed(user, member.gender)) {
       throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
     }
-    const receptionOnly = !isSystemAdmin(user) && /(reception|ريسيبشن|استقبال)/i.test(user?.job_title ?? '');
-    if (receptionOnly && (!member.created_at || localDateString(member.created_at) !== localDateString())) {
+    if (options.anyDay) return;
+    if (isReceptionEmployee(user) && (!member.created_at || localDateString(member.created_at) !== localDateString())) {
       throw new ForbiddenException('موظف الاستقبال يمكنه الوصول إلى أعضاء اليوم فقط');
     }
   }
@@ -118,7 +135,7 @@ export class ClubMembersService {
       select: { branch_id: true, gender: true, created_at: true, membership_document_path: true, membership_document_uploaded_at: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
-    this.assertMemberAccess(user, member);
+    this.assertMemberAccess(user, member, { anyDay: true });
     return {
       available: Boolean(member.membership_document_path),
       uploadedAt: member.membership_document_uploaded_at,
@@ -132,7 +149,7 @@ export class ClubMembersService {
       select: { branch_id: true, gender: true, created_at: true, membership_document_path: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
-    this.assertMemberAccess(user, member);
+    this.assertMemberAccess(user, member, { anyDay: true });
     if (!member.membership_document_path) throw new NotFoundException('مستند العضو غير موجود');
     return this.memberDocumentStorage.readLegacy(member.membership_document_path);
   }
@@ -160,7 +177,7 @@ export class ClubMembersService {
       where: { id }, select: { id: true, branch_id: true, gender: true, created_at: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
-    this.assertMemberAccess(user, member);
+    this.assertMemberAccess(user, member, { anyDay: true });
     const documents = await this.prisma.club_member_documents.findMany({
       where: { member_id: id }, orderBy: [{ uploaded_at: 'desc' }, { id: 'desc' }],
     });
@@ -218,7 +235,7 @@ export class ClubMembersService {
       where: { id }, select: { id: true, branch_id: true, gender: true, created_at: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
-    this.assertMemberAccess(user, member);
+    this.assertMemberAccess(user, member, { anyDay: true });
     const documentType = normalizeMembershipDocumentType(type);
     const stored = this.memberDocumentStorage.store(file);
     try {
@@ -247,7 +264,7 @@ export class ClubMembersService {
       where: { id }, select: { id: true, branch_id: true, gender: true, created_at: true },
     });
     if (!member) throw new NotFoundException('العضو غير موجود');
-    this.assertMemberAccess(user, member);
+    this.assertMemberAccess(user, member, { anyDay: true });
     if (documentId < 0) {
       const image = await this.prisma.club_member_images.findFirst({
         where: { id: -documentId, member_id: id },
@@ -1338,9 +1355,14 @@ export class ClubMembersService {
   async update(id: number, dto: Partial<UpsertClubMemberDto>, user?: JwtUser) {
     const existing = await this.prisma.club_members.findFirst({ where: { id, is_deleted: false } });
     if (!existing) throw new NotFoundException('العضو غير موجود');
-    // Edit/delete rule first so the receptionist gets the specific "added today only" message.
-    this.assertReceptionCanModify(user, existing);
-    this.assertMemberAccess(user, existing);
+    // A photo-only change (reception's camera/pencil on the member photo, client 24 Nov) is allowed
+    // for any member of the user's branch/section; every other edit keeps the "added today" rule.
+    const photoOnly = isPhotoOnlyMemberUpdate(dto);
+    if (!photoOnly) {
+      // Edit/delete rule first so the receptionist gets the specific "added today only" message.
+      this.assertReceptionCanModify(user, existing);
+    }
+    this.assertMemberAccess(user, existing, { anyDay: photoOnly });
     if (dto.gender && !this.branchScope.isMemberGenderAllowed(user, dto.gender)) {
       throw new ForbiddenException('لا تملك صلاحية نقل العضو إلى هذا القسم');
     }
