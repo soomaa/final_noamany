@@ -1,10 +1,24 @@
 import { EmployeeType, LeaveType } from '../../common/constants/hr-codes';
-import { SUSPEND_APPROVED, SuspendStatus } from '../../common/utils/suspend-status.util';
+import { SuspendStatus } from '../../common/utils/suspend-status.util';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { decimal, payrollPeriod } from './payroll-status.util';
+import { legacyBusinessIsoDate, legacyDateMatchValues } from '../../common/utils/legacy-date.util';
+import { finalApprovalSuspendFilter } from './leave-approval.util';
+import { ScheduleResolver } from '../attendance-exceptions/scheduled-shifts.util';
+import { ResolutionIndex, loadResolutions } from '../attendance-exceptions/resolutions.repo';
+import { dayAbsence, forgottenFingerprint, lateTreatment, round4 } from './payroll-attendance.util';
+
+/**
+ * Per-employee attendance inputs shared by the absence, missing-punch and late calculations:
+ * the scheduled shift slots (split shifts) and the managers' daily-exception resolutions.
+ */
+export interface PayrollAttendanceContext {
+  schedule: ScheduleResolver | null;
+  resolutions: ResolutionIndex;
+}
 
 /** Allowance/deduction codes (badl) keyed in hr_finance_employes. */
 const BADL = {
@@ -203,13 +217,19 @@ export class PayrollEngineService {
     // Target is kept separate because its payable amount remains editable in the sheet.
     const totEntdab = incentives.classCommission + incentives.proteinCommission;
 
-    const absence = await this.getActualAbsence(empCode, fromDate, toDate);
+    const attendanceCtx = await this.loadAttendanceContext(
+      { id: emp.id, emp_code: empCode, branch_id_fk: emp.branch_id_fk },
+      fromDate,
+      toDate,
+    );
+    const absence = await this.getActualAbsence(empCode, fromDate, toDate, attendanceCtx);
     const keyab = await this.getKeyabByDate(empCode, fromDate, toDate);
     let absenceDays = absence.count;
-    let paidLeaveDays = keyab.withSalaryDays;
-    let unpaidLeaveDays = keyab.withoutSalaryDays;
-    let forgottenFingerprint = await this.getForgottenFingerprintByDate(empCode, fromDate, toDate);
-    let late = await this.getLateByDate(empCode, fromDate, toDate);
+    // Leave decided by a manager on the daily-exceptions page counts like an approved leave.
+    let paidLeaveDays = round4(keyab.withSalaryDays + absence.resolutionLeave.paidDays);
+    let unpaidLeaveDays = round4(keyab.withoutSalaryDays + absence.resolutionLeave.unpaidDays);
+    let forgottenFingerprint = await this.getForgottenFingerprintByDate(empCode, fromDate, toDate, attendanceCtx);
+    let late = await this.getLateByDate(empCode, fromDate, toDate, attendanceCtx);
     let khasmKeyabAmount = absenceDays * agrYom;
     let khasmAgazat = paidLeaveDays * agrYom;
     let agazaBdonRateb = unpaidLeaveDays * agrYom;
@@ -388,14 +408,44 @@ export class PayrollEngineService {
     return agg._sum.num_hours ?? 0;
   }
 
+  /**
+   * Extra shifts (tbl_emps_shef_edafi ttype=2) paid as days — only those actually worked: a
+   * tbl_hdoor_emps row with a punch for the same employee and date, and the same shift when the
+   * extra shift names one. A booked extra shift that was never punched is not paid.
+   */
   async getSheftEdafi(empCode: number, fromDate: string, toDate: string): Promise<number> {
-    return this.prisma.tbl_emps_shef_edafi.count({
+    const extras = await this.prisma.tbl_emps_shef_edafi.findMany({
       where: {
         emp_code_fk: empCode,
         ttype: 2,
         sheft_date: { gte: fromDate, lte: toDate },
       },
+      select: { sheft_date: true, dwam_id_fk: true },
     });
+    if (!extras.length) return 0;
+    const dates = [...new Set(extras.map((extra) => extra.sheft_date.slice(0, 10)))];
+    const punches = await this.prisma.tbl_hdoor_emps.findMany({
+      where: {
+        member_code: empCode,
+        OR: [
+          { action_date: { in: dates } },
+          { action_date_s: { in: dates.flatMap((date) => legacyDateMatchValues(date)) } },
+        ],
+      },
+      select: { action_date: true, action_date_s: true, dwam_id_fk: true, hdoor_time: true, ensraf_time: true },
+    });
+    const worked = punches
+      .filter((row) => Boolean(row.hdoor_time?.trim()) || Boolean(row.ensraf_time?.trim()))
+      .map((row) => ({
+        date: row.action_date?.match(/^\d{4}-\d{2}-\d{2}/)?.[0]
+          ?? legacyBusinessIsoDate(row.action_date_s)?.slice(0, 10)
+          ?? '',
+        shiftId: row.dwam_id_fk,
+      }));
+    return extras.filter((extra) => {
+      const date = extra.sheft_date.slice(0, 10);
+      return worked.some((row) => row.date === date && (!extra.dwam_id_fk || row.shiftId === extra.dwam_id_fk));
+    }).length;
   }
 
   async getGezaaByDate(empCode: number, fromDate: string, toDate: string): Promise<number> {
@@ -509,12 +559,15 @@ export class PayrollEngineService {
     empCode: number,
     fromDate: string,
     toDate: string,
+    ctx?: PayrollAttendanceContext,
   ): Promise<{ lateWithPermission: number; lateWithoutPermission: number }> {
+    const attendance = ctx ?? (await this.loadAttendanceContext({ emp_code: empCode }, fromDate, toDate));
+    // Permissions count only once finally approved (not at the direct manager's step).
     const ozonat = await this.prisma.hr_all_ozonat_orders.findMany({
       where: {
         emp_code_fk: empCode,
         ezn_date: { gte: fromDate, lte: toDate },
-        suspend: { in: SUSPEND_APPROVED },
+        suspend: finalApprovalSuspendFilter(),
       },
       select: { ezn_date: true },
     });
@@ -526,7 +579,7 @@ export class PayrollEngineService {
         action_date: { gte: fromDate, lte: toDate },
         late_min: { gt: 0 },
       },
-      select: { late_min: true, action_date: true },
+      select: { late_min: true, action_date: true, dwam_id_fk: true },
     });
 
     let lateWithPermission = 0;
@@ -534,7 +587,13 @@ export class PayrollEngineService {
     for (const row of lateRows) {
       let late = Math.floor(row.late_min ?? 0);
       const date = row.action_date ?? '';
-      if (approvedDates.has(date)) {
+      const splitDay = this.countedSlots(attendance, empCode, date).length > 1;
+      const resolution = splitDay
+        ? attendance.resolutions.forSlot(date, row.dwam_id_fk)
+        : attendance.resolutions.forDay(date, row.dwam_id_fk);
+      const treatment = lateTreatment(resolution);
+      if (treatment === 'drop') continue;
+      if (approvedDates.has(date) || treatment === 'permission') {
         lateWithPermission += late;
       } else {
         if (late > 120) late = 240;
@@ -549,7 +608,14 @@ export class PayrollEngineService {
     empCode: number,
     fromDate: string,
     toDate: string,
-  ): Promise<{ count: number; days: string[] }> {
+    ctx?: PayrollAttendanceContext,
+  ): Promise<{
+    count: number;
+    days: string[];
+    /** Leave days granted by manager resolutions (fractions for a split-shift slot). */
+    resolutionLeave: { paidDays: number; unpaidDays: number };
+  }> {
+    const attendanceCtx = ctx ?? (await this.loadAttendanceContext({ emp_code: empCode }, fromDate, toDate));
     const offRow = await this.prisma.hr_emp_agazat_dayes.findFirst({
       where: { emp_code_fk: empCode },
     });
@@ -568,22 +634,25 @@ export class PayrollEngineService {
         member_code: empCode,
         action_date: { gte: fromDate, lte: toDate },
       },
-      select: { action_date: true },
-      distinct: ['action_date'],
+      select: { action_date: true, dwam_id_fk: true, sheft_type: true, hdoor_time: true, ensraf_time: true },
     });
-    const attendanceDates = (attendance.map((a) => a.action_date).filter(
-      (x): x is string => !!x,
-    ));
-    const attendanceSet = new Set(attendanceDates);
+    const rowsByDate = new Map<string, typeof attendance>();
+    for (const row of attendance) {
+      if (!row.action_date) continue;
+      const list = rowsByDate.get(row.action_date) ?? [];
+      list.push(row);
+      rowsByDate.set(row.action_date, list);
+    }
+    const attendanceDates = [...rowsByDate.keys()];
 
-    // 4) fingerprint absence (working days with no attendance).
-    const fingerprintAbsence = allDates.filter((d) => !attendanceSet.has(d));
+    // 4) candidate absence: every working day; judged per scheduled shift slot in step 9.
+    const fingerprintAbsence = allDates;
 
-    // 5) approved vacations (suspend 1|4) days, excluding off-day.
+    // 5) finally-approved vacations (see leave-approval.util), excluding off-day.
     const vacations = await this.prisma.hr_all_agzat_orders.findMany({
       where: {
         emp_code_fk: empCode,
-        suspend: { in: SUSPEND_APPROVED },
+        suspend: finalApprovalSuspendFilter(),
         agaza_from_date_m: { lte: toDate },
         agaza_to_date_m: { gte: fromDate },
       },
@@ -625,7 +694,7 @@ export class PayrollEngineService {
       const replacements = await this.prisma.hr_all_agzat_orders.findMany({
         where: {
           emp_code_fk: empCode,
-          suspend: { in: SUSPEND_APPROVED },
+          suspend: finalApprovalSuspendFilter(),
           no3_agaza: LeaveType.REPLACEMENT,
           agaza_from_date_m: { lte: toDate },
           agaza_to_date_m: { gte: fromDate },
@@ -640,14 +709,74 @@ export class PayrollEngineService {
       }
     }
 
-    // 9) final absence = fingerprint − vacations − holidays − replacement-leave.
-    const actualAbsence = fingerprintAbsence.filter(
-      (d) =>
-        !vacationDays.has(d) &&
-        !officialHolidays.has(d) &&
-        !replacementDays.has(d),
+    // 9) final absence = working days − vacations − holidays − replacement-leave, each remaining
+    //    day judged per scheduled shift slot and by the managers' resolutions (dayAbsence).
+    const actualAbsence: string[] = [];
+    let count = 0;
+    const resolutionLeave = { paidDays: 0, unpaidDays: 0 };
+    for (const d of fingerprintAbsence) {
+      if (vacationDays.has(d) || officialHolidays.has(d) || replacementDays.has(d)) continue;
+      const day = dayAbsence(
+        d,
+        this.countedSlots(attendanceCtx, empCode, d),
+        rowsByDate.get(d) ?? [],
+        attendanceCtx.resolutions,
+      );
+      if (day.fraction > 0) {
+        actualAbsence.push(d);
+        count += day.fraction;
+      }
+      for (const leave of day.leave) {
+        if (leave.leaveTypeId === LeaveType.UNPAID) resolutionLeave.unpaidDays += leave.days;
+        else resolutionLeave.paidDays += leave.days;
+      }
+    }
+    return {
+      count: round4(count),
+      days: actualAbsence,
+      resolutionLeave: {
+        paidDays: round4(resolutionLeave.paidDays),
+        unpaidDays: round4(resolutionLeave.unpaidDays),
+      },
+    };
+  }
+
+  /**
+   * Schedule + resolutions for one employee over the window. `employee.id` / branch are looked up
+   * when not supplied (direct calls of the public helpers).
+   */
+  async loadAttendanceContext(
+    employee: { id?: number; emp_code: number; branch_id_fk?: number | null },
+    fromDate: string,
+    toDate: string,
+  ): Promise<PayrollAttendanceContext> {
+    let ref = employee.id != null
+      ? { id: employee.id, emp_code: employee.emp_code, branch_id_fk: employee.branch_id_fk ?? null }
+      : null;
+    if (!ref) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const found = await (this.prisma as any).employees?.findFirst?.({
+        where: { emp_code: employee.emp_code },
+        select: { id: true, emp_code: true, branch_id_fk: true },
+      });
+      ref = found ? { id: found.id, emp_code: employee.emp_code, branch_id_fk: found.branch_id_fk ?? null } : null;
+    }
+    const schedule = ref
+      ? await ScheduleResolver.load(this.prisma, [ref], fromDate, toDate, {
+          defaultOffDay: this.defaultOffDay,
+          includeSpecial: true,
+        })
+      : null;
+    const resolutions = new ResolutionIndex(
+      await loadResolutions(this.prisma, [employee.emp_code], fromDate, toDate),
     );
-    return { count: actualAbsence.length, days: actualAbsence };
+    return { schedule, resolutions };
+  }
+
+  /** Main/replacement shift slots scheduled for the date ([] when unknown → single-shift rules). */
+  private countedSlots(ctx: PayrollAttendanceContext, empCode: number, date: string) {
+    if (!ctx.schedule || !date) return [];
+    return ctx.schedule.day(empCode, date).slots.filter((slot) => slot.source !== 'extra');
   }
 
   /** Bonuses: hr_mokafat_details suspend=4 option='rateb', dated 25th-in-window. */
@@ -674,7 +803,7 @@ export class PayrollEngineService {
     const rows = await this.prisma.hr_all_agzat_orders.findMany({
       where: {
         emp_code_fk: empCode,
-        suspend: { in: SUSPEND_APPROVED },
+        suspend: finalApprovalSuspendFilter(),
         agaza_from_date_m: { lte: toDate },
         agaza_to_date_m: { gte: fromDate },
       },
@@ -693,27 +822,28 @@ export class PayrollEngineService {
   /**
    * Missing one side of the fingerprint pair counts progressively like the active legacy sheet:
    * first occurrence = 1/4 day, second = 1/2 day, every later occurrence = one full day.
+   * Split-shift days count at most once, weighted by the affected shifts' share of the day; slots a
+   * manager resolved on the daily-exceptions page are not penalised (payroll-attendance.util).
    */
   async getForgottenFingerprintByDate(
     empCode: number,
     fromDate: string,
     toDate: string,
+    ctx?: PayrollAttendanceContext,
   ): Promise<{ count: number; deductionDays: number }> {
+    const attendance = ctx ?? (await this.loadAttendanceContext({ emp_code: empCode }, fromDate, toDate));
     const rows = await this.prisma.tbl_hdoor_emps.findMany({
       where: {
         member_code: empCode,
         action_date: { gte: fromDate, lte: toDate },
       },
-      select: { hdoor_time: true, ensraf_time: true },
+      select: { hdoor_time: true, ensraf_time: true, action_date: true, dwam_id_fk: true, sheft_type: true },
     });
-    const count = rows.reduce((total, row) => {
-      const hasIn = Boolean(row.hdoor_time?.trim());
-      const hasOut = Boolean(row.ensraf_time?.trim());
-      return total + (hasIn !== hasOut ? 1 : 0);
-    }, 0);
-    const deductionDays =
-      count === 0 ? 0 : 0.25 + (count >= 2 ? 0.5 : 0) + Math.max(0, count - 2);
-    return { count, deductionDays };
+    return forgottenFingerprint(
+      rows,
+      (date) => this.countedSlots(attendance, empCode, date),
+      attendance.resolutions,
+    );
   }
 
   // ── Insurance (GOSI) rate table ────────────────────────────────────────────

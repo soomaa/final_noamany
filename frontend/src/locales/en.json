@@ -312,6 +312,7 @@
       "/attendance/settings": "Work Schedule Settings",
       "/attendance/rules": "Attendance Rules",
       "/attendance/reports": "Attendance Reports",
+      "/attendance/exceptions": "Daily Attendance Cases",
       "/attendance/adjustments": "Shift Swaps & Overtime",
       "/attendance/import": "Import Attendance File",
       "/payroll/runs": "Payroll Run",

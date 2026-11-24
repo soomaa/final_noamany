@@ -17,6 +17,7 @@ import {
   AttendanceSettingsPage,
   AttendanceReportsPage,
   AttendanceAdjustmentsPage,
+  AttendanceExceptionsPage,
   AttendanceImportPage,
   CircularsPage,
   ClearancePage,
@@ -403,6 +404,7 @@ export function AppRouter() {
           <Route path="attendance/settings" element={<Lazy><AttendanceSettingsPage /></Lazy>} />
           <Route path="attendance/rules" element={<Lazy><AttendanceRulesPage /></Lazy>} />
           <Route path="attendance/reports" element={<Lazy><AttendanceReportsPage /></Lazy>} />
+          <Route path="attendance/exceptions" element={<Lazy><AttendanceExceptionsPage /></Lazy>} />
           <Route path="attendance/adjustments" element={<Lazy><AttendanceAdjustmentsPage /></Lazy>} />
           <Route path="attendance/import" element={<Lazy><AttendanceImportPage /></Lazy>} />
           <Route path="reports/attendance-daily" element={<Lazy><AttendanceReportsPage /></Lazy>} />

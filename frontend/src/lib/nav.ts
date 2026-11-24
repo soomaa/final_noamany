@@ -468,6 +468,7 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: Fingerprint,
         items: [
           { to: '/attendance' },
+          { to: '/attendance/exceptions' },
           { to: '/attendance/reports' },
           { to: '/attendance/adjustments' },
           { to: '/attendance/import' },

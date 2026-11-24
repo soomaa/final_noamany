@@ -34,6 +34,7 @@ import { PenaltiesModule } from './modules/penalties/penalties.module';
 import { RewardsModule } from './modules/rewards/rewards.module';
 import { RequestsModule } from './modules/requests/requests.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
+import { AttendanceExceptionsModule } from './modules/attendance-exceptions/attendance-exceptions.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { LeavesModule } from './modules/leaves/leaves.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
@@ -141,6 +142,7 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     DocumentsModule,
     ReportsModule,
     AttendanceModule,
+    AttendanceExceptionsModule,
     LeavesModule,
     PermissionsModule,
     // --- Wave 3 ---
