@@ -25,6 +25,7 @@
     "db:migrate:branches": "ts-node prisma/scripts/migrate-branches.ts",
     "db:validate:branches": "ts-node prisma/scripts/validate-branches.ts",
     "db:repair:noamany-club-branches": "ts-node prisma/scripts/repair-noamany-club-branches.ts",
+    "db:apply:branch-manager-hr-defaults": "ts-node prisma/scripts/apply-branch-manager-hr-defaults.ts",
     "db:validate:noamany-club-branches": "ts-node prisma/scripts/repair-noamany-club-branches.ts --dry-run",
     "db:migrate:employees": "ts-node prisma/scripts/migrate-employees.ts",
     "db:validate:employees": "ts-node prisma/scripts/validate-employees.ts",

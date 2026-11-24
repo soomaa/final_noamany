@@ -12,7 +12,8 @@ export type RequestTypeKey =
   | 'resignation'
   | 'transfer'
   | 'promotion'
-  | 'data-change';
+  | 'data-change'
+  | 'overtime';
 
 const REQUEST_TYPE_META: Record<RequestTypeKey, { path: string; printable?: boolean }> = {
   leave: { path: '/requests/new/leave' },
@@ -25,6 +26,7 @@ const REQUEST_TYPE_META: Record<RequestTypeKey, { path: string; printable?: bool
   transfer: { path: '/requests/new/transfer' },
   promotion: { path: '/requests/new/promotion' },
   'data-change': { path: '/requests/new/data-change' },
+  overtime: { path: '/requests/new/overtime' },
 };
 
 export function getRequestTypes(t: TFunction) {

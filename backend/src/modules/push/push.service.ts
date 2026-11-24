@@ -121,6 +121,36 @@ export class PushService {
   }
 
   /**
+   * Push only (no notification rows): for workflows that already wrote their own in-app
+   * notification (leaves, permissions, overtime and employee requests). Best-effort: never
+   * throws, so a push failure can never fail the request that triggered it.
+   */
+  async pushToUsers(userIds: Array<number | null | undefined>, title: string, body: string): Promise<number> {
+    let sent = 0;
+    try {
+      const ids = [...new Set(userIds.filter((id): id is number => typeof id === 'number' && id > 0))];
+      if (!ids.length) return 0;
+      const users = await this.prisma.users.findMany({
+        where: { user_id: { in: ids } },
+        select: { user_id: true, device_token: true },
+      });
+      for (const user of users) {
+        const token = user.device_token?.trim();
+        if (!token) continue;
+        try {
+          await this.dispatch(token, { title, body });
+          sent += 1;
+        } catch (error) {
+          this.logger.warn(`push to user ${user.user_id} failed: ${(error as Error).message}`);
+        }
+      }
+    } catch (error) {
+      this.logger.warn(`pushToUsers failed: ${(error as Error).message}`);
+    }
+    return sent;
+  }
+
+  /**
    * Broadcast to all users, or to a single branch (users.branch_id_fk = branchId).
    */
   async broadcast(

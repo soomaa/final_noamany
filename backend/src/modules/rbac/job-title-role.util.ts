@@ -1,6 +1,6 @@
 import { BadRequestException } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
-import { defaultPermissionCellsForJobTitle } from './job-title-defaults';
+import { branchManagerHrCells, defaultPermissionCellsForJobTitle, isBranchManagerSheetTitle } from './job-title-defaults';
 
 export const JOB_TITLE_ROLE_PREFIX = 'job_title_';
 
@@ -142,4 +142,36 @@ export async function syncAllEmployeeUserRoles(prisma: EmployeeUserPrisma): Prom
     if (userId != null) synced.push(userId);
   }
   return synced;
+}
+
+type BackfillPrisma = Pick<PrismaClient, 'rbac_roles' | 'rbac_role_permissions' | 'rbac_resources' | 'rbac_actions'>;
+
+/**
+ * One-off (re-runnable) backfill of the 24 Nov branch-manager HR cells onto EXISTING branch-manager
+ * job-title roles. Only adds missing cells (createMany skipDuplicates on the role/resource/action
+ * unique key): custom grants, and any explicit Deny an admin already stored, are left untouched.
+ * Script: prisma/scripts/apply-branch-manager-hr-defaults.ts. Do not run it on every boot — that
+ * would re-add cells an admin removed on purpose.
+ */
+export async function applyBranchManagerHrDefaults(prisma: BackfillPrisma) {
+  const cells = branchManagerHrCells();
+  const [roles, resources, actions] = await Promise.all([
+    prisma.rbac_roles.findMany({ where: { key: { startsWith: JOB_TITLE_ROLE_PREFIX } }, select: { id: true, name_ar: true } }),
+    prisma.rbac_resources.findMany({ where: { key: { in: [...new Set(cells.map((c) => c.resourceKey))] } }, select: { id: true, key: true } }),
+    prisma.rbac_actions.findMany({ where: { key: { in: [...new Set(cells.map((c) => c.actionKey))] } }, select: { id: true, key: true } }),
+  ]);
+  const resourceId = new Map(resources.map((r) => [r.key, r.id] as const));
+  const actionId = new Map(actions.map((a) => [a.key, a.id] as const));
+  const missingResources = [...new Set(cells.map((c) => c.resourceKey))].filter((k) => !resourceId.has(k));
+  const targets = roles.filter((r) => isBranchManagerSheetTitle(r.name_ar));
+  let added = 0;
+  for (const role of targets) {
+    const data = cells
+      .filter((c) => resourceId.has(c.resourceKey) && actionId.has(c.actionKey))
+      .map((c) => ({ role_id: role.id, resource_id: resourceId.get(c.resourceKey)!, action_id: actionId.get(c.actionKey)!, effect: c.effect }));
+    if (!data.length) continue;
+    const result = await prisma.rbac_role_permissions.createMany({ data, skipDuplicates: true });
+    added += result.count;
+  }
+  return { roles: targets.map((r) => ({ id: r.id, name: r.name_ar })), added, missingResources };
 }

@@ -112,7 +112,40 @@ export function branchManagerCells(): JobTitlePermissionCell[] {
     ...grant(['gym-sales.sales.invoices', 'gym-sales.sales.drawings', 'gym-sales.inventory.stock_taking', 'gym-sales.inventory.stock_taking_report'], ['view', 'print']),
     // إدارة خدمة العملاء
     ...grant(['customer-service.reports'], VIEW_REPORT),
+    // HR approvals for the branch's staff (24 Nov): see BRANCH_MANAGER_HR_CELLS.
+    ...branchManagerHrCells(),
   ];
+}
+
+/**
+ * Branch manager HR duties (meeting 24 Nov 2026): approve / reject the branch staff's leaves,
+ * permissions and employee requests (they are the direct manager in the chain), record extra
+ * hours, read daily reports and handle attendance exceptions. Still no delete. Who may decide on a
+ * given request is enforced by the approval chain (routed recipient, or HR / admin override).
+ * Also applied once to existing branch-manager roles (applyBranchManagerHrDefaults).
+ */
+export function branchManagerHrCells(): JobTitlePermissionCell[] {
+  return dedupe([
+    ...grant(['leaves.list', 'leaves.permissions', 'leaves.requests'], ['view', 'approve', 'reject']),
+    // Their own leave / permit / overtime requests.
+    ...selfServiceCells(),
+    // «الساعات الإضافية»: POST /attendance/extra-hours is guarded by attendance.adjustments:create.
+    ...grant(['attendance.adjustments'], ['view', 'create']),
+    ...grant(['affairs.daily_reports'], ['view']),
+    // Resource created by the attendance-exceptions module; cells for a resource that is not in
+    // rbac_resources yet are skipped when the matrix is written.
+    ...grant(['attendance.exceptions'], ['view', 'update']),
+  ]);
+}
+
+function dedupe(cells: JobTitlePermissionCell[]): JobTitlePermissionCell[] {
+  const seen = new Set<string>();
+  return cells.filter((c) => {
+    const key = `${c.resourceKey}:${c.actionKey}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 /** Titles that get the branch-manager sheet (normalised: ة→ه, إ→ا). */
@@ -173,6 +206,15 @@ export function selfServiceCells(): JobTitlePermissionCell[] {
  * existing/custom matrix is never overwritten, and can be refined from Roles & Permissions.
  */
 export function defaultPermissionCellsForJobTitle(name: string): JobTitlePermissionCell[] {
+  const cells = titleCells(name);
+  // Every recognised staff role keeps the self-service the old generic «موظف» role gave (own
+  // permits and employee requests, incl. leave / overtime through «طلبات الموظفين»); the
+  // own-records filter (common/hr-scope/own-hr-records) keeps those lists to the employee's own.
+  // An unknown title stays empty: access is never inferred from free text.
+  return cells.length ? dedupe([...cells, ...selfServiceCells()]) : cells;
+}
+
+function titleCells(name: string): JobTitlePermissionCell[] {
   const title = normalizeJobTitle(name);
 
   if (isBranchManagerSheetTitle(name)) return branchManagerCells();

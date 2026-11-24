@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { paginated } from '../../common/dto/list-result';
@@ -16,6 +16,10 @@ import { CreateRequestDto } from './dto/create-request.dto';
 import { ListRequestsDto } from './dto/list-requests.dto';
 import { LoansService } from '../loans/loans.service';
 import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
+import { LeavesService } from '../leaves/leaves.service';
+import { PermissionsService } from '../permissions/permissions.service';
+import { OvertimeRequestsService } from '../overtime-requests/overtime-requests.service';
+import { PushService } from '../push/push.service';
 
 /** Who may see which requests: `null` employee set = every request (system admin). */
 type RequestAudience = { empIds: number[] | null };
@@ -38,7 +42,99 @@ export class RequestsService {
     private readonly loans: LoansService,
     private readonly scope: BranchScopeService,
     private readonly engine: PermissionEngineService,
+    // Optional so the scope specs can construct the service without the chain modules.
+    @Optional() private readonly leaves?: LeavesService,
+    @Optional() private readonly permissions?: PermissionsService,
+    @Optional() private readonly overtime?: OvertimeRequestsService,
+    @Optional() private readonly push?: PushService,
   ) {}
+
+  /** Best-effort result push (+ in-app row) to the employee; never fails the request. */
+  private async notifyResult(toUser: number | null | undefined, fromUser: number, title: string, body: string) {
+    if (!toUser || toUser === fromUser || !this.push) return;
+    try {
+      await this.push.sendToUsers([toUser], title, body, fromUser);
+    } catch {
+      // best-effort
+    }
+  }
+
+  private str(v: unknown): string | undefined {
+    if (v == null) return undefined;
+    const s = String(v).trim();
+    return s ? s : undefined;
+  }
+
+  private num(v: unknown): number | undefined {
+    const n = Number(v);
+    return v == null || v === '' || !Number.isFinite(n) ? undefined : n;
+  }
+
+  /**
+   * Leave / permission / overtime filed through «طلبات الموظفين» go to their own module so its
+   * validation (min/max days, overlap, sick-leave limit, monthly permit caps, …) and the approval
+   * chain apply. Returns null for every other type.
+   */
+  private async delegateToChain(dto: CreateRequestDto, user: JwtUser) {
+    const typeKey = fromDbRequestType(dto.type);
+    if (!['leave', 'permission', 'overtime'].includes(typeKey)) return null;
+    const p: Record<string, unknown> = { ...(dto.payload ?? {}), ...dto };
+    // A staff login always files for itself; only an account without an employee link may name one.
+    const empId = user.emp_code != null ? undefined : this.num(dto.empId ?? dto.payload?.empId);
+    if (typeKey === 'leave') {
+      if (!this.leaves) throw new BadRequestException('خدمة الإجازات غير متاحة');
+      const leaveTypeId = this.num(p.leave_type_id ?? p.leaveTypeId);
+      const startDate = this.str(p.date_from ?? p.startDate);
+      const endDate = this.str(p.date_to ?? p.endDate);
+      if (!leaveTypeId || !startDate || !endDate) throw new BadRequestException('نوع الإجازة والتواريخ مطلوبة');
+      const result = await this.leaves.create(
+        {
+          empId,
+          leaveTypeId,
+          startDate,
+          endDate,
+          substituteEmpId: this.num(p.substitute_id ?? p.substituteEmpId),
+          returnToWorkDate: this.str(p.return_to_work_date ?? p.returnToWorkDate),
+          reason: this.str(p.reason ?? p.notes),
+        },
+        user.sub,
+        user.name ?? undefined,
+        undefined,
+        user,
+      );
+      return { ...result, delegated: 'leaves' as const };
+    }
+    if (typeKey === 'permission') {
+      if (!this.permissions) throw new BadRequestException('خدمة الأذونات غير متاحة');
+      const result = await this.permissions.create(
+        {
+          empId,
+          no3Ezn: this.num(p.permission_type ?? p.no3Ezn) ?? 1,
+          fatraFk: this.num(p.permission_period ?? p.fatraFk),
+          eznDate: this.str(p.permission_date ?? p.eznDate) ?? '',
+          fromHour: this.str(p.time_from ?? p.fromHour) ?? '',
+          toHour: this.str(p.time_to ?? p.toHour) ?? '',
+          reason: this.str(p.reason ?? p.notes) ?? '',
+        },
+        user.sub,
+        user.name ?? undefined,
+        user,
+      );
+      return { ...result, delegated: 'permissions' as const };
+    }
+    if (!this.overtime) throw new BadRequestException('خدمة الساعات الإضافية غير متاحة');
+    const result = await this.overtime.create(
+      {
+        empId,
+        date: this.str(p.date ?? p.overtime_date) ?? '',
+        hours: this.num(p.hours) ?? 0,
+        reason: this.str(p.reason ?? p.notes) ?? '',
+      },
+      user,
+      empId != null,
+    );
+    return { ...result, delegated: 'overtime-requests' as const };
+  }
 
   // ---- visibility -----------------------------------------------------------------------
 
@@ -220,6 +316,9 @@ export class RequestsService {
       throw new BadRequestException('نوع الطلب غير معروف');
     }
 
+    const delegated = await this.delegateToChain(dto, user);
+    if (delegated) return delegated;
+
     const { type, notes, payload: explicitPayload, ...rest } = dto;
     const emp = await this.resolveRequestEmployee(user, dto);
     // Client-supplied employee ids never reach the stored payload: approval routes on
@@ -274,12 +373,30 @@ export class RequestsService {
       return { dryRun: true, preview: { type: typeKey }, rows, warning: 'سيتم إنشاء سجل في النظام عند الاعتماد' };
     }
 
+    if (typeKey === 'leave' || typeKey === 'permission') {
+      // Old flat rows filed before 24 Nov: hand them to the real chain instead of creating an
+      // already-approved leave / permit that skipped every validation.
+      const forwarded = await this.forwardLegacyChainRequest(typeKey, row, payload);
+      await this.prisma.hr_requests.update({
+        where: { id },
+        data: { status: 4, reason_action: `forwarded:${forwarded.module}:${forwarded.id}` },
+      });
+      await this.notifyResult(
+        row.publisher,
+        userId,
+        'تم تحويل طلبك لمسار الاعتماد',
+        typeKey === 'leave' ? 'طلب الإجازة بانتظار اعتماد المدير المباشر والموارد البشرية' : 'طلب الإذن بانتظار الاعتماد',
+      );
+      return { id, status: 'approved', forwardedTo: forwarded };
+    }
+
     await this.routeToDomain(typeKey, row, payload, userId);
 
     await this.prisma.hr_requests.update({
       where: { id },
       data: { status: 4, reason_action: 'approved' },
     });
+    await this.notifyResult(row.publisher, userId, 'تم اعتماد طلبك', REQUEST_TYPE_LABELS[typeKey] ?? typeKey);
 
     return { id, status: 'approved' };
   }
@@ -292,7 +409,68 @@ export class RequestsService {
       where: { id },
       data: { status: 2, reason_action: 'rejected' },
     });
+    const typeKey = fromDbRequestType(row.type);
+    await this.notifyResult(row.publisher, user.sub, 'تم رفض طلبك', REQUEST_TYPE_LABELS[typeKey] ?? typeKey);
     return { id, status: 'rejected' };
+  }
+
+  /** Re-file an old flat leave / permission row through its module, as the employee who filed it. */
+  private async forwardLegacyChainRequest(
+    typeKey: 'leave' | 'permission',
+    row: { emp_id_fk: number | null; publisher: number | null; publisher_name: string | null },
+    payload: Record<string, unknown>,
+  ): Promise<{ module: 'leaves' | 'permissions'; id: number }> {
+    if (row.emp_id_fk == null) throw new BadRequestException('الطلب غير مرتبط بموظف');
+    try {
+      return await this.forwardAs(typeKey, row, payload, row.publisher ?? undefined);
+    } catch (error) {
+      // The original filer may no longer be allowed to file for this employee: file as the system.
+      if (error instanceof ForbiddenException) return this.forwardAs(typeKey, row, payload, undefined);
+      throw error;
+    }
+  }
+
+  private async forwardAs(
+    typeKey: 'leave' | 'permission',
+    row: { emp_id_fk: number | null; publisher: number | null; publisher_name: string | null },
+    payload: Record<string, unknown>,
+    filer: number | undefined,
+  ): Promise<{ module: 'leaves' | 'permissions'; id: number }> {
+    if (typeKey === 'leave') {
+      if (!this.leaves) throw new BadRequestException('خدمة الإجازات غير متاحة');
+      const leaveTypeId = this.num(payload.leave_type_id);
+      const startDate = this.str(payload.date_from);
+      const endDate = this.str(payload.date_to);
+      if (!leaveTypeId || !startDate || !endDate) throw new BadRequestException('نوع الإجازة والتواريخ مطلوبة');
+      const created = await this.leaves.create(
+        {
+          empId: row.emp_id_fk!,
+          leaveTypeId,
+          startDate,
+          endDate,
+          substituteEmpId: this.num(payload.substitute_id),
+          reason: this.str(payload.reason ?? payload.notes),
+        },
+        filer,
+        row.publisher_name ?? undefined,
+      );
+      return { module: 'leaves', id: created.id };
+    }
+    if (!this.permissions) throw new BadRequestException('خدمة الأذونات غير متاحة');
+    const created = await this.permissions.create(
+      {
+        empId: row.emp_id_fk!,
+        no3Ezn: this.num(payload.permission_type) ?? 1,
+        fatraFk: this.num(payload.permission_period),
+        eznDate: this.str(payload.permission_date) ?? '',
+        fromHour: this.str(payload.time_from) ?? '',
+        toHour: this.str(payload.time_to) ?? '',
+        reason: this.str(payload.reason ?? payload.notes) ?? '',
+      },
+      filer,
+      row.publisher_name ?? undefined,
+    );
+    return { module: 'permissions', id: created.id };
   }
 
   private async routeToDomain(

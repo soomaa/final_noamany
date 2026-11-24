@@ -10,6 +10,7 @@ export const REQUEST_TYPE_TO_DB: Record<string, string> = {
   transfer: 'transfer',
   promotion: 'promotion',
   'data-change': 'data_change',
+  overtime: 'overtime',
 };
 
 export const REQUEST_TYPE_FROM_DB: Record<string, string> = Object.fromEntries(
@@ -27,6 +28,7 @@ export const REQUEST_TYPE_LABELS: Record<string, string> = {
   transfer: 'طلب نقل',
   promotion: 'طلب ترقية',
   'data-change': 'طلب تعديل بيانات',
+  overtime: 'طلب ساعات إضافية',
 };
 
 export function toDbRequestType(type: string): string {
@@ -36,3 +38,10 @@ export function toDbRequestType(type: string): string {
 export function fromDbRequestType(type: string): string {
   return REQUEST_TYPE_FROM_DB[type] ?? type;
 }
+
+/**
+ * Types that have their own approval chain: `POST /requests` hands them to that module
+ * (leaves → LeavesService, permission → PermissionsService, overtime → OvertimeRequestsService)
+ * instead of storing a flat hr_requests row.
+ */
+export const CHAIN_REQUEST_TYPES = ['leave', 'permission', 'overtime'] as const;

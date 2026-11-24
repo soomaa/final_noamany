@@ -10,6 +10,7 @@ export const REQUEST_TYPES = {
   transfer: { key: 'transfer', label: uiStatic('طلب نقل'), path: '/requests/new/transfer' },
   promotion: { key: 'promotion', label: uiStatic('طلب ترقية'), path: '/requests/new/promotion' },
   'data-change': { key: 'data-change', label: uiStatic('طلب تعديل بيانات'), path: '/requests/new/data-change' },
+  overtime: { key: 'overtime', label: uiStatic('طلب ساعات إضافية'), path: '/requests/new/overtime' },
 } as const;
 
 export type RequestTypeKey = keyof typeof REQUEST_TYPES;

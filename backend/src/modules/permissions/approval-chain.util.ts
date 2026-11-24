@@ -1,4 +1,9 @@
 /**
+ * NOTE (24 Nov 2026): leaves and permissions now route through the shared chain in
+ * common/hr-approval/approval-chain.ts (direct manager → HR → department manager). Only
+ * PROCESS_CODE is still used by them; the old-order stage tables below are kept for loans.
+ */
+/**
  * Faithful port of the 5-stage role-routed approval chain shared by agazat + ozonat
  * (legacy: Vacation.php / Ezn_order.php `process_ta7welat_procedures`).
  *

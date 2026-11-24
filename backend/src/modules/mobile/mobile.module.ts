@@ -9,9 +9,10 @@ import { LegacyMobileController } from './legacy-mobile.controller';
 import { LegacyMobileCompatService } from './legacy-mobile-compat.service';
 import { UploadsModule } from '../uploads/uploads.module';
 import { LoansModule } from '../loans/loans.module';
+import { OvertimeRequestsModule } from '../overtime-requests/overtime-requests.module';
 
 @Module({
-  imports: [AuthModule, PermissionsModule, LeavesModule, AttendanceModule, UploadsModule, LoansModule],
+  imports: [AuthModule, PermissionsModule, LeavesModule, AttendanceModule, UploadsModule, LoansModule, OvertimeRequestsModule],
   controllers: [MobileController, LegacyMobileController],
   providers: [MobileService, LegacyMobileCompatService],
   exports: [MobileService, LegacyMobileCompatService],

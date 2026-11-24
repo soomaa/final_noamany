@@ -18,6 +18,7 @@ import { NotImplementedState } from '@/components/common/states';
 import { api, apiError } from '@/lib/api';
 import { getRequestTypeMap, REQUEST_TYPE_KEYS, type RequestTypeKey } from '@/lib/i18n-constants';
 import { useBranches } from '@/hooks/use-branches';
+import { usePermission } from '@/hooks/use-permission';
 import { useLocale } from '@/store/locale';
 import { validateDateOrder } from '@/lib/validators';
 import { uiStatic } from '@/lib/ui-static';
@@ -64,6 +65,11 @@ const schemas: Record<RequestTypeKey, z.ZodType> = {
   transfer: baseSchema.extend({ target_branch_id: z.string().min(1), target_department_id: z.string().optional(), reason: z.string().min(1) }),
   promotion: baseSchema.extend({ new_job_title: z.string().min(1), new_salary: z.string().optional(), reason: z.string().min(1) }),
   'data-change': baseSchema.extend({ field_name: z.string().min(1), old_value: z.string().optional(), new_value: z.string().min(1), reason: z.string().min(1) }),
+  overtime: baseSchema.extend({
+    overtime_date: z.string().min(1, uiStatic('تاريخ الإضافي مطلوب')),
+    hours: z.coerce.number().int(uiStatic('عدد الساعات رقم صحيح')).min(1, uiStatic('عدد الساعات غير صالح')).max(12, uiStatic('عدد الساعات لا يتجاوز 12 ساعة')),
+    reason: z.string().min(1, uiStatic('السبب مطلوب')),
+  }),
 };
 
 export function RequestNewPage() {
@@ -72,13 +78,21 @@ export function RequestNewPage() {
   const requestTypeMap = useMemo(() => getRequestTypeMap(t), [t]);
   const meta = type && REQUEST_TYPE_KEYS.includes(type as RequestTypeKey) ? requestTypeMap[type as RequestTypeKey] : null;
   const navigate = useNavigate();
+  const { can } = usePermission();
   const schema = meta ? schemas[meta.key as RequestTypeKey] : baseSchema;
 
   const { data: leaveTypes } = useQuery({
     queryKey: ['leaves', 'types'],
     queryFn: async () => {
-      const { data } = await api.get<{ data: { id: number; title: string; agazaTtype?: number; isActive?: boolean }[] }>('/leaves/types', { params: { pageSize: 200 } });
-      return data.data ?? [];
+      type LeaveTypes = { data: { id: number; title: string; agazaTtype?: number; isActive?: boolean }[] };
+      try {
+        const { data } = await api.get<LeaveTypes>('/leaves/types', { params: { pageSize: 200 } });
+        return data.data ?? [];
+      } catch {
+        // Staff with only the «طلبات الموظفين» self-service: the employee-safe lookup.
+        const { data } = await api.get<LeaveTypes>('/mobile/leaves/types');
+        return data.data ?? [];
+      }
     },
     enabled: meta?.key === 'leave',
   });
@@ -144,6 +158,37 @@ export function RequestNewPage() {
   const onSubmit = async (values: Record<string, unknown>) => {
     if (!meta) return;
     try {
+      if (meta.key === 'leave') {
+        // Same endpoint as the leaves form: min/max days, overlap, sick-leave limit and the
+        // approval chain (direct manager → HR → department manager) all apply.
+        // Staff holding only the requests self-service file through POST /requests, which hands
+        // the leave to the same LeavesService.create (identical validation and chain).
+        const notes = typeof values.notes === 'string' && values.notes.trim() ? values.notes.trim() : undefined;
+        if (can('leaves.list:create')) {
+          await api.post('/leaves', {
+            leaveTypeId: Number(values.leave_type_id),
+            startDate: values.date_from,
+            endDate: values.date_to,
+            substituteEmpId: values.substitute_id ? Number(values.substitute_id) : undefined,
+            reason: notes,
+          });
+        } else {
+          await api.post('/requests', { type: 'leave', ...values });
+        }
+        toast.success(ui('تم إرسال طلب الإجازة للاعتماد'));
+        navigate(can('leaves.list:view') ? '/leaves' : '/requests');
+        return;
+      }
+      if (meta.key === 'overtime') {
+        await api.post('/overtime-requests', {
+          date: values.overtime_date,
+          hours: Number(values.hours),
+          reason: values.reason,
+        });
+        toast.success(ui('تم إرسال طلب الساعات الإضافية'));
+        navigate('/requests/overtime');
+        return;
+      }
       if (meta.key === 'permission') {
         await api.post('/permissions', {
           no3Ezn: Number(values.permission_type),
@@ -250,6 +295,19 @@ export function RequestNewPage() {
             <FieldWrapper label={ui('المسمى الجديد')}><Input {...register('new_job_title')} /></FieldWrapper>
             <FieldWrapper label={ui('الراتب الجديد')}><Input {...register('new_salary')} className="nums" /></FieldWrapper>
             <RHFTextarea control={control} name="reason" label={ui('مبررات الترقية')} required />
+          </>
+        );
+      case 'overtime':
+        return (
+          <>
+            <DualDateField label={ui('تاريخ الإضافي')} gregorianValue={watch('overtime_date')} onGregorianChange={(v) => setValue('overtime_date', v, { shouldValidate: true })} />
+            <FieldWrapper label={ui('عدد الساعات')} error={(errors as { hours?: { message?: string } }).hours?.message} required>
+              <Input {...register('hours')} type="number" min={1} max={12} step={1} className="nums" />
+            </FieldWrapper>
+            <RHFTextarea control={control} name="reason" label={ui('السبب')} required />
+            <p className="text-sm text-muted-foreground md:col-span-2">
+              {ui('يُعتمد الطلب من المدير المباشر ثم الموارد البشرية، ولا تُحتسب إلا الساعات التي تؤكدها البصمة.')}
+            </p>
           </>
         );
       case 'data-change':

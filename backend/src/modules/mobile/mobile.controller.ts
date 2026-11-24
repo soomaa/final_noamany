@@ -48,6 +48,12 @@ import { AttendanceService } from '../attendance/attendance.service';
 import { AttendanceReportDto } from '../attendance/dto/report.dto';
 import { LegacyMobileCompatService } from './legacy-mobile-compat.service';
 import { LoansService } from '../loans/loans.service';
+import { OvertimeRequestsService } from '../overtime-requests/overtime-requests.service';
+import {
+  CreateOvertimeRequestDto,
+  ListOvertimeRequestsDto,
+  OvertimeActionDto,
+} from '../overtime-requests/dto/overtime-request.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('mobile')
@@ -59,6 +65,7 @@ export class MobileController {
     private readonly attendanceService: AttendanceService,
     private readonly compat: LegacyMobileCompatService,
     private readonly loans: LoansService,
+    private readonly overtime: OvertimeRequestsService,
   ) {}
 
   @Public()
@@ -130,7 +137,7 @@ export class MobileController {
     @Body() dto: ActionLeaveDto,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.leavesService.action(id, dto, user.sub, user.name ?? undefined);
+    return this.leavesService.action(id, dto, user.sub, user.name ?? undefined, user);
   }
 
   /** Same ozonat table and approval chain used by the dashboard. */
@@ -163,7 +170,42 @@ export class MobileController {
     @Body() dto: ActionPermissionDto,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.permissions.action(id, dto, user.sub, user.name ?? undefined);
+    return this.permissions.action(id, dto, user.sub, user.name ?? undefined, user);
+  }
+
+  /**
+   * Employee overtime requests (direct manager → HR). mode=sader (default) = mine,
+   * mode=wared = waiting for my decision. On final approval the hours are recorded through the
+   * attendance extra-hours path, so only what the fingerprint confirms counts.
+   */
+  @Get('overtime-requests')
+  overtimeRequests(@Query() query: ListOvertimeRequestsDto, @CurrentUser() user: JwtUser) {
+    if (query.mode !== 'wared') query.mode = 'sader';
+    return this.overtime.list(query, user);
+  }
+
+  @Post('overtime-requests')
+  createOvertimeRequest(@Body() dto: CreateOvertimeRequestDto, @CurrentUser() user: JwtUser) {
+    return this.overtime.create({ ...dto, empId: undefined }, user, false);
+  }
+
+  @Get('overtime-requests/:id')
+  overtimeRequest(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.overtime.findOne(id, user);
+  }
+
+  @Patch('overtime-requests/:id/action')
+  actionOvertimeRequest(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: OvertimeActionDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.overtime.action(id, dto, user);
+  }
+
+  @Patch('overtime-requests/:id/cancel')
+  cancelOvertimeRequest(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.overtime.cancel(id, user);
   }
 
   /** Legacy Add_Task/Get_Tasks_List use the employee daily-report table. */
