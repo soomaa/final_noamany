@@ -93,13 +93,22 @@ interface Props {
   /** Fixed employee (from the employees list); otherwise the dialog shows an employee picker. */
   employee?: { id: number; name: string } | null;
   onSaved?: () => void;
+  /** Pre-filled values (e.g. from an approved resignation request). */
+  defaults?: Partial<{
+    exitType: ExitType;
+    noticeGivenDate: string;
+    lastWorkingDate: string;
+    requiredNoticeDays: number;
+    reason: string;
+    notes: string;
+  }>;
 }
 
 /**
  * Records an employee exit (structured type + notice). Also marks the employee as left
  * (leave_emp / end_service_date_m) on the server.
  */
-export function EmployeeExitDialog({ open, onOpenChange, employee, onSaved }: Props) {
+export function EmployeeExitDialog({ open, onOpenChange, employee, onSaved, defaults }: Props) {
   const { ui } = useLocale();
   const qc = useQueryClient();
   const { data: empOptions = [] } = useEmployeeOptions(open && !employee);
@@ -119,20 +128,21 @@ export function EmployeeExitDialog({ open, onOpenChange, employee, onSaved }: Pr
     if (!open) return;
     setForm({
       empId: employee ? String(employee.id) : '',
-      exitType: 'resignation',
-      noticeGivenDate: '',
-      lastWorkingDate: todayIso(),
-      requiredNoticeDays: String(DEFAULT_NOTICE_DAYS),
-      reason: '',
-      notes: '',
+      exitType: defaults?.exitType ?? 'resignation',
+      noticeGivenDate: defaults?.noticeGivenDate ?? '',
+      lastWorkingDate: defaults?.lastWorkingDate ?? todayIso(),
+      requiredNoticeDays: String(defaults?.requiredNoticeDays ?? DEFAULT_NOTICE_DAYS),
+      reason: defaults?.reason ?? '',
+      notes: defaults?.notes ?? '',
       settlementNotes: '',
     });
+    if (defaults?.requiredNoticeDays != null) return;
     // Server default notice period (HR_REQUIRED_NOTICE_DAYS); keep 30 if unreachable.
     api
       .get<{ requiredNoticeDays: number }>('/termination/exits/meta')
       .then(({ data }) => setForm((f) => ({ ...f, requiredNoticeDays: String(data.requiredNoticeDays) })))
       .catch(() => undefined);
-  }, [open, employee]);
+  }, [open, employee, defaults]);
 
   const required = Math.max(0, parseInt(form.requiredNoticeDays, 10) || 0);
   const shortfall = useMemo(

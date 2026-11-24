@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Min } from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 /**
@@ -25,6 +25,12 @@ export class CreateShiftSwapDto {
   @IsNotEmpty({ message: 'تاريخ الشيفت حقل مطلوب' })
   @IsString()
   sheftDate!: string;
+
+  /** Optional reason (extra shift entered by a manager → shown to HR). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }
 
 /**
@@ -43,6 +49,12 @@ export class CreateExtraHoursDto {
   @IsNotEmpty({ message: 'تاريخ الشيفت حقل مطلوب' })
   @IsString()
   edafaDate!: string;
+
+  /** Optional reason (manager entry → shown to HR). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  reason?: string;
 }
 
 /** List query for swap / extra-hours lists + their reports. */

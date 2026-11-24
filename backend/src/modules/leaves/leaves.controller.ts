@@ -18,7 +18,7 @@ import { JwtUser } from '../../common/types/jwt-user';
 import { LeavesService } from './leaves.service';
 import { CreateLeaveDto } from './dto/create-leave.dto';
 import { ListLeavesDto } from './dto/list-leaves.dto';
-import { ApproveLeaveDto } from './dto/action-leave.dto';
+import { ActionLeaveDto, ApproveLeaveDto, ResubmitLeaveDto } from './dto/action-leave.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('leaves')
@@ -137,6 +137,27 @@ export class LeavesController {
     @Body() body?: ApproveLeaveDto,
   ) {
     return this.leaves.reject(id, user.sub, user.name ?? undefined, user, body?.reason);
+  }
+
+  /**
+   * One decision on the pending step: accept | reject | return («إرجاع للتعديل», comment
+   * required). Who may decide is checked in the service (routed recipient, or HR / admin).
+   */
+  @Post(':id/action')
+  action(@Param('id', ParseIntPipe) id: number, @Body() body: ActionLeaveDto, @CurrentUser() user: JwtUser) {
+    return this.leaves.action(id, body, user.sub, user.name ?? undefined, user);
+  }
+
+  /** Edit + resubmit after «إرجاع للتعديل»; resumes at the step that returned it. */
+  @Post(':id/resubmit')
+  resubmit(@Param('id', ParseIntPipe) id: number, @Body() body: ResubmitLeaveDto, @CurrentUser() user: JwtUser) {
+    return this.leaves.resubmit(id, body, user);
+  }
+
+  /** Unified request card (status chip, timeline, available actions). */
+  @Get(':id/flow')
+  flow(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.leaves.flow(id, user);
   }
 
   /** Original requested range when the leave was partially approved (null otherwise). */

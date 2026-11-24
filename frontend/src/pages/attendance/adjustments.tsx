@@ -1,6 +1,7 @@
 import type { ColumnDef } from '@tanstack/react-table';
 import { useQuery } from '@tanstack/react-query';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, Fingerprint, ListChecks } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Combobox } from '@/components/common/combobox';
@@ -18,6 +19,7 @@ import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import type { EmployeeListItem } from '@/types/employees';
 import { SearchableSelect } from '@/components/common/searchable-select';
+import { Textarea } from '@/components/ui/textarea';
 
 interface SwapRow { id: number; empCode: number; empName: string; sheftDate: string; ttypeName: string; dwamTitle?: string; punchStatus?: 'no_punch' | 'confirmed' | 'pending'; warning?: string; }
 /** numHours = hours the fingerprint confirmed (what payroll pays); requestedHours = what the manager entered. */
@@ -36,6 +38,9 @@ function minutesLabel(minutes: number) {
   return toArabicDigits(h ? `${h} س ${m ? `${m} د` : ''}`.trim() : `${m} د`);
 }
 interface ShiftOption { id: number; title?: string; hdoorFromTime?: string; ensrafToTime?: string; }
+interface TeamResponse { scope: 'all' | 'team'; recordsDirectly: boolean; employees: { id: number; emp_code: number | null; employee: string | null; edara_n?: string | null; qsm_n?: string | null }[] }
+interface OvertimePreview { message: string; confirmedMinutes: number; confirmedHours: number; hasPunch: boolean; openPunch: boolean; future: boolean; isOffDay: boolean; punches: { shiftTitle?: string | null; in?: string | null; out?: string | null }[] }
+interface ManagerEntryResult { queued?: boolean; autoApproved?: boolean; message?: string; warning?: string }
 
 export function AttendanceAdjustmentsPage() {
   const { ui } = useLocale();
@@ -53,7 +58,20 @@ export function AttendanceAdjustmentsPage() {
     staleTime: 60_000,
   });
   const [swap, setSwap] = useState({ empId: '', dwamIdFk: '', sheftDate: '', ttype: '1' });
-  const [extra, setExtra] = useState({ empId: '', edafaDate: '', numHours: '1' });
+  const [extra, setExtra] = useState({ empId: '', date: '', kind: 'hours' as 'hours' | 'shift', hours: '1', shiftId: '', reason: '' });
+  // Employees this user may enter overtime for: his team (direct manager) or everyone (HR / admin).
+  const { data: team } = useQuery({
+    queryKey: ['overtime-requests', 'team'],
+    queryFn: async () => (await api.get<TeamResponse>('/overtime-requests/team')).data,
+    staleTime: 60_000,
+  });
+  // Live: what the fingerprint confirms for that employee and day.
+  const preview = useQuery({
+    queryKey: ['overtime-requests', 'preview', extra.empId, extra.date],
+    queryFn: async () => (await api.get<OvertimePreview>('/overtime-requests/preview', { params: { empId: extra.empId, date: extra.date } })).data,
+    enabled: !!extra.empId && /^\d{4}-\d{2}-\d{2}$/.test(extra.date),
+    retry: false,
+  });
   const [saving, setSaving] = useState(false);
   const [compEmpCode, setCompEmpCode] = useState('');
   const compDays = useQuery({
@@ -77,24 +95,43 @@ export function AttendanceAdjustmentsPage() {
     description: [shift.hdoorFromTime, shift.ensrafToTime].filter(Boolean).join(' — '),
   }));
   const swapEmployee = employees.find((employee) => String(employee.id) === swap.empId);
-  const extraEmployee = employees.find((employee) => String(employee.id) === extra.empId);
+  const teamOptions = (team?.employees ?? []).map((employee) => ({
+    value: String(employee.id),
+    label: `${employee.employee ?? ''} (${employee.emp_code ?? '—'})`,
+    description: [employee.edara_n, employee.qsm_n].filter(Boolean).join(' — '),
+  }));
+  const extraOptions = team ? teamOptions : employeeOptions;
   const saveSwap = async () => {
     if (!swap.empId || !swap.dwamIdFk || !swap.sheftDate) return toast.error(ui('أكمل بيانات الوردية'));
     setSaving(true);
     try {
-      const { data } = await api.post<{ warning?: string }>('/attendance/shift-swaps', { ...swap, empId: Number(swap.empId), dwamIdFk: Number(swap.dwamIdFk), ttype: Number(swap.ttype) });
-      if (data?.warning) toast.warning(data.warning, { duration: 10_000 });
+      const { data } = await api.post<{ warning?: string; queued?: boolean; message?: string }>('/attendance/shift-swaps', { ...swap, empId: Number(swap.empId), dwamIdFk: Number(swap.dwamIdFk), ttype: Number(swap.ttype) });
+      // An extra shift from a direct manager waits for HR approval.
+      if (data?.queued) toast.success(data.message ?? ui('اتبعت للـ HR للموافقة'), { duration: 8_000 });
+      else if (data?.warning) toast.warning(data.warning, { duration: 10_000 });
       else toast.success(ui('تم حفظ تعديل الوردية')); setSwap({ empId: '', dwamIdFk: '', sheftDate: '', ttype: '1' }); void swaps.refetch();
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
   };
   const saveExtra = async () => {
-    if (!extra.empId || !extra.edafaDate || !extra.numHours) return toast.error(ui('أكمل بيانات الساعات الإضافية'));
+    if (!extra.empId || !extra.date) return toast.error(ui('اختر الموظف والتاريخ'));
+    if (extra.kind === 'hours' && !(Number(extra.hours) >= 1)) return toast.error(ui('عدد الساعات غير صالح'));
+    if (extra.kind === 'shift' && !extra.shiftId) return toast.error(ui('اختر الوردية الإضافية'));
+    if (!extra.reason.trim()) return toast.error(ui('اكتب السبب'));
     setSaving(true);
     try {
-      const { data } = await api.post<{ warning?: string }>('/attendance/extra-hours', { ...extra, empId: Number(extra.empId), numHours: Number(extra.numHours) });
-      // Only what the fingerprint confirms is saved for payroll; say so when it is less than requested.
-      if (data?.warning) toast.warning(data.warning, { duration: 12_000 });
-      else toast.success(ui('تم حفظ الساعات الإضافية')); setExtra({ empId: '', edafaDate: '', numHours: '1' }); void extras.refetch();
+      const { data } = await api.post<ManagerEntryResult>('/overtime-requests/manager', {
+        empId: Number(extra.empId),
+        date: extra.date,
+        kind: extra.kind,
+        ...(extra.kind === 'hours' ? { hours: Number(extra.hours) } : { shiftId: Number(extra.shiftId) }),
+        reason: extra.reason.trim(),
+      });
+      // A direct manager's entry is a request for HR; HR / admin entries are recorded (fingerprint rule applies).
+      if (data?.queued) toast.success(data.message ?? ui('اتبعت للـ HR للموافقة'), { duration: 8_000 });
+      else if (data?.warning) toast.warning(data.warning, { duration: 12_000 });
+      else toast.success(data?.message ?? ui('تم حفظ الساعات الإضافية'));
+      setExtra({ empId: '', date: '', kind: 'hours', hours: '1', shiftId: '', reason: '' });
+      void extras.refetch();
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
   };
   const remove = async (path: string, id: number, refresh: () => unknown) => {
@@ -159,13 +196,35 @@ export function AttendanceAdjustmentsPage() {
         <DataTable {...tableProps} columns={swapColumns} data={swaps.data?.data ?? []} total={swaps.data?.total ?? 0} isLoading={swaps.isLoading} isError={swaps.isError} onRetry={() => void swaps.refetch()} />
       </TabsContent>
       <TabsContent value="extra" className="space-y-4">
-        <div className="grid gap-3 rounded-lg border bg-card p-4 sm:grid-cols-3">
-          <div><Label>{ui('الموظف')}</Label><Combobox value={extra.empId} options={employeeOptions} placeholder={ui('اختر الموظف')} searchPlaceholder={ui('ابحث بالاسم أو الكود…')} onValueChange={(empId) => setExtra((x) => ({ ...x, empId }))} /></div>
-          <div><Label>{ui('الإدارة')}</Label><Input disabled value={extraEmployee?.edara_n ?? ''} /></div>
-          <div><Label>{ui('القسم')}</Label><Input disabled value={extraEmployee?.qsm_n ?? ''} /></div>
-          <div><Label>{ui('التاريخ')}</Label><Input type="date" value={extra.edafaDate} onChange={(e) => setExtra((x) => ({ ...x, edafaDate: e.target.value }))} /></div>
-          <div><Label>{ui('عدد الساعات')}</Label><Input type="number" min="1" value={extra.numHours} onChange={(e) => setExtra((x) => ({ ...x, numHours: e.target.value }))} /></div>
-          <div className="flex items-end"><Button className="w-full" disabled={saving} onClick={() => void saveExtra()}>{ui('حفظ')}</Button></div>
+        <div className="space-y-3 rounded-lg border bg-card p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm font-semibold">{team?.recordsDirectly ? ui('تسجيل إضافي (الموارد البشرية — يتسجل مباشرة)') : ui('طلب إضافي لموظف في فريقك — بيروح للـ HR للموافقة')}</p>
+            <Button variant="outline" size="sm" asChild><Link to="/requests/overtime"><ListChecks className="size-4" />{ui('متابعة الطلبات')}</Link></Button>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div><Label>{ui('الموظف')}</Label><Combobox value={extra.empId} options={extraOptions} placeholder={team?.scope === 'team' ? ui('اختر من فريقك') : ui('اختر الموظف')} searchPlaceholder={ui('ابحث بالاسم أو الكود…')} emptyText={team?.scope === 'team' ? ui('مفيش موظفين تحت إدارتك المباشرة') : undefined} onValueChange={(empId) => setExtra((x) => ({ ...x, empId }))} /></div>
+            <div><Label>{ui('التاريخ')}</Label><Input type="date" value={extra.date} onChange={(e) => setExtra((x) => ({ ...x, date: e.target.value }))} /></div>
+            <div><Label>{ui('النوع')}</Label><SearchableSelect className="h-10 w-full rounded-md border bg-background px-3" value={extra.kind} onChange={(e) => setExtra((x) => ({ ...x, kind: e.target.value as 'hours' | 'shift' }))}><option value="hours">{ui('ساعات إضافية')}</option><option value="shift">{ui('شيفت إضافي')}</option></SearchableSelect></div>
+            {extra.kind === 'hours'
+              ? <div><Label>{ui('عدد الساعات')}</Label><Input type="number" min="1" max="12" value={extra.hours} onChange={(e) => setExtra((x) => ({ ...x, hours: e.target.value }))} /></div>
+              : <div><Label>{ui('الوردية الإضافية')}</Label><Combobox value={extra.shiftId} options={shiftOptions} placeholder={ui('اختر الوردية')} searchPlaceholder={ui('ابحث في الورديات…')} onValueChange={(shiftId) => setExtra((x) => ({ ...x, shiftId }))} /></div>}
+            <div className="sm:col-span-2"><Label>{ui('السبب')}</Label><Textarea rows={2} value={extra.reason} onChange={(e) => setExtra((x) => ({ ...x, reason: e.target.value }))} placeholder={ui('مثال: جرد آخر الشهر')} /></div>
+          </div>
+          {extra.empId && extra.date && (
+            <div className="rounded-md border border-primary/30 bg-primary/5 p-3 text-sm">
+              <p className="flex items-center gap-1.5 font-medium"><Fingerprint className="size-4 text-primary" />{ui('البصمة في اليوم ده')}</p>
+              {preview.isLoading ? <p className="text-muted-foreground">{ui('جاري التحميل…')}</p> : preview.isError ? <p className="text-muted-foreground">{apiError(preview.error)}</p> : preview.data && <>
+                <p className="mt-1">{preview.data.message}</p>
+                {preview.data.punches.length > 0 && <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                  {preview.data.punches.map((p, i) => <li key={i}>{p.shiftTitle ?? ui('وردية')}: {ui('حضور')} {toArabicDigits(p.in ?? '—')} — {ui('انصراف')} {toArabicDigits(p.out ?? '—')}</li>)}
+                </ul>}
+                {extra.kind === 'hours' && Number(extra.hours) > preview.data.confirmedHours && !preview.data.future && (
+                  <WarningNote text={ui(`المطلوب ${extra.hours} ساعة والبصمة بتأكد ${preview.data.confirmedHours} بس — هيتصرف المؤكد بس بعد موافقة HR`)} />
+                )}
+              </>}
+            </div>
+          )}
+          <div className="flex justify-end"><Button disabled={saving} onClick={() => void saveExtra()}>{team?.recordsDirectly ? ui('حفظ') : ui('إرسال للـ HR')}</Button></div>
         </div>
         <p className="text-xs text-muted-foreground">{ui('المرتب بيصرف الساعات المؤكدة بالبصمة بس (بعد ميعاد احتساب الإضافي، أو اليوم كله لو شيفت إضافي أو يوم راحة).')}</p>
         <DataTable {...tableProps} columns={extraColumns} data={extras.data?.data ?? []} total={extras.data?.total ?? 0} isLoading={extras.isLoading} isError={extras.isError} onRetry={() => void extras.refetch()} />

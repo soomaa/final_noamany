@@ -1,4 +1,5 @@
-import { ArrowRight, Check, X } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ArrowRight, Check, LogOut, X } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -16,6 +17,21 @@ import { isNotImplemented, useResource } from '@/lib/api-hooks';
 import { getRequestType, type RequestTypeKey } from '@/lib/i18n-constants';
 import { queryClient } from '@/lib/query';
 import { useLocale } from '@/store/locale';
+import { EmployeeExitDialog, type ExitType } from '@/components/employees/employee-exit-dialog';
+
+/** Pre-filled exit record for an approved resignation (GET /requests/:id/exit-draft). */
+interface ExitDraft {
+  empId: number;
+  employeeName?: string | null;
+  exitType: ExitType;
+  noticeGivenDate: string;
+  lastWorkingDate: string;
+  requiredNoticeDays: number;
+  noticeShortfallDays: number;
+  reason?: string | null;
+  existingExitId?: number | null;
+  message?: string;
+}
 
 interface RequestDetail {
   id: number;
@@ -26,12 +42,48 @@ interface RequestDetail {
   createdAt?: string;
   payload?: Record<string, unknown>;
   timeline?: TimelineEvent[];
+  exitPending?: boolean;
 }
 
 export function RequestDetailPage() {
   const { t, ui } = useLocale();
   const { id } = useParams<{ id: string }>();
   const { data, isLoading, isError, error, refetch } = useResource<RequestDetail>('requests', id);
+  const [exitDraft, setExitDraft] = useState<ExitDraft | null>(null);
+  // Stable objects: the dialog resets its form whenever these change.
+  const exitEmployee = useMemo(
+    () => (exitDraft ? { id: exitDraft.empId, name: exitDraft.employeeName ?? data?.employeeName ?? '' } : null),
+    [exitDraft, data?.employeeName],
+  );
+  const exitDefaults = useMemo(
+    () =>
+      exitDraft
+        ? {
+            exitType: exitDraft.exitType,
+            noticeGivenDate: exitDraft.noticeGivenDate,
+            lastWorkingDate: exitDraft.lastWorkingDate,
+            requiredNoticeDays: exitDraft.requiredNoticeDays,
+            reason: exitDraft.reason ?? undefined,
+            notes: `${ui('من طلب استقالة')} #${id}`,
+          }
+        : undefined,
+    [exitDraft, id, ui],
+  );
+
+  /** Resignation: open the exit dialog pre-filled (the record is created only when HR saves it). */
+  const openExit = async (draft?: ExitDraft | null) => {
+    try {
+      const d = draft ?? (await api.get<ExitDraft>(`/requests/${id}/exit-draft`)).data;
+      if (!d) return;
+      if (d.existingExitId) {
+        toast.info(d.message ?? ui('للموظف سجل انتهاء خدمة بالفعل'));
+        return;
+      }
+      setExitDraft(d);
+    } catch (e) {
+      toast.error(apiError(e));
+    }
+  };
 
   const approve = async () => {
     const ok = await confirmWithPreview(
@@ -41,10 +93,14 @@ export function RequestDetailPage() {
         return { rows: (data as { rows?: { label: string; before?: string; after?: string }[] }).rows, warning: (data as { warning?: string }).warning };
       },
       async () => {
-        await api.patch(`/requests/${id}/approve`);
+        const { data: approved } = await api.patch<{ exitDraft?: ExitDraft | null }>(`/requests/${id}/approve`);
         toast.success(ui('تم الاعتماد'));
         void queryClient.invalidateQueries({ queryKey: ['requests'] });
         void refetch();
+        if (approved?.exitDraft) {
+          toast.info(approved.exitDraft.message ?? ui('سجل انتهاء الخدمة'));
+          void openExit(approved.exitDraft);
+        }
       },
     );
     if (!ok) return;
@@ -143,11 +199,21 @@ export function RequestDetailPage() {
                 <Button size="sm" variant="destructive" onClick={() => void reject()}><X className="size-4" />{ui('رفض')}</Button>
               </>
             )}
+            {data.type === 'resignation' && data.status === 'approved' && (
+              <Button size="sm" variant="outline" onClick={() => void openExit()}><LogOut className="size-4" />{ui('تسجيل انتهاء الخدمة')}</Button>
+            )}
             <Button variant="outline" size="sm" asChild><Link to="/requests"><ArrowRight className="size-4" />{ui('العودة')}</Link></Button>
           </div>
         }
       />
       {data.type === 'salary-certificate' ? <PrintView title={ui('تعريف مرتب')}>{content}</PrintView> : content}
+      <EmployeeExitDialog
+        open={exitDraft != null}
+        onOpenChange={(o) => !o && setExitDraft(null)}
+        employee={exitEmployee}
+        defaults={exitDefaults}
+        onSaved={() => void refetch()}
+      />
     </div>
   );
 }

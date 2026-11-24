@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
   Optional,
@@ -18,10 +19,24 @@ import { todayIso } from "../../common/utils/legacy-date.util";
 import { insertLegacyNotification } from "../../common/utils/legacy-notification.util";
 import { retryOnUniqueViolation } from "../../common/retry-unique";
 import { CreatePermissionDto } from "./dto/create-permission.dto";
-import { ActionPermissionDto } from "./dto/action-permission.dto";
+import { ActionPermissionDto, ResubmitPermissionDto } from "./dto/action-permission.dto";
 import { ListPermissionsDto } from "./dto/list-permissions.dto";
 import { UpdatePermissionDto } from "./dto/update-permission.dto";
 import { PROCESS_CODE } from "./approval-chain.util";
+import {
+  FLOW_STATUS_LABEL_AR,
+  ReturnInfo,
+  chainFlowStatus,
+  createReturn,
+  legacyHistoryEntry,
+  loadTimeline,
+  mergeTimeline,
+  openReturn,
+  openReturnsFor,
+  recordTimeline,
+  requireReturnComment,
+  resolveReturn,
+} from "../../common/hr-approval/request-flow";
 import {
   ChainStageKey,
   FINAL_APPROVAL_SUSPEND,
@@ -29,8 +44,10 @@ import {
   STAGE_DATE_COLUMN,
   STAGE_LABEL_AR,
   authorizeApprover,
+  isHrOfficer,
   pendingStage,
   requesterUserIds,
+  resolveStageRecipient,
   routeNext,
 } from "../../common/hr-approval/approval-chain";
 import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
@@ -197,6 +214,7 @@ export class PermissionsService {
       select: { id: true, employee: true },
     });
     const empMap = new Map(emps.map((e) => [e.id, e.employee]));
+    const returns = await openReturnsFor(this.prisma, "permission", rows.map((r) => r.id));
 
     const data = rows.map((r) => ({
       id: r.id,
@@ -222,9 +240,11 @@ export class PermissionsService {
       canAction:
         userId != null &&
         r.current_to_user_id === userId &&
-        pendingStage(r) != null,
+        pendingStage(r) != null &&
+        !returns.has(r.id),
       pendingStage: pendingStage(r) ?? undefined,
-      canModify: r.suspend === SuspendStatus.INCOMING && r.cancel !== "yes",
+      canModify: r.suspend === SuspendStatus.INCOMING && r.cancel !== "yes" && !returns.has(r.id),
+      ...this.flowFields(r, returns.get(r.id) ?? null, userId),
     }));
 
     return paginated(data, total, q.page, q.pageSize);
@@ -280,11 +300,13 @@ export class PermissionsService {
   }
 
   /** Update an unreviewed request while preserving its employee and workflow owner. */
-  async update(id: number, body: UpdatePermissionDto, actor?: JwtUser) {
+  async update(id: number, body: UpdatePermissionDto, actor?: JwtUser, allowReturned = false) {
     if (actor) await this.findInScope(id, actor);
     const row = await this.prisma.hr_all_ozonat_orders.findUnique({ where: { id } });
     const employeeId = row?.emp_id_fk;
-    this.assertEditable(row, "تعديل");
+    // A permit returned for changes is editable by the person it was returned to (resubmit).
+    const ret = allowReturned && row ? await openReturn(this.prisma, "permission", id) : null;
+    if (!ret) this.assertEditable(row, "تعديل");
     const minutes = this.permitMinutes(body.fromHour, body.toHour);
     if (minutes <= 0) throw new BadRequestException("مدة الإذن غير صحيحة");
     if (minutes > DEFAULT_NUMS_IN_ONE_TIME) {
@@ -492,6 +514,17 @@ export class PermissionsService {
       title: "لديك طلب إذن جديد",
       body: `${emp.employee ?? ""} — ${body.eznDate} ${body.fromHour}–${body.toHour}`,
     });
+    await recordTimeline(this.prisma, "permission", row.id, {
+      action: "submit",
+      by: currentUserId ?? null,
+      byName: currentUserName ?? null,
+      to: firstStage?.recipient?.userId ?? null,
+      toName: firstStage?.recipient?.name ?? null,
+      comment: body.reason ?? null,
+    });
+    for (const stage of route.skipped) {
+      await recordTimeline(this.prisma, "permission", row.id, { action: "skip", stage, byName: "النظام" });
+    }
 
     return { id: row.id, eznRkm, minutes };
   }
@@ -521,6 +554,9 @@ export class PermissionsService {
     const stage = pendingStage(row);
     if (!stage)
       throw new BadRequestException("لا يوجد إجراء متاح على هذا الطلب");
+    if (await openReturn(this.prisma, "permission", id)) {
+      throw new BadRequestException("الطلب مرتجع لمقدمه للتعديل؛ استنى إعادة الإرسال");
+    }
 
     const emp = row.emp_id_fk
       ? await this.prisma.employees.findUnique({
@@ -538,7 +574,11 @@ export class PermissionsService {
       (uid) => this.hasHrApproveGrant(uid),
     );
 
-    const reason = body.reason ?? null;
+    if (body.action === "return") {
+      return this.returnForChanges(row, stage, body.comment ?? body.reason, requester, auth.override, userId ?? actor?.sub, userName);
+    }
+
+    const reason = body.reason ?? body.comment ?? null;
     let toUserId: number | null;
     let toUserName: string | null = null;
     let toEmpId: number | null = null;
@@ -630,6 +670,22 @@ export class PermissionsService {
     });
 
     const decision = body.action === "accept" ? "اعتماد" : "رفض";
+    await recordTimeline(this.prisma, "permission", id, {
+      action: body.action === "accept" ? "accept" : "reject",
+      stage,
+      by: userId ?? actor?.sub ?? null,
+      byName: userName ?? null,
+      to: toUserId,
+      toName: toUserName,
+      comment: reason,
+      override: auth.override,
+    });
+    for (const s of autoApproved) {
+      await recordTimeline(this.prisma, "permission", id, { action: "accept", stage: s, by: userId ?? null, byName: userName ?? null, comment: "نفس المعتمد" });
+    }
+    for (const s of skipped) {
+      await recordTimeline(this.prisma, "permission", id, { action: "skip", stage: s, byName: "النظام" });
+    }
     await this.insertHistory({
       eznRkm: row.ezn_rkm,
       eznId: id,
@@ -700,6 +756,293 @@ export class PermissionsService {
     }
 
     return { id, stage, suspend, status: suspendToListStatus(suspend), final, nextStage, override: auth.override };
+  }
+
+  // ---- return with comment / resubmit / flow detail ---------------------------------------
+
+  private flowFields(
+    row: Parameters<typeof chainFlowStatus>[0] & { id: number; publisher: number | null },
+    ret: ReturnInfo | null,
+    userId?: number | null,
+  ) {
+    const flowStatus = chainFlowStatus(row, ret != null);
+    return {
+      flowStatus,
+      flowStatusLabel: FLOW_STATUS_LABEL_AR[flowStatus],
+      returned: ret != null,
+      returnComment: ret?.comment ?? null,
+      returnedBy: ret?.returnedByName ?? null,
+      returnedStage: ret?.stage ?? null,
+      canResubmit: ret != null && userId != null && (ret.returnedTo === userId || row.publisher === userId),
+    };
+  }
+
+  /** «إرجاع للتعديل»: back to the requester with a comment; stage flags / suspend unchanged. */
+  private async returnForChanges(
+    row: Prisma.hr_all_ozonat_ordersGetPayload<object>,
+    stage: string,
+    rawComment: string | null | undefined,
+    requester: Set<number>,
+    override: boolean,
+    userId: number | undefined,
+    userName: string | undefined,
+  ) {
+    const comment = requireReturnComment(rawComment);
+    const target = row.publisher ?? row.emp_user_id ?? [...requester][0] ?? null;
+    const targetName = row.publisher_name ?? row.emp_name ?? null;
+    await createReturn(this.prisma, {
+      type: "permission",
+      requestId: row.id,
+      stage,
+      by: userId ?? null,
+      byName: userName ?? null,
+      to: target,
+      comment,
+    });
+    await this.prisma.hr_all_ozonat_orders.update({
+      where: { id: row.id },
+      data: {
+        current_from_user_id: userId ?? null,
+        current_from_user_name: userName ?? null,
+        current_to_user_id: target,
+        current_to_user_name: targetName,
+        reason_action: comment.slice(0, 50),
+      },
+    });
+    await this.insertHistory({
+      eznRkm: row.ezn_rkm,
+      eznId: row.id,
+      fromUserId: userId,
+      fromUserName: userName,
+      toUserId: target,
+      toUserName: targetName ?? undefined,
+      msg: `إرجاع للتعديل — ${comment}`.slice(0, 100),
+      reason: stage,
+      suspend: String(row.suspend ?? 0),
+      processCode: PROCESS_CODE.ACCEPT,
+    });
+    await recordTimeline(this.prisma, "permission", row.id, {
+      action: "return",
+      stage,
+      by: userId ?? null,
+      byName: userName ?? null,
+      to: target,
+      toName: targetName,
+      comment,
+      override,
+    });
+    await this.pushInApp(target, userId, "طلب الإذن رجعلك للتعديل", comment);
+    return {
+      id: row.id,
+      stage,
+      suspend: row.suspend,
+      status: "returned",
+      final: false,
+      nextStage: null,
+      override,
+      returnedTo: target,
+    };
+  }
+
+  /** Edit (optional) + resubmit a returned permit; it resumes at the step that returned it. */
+  async resubmit(id: number, body: ResubmitPermissionDto, actor: JwtUser) {
+    const row = await this.prisma.hr_all_ozonat_orders.findUnique({ where: { id } });
+    if (!row || row.cancel === "yes") throw new NotFoundException("طلب الإذن غير موجود");
+    const ret = await openReturn(this.prisma, "permission", id);
+    if (!ret) throw new BadRequestException("الطلب مش مرتجع للتعديل");
+    if (ret.returnedTo !== actor.sub && row.publisher !== actor.sub && !isSystemAdmin(actor)) {
+      throw new ForbiddenException("يمكن لمقدم الطلب فقط تعديله وإعادة إرساله");
+    }
+    const edits = ["no3Ezn", "eznDate", "fromHour", "toHour", "reason", "fatraFk"] as const;
+    if (edits.some((k) => body[k] !== undefined)) {
+      await this.update(
+        id,
+        {
+          no3Ezn: body.no3Ezn ?? row.no3_ezn ?? 1,
+          eznDate: body.eznDate ?? row.ezn_date ?? row.ezn_date_ar ?? "",
+          fromHour: body.fromHour ?? row.from_hour ?? "",
+          toHour: body.toHour ?? row.to_hour ?? "",
+          reason: body.reason ?? row.reason ?? "",
+          fatraFk: body.fatraFk ?? row.fatra_fk ?? undefined,
+        },
+        undefined,
+        true,
+      );
+    }
+    const emp = row.emp_id_fk
+      ? await this.prisma.employees.findUnique({ where: { id: row.emp_id_fk }, select: EMPLOYEE_WORKFLOW_SELECT })
+      : null;
+    const requester = await requesterUserIds(this.prisma, emp, row.publisher);
+    if (row.emp_user_id) requester.add(row.emp_user_id);
+    const stage = ret.stage as ChainStageKey;
+    let recipient = (["approve_direct_manager", "approve_hr", "approve_moder_edara"] as string[]).includes(stage)
+      ? await resolveStageRecipient(this.prisma, stage, emp, requester)
+      : null;
+    let toStage: string = stage;
+    if (!recipient && stage !== "approve_hr") {
+      const next = await routeNext(this.prisma, stage, emp, requester, {
+        approve_direct_manager: row.approve_direct_manager,
+        approve_hr: row.approve_hr,
+        approve_moder_edara: row.approve_moder_edara,
+      });
+      if (!next.final) {
+        recipient = next.recipient;
+        toStage = next.stage;
+      }
+    }
+    await this.prisma.hr_all_ozonat_orders.update({
+      where: { id },
+      data: {
+        current_from_user_id: actor.sub,
+        current_from_user_name: actor.name ?? null,
+        current_to_user_id: recipient?.userId ?? null,
+        current_to_user_name: recipient?.name ?? null,
+        current_to_emp_id: recipient?.empId ?? null,
+        reason_action: "resubmit",
+      },
+    });
+    await resolveReturn(this.prisma, "permission", id, "resubmitted");
+    await this.insertHistory({
+      eznRkm: row.ezn_rkm,
+      eznId: id,
+      fromUserId: actor.sub,
+      fromUserName: actor.name ?? undefined,
+      toUserId: recipient?.userId,
+      toUserName: recipient?.name ?? undefined,
+      msg: `إعادة إرسال بعد التعديل${body.comment ? ` — ${body.comment}` : ""}`.slice(0, 100),
+      reason: toStage,
+      suspend: String(row.suspend ?? 0),
+      processCode: PROCESS_CODE.ACCEPT,
+    });
+    await recordTimeline(this.prisma, "permission", id, {
+      action: "resubmit",
+      stage: toStage,
+      by: actor.sub,
+      byName: actor.name ?? null,
+      to: recipient?.userId ?? null,
+      toName: recipient?.name ?? null,
+      comment: body.comment ?? null,
+    });
+    await this.notify(id, toStage === "approve_hr" ? 116 : 115, actor.sub, recipient?.userId, {
+      title: "طلب إذن اتعدل ورجعلك",
+      body: `${row.emp_name ?? ""}${body.comment ? ` — ${body.comment}` : ""}`,
+    });
+    return { id, status: "pending", stage: toStage, currentTo: recipient?.name ?? null };
+  }
+
+  /** Unified request card: fields, status chip, timeline (who / action / comment / when). */
+  async flow(id: number, actor: JwtUser) {
+    const row = await this.prisma.hr_all_ozonat_orders.findUnique({ where: { id } });
+    if (!row || row.cancel === "yes") throw new NotFoundException("طلب الإذن غير موجود");
+    const hr = await this.isHrOrAdmin(actor);
+    if (!hr) await this.assertRowInScope(actor, row);
+    const ret = await openReturn(this.prisma, "permission", id);
+    const [emp, legacy, timeline] = await Promise.all([
+      row.emp_id_fk ? this.prisma.employees.findUnique({ where: { id: row.emp_id_fk }, select: { branch_id_fk: true } }) : null,
+      this.prisma.hr_all_ozonat_history.findMany({ where: { ezn_rkm_id: id }, orderBy: { id: "asc" } }),
+      loadTimeline(this.prisma, "permission", id),
+    ]);
+    const stage = pendingStage(row);
+    const routedToMe = row.current_to_user_id === actor.sub;
+    const canAction = stage != null && !ret && (routedToMe || hr) && row.publisher !== actor.sub;
+    const typeTitle = row.no3_ezn === 1 ? "استئذان شخصي" : row.no3_ezn === 2 ? "استئذان للعمل" : "اخرى";
+    return {
+      kind: "permission" as const,
+      id,
+      employeeName: row.emp_name,
+      branchId: emp?.branch_id_fk ?? null,
+      title: typeTitle,
+      createdAt: row.date_ar ?? row.date ?? null,
+      stage,
+      currentTo: row.current_to_user_name,
+      ...this.flowFields(row, ret, actor.sub),
+      canAction,
+      canReturn: canAction,
+      canPartial: false,
+      override: canAction && !routedToMe,
+      fields: [
+        { key: "no3Ezn", label: "نوع الإذن", value: typeTitle },
+        { key: "eznDate", label: "التاريخ", value: row.ezn_date_ar ?? row.ezn_date ?? row.date_ar },
+        { key: "fromHour", label: "من", value: row.from_hour },
+        { key: "toHour", label: "إلى", value: row.to_hour },
+        { key: "minutes", label: "المدة (دقيقة)", value: row.total_hours != null ? String(row.total_hours) : null },
+        { key: "reason", label: "السبب", value: row.reason },
+      ],
+      editable: {
+        no3Ezn: row.no3_ezn,
+        eznDate: row.ezn_date ?? row.ezn_date_ar,
+        fromHour: row.from_hour,
+        toHour: row.to_hour,
+        reason: row.reason,
+        fatraFk: row.fatra_fk,
+      },
+      timeline: mergeTimeline(
+        legacy.map((h) =>
+          legacyHistoryEntry({
+            date: h.date ?? h.date_ar,
+            fromUser: h.from_user_id,
+            fromName: h.from_user_name,
+            toUser: h.to_user_id,
+            toName: h.to_user_name,
+            msg: h.talab_msg,
+            reasonAction: h.reason_action,
+          }),
+        ),
+        timeline,
+      ),
+    };
+  }
+
+  /** Extra fields the mobile permit detail adds (additive): status chip, return, timeline. */
+  async mobileFlowExtras(id: number, actor: JwtUser) {
+    try {
+      const f = await this.flow(id, actor);
+      return {
+        flowStatus: f.flowStatus,
+        flowStatusLabel: f.flowStatusLabel,
+        returned: f.returned,
+        returnComment: f.returnComment,
+        canResubmit: f.canResubmit,
+        canReturn: f.canReturn,
+        history: f.timeline,
+        comments: f.timeline.filter((t) => t.comment).map((t) => ({ at: t.at, byName: t.byName, action: t.action, actionLabel: t.actionLabel, comment: t.comment })),
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  /** Open permits for the HR inbox (pending in the chain or returned). */
+  async openRows() {
+    const rows = await this.prisma.hr_all_ozonat_orders.findMany({
+      where: {
+        suspend: { in: [SuspendStatus.INCOMING, SuspendStatus.APPROVED_L1] },
+        AND: [
+          { OR: [{ cancel: null }, { cancel: { not: "yes" } }] },
+          { OR: [{ close_talab: null }, { close_talab: { not: "yes" } }] },
+        ],
+      },
+      orderBy: { id: "desc" },
+      take: 2000,
+    });
+    const open = rows.filter((r) => pendingStage(r) != null);
+    const returns = await openReturnsFor(this.prisma, "permission", open.map((r) => r.id));
+    return open.map((r) => ({ row: r, stage: pendingStage(r)!, ret: returns.get(r.id) ?? null }));
+  }
+
+  async isHrOrAdmin(actor: Pick<JwtUser, "sub" | "level" | "is_super_admin">): Promise<boolean> {
+    if (isSystemAdmin(actor as JwtUser)) return true;
+    if (await isHrOfficer(this.prisma, actor.sub)) return true;
+    return this.hasHrApproveGrant(actor.sub);
+  }
+
+  private async pushInApp(toUser: number | null | undefined, fromUser: number | null | undefined, title: string, body: string) {
+    if (!toUser || toUser === fromUser || !this.push) return;
+    try {
+      await this.push.sendToUsers([toUser], title, body, fromUser ?? undefined);
+    } catch {
+      // best-effort
+    }
   }
 
   /** HR authority through RBAC (the HR job-title role holds hr:approve). */

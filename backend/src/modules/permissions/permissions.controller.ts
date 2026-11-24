@@ -16,7 +16,7 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { JwtUser } from '../../common/types/jwt-user';
 import { PermissionsService } from './permissions.service';
 import { CreatePermissionDto } from './dto/create-permission.dto';
-import { ActionPermissionDto } from './dto/action-permission.dto';
+import { ActionPermissionDto, ResubmitPermissionDto } from './dto/action-permission.dto';
 import { ListPermissionsDto } from './dto/list-permissions.dto';
 import { UpdatePermissionDto } from './dto/update-permission.dto';
 
@@ -73,6 +73,18 @@ export class PermissionsController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.permissions.action(id, body, user.sub, user.name ?? undefined, user);
+  }
+
+  /** Edit + resubmit after «إرجاع للتعديل»; resumes at the step that returned it. */
+  @Post(':id/resubmit')
+  resubmit(@Param('id', ParseIntPipe) id: number, @Body() body: ResubmitPermissionDto, @CurrentUser() user: JwtUser) {
+    return this.permissions.resubmit(id, body, user);
+  }
+
+  /** Unified request card (status chip, timeline, available actions). */
+  @Get(':id/flow')
+  flow(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.permissions.flow(id, user);
   }
 
   @Post(':id/approve')

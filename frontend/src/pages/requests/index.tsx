@@ -108,6 +108,9 @@ export function RequestsPage() {
         actions={
           <div className="flex gap-2">
           <Button variant="outline" asChild>
+            <Link to="/requests/inbox"><Inbox className="size-4" /> {ui('بانتظار الموافقة')}</Link>
+          </Button>
+          <Button variant="outline" asChild>
             <Link to="/requests/overtime"><Clock className="size-4" /> {ui('الساعات الإضافية')}</Link>
           </Button>
           <DropdownMenu>

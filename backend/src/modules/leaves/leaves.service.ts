@@ -25,7 +25,7 @@ import {
 import { legacyBusinessIsoDate, todayIso } from "../../common/utils/legacy-date.util";
 import { insertLegacyNotification } from "../../common/utils/legacy-notification.util";
 import { CreateLeaveDto } from "./dto/create-leave.dto";
-import { ActionLeaveDto } from "./dto/action-leave.dto";
+import { ActionLeaveDto, ResubmitLeaveDto } from "./dto/action-leave.dto";
 import { ListLeavesDto } from "./dto/list-leaves.dto";
 import { JwtUser } from "../../common/types/jwt-user";
 import { PROCESS_CODE } from "./approval-chain.util";
@@ -36,10 +36,26 @@ import {
   STAGE_DATE_COLUMN,
   STAGE_LABEL_AR,
   authorizeApprover,
+  isHrOfficer,
   pendingStage,
   requesterUserIds,
+  resolveStageRecipient,
   routeNext,
 } from "../../common/hr-approval/approval-chain";
+import {
+  FLOW_STATUS_LABEL_AR,
+  ReturnInfo,
+  chainFlowStatus,
+  createReturn,
+  legacyHistoryEntry,
+  loadTimeline,
+  mergeTimeline,
+  openReturn,
+  openReturnsFor,
+  recordTimeline,
+  requireReturnComment,
+  resolveReturn,
+} from "../../common/hr-approval/request-flow";
 import { PushService } from "../push/push.service";
 import { ownOnlyEmployeeIds } from "../../common/hr-scope/own-hr-records";
 import { PermissionEngineService } from "../rbac/engine/permission-engine.service";
@@ -198,6 +214,7 @@ export class LeavesService {
     ]);
     const empMap = new Map(emps.map((e) => [e.id, e.employee]));
     const typeMap = new Map(types.map((t) => [t.id, t.name]));
+    const returns = await openReturnsFor(this.prisma, "leave", rows.map((r) => r.id));
 
     const data = rows.map((r) => ({
       id: r.id,
@@ -222,11 +239,14 @@ export class LeavesService {
       canAction:
         userId != null &&
         r.current_to_user_id === userId &&
-        pendingStage(r) != null,
+        pendingStage(r) != null &&
+        !returns.has(r.id),
       pendingStage: pendingStage(r) ?? undefined,
       canManage:
         r.suspend === SuspendStatus.INCOMING &&
+        !returns.has(r.id) &&
         (isAdmin || (userId != null && r.publisher === userId)),
+      ...this.flowFields(r, returns.get(r.id) ?? null, userId),
     }));
 
     return paginated(data, total, q.page, q.pageSize);
@@ -484,6 +504,17 @@ export class LeavesService {
       title: "لديك طلب إجازة جديد",
       body: `${emp?.employee ?? currentUserName ?? ""} — من ${body.startDate} إلى ${body.endDate}`,
     });
+    await recordTimeline(this.prisma, "leave", row.id, {
+      action: "submit",
+      by: currentUserId ?? null,
+      byName: currentUserName ?? null,
+      to: firstStage?.recipient?.userId ?? null,
+      toName: firstStage?.recipient?.name ?? null,
+      comment: body.reason ?? null,
+    });
+    for (const stage of route.skipped) {
+      await recordTimeline(this.prisma, "leave", row.id, { action: "skip", stage, byName: "النظام" });
+    }
 
     return { id: row.id, agaza_rkm: row.agaza_rkm };
   }
@@ -509,6 +540,9 @@ export class LeavesService {
     const stage = pendingStage(row);
     if (!stage)
       throw new BadRequestException("لا يوجد إجراء متاح على هذا الطلب");
+    if (await openReturn(this.prisma, "leave", id)) {
+      throw new BadRequestException("الطلب مرتجع لمقدمه للتعديل؛ استنى إعادة الإرسال");
+    }
 
     const emp = row.emp_id_fk
       ? await this.prisma.employees.findUnique({
@@ -527,7 +561,11 @@ export class LeavesService {
     // Never route the next step back to the person deciding now, nor to the requester.
     const exclude = new Set(requester);
 
-    const reason = body.reason ?? null;
+    if (body.action === "return") {
+      return this.returnForChanges(row, stage, body.comment ?? body.reason, requester, auth.override, userId ?? actor?.sub, userName);
+    }
+
+    const reason = body.reason ?? body.comment ?? null;
     let toUserId: number | null;
     let toUserName: string | null = null;
     let toEmpId: number | null = null;
@@ -630,6 +668,22 @@ export class LeavesService {
     const decision = body.action === "accept"
       ? original ? "اعتماد جزئي" : "اعتماد"
       : "رفض";
+    await recordTimeline(this.prisma, "leave", id, {
+      action: body.action === "accept" ? "accept" : "reject",
+      stage,
+      by: userId ?? actor?.sub ?? null,
+      byName: userName ?? null,
+      to: toUserId,
+      toName: toUserName,
+      comment: [original ? `اعتماد جزئي ${data.agaza_from_date_m} → ${data.agaza_to_date_m}` : null, reason].filter(Boolean).join(" — ") || null,
+      override: auth.override,
+    });
+    for (const s of autoApproved) {
+      await recordTimeline(this.prisma, "leave", id, { action: "accept", stage: s, by: userId ?? null, byName: userName ?? null, comment: "نفس المعتمد" });
+    }
+    for (const s of skipped) {
+      await recordTimeline(this.prisma, "leave", id, { action: "skip", stage: s, byName: "النظام" });
+    }
     await this.insertHistory({
       agazaRkm: row.agaza_rkm,
       agazaId: id,
@@ -1026,7 +1080,7 @@ export class LeavesService {
     },
     actor: Pick<JwtUser, "sub" | "level" | "is_super_admin">,
   ) {
-    const row = await this.findManageableLeave(id, actor);
+    const row = await this.findManageableLeave(id, actor, true);
     const startDate = body.startDate ?? row.agaza_from_date_m;
     const endDate = body.endDate ?? row.agaza_to_date_m;
     if (!startDate || !endDate)
@@ -1067,11 +1121,17 @@ export class LeavesService {
   private async findManageableLeave(
     id: number,
     actor: Pick<JwtUser, "sub" | "level" | "is_super_admin">,
+    allowReturned = false,
   ) {
     const row = await this.prisma.hr_all_agzat_orders.findUnique({
       where: { id },
     });
     if (!row) throw new NotFoundException("طلب الإجازة غير موجود");
+    // A request returned for changes is editable by the person it was returned to.
+    const ret = allowReturned ? await openReturn(this.prisma, "leave", id) : null;
+    if (ret && (ret.returnedTo === actor.sub || row.publisher === actor.sub || isSystemAdmin(actor as JwtUser))) {
+      return row;
+    }
     if (row.suspend !== SuspendStatus.INCOMING) {
       throw new BadRequestException("لا يمكن تعديل أو حذف طلب تمت مراجعته");
     }
@@ -1081,6 +1141,294 @@ export class LeavesService {
       );
     }
     return row;
+  }
+
+  // ---- return with comment / resubmit / flow detail ---------------------------------------
+
+  /** Unified card fields for list rows and the detail (additive for the mobile app). */
+  private flowFields(
+    row: Parameters<typeof chainFlowStatus>[0] & { id: number; publisher: number | null },
+    ret: ReturnInfo | null,
+    userId?: number | null,
+  ) {
+    const flowStatus = chainFlowStatus(row, ret != null);
+    return {
+      flowStatus,
+      flowStatusLabel: FLOW_STATUS_LABEL_AR[flowStatus],
+      returned: ret != null,
+      returnComment: ret?.comment ?? null,
+      returnedBy: ret?.returnedByName ?? null,
+      returnedStage: ret?.stage ?? null,
+      canResubmit: ret != null && userId != null && (ret.returnedTo === userId || row.publisher === userId),
+    };
+  }
+
+  /**
+   * «إرجاع للتعديل»: back to the requester with a comment. The stage flags and suspend stay as
+   * they are (the step that returned it is still 'wait'); an open hr_request_returns row marks it.
+   */
+  private async returnForChanges(
+    row: Prisma.hr_all_agzat_ordersGetPayload<object>,
+    stage: string,
+    rawComment: string | null | undefined,
+    requester: Set<number>,
+    override: boolean,
+    userId: number | undefined,
+    userName: string | undefined,
+  ) {
+    const comment = requireReturnComment(rawComment);
+    const target = row.publisher ?? row.current_from_user_id ?? [...requester][0] ?? null;
+    const targetName = row.publisher_name ?? row.current_from_user_name ?? null;
+    await createReturn(this.prisma, {
+      type: "leave",
+      requestId: row.id,
+      stage,
+      by: userId ?? null,
+      byName: userName ?? null,
+      to: target,
+      comment,
+    });
+    await this.prisma.hr_all_agzat_orders.update({
+      where: { id: row.id },
+      data: {
+        current_from_user_id: userId ?? null,
+        current_from_user_name: userName ?? null,
+        current_to_user_id: target,
+        current_to_user_name: targetName,
+        reason_action: comment.slice(0, 50),
+      },
+    });
+    await this.insertHistory({
+      agazaRkm: row.agaza_rkm,
+      agazaId: row.id,
+      fromUser: userId,
+      fromUserName: userName,
+      toUser: target,
+      toUserName: targetName ?? undefined,
+      msg: "إرجاع للتعديل",
+      reason: stage,
+      processCode: PROCESS_CODE.ACCEPT,
+    });
+    await recordTimeline(this.prisma, "leave", row.id, {
+      action: "return",
+      stage,
+      by: userId ?? null,
+      byName: userName ?? null,
+      to: target,
+      toName: targetName,
+      comment,
+      override,
+    });
+    await this.pushInApp(target, userId, "طلب الإجازة رجعلك للتعديل", comment);
+    return {
+      id: row.id,
+      stage,
+      suspend: row.suspend,
+      status: "returned",
+      workflowStatus: "returned",
+      final: false,
+      nextStage: null,
+      override,
+      returnedTo: target,
+    };
+  }
+
+  /** Edit (optional) + resubmit a returned leave; it resumes at the step that returned it. */
+  async resubmit(id: number, body: ResubmitLeaveDto, actor: JwtUser) {
+    const row = await this.prisma.hr_all_agzat_orders.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("طلب الإجازة غير موجود");
+    const ret = await openReturn(this.prisma, "leave", id);
+    if (!ret) throw new BadRequestException("الطلب مش مرتجع للتعديل");
+    if (ret.returnedTo !== actor.sub && row.publisher !== actor.sub && !isSystemAdmin(actor)) {
+      throw new ForbiddenException("يمكن لمقدم الطلب فقط تعديله وإعادة إرساله");
+    }
+    const edits = ["startDate", "endDate", "returnToWorkDate", "reason", "addressSinceAgaza"] as const;
+    if (edits.some((k) => body[k] !== undefined)) {
+      await this.update(
+        id,
+        {
+          startDate: body.startDate,
+          endDate: body.endDate,
+          returnToWorkDate: body.returnToWorkDate,
+          reason: body.reason ?? row.reason ?? undefined,
+          addressSinceAgaza: body.addressSinceAgaza ?? row.address_since_agaza ?? undefined,
+        },
+        actor,
+      );
+    }
+    const emp = row.emp_id_fk
+      ? await this.prisma.employees.findUnique({ where: { id: row.emp_id_fk }, select: EMPLOYEE_WORKFLOW_SELECT })
+      : null;
+    const requester = await requesterUserIds(this.prisma, emp, row.publisher);
+    const stage = ret.stage as ChainStageKey;
+    let recipient = (["approve_direct_manager", "approve_hr", "approve_moder_edara"] as string[]).includes(stage)
+      ? await resolveStageRecipient(this.prisma, stage, emp, requester)
+      : null;
+    let toStage: string = stage;
+    if (!recipient && stage !== "approve_hr") {
+      // Nobody holds that step any more: continue with the next one.
+      const next = await routeNext(this.prisma, stage, emp, requester, {
+        approve_direct_manager: row.approve_direct_manager,
+        approve_hr: row.approve_hr,
+        approve_moder_edara: row.approve_moder_edara,
+      });
+      if (!next.final) {
+        recipient = next.recipient;
+        toStage = next.stage;
+      }
+    }
+    await this.prisma.hr_all_agzat_orders.update({
+      where: { id },
+      data: {
+        current_from_user_id: actor.sub,
+        current_from_user_name: actor.name ?? null,
+        current_to_user_id: recipient?.userId ?? null,
+        current_to_user_name: recipient?.name ?? null,
+        current_to_emp_id: recipient?.empId != null ? String(recipient.empId) : null,
+        reason_action: "resubmit",
+      },
+    });
+    await resolveReturn(this.prisma, "leave", id, "resubmitted");
+    await this.insertHistory({
+      agazaRkm: row.agaza_rkm,
+      agazaId: id,
+      fromUser: actor.sub,
+      fromUserName: actor.name ?? undefined,
+      toUser: recipient?.userId,
+      toUserName: recipient?.name ?? undefined,
+      msg: "إعادة إرسال بعد التعديل",
+      reason: toStage.slice(0, 30),
+      processCode: PROCESS_CODE.ACCEPT,
+    });
+    await recordTimeline(this.prisma, "leave", id, {
+      action: "resubmit",
+      stage: toStage,
+      by: actor.sub,
+      byName: actor.name ?? null,
+      to: recipient?.userId ?? null,
+      toName: recipient?.name ?? null,
+      comment: body.comment ?? null,
+    });
+    await this.notify(id, toStage === "approve_hr" ? 106 : 105, actor.sub, recipient?.userId, {
+      title: "طلب إجازة اتعدل ورجعلك",
+      body: `${emp?.employee ?? ""}${body.comment ? ` — ${body.comment}` : ""}`,
+    });
+    return { id, status: "pending", stage: toStage, currentTo: recipient?.name ?? null };
+  }
+
+  /** Unified request card: fields, status chip, timeline (who / action / comment / when). */
+  async flow(id: number, actor: JwtUser) {
+    const row = await this.prisma.hr_all_agzat_orders.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException("طلب الإجازة غير موجود");
+    const hr = await this.isHrOrAdmin(actor);
+    if (!hr) await this.assertLeaveInScope(actor, row);
+    const ret = await openReturn(this.prisma, "leave", id);
+    const [emp, type, legacy, timeline, original] = await Promise.all([
+      row.emp_id_fk
+        ? this.prisma.employees.findUnique({ where: { id: row.emp_id_fk }, select: { employee: true, branch_id_fk: true } })
+        : null,
+      row.no3_agaza ? this.prisma.holiday_setting.findUnique({ where: { id: row.no3_agaza } }) : null,
+      this.prisma.hr_all_agzat_history.findMany({ where: { agaza_id_fk: id }, orderBy: { id: "asc" } }),
+      loadTimeline(this.prisma, "leave", id),
+      this.requestedRange(id).catch(() => null),
+    ]);
+    const stage = pendingStage(row);
+    const routedToMe = row.current_to_user_id === actor.sub;
+    const canAction = stage != null && !ret && (routedToMe || hr) && row.publisher !== actor.sub;
+    return {
+      kind: "leave" as const,
+      id,
+      employeeName: emp?.employee ?? row.current_from_user_name ?? null,
+      branchId: emp?.branch_id_fk ?? null,
+      title: type?.name ?? "إجازة",
+      createdAt: legacyBusinessIsoDate(row.agaza_date),
+      stage,
+      currentTo: row.current_to_user_name,
+      ...this.flowFields(row, ret, actor.sub),
+      canAction,
+      canReturn: canAction,
+      canPartial: canAction,
+      override: canAction && !routedToMe,
+      fields: [
+        { key: "leaveType", label: "نوع الإجازة", value: type?.name ?? null },
+        { key: "startDate", label: "من", value: row.agaza_from_date_m },
+        { key: "endDate", label: "إلى", value: row.agaza_to_date_m },
+        { key: "days", label: "عدد الأيام", value: row.num_days != null ? String(Math.round(row.num_days)) : null },
+        { key: "returnToWorkDate", label: "تاريخ المباشرة", value: row.mobashret_amal_date_m },
+        { key: "reason", label: "السبب", value: row.reason },
+        ...(original ? [{ key: "requested", label: "المطلوب أصلًا", value: `${original.from} → ${original.to} (${original.days} يوم)` }] : []),
+      ],
+      editable: {
+        startDate: row.agaza_from_date_m,
+        endDate: row.agaza_to_date_m,
+        returnToWorkDate: row.mobashret_amal_date_m,
+        reason: row.reason,
+      },
+      timeline: mergeTimeline(
+        legacy.map((h) =>
+          legacyHistoryEntry({
+            date: h.date ?? h.date_ar,
+            fromUser: h.from_user,
+            fromName: h.from_user_n,
+            toUser: h.to_user,
+            toName: h.to_user_n,
+            msg: h.talab_msg,
+            reasonAction: h.reason_action,
+          }),
+        ),
+        timeline,
+      ),
+    };
+  }
+
+  /** Extra fields the mobile leave detail adds (additive): status chip, return, timeline. */
+  async mobileFlowExtras(id: number, actor: JwtUser) {
+    try {
+      const f = await this.flow(id, actor);
+      return {
+        flowStatus: f.flowStatus,
+        flowStatusLabel: f.flowStatusLabel,
+        returned: f.returned,
+        returnComment: f.returnComment,
+        canResubmit: f.canResubmit,
+        canReturn: f.canReturn,
+        history: f.timeline,
+        comments: f.timeline.filter((t) => t.comment).map((t) => ({ at: t.at, byName: t.byName, action: t.action, actionLabel: t.actionLabel, comment: t.comment })),
+      };
+    } catch {
+      return {};
+    }
+  }
+
+  /** Open leave requests for the HR inbox (pending in the chain or returned). */
+  async openRows() {
+    const rows = await this.prisma.hr_all_agzat_orders.findMany({
+      where: {
+        suspend: { in: [SuspendStatus.INCOMING, SuspendStatus.APPROVED_L1] },
+        OR: [{ close_talab: null }, { close_talab: { not: "yes" } }],
+      },
+      orderBy: { id: "desc" },
+      take: 2000,
+    });
+    const open = rows.filter((r) => pendingStage(r) != null);
+    const returns = await openReturnsFor(this.prisma, "leave", open.map((r) => r.id));
+    return open.map((r) => ({ row: r, stage: pendingStage(r)!, ret: returns.get(r.id) ?? null }));
+  }
+
+  async isHrOrAdmin(actor: Pick<JwtUser, "sub" | "level" | "is_super_admin">): Promise<boolean> {
+    if (isSystemAdmin(actor as JwtUser)) return true;
+    if (await isHrOfficer(this.prisma, actor.sub)) return true;
+    return this.hasHrApproveGrant(actor.sub);
+  }
+
+  /** In-app row + push for events without a legacy notification code (best-effort). */
+  private async pushInApp(toUser: number | null | undefined, fromUser: number | null | undefined, title: string, body: string) {
+    if (!toUser || toUser === fromUser || !this.push) return;
+    try {
+      await this.push.sendToUsers([toUser], title, body, fromUser ?? undefined);
+    } catch {
+      // best-effort
+    }
   }
 
   private async insertHistory(opts: {

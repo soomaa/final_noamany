@@ -39,10 +39,10 @@ import {
 } from './dto/mobile.dto';
 import { PermissionsService } from '../permissions/permissions.service';
 import { CreatePermissionDto } from '../permissions/dto/create-permission.dto';
-import { ActionPermissionDto } from '../permissions/dto/action-permission.dto';
+import { ActionPermissionDto, ResubmitPermissionDto } from '../permissions/dto/action-permission.dto';
 import { ListPermissionsDto } from '../permissions/dto/list-permissions.dto';
 import { LeavesService } from '../leaves/leaves.service';
-import { ActionLeaveDto } from '../leaves/dto/action-leave.dto';
+import { ActionLeaveDto, ResubmitLeaveDto } from '../leaves/dto/action-leave.dto';
 import { ListLeavesDto } from '../leaves/dto/list-leaves.dto';
 import { AttendanceService } from '../attendance/attendance.service';
 import { AttendanceReportDto } from '../attendance/dto/report.dto';
@@ -53,6 +53,7 @@ import {
   CreateOvertimeRequestDto,
   ListOvertimeRequestsDto,
   OvertimeActionDto,
+  ResubmitOvertimeDto,
 } from '../overtime-requests/dto/overtime-request.dto';
 
 @UseGuards(JwtAuthGuard)
@@ -122,8 +123,10 @@ export class MobileController {
 
   /** Declared after leaves/types so "types" never reaches the id pipe. */
   @Get('leaves/:id')
-  leaveDetail(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    return this.mobile.leave(user, id);
+  async leaveDetail(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    const row = await this.mobile.leave(user, id);
+    // Additive: flowStatus/flowStatusLabel, returned/returnComment/canResubmit, history, comments.
+    return { ...row, ...(await this.leavesService.mobileFlowExtras(id, user)) };
   }
 
   @Post('leaves')
@@ -140,6 +143,12 @@ export class MobileController {
     return this.leavesService.action(id, dto, user.sub, user.name ?? undefined, user);
   }
 
+  /** Edit + resubmit a leave returned for changes («إرجاع للتعديل»). */
+  @Patch('leaves/:id/resubmit')
+  resubmitLeave(@Param('id', ParseIntPipe) id: number, @Body() dto: ResubmitLeaveDto, @CurrentUser() user: JwtUser) {
+    return this.leavesService.resubmit(id, dto, user);
+  }
+
   /** Same ozonat table and approval chain used by the dashboard. */
   @Get('permissions')
   permissionsList(@Query() query: ListPermissionsDto, @CurrentUser() user: JwtUser) {
@@ -154,8 +163,11 @@ export class MobileController {
   }
   /** Declared after permissions/available so "available" never reaches the id pipe. */
   @Get('permissions/:id')
-  permissionDetail(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    return this.compat.permissionDetail(user, { ezn_id: String(id) });
+  async permissionDetail(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    const rows = await this.compat.permissionDetail(user, { ezn_id: String(id) });
+    // Additive (same array shape): status chip, return comment, history, comments.
+    const extras = await this.permissions.mobileFlowExtras(id, user);
+    return rows.map((row) => ({ ...row, ...extras }));
   }
 
 
@@ -171,6 +183,12 @@ export class MobileController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.permissions.action(id, dto, user.sub, user.name ?? undefined, user);
+  }
+
+  /** Edit + resubmit a permit returned for changes («إرجاع للتعديل»). */
+  @Patch('permissions/:id/resubmit')
+  resubmitPermission(@Param('id', ParseIntPipe) id: number, @Body() dto: ResubmitPermissionDto, @CurrentUser() user: JwtUser) {
+    return this.permissions.resubmit(id, dto, user);
   }
 
   /**
@@ -201,6 +219,12 @@ export class MobileController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.overtime.action(id, dto, user);
+  }
+
+  /** Edit + resubmit an overtime request returned for changes. */
+  @Patch('overtime-requests/:id/resubmit')
+  resubmitOvertimeRequest(@Param('id', ParseIntPipe) id: number, @Body() dto: ResubmitOvertimeDto, @CurrentUser() user: JwtUser) {
+    return this.overtime.resubmit(id, dto, user);
   }
 
   @Patch('overtime-requests/:id/cancel')
@@ -287,9 +311,16 @@ export class MobileController {
     ];
   }
 
+  /** ttype 2 (extra shift) from a direct manager waits for HR (response adds queued/requestId/message). */
   @Post('attendance/shift-swaps')
   async createMobileShiftSwap(@Body() dto: MobileShiftSwapDto, @CurrentUser() user: JwtUser) {
     const employeeId = await this.mobile.employeeIdByPhone(dto.employeePhone);
+    if (Number(dto.ttype) === 2) {
+      return this.overtime.managerEntry(
+        { empId: employeeId, date: dto.sheftDate, kind: 'shift', shiftId: dto.dwamIdFk, reason: dto.reason },
+        user,
+      );
+    }
     return this.attendanceService.createShiftSwap({ ...dto, empId: employeeId }, user.sub);
   }
 
@@ -301,10 +332,18 @@ export class MobileController {
     });
   }
 
+  /**
+   * A direct manager's overtime entry becomes a request at the HR step (response:
+   * `{ id, requestId, queued: true, status: 'pending', message: 'اتبعت للـ HR للموافقة' }`);
+   * HR / admin entries are recorded at once (old response + `autoApproved: true`).
+   */
   @Post('attendance/extra-hours')
   async createMobileExtraHours(@Body() dto: MobileExtraHoursDto, @CurrentUser() user: JwtUser) {
     const employeeId = await this.mobile.employeeIdByPhone(dto.employeePhone);
-    return this.attendanceService.createExtraHours({ ...dto, empId: employeeId }, user.sub);
+    return this.overtime.managerEntry(
+      { empId: employeeId, date: dto.edafaDate, kind: 'hours', hours: dto.numHours, reason: dto.reason },
+      user,
+    );
   }
 
   @Get('circulars')
