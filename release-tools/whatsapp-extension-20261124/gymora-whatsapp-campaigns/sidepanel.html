@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GYMORA — حملات واتساب</title>
+  <link rel="stylesheet" href="sidepanel.css" />
+</head>
+<body>
+  <header class="brand">
+    <img class="logo" src="icons/128.png" alt="GYMORA" width="44" height="44" />
+    <div class="brand-text">
+      <p class="eyebrow" dir="ltr">GYMORA</p>
+      <h1>حملات واتساب</h1>
+      <p id="device-line" class="device"></p>
+    </div>
+    <span id="live" class="pill off">متوقف</span>
+    <button type="button" id="to-mini" class="icon-btn panel-only" title="تصغير لعمود صغير جنب الشاشة" aria-label="تصغير لعمود صغير">–</button>
+    <button type="button" id="to-panel" class="icon-btn mini-only" title="رجوع للبانل الكبير" aria-label="رجوع للبانل الكبير">⤢</button>
+  </header>
+
+  <main>
+    <section id="setup" class="setup" hidden>
+      <div class="hero">
+        <div class="hero-art" aria-hidden="true">
+          <span class="tile"><img src="icons/128.png" alt="" /></span>
+          <span class="link-dots"><i></i><i></i><i></i></span>
+          <span class="tile chat">
+            <svg viewBox="0 0 24 24" width="26" height="26"><path fill="currentColor" d="M12 3a9 9 0 0 0-7.8 13.5L3 21l4.7-1.2A9 9 0 1 0 12 3Zm4.6 12.4c-.2.5-1.1 1-1.6 1.1-.4.1-.9.1-1.5-.1a13 13 0 0 1-1.4-.5 10.6 10.6 0 0 1-4-3.6c-.3-.4-.9-1.3-.9-2.4s.6-1.7.8-2c.2-.2.5-.3.6-.3h.5c.1 0 .4 0 .5.4l.7 1.7c.1.2.1.3 0 .5l-.3.4-.3.4c-.1.1-.2.3-.1.5.2.3.7 1.1 1.5 1.8 1 .9 1.8 1.2 2.1 1.3.2.1.4.1.5-.1l.7-.9c.2-.2.3-.2.5-.1l1.6.8c.2.1.4.2.4.3.1.1.1.6-.1 1.1Z"/></svg>
+          </span>
+        </div>
+        <h2>اربطي الجهاز ده بالسيستم</h2>
+        <p>مرة واحدة بس لكل جهاز — بعدها الإرسال بيبقى بضغطة زرار.</p>
+      </div>
+
+      <div class="card">
+        <ol class="steps">
+          <li><span class="n">1</span><div><b>افتحي صفحة «رسائل واتساب»</b><small>أجهزة الإرسال ← إضافة جهاز</small></div></li>
+          <li><span class="n">2</span><div><b>اكتبي عنوان السيستم</b><small>بيتملى لوحده لو صفحة السيستم مفتوحة</small></div></li>
+          <li><span class="n">3</span><div><b>اكتبي كود الربط</b><small>8 حروف وأرقام — صالح 15 دقيقة</small></div></li>
+        </ol>
+        <label>عنوان السيستم
+          <span class="input-icon">
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" d="M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm-9 9h18M12 3c2.5 2.6 3.7 5.6 3.7 9s-1.2 6.4-3.7 9c-2.5-2.6-3.7-5.6-3.7-9S9.5 5.6 12 3Z"/></svg>
+            <input id="server" dir="ltr" placeholder="https://gym.example.com" autocomplete="url" inputmode="url" />
+          </span>
+        </label>
+        <label>كود الربط<input id="code" dir="ltr" placeholder="XXXX-XXXX" maxlength="9" autocomplete="off" spellcheck="false" class="code" /></label>
+        <button id="pair" class="btn primary big">ربط الجهاز</button>
+        <p id="setup-error" class="error" role="alert"></p>
+      </div>
+      <p class="version">GYMORA · <span class="ver"></span></p>
+    </section>
+
+    <section id="main" hidden>
+      <div id="control" class="card panel-only"></div>
+      <p id="mini-today" class="mini-today mini-only"></p>
+
+      <div class="card">
+        <div class="card-head"><h2>الحملات</h2></div>
+        <label class="field">إرسال من
+          <select id="campaign"><option value="">كل الحملات الشغالة</option></select>
+        </label>
+        <ul id="campaigns" class="campaigns"></ul>
+      </div>
+
+      <button id="toggle" class="btn primary big">▶ تشغيل الإرسال</button>
+      <div id="status" class="status idle" role="status">متوقف</div>
+
+      <div class="stats" role="group" aria-label="فلترة الرسايل">
+        <button type="button" class="stat ok" data-filter="ok" aria-pressed="false"><b id="s-sent">0</b><span>اتبعتت</span></button>
+        <button type="button" class="stat bad" data-filter="bad" aria-pressed="false"><b id="s-failed">0</b><span>فشلت</span></button>
+        <button type="button" class="stat unsure" data-filter="unsure" aria-pressed="false"><b id="s-uncertain">0</b><span>مراجعة</span></button>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2 id="log-title">آخر الرسايل</h2>
+          <button type="button" id="log-clear" class="filter-chip" hidden>عرض الكل ✕</button>
+        </div>
+        <ol id="log" class="log"></ol>
+        <p id="log-empty" class="empty">لسه مفيش رسايل في الجلسة دي</p>
+      </div>
+
+      <footer class="panel-only">
+        <button id="open-wa" class="btn ghost">فتح واتساب ويب</button>
+        <p class="hint">سيبي واتساب ويب مفتوح والبانل ده مفتوح طول الإرسال. الإرسال بيقف لوحده لما الطابور يخلص.</p>
+        <button id="unpair" class="link">إلغاء ربط الجهاز</button>
+        <p class="version">GYMORA · <span class="ver"></span></p>
+      </footer>
+    </section>
+  </main>
+
+  <script src="sidepanel.js"></script>
+</body>
+</html>
