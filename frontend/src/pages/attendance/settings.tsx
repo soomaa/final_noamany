@@ -37,6 +37,14 @@ interface ShiftRow {
   ensrafFromTime?: string;
   ensrafToTime?: string;
   ensrafKhasmFrom?: string;
+  /** Different times for specific weekdays (0 = Sunday … 5 = Friday … 6 = Saturday). */
+  dayOverrides?: DayOverride[];
+}
+
+type ShiftTimes = Omit<ShiftForm, 'title' | 'dayOverrides'>;
+
+interface DayOverride extends ShiftTimes {
+  weekday: number;
 }
 
 interface ShiftForm {
@@ -47,7 +55,20 @@ interface ShiftForm {
   ensrafFromTime: string;
   ensrafToTime: string;
   ensrafKhasmFrom: string;
+  dayOverrides: DayOverride[];
 }
+
+/** Same order as JavaScript getDay() / the API: 0 = Sunday … 6 = Saturday. */
+const WEEKDAYS: { value: number; label: string }[] = [
+  { value: 6, label: uiStatic('السبت') },
+  { value: 0, label: uiStatic('الأحد') },
+  { value: 1, label: uiStatic('الإثنين') },
+  { value: 2, label: uiStatic('الثلاثاء') },
+  { value: 3, label: uiStatic('الأربعاء') },
+  { value: 4, label: uiStatic('الخميس') },
+  { value: 5, label: uiStatic('الجمعة') },
+];
+const weekdayLabel = (weekday: number) => WEEKDAYS.find((d) => d.value === weekday)?.label ?? String(weekday);
 
 const EMPTY_FORM: ShiftForm = {
   title: '',
@@ -57,6 +78,7 @@ const EMPTY_FORM: ShiftForm = {
   ensrafFromTime: '',
   ensrafToTime: '',
   ensrafKhasmFrom: '',
+  dayOverrides: [],
 };
 
 /** Backend may contain legacy "h:i A" values; normalize them before the 12-hour editor. */
@@ -72,7 +94,7 @@ function toInputTime(raw?: string): string {
   return hm ? `${hm[1].padStart(2, '0')}:${hm[2]}` : '';
 }
 
-const TIME_FIELDS: { key: keyof Omit<ShiftForm, 'title'>; label: string }[] = [
+const TIME_FIELDS: { key: keyof ShiftTimes; label: string }[] = [
   { key: 'hdoorFromTime', label: uiStatic('بداية الحضور') },
   { key: 'hdoorToTime', label: uiStatic('نهاية الحضور') },
   { key: 'hdoorKhasmFrom', label: uiStatic('بداية الخصم (تأخير)') },
@@ -90,6 +112,8 @@ export function AttendanceSettingsPage() {
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState<ShiftForm>(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
+  /** Weekday whose different times are being edited in the dialog. */
+  const [overrideDay, setOverrideDay] = useState<number | null>(null);
   const [activatingWeeklySchedule, setActivatingWeeklySchedule] = useState(false);
   const { data: weeklyScheduleRollout, refetch: refetchWeeklyScheduleRollout } = useQuery({
     queryKey: ['attendance', 'weekly-schedule-rollout'],
@@ -104,6 +128,7 @@ export function AttendanceSettingsPage() {
   const openCreate = () => {
     setEditId(null);
     setForm(EMPTY_FORM);
+    setOverrideDay(null);
     setDialogOpen(true);
   };
 
@@ -117,7 +142,17 @@ export function AttendanceSettingsPage() {
       ensrafFromTime: toInputTime(row.ensrafFromTime),
       ensrafToTime: toInputTime(row.ensrafToTime),
       ensrafKhasmFrom: toInputTime(row.ensrafKhasmFrom),
+      dayOverrides: (row.dayOverrides ?? []).map((o) => ({
+        weekday: o.weekday,
+        hdoorFromTime: toInputTime(o.hdoorFromTime),
+        hdoorToTime: toInputTime(o.hdoorToTime),
+        hdoorKhasmFrom: toInputTime(o.hdoorKhasmFrom),
+        ensrafFromTime: toInputTime(o.ensrafFromTime),
+        ensrafToTime: toInputTime(o.ensrafToTime),
+        ensrafKhasmFrom: toInputTime(o.ensrafKhasmFrom),
+      })),
     });
+    setOverrideDay(row.dayOverrides?.[0]?.weekday ?? null);
     setDialogOpen(true);
   };
 
@@ -126,6 +161,14 @@ export function AttendanceSettingsPage() {
     if (missing) {
       toast.error(`${missing.label} ${ui('حقل مطلوب')}`);
       return;
+    }
+    for (const o of form.dayOverrides) {
+      const missingDay = TIME_FIELDS.find((f) => !o[f.key]);
+      if (missingDay) {
+        setOverrideDay(o.weekday);
+        toast.error(`${weekdayLabel(o.weekday)}: ${missingDay.label} ${ui('حقل مطلوب')}`);
+        return;
+      }
     }
     setSaving(true);
     try {
@@ -137,6 +180,8 @@ export function AttendanceSettingsPage() {
         ensrafFromTime: form.ensrafFromTime,
         ensrafToTime: form.ensrafToTime,
         ensrafKhasmFrom: form.ensrafKhasmFrom,
+        // Always sent so removing the last day also clears it on the server.
+        dayOverrides: form.dayOverrides,
       };
       if (editId != null) {
         await api.put(`/attendance/shifts/${editId}`, payload);
@@ -183,6 +228,27 @@ export function AttendanceSettingsPage() {
     }
   };
 
+  /** Pick a weekday: adds it (pre-filled with the shift's own times) or opens it for editing. */
+  const pickOverrideDay = (weekday: number) => {
+    setForm((f) => {
+      if (f.dayOverrides.some((o) => o.weekday === weekday)) return f;
+      const { title: _title, dayOverrides, ...times } = f;
+      return { ...f, dayOverrides: [...dayOverrides, { weekday, ...times }] };
+    });
+    setOverrideDay(weekday);
+  };
+  const removeOverrideDay = (weekday: number) => {
+    setForm((f) => ({ ...f, dayOverrides: f.dayOverrides.filter((o) => o.weekday !== weekday) }));
+    setOverrideDay(null);
+  };
+  const setOverrideTime = (weekday: number, key: keyof ShiftTimes, value: string) => {
+    setForm((f) => ({
+      ...f,
+      dayOverrides: f.dayOverrides.map((o) => (o.weekday === weekday ? { ...o, [key]: value } : o)),
+    }));
+  };
+  const editedOverride = form.dayOverrides.find((o) => o.weekday === overrideDay);
+
   const timeCell = (v?: string) => <span className="nums">{v ? formatTime(v) : '—'}</span>;
 
   const columns: ColumnDef<ShiftRow>[] = [
@@ -193,6 +259,14 @@ export function AttendanceSettingsPage() {
       cell: ({ row }) => (
         <div className="space-y-1">
           <span>{row.original.title ?? '—'}</span>
+          {row.original.dayOverrides?.length ? (
+            <p className="text-xs text-muted-foreground">
+              {ui('مواعيد مختلفة:')}{' '}
+              {row.original.dayOverrides
+                .map((o) => `${weekdayLabel(o.weekday)} ${o.hdoorFromTime ? formatTime(o.hdoorFromTime) : ''}`.trim())
+                .join('، ')}
+            </p>
+          ) : null}
           {row.original.warnings?.length ? (
             <ul className="space-y-0.5 text-xs text-destructive">
               {row.original.warnings.map((warning) => (
@@ -290,6 +364,54 @@ export function AttendanceSettingsPage() {
                   <Time12Input value={form[f.key]} onValueChange={(value) => setForm((prev) => ({ ...prev, [f.key]: value }))} />
                 </div>
               ))}
+            </div>
+            <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+              <div>
+                <Label>{ui('مواعيد مختلفة لأيام معينة')}</Label>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {ui('مثلاً لو الفرع بيفتح الجمعة الساعة ١٠: اختار الجمعة وعدّل مواعيدها. التأخير والانصراف المبكر والإضافي في اليوم ده بيتحسبوا من مواعيده هو.')}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {WEEKDAYS.map((day) => {
+                  const has = form.dayOverrides.some((o) => o.weekday === day.value);
+                  return (
+                    <Button
+                      key={day.value}
+                      type="button"
+                      size="sm"
+                      variant={overrideDay === day.value ? 'brand' : has ? 'secondary' : 'outline'}
+                      onClick={() => pickOverrideDay(day.value)}
+                    >
+                      {day.label}
+                      {has ? ' •' : ''}
+                    </Button>
+                  );
+                })}
+              </div>
+              {editedOverride ? (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium">{`${ui('مواعيد يوم')} ${weekdayLabel(editedOverride.weekday)}`}</span>
+                    <Button type="button" variant="ghost" size="sm" onClick={() => removeOverrideDay(editedOverride.weekday)}>
+                      <Trash2 className="size-4 text-destructive" /> {ui('رجّعه للمواعيد العادية')}
+                    </Button>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    {TIME_FIELDS.map((f) => (
+                      <div key={f.key} className="space-y-1.5">
+                        <Label className="text-xs">{f.label}</Label>
+                        <Time12Input
+                          value={editedOverride[f.key]}
+                          onValueChange={(value) => setOverrideTime(editedOverride.weekday, f.key, value)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">{ui('كل الأيام ماشية على مواعيد الوردية العادية.')}</p>
+              )}
             </div>
           </div>
           <DialogFooter>
