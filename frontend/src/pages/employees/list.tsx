@@ -1,7 +1,7 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Banknote, CalendarDays, Clock3, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Banknote, CalendarDays, Clock3, LogOut, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import {
@@ -12,6 +12,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { DataTable } from '@/components/common/data-table';
+import { EmployeeExitDialog } from '@/components/employees/employee-exit-dialog';
 import { FilterBar, type FilterField } from '@/components/common/filter-bar';
 import { ListStatusTabs } from '@/components/common/list-status-tabs';
 import { PageHeader } from '@/components/common/page-header';
@@ -37,6 +38,7 @@ export function EmployeesListPage() {
   const { ui } = useLocale();
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<EmployeeListItem>('employees', params);
+  const [exitFor, setExitFor] = useState<{ id: number; name: string } | null>(null);
 
   const filters: FilterField[] = [
     {
@@ -154,6 +156,9 @@ export function EmployeesListPage() {
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
+              <DropdownMenuItem onSelect={() => setExitFor({ id: row.original.id, name: row.original.employee ?? '' })}>
+                <LogOut className="size-4" /> {ui('تسجيل انتهاء خدمة / ترك عمل')}
+              </DropdownMenuItem>
               <DropdownMenuItem className="text-destructive" onSelect={() => void deleteEmployee(row.original.id)}>
                 <Trash2 className="size-4" /> {ui('حذف')}
               </DropdownMenuItem>
@@ -209,6 +214,7 @@ export function EmployeesListPage() {
           </Button>
         }
       />
+      <EmployeeExitDialog open={exitFor != null} onOpenChange={(o) => !o && setExitFor(null)} employee={exitFor} />
     </div>
   );
 }

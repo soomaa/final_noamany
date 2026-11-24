@@ -1,8 +1,19 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Archive, Pencil, Plus, Trash2 } from 'lucide-react';
+import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { AlertTriangle, Archive, LogOut, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { Combobox } from '@/components/common/combobox';
+import {
+  EXIT_TYPES,
+  EXIT_TYPE_LABELS,
+  EmployeeExitDialog,
+  ExitTypeBadge,
+  type EmployeeExit,
+} from '@/components/employees/employee-exit-dialog';
+import type { PaginatedResponse } from '@/components/common/data-table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { DataTable } from '@/components/common/data-table';
 import { DateText } from '@/components/common/formatters';
 import { ListPageShell } from '@/components/common/list-page-shell';
@@ -24,6 +35,109 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
+/** Structured exits (ترك العمل / استقالة / إنهاء خدمة …) with a filter by exit type. */
+function ExitsTab({ search, openCreate }: { search: string; openCreate: () => void }) {
+  const { ui } = useLocale();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [exitType, setExitType] = useState<string>('all');
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['termination/exits', { page, pageSize, exitType, search }],
+    queryFn: async ({ signal }) =>
+      (
+        await api.get<PaginatedResponse<EmployeeExit>>('/termination/exits', {
+          params: { page, pageSize, ...(search ? { search } : {}), ...(exitType !== 'all' ? { exitType } : {}) },
+          signal,
+        })
+      ).data,
+    placeholderData: keepPreviousData,
+  });
+
+  const columns: ColumnDef<EmployeeExit>[] = [
+    { id: 'serial', header: ui('م'), cell: ({ row }) => toArabicDigits((page - 1) * pageSize + row.index + 1) },
+    { accessorKey: 'employeeName', header: ui('الموظف') },
+    {
+      accessorKey: 'exitType',
+      header: ui('نوع انتهاء الخدمة'),
+      cell: ({ row }) => <ExitTypeBadge type={row.original.exitType} />,
+    },
+    {
+      accessorKey: 'noticeGivenDate',
+      header: ui('تاريخ الإخطار'),
+      cell: ({ getValue }) => (getValue() ? <DateText value={getValue() as string} /> : ui('بدون إخطار')),
+    },
+    {
+      accessorKey: 'lastWorkingDate',
+      header: ui('آخر يوم عمل'),
+      cell: ({ getValue }) => <DateText value={getValue() as string} />,
+    },
+    {
+      accessorKey: 'noticeShortfallDays',
+      header: ui('أيام الإخطار الناقصة'),
+      cell: ({ row }) =>
+        row.original.noticeShortfallDays > 0 ? (
+          <span className="inline-flex items-center gap-1 text-destructive nums">
+            <AlertTriangle className="size-3.5" /> {toArabicDigits(row.original.noticeShortfallDays)}
+          </span>
+        ) : (
+          <span className="nums">{toArabicDigits(0)}</span>
+        ),
+    },
+    { accessorKey: 'reason', header: ui('السبب'), cell: ({ getValue }) => (getValue() as string | null) || '—' },
+    {
+      accessorKey: 'settlementNotes',
+      header: ui('ملاحظات التسوية'),
+      cell: ({ getValue }) => (getValue() as string | null) || '—',
+    },
+    { accessorKey: 'recordedByName', header: ui('سجّلها'), cell: ({ getValue }) => (getValue() as string | null) || '—' },
+  ];
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Select
+          value={exitType}
+          onValueChange={(v) => {
+            setExitType(v);
+            setPage(1);
+          }}
+        >
+          <SelectTrigger className="h-10 w-64" aria-label={ui('نوع انتهاء الخدمة')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">{ui('كل أنواع انتهاء الخدمة')}</SelectItem>
+            {EXIT_TYPES.map((t) => (
+              <SelectItem key={t} value={t}>
+                {ui(EXIT_TYPE_LABELS[t])}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button variant="brand" size="sm" onClick={openCreate}>
+          <LogOut className="size-4" /> {ui('تسجيل انتهاء خدمة')}
+        </Button>
+      </div>
+      <DataTable
+        columns={columns}
+        data={data?.data ?? []}
+        total={data?.total ?? 0}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={(s) => {
+          setPageSize(s);
+          setPage(1);
+        }}
+        isLoading={isLoading}
+        isError={isError}
+        onRetry={() => void refetch()}
+        emptyTitle={ui('لا توجد سجلات انتهاء خدمة')}
+      />
+    </div>
+  );
+}
+
 interface ArchiveRow {
   id: number;
   title?: string;
@@ -40,6 +154,7 @@ export function ArchivePage() {
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
   const [form, setForm] = useState({ empId: '', fromDate: '', toDate: '' });
+  const [exitOpen, setExitOpen] = useState(false);
 
   const deleteMutation = useMutationWithToast(
     (id: number) => api.delete(`/termination/archive/${id}`),
@@ -144,34 +259,47 @@ export function ArchivePage() {
     <>
       <ListPageShell
         title={ui('طي القيد')}
-        description={ui('أرشيف وطي قيد الموظفين')}
-        searchPlaceholder={ui('بحث في طي القيد…')}
+        description={ui('انتهاء خدمة الموظفين (استقالة، ترك عمل، إنهاء خدمة…) وأرشيف طي القيد')}
+        searchPlaceholder={ui('بحث باسم الموظف أو التاريخ…')}
         stats={stats}
         statsLoading={isLoading}
         isError={isError}
         error={error}
-        actions={
-          <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('سجل جديد')}
-          </Button>
-        }
       >
-        <DataTable
-          columns={columns}
-          data={data?.data ?? []}
-          total={data?.total ?? 0}
-          page={params.page}
-          pageSize={params.pageSize}
-          onPageChange={(p) => setParams({ page: p })}
-          onPageSizeChange={(s) => setParams({ pageSize: s, page: 1 })}
-          isLoading={isLoading}
-          isError={isError}
-          onRetry={() => void refetch()}
-          search={params.search}
-          onSearchChange={(s) => setParams({ search: s, page: 1 })}
-          emptyTitle={ui('لا توجد سجلات')}
-        />
+        <Tabs defaultValue="exits">
+          <TabsList className="mb-4">
+            <TabsTrigger value="exits">{ui('انتهاء الخدمة')}</TabsTrigger>
+            <TabsTrigger value="archive">{ui('طي القيد')}</TabsTrigger>
+          </TabsList>
+          <TabsContent value="exits">
+            <ExitsTab search={params.search} openCreate={() => setExitOpen(true)} />
+          </TabsContent>
+          <TabsContent value="archive" className="space-y-3">
+            <div className="flex justify-end">
+              <Button variant="brand" size="sm" onClick={openCreate}>
+                <Plus className="size-4" /> {ui('سجل جديد')}
+              </Button>
+            </div>
+            <DataTable
+              columns={columns}
+              data={data?.data ?? []}
+              total={data?.total ?? 0}
+              page={params.page}
+              pageSize={params.pageSize}
+              onPageChange={(p) => setParams({ page: p })}
+              onPageSizeChange={(s) => setParams({ pageSize: s, page: 1 })}
+              isLoading={isLoading}
+              isError={isError}
+              onRetry={() => void refetch()}
+              search={params.search}
+              onSearchChange={(s) => setParams({ search: s, page: 1 })}
+              emptyTitle={ui('لا توجد سجلات')}
+            />
+          </TabsContent>
+        </Tabs>
       </ListPageShell>
+
+      <EmployeeExitDialog open={exitOpen} onOpenChange={setExitOpen} />
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
         <DialogContent aria-describedby={undefined}>

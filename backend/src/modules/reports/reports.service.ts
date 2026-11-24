@@ -6,6 +6,7 @@ import { paginated } from '../../common/dto/list-result';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
+import { EXIT_TYPE_LABELS, isExitType, latestExitTypes } from '../termination/exit-types';
 import { diffDaysFromToday, parseLegacyDate, todayIso, toIsoDate } from '../../common/utils/legacy-date.util';
 
 const REPORT_KEYS = [
@@ -221,13 +222,22 @@ export class ReportsService {
         select: { id: true, employee: true, end_service_date_m: true, reason: true },
         orderBy: { id: 'desc' },
       });
+      // Latest structured exit per employee (hr_employee_exits: raw SQL, not in the Prisma Client).
+      const exitByEmp = await latestExitTypes(this.prisma, rows.map((e) => e.id));
+      const wantedType = q.type && isExitType(q.type) ? q.type : null;
       return this.paginateRows(
-        rows.map((e) => ({
-          id: e.id,
-          name: e.employee ?? '—',
-          value: toIsoDate(e.end_service_date_m) ?? '—',
-          reason: e.reason,
-        })),
+        rows
+          .filter((e) => !wantedType || exitByEmp.get(e.id) === wantedType)
+          .map((e) => {
+            const exitType = exitByEmp.get(e.id);
+            return {
+              id: e.id,
+              name: e.employee ?? '—',
+              value: toIsoDate(e.end_service_date_m) ?? '—',
+              exitType: exitType ? EXIT_TYPE_LABELS[exitType] : '—',
+              reason: e.reason,
+            };
+          }),
         q,
       );
     },

@@ -1,4 +1,5 @@
-import { Printer, Pencil } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
+import { LogOut, Printer, Pencil } from 'lucide-react';
 import { Link, useParams } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -15,6 +16,8 @@ import {
   DocumentsTab,
   InsuranceTab,
 } from '@/components/employees/employee-profile-tabs';
+import { ExitTypeBadge, type EmployeeExit } from '@/components/employees/employee-exit-dialog';
+import { api } from '@/lib/api';
 import { useResource, isNotImplemented } from '@/lib/api-hooks';
 import type {
   EmployeeBankRow,
@@ -65,6 +68,14 @@ export function EmployeeProfilePage() {
   const { data: documents, isLoading: docsLoading } = useResource<EmployeeDocumentFile[]>('employees', id, 'documents');
   const { data: banks, isLoading: banksLoading } = useResource<EmployeeBankRow[]>('employees', id, 'banks');
   const { data: contract, isLoading: contractLoading } = useResource<EmployeeContract | null>('employees', id, 'contract');
+  // Structured exit records; silently hidden when the viewer lacks the termination permission.
+  const { data: exits } = useQuery({
+    queryKey: ['termination/exits', 'employee', id],
+    queryFn: async ({ signal }) => (await api.get<EmployeeExit[]>(`/termination/exits/employee/${id}`, { signal })).data,
+    enabled: !!id,
+    retry: false,
+  });
+  const lastExit = exits?.[0];
 
   if (isError && isNotImplemented(error)) {
     return (
@@ -131,6 +142,31 @@ export function EmployeeProfilePage() {
         </div>
 
         <CardContent className="p-6">
+          {lastExit && (
+            <div className="mb-6 rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <LogOut className="size-4 text-destructive" />
+                <span className="font-semibold">{ui('انتهاء الخدمة')}</span>
+                <ExitTypeBadge type={lastExit.exitType} />
+              </div>
+              <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <Field label={ui('آخر يوم عمل')} value={<DateText value={lastExit.lastWorkingDate} />} />
+                <Field label={ui('تاريخ الإخطار')} value={lastExit.noticeGivenDate ? <DateText value={lastExit.noticeGivenDate} /> : ui('بدون إخطار')} />
+                <Field
+                  label={ui('أيام الإخطار الناقصة')}
+                  value={
+                    <span className={lastExit.noticeShortfallDays > 0 ? 'text-destructive' : undefined}>
+                      {toArabicDigits(lastExit.noticeShortfallDays)} / {toArabicDigits(lastExit.requiredNoticeDays)} {ui('يوم')}
+                    </span>
+                  }
+                />
+                <Field label={ui('سجّلها')} value={lastExit.recordedByName ?? '—'} />
+                {lastExit.reason && <Field label={ui('السبب')} value={lastExit.reason} />}
+                {lastExit.settlementNotes && <Field label={ui('ملاحظات التسوية')} value={lastExit.settlementNotes} />}
+                {lastExit.notes && <Field label={ui('ملاحظات')} value={lastExit.notes} />}
+              </dl>
+            </div>
+          )}
           <Tabs defaultValue="personal">
             <TabsList className="mb-4 flex-wrap">
               <TabsTrigger value="personal">{ui('البيانات الشخصية')}</TabsTrigger>
