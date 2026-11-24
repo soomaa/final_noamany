@@ -95,9 +95,10 @@ export function AttendanceDevicesPage() {
 
   const columns: ColumnDef<DeviceRow>[] = [
     {
+      // The real id, not a row counter: the fingerprint agent's setup asks for this number.
       accessorKey: 'id',
-      header: ui('م'),
-      cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1),
+      header: ui('رقم الجهاز'),
+      cell: ({ getValue }) => <span className="nums">{toArabicDigits(Number(getValue()))}</span>,
     },
     { accessorKey: 'title', header: ui('الجهاز') },
     { accessorKey: 'ip', header: ui('عنوان IP'), cell: ({ getValue }) => <span className="nums">{String(getValue() ?? '—')}</span> },

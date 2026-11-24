@@ -3959,6 +3959,27 @@ model attendance_devices {
   @@map("attendance_devices")
 }
 
+/// Raw punches pushed by the on-site ZKTeco agent. One row per device log line, so a
+/// re-sent batch is skipped instead of being punched twice. punch_date/punch_time are
+/// the device's local wall clock, which is what the attendance engine works in.
+model attendance_device_punches {
+  id             Int      @id @default(autoincrement())
+  device_id      Int // -> attendance_devices.id
+  device_user_id String   @db.VarChar(32) // "AC No" on the device = employees.emp_code
+  punch_date     String   @db.Char(10) // YYYY-MM-DD
+  punch_time     String   @db.Char(8) // HH:mm:ss
+  device_state   Int?     @db.SmallInt // device punch state key (0 in, 1 out, ...), audit only
+  verify_type    Int?     @db.SmallInt // 1 finger, 15 face, ... audit only
+  result         String   @db.VarChar(20) // processing | applied | rejected | ignored
+  message        String?  @db.VarChar(255)
+  attendance_id  Int? // -> tbl_hdoor_emps.hodoor_id when applied
+  received_at    DateTime @default(now()) @db.DateTime(0)
+
+  @@unique([device_id, device_user_id, punch_date, punch_time], map: "uq_device_punch")
+  @@index([device_user_id, punch_date], map: "idx_device_punch_user_date")
+  @@map("attendance_device_punches")
+}
+
 model attendance_rules {
   id         Int     @id @default(autoincrement())
   key        String  @unique @db.VarChar(50) // late | early_leave | absence | overtime | weekly_rest | holidays | flexible_hours
