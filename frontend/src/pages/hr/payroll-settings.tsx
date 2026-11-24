@@ -25,6 +25,9 @@ interface Settings {
   lateCapEnabled: boolean;
   lateCapThresholdMin: number;
   lateCapValueMin: number;
+  earlyLeaveDeduct: boolean;
+  earlyLeaveHourMultiplier: number;
+  permittedEarlyLeaveDeduct: boolean;
   permittedLateDeduct: boolean;
   permittedLateRatePercent: number;
   missingPunchFreePerMonth: number;
@@ -40,6 +43,7 @@ interface Settings {
   compDayInWeeklyScheduleMode: boolean;
   defaultWeeklyOffDay: string;
   deductionExemptEmpCodes: number[];
+  exceptionsTrackingStartDate: string | null;
 }
 type Key = keyof Settings;
 
@@ -82,7 +86,7 @@ interface Field {
   key: Key;
   label: string;
   help: string;
-  kind: 'boolean' | 'number' | 'weekday' | 'codes';
+  kind: 'boolean' | 'number' | 'weekday' | 'codes' | 'date';
   unit?: string;
   step?: number;
   min?: number;
@@ -146,6 +150,32 @@ const GROUPS: Group[] = [
       },
       { key: 'lateCapThresholdMin', kind: 'number', step: 5, min: 0, unit: 'دقيقة', label: 'الحد', help: 'لو تأخير اليوم أكتر من الرقم ده…', visible: (s) => s.lateCapEnabled },
       { key: 'lateCapValueMin', kind: 'number', step: 5, min: 0, unit: 'دقيقة', label: 'يتحسب كأنه', help: '…يتحسب اليوم ده بالعدد ده من الدقائق.', visible: (s) => s.lateCapEnabled },
+    ],
+  },
+  {
+    id: 'early-leave',
+    title: 'الانصراف المبكر',
+    intro: 'دقائق الانصراف قبل ميعاد الانصراف (بعد فترة السماح في «قواعد الدوام»). حاليًا بتتسجل بس ومش بتتخصم من المرتب. الأيام اللي المدير قرر فيها «حضر» أو «معذور» في الحالات اليومية مش بتتخصم.',
+    fields: [
+      {
+        key: 'earlyLeaveDeduct', kind: 'boolean', label: 'خصم الانصراف المبكر',
+        help: 'لو فعّلته، دقائق الانصراف المبكر بدون إذن هتتخصم بأجر الساعة.',
+        example: ({ s, hour }) => s.earlyLeaveDeduct
+          ? `مشي بدري 30 دقيقة بدون إذن → هيتخصم ${money(0.5 * hour * s.earlyLeaveHourMultiplier)}`
+          : 'مشي بدري 30 دقيقة → مش هيتخصم حاجة (زي دلوقتي)',
+      },
+      {
+        key: 'earlyLeaveHourMultiplier', kind: 'number', step: 0.25, min: 0, unit: '× أجر الساعة', label: 'قيمة ساعة الانصراف المبكر',
+        help: '1 = كل ساعة انصراف مبكر بتتخصم بأجر ساعة.', visible: (s) => s.earlyLeaveDeduct,
+      },
+      {
+        key: 'permittedEarlyLeaveDeduct', kind: 'boolean', label: 'خصم الانصراف المبكر اللي عليه إذن',
+        help: 'لو اليوم عليه إذن معتمد (أو قرار «إذن» في الحالات اليومية). مقفول = الإذن بيعفيه من الخصم.',
+        visible: (s) => s.earlyLeaveDeduct,
+        example: ({ s, hour }) => s.permittedEarlyLeaveDeduct
+          ? `مشي بدري 30 دقيقة بإذن → هيتخصم ${money(0.5 * hour * s.earlyLeaveHourMultiplier)}`
+          : 'مشي بدري 30 دقيقة بإذن → مش هيتخصم حاجة',
+      },
     ],
   },
   {
@@ -263,6 +293,20 @@ const GROUPS: Group[] = [
       },
     ],
   },
+  {
+    id: 'exceptions',
+    title: 'الحالات اليومية',
+    intro: 'صفحة «الحالات اليومية» بتطلع كل يوم فيه غياب أو بصمة ناقصة أو تأخير عشان المدير يقرر فيه، ومنها التنبيهات والتذكيرات والتصعيد.',
+    fields: [
+      {
+        key: 'exceptionsTrackingStartDate', kind: 'date', label: 'بداية متابعة الحالات',
+        help: 'الحالات اللي قبل التاريخ ده مش بتظهر ولا بتتعد في التنبيه ولا بيتبعت عليها تذكير أو تصعيد. اتظبط على يوم تشغيل النظام عشان التاريخ القديم مايغرقش المديرين. فاضي = كل التاريخ.',
+        example: ({ s }) => s.exceptionsTrackingStartDate
+          ? `غياب يوم قبل ${s.exceptionsTrackingStartDate} → مش هيظهر للمدير ولا هيتبعت عليه تذكير`
+          : 'كل الأيام القديمة هتظهر في الحالات اليومية',
+      },
+    ],
+  },
 ];
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -370,6 +414,16 @@ export function PayrollSettingsPage() {
             </SelectContent>
           </Select>
         );
+      case 'date':
+        return (
+          <Input
+            type="date"
+            dir="ltr"
+            className="nums w-44"
+            value={typeof value === 'string' ? value : ''}
+            onChange={(e) => setValue(field.key, e.target.value || '')}
+          />
+        );
       case 'codes':
         return (
           <Input
@@ -391,6 +445,7 @@ export function PayrollSettingsPage() {
     const d = data.defaults[field.key];
     if (field.kind === 'boolean') return d ? 'مفعّل' : 'مقفول';
     if (field.kind === 'weekday') return dayName(String(d));
+    if (field.kind === 'date') return d ? String(d) : 'من غير تاريخ (كل التاريخ)';
     if (field.kind === 'codes') return (d as number[]).length ? (d as number[]).join(', ') : 'مفيش';
     return `${num(Number(d))}${field.unit ? ` ${field.unit}` : ''}`;
   };
@@ -495,7 +550,6 @@ export function PayrollSettingsPage() {
       <Card>
         <CardHeader className="pb-2"><CardTitle className="text-base">{ui('ملاحظات')}</CardTitle></CardHeader>
         <CardContent className="space-y-1.5 text-sm text-muted-foreground">
-          <p>• الانصراف المبكر بيتسجل في الحضور، لكن حساب المرتبات الحالي مش بيخصمه.</p>
           <p>• التعديلات بتتطبق على أي مرتب يتحسب بعد الحفظ؛ المسيّرات اللي اترحّلت قبل كده مش بتتغير.</p>
         </CardContent>
       </Card>

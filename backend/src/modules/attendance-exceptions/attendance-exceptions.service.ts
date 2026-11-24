@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -16,6 +16,7 @@ import { managerKind, managerSection } from '../../common/utils/manager-scope.ut
 import { SuspendStatus } from '../../common/utils/suspend-status.util';
 import { finalApprovalSuspendFilter, isFinallyApproved } from '../payroll/leave-approval.util';
 import { matchRowsToSlots } from '../payroll/payroll-attendance.util';
+import { HrPayrollSettingsService } from '../hr-payroll-settings/hr-payroll-settings.service';
 import { ListAttendanceExceptionsDto, ResolveAttendanceExceptionDto } from './dto/attendance-exceptions.dto';
 import {
   CaseType,
@@ -177,14 +178,30 @@ function permissionDate(raw: string | null | undefined): string | null {
  */
 @Injectable()
 export class AttendanceExceptionsService {
-  private readonly defaultOffDay: string;
+  /** Env fallback (PAYROLL_DEFAULT_OFF_DAY) when the settings service is not wired (specs). */
+  private readonly envDefaultOffDay: string;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly scope: BranchScopeService,
     config?: ConfigService,
+    /** «إعدادات الحضور والمرتبات»: default weekly off day and the tracking start date. */
+    @Optional() private readonly hrSettings?: HrPayrollSettingsService,
   ) {
-    this.defaultOffDay = config?.get<string>('payroll.defaultOffDay') ?? 'Friday';
+    this.envDefaultOffDay = config?.get<string>('payroll.defaultOffDay') ?? 'Friday';
+  }
+
+  /** Default off day + tracking start, read at request time (cached ~60 s by the settings service). */
+  private async rules(): Promise<{ defaultOffDay: string; trackingStart: string | null }> {
+    try {
+      const settings = this.hrSettings ? await this.hrSettings.get() : null;
+      return {
+        defaultOffDay: settings?.defaultWeeklyOffDay ?? this.envDefaultOffDay,
+        trackingStart: settings?.exceptionsTrackingStartDate ?? null,
+      };
+    } catch {
+      return { defaultOffDay: this.envDefaultOffDay, trackingStart: null };
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -193,13 +210,16 @@ export class AttendanceExceptionsService {
 
   async list(q: ListAttendanceExceptionsDto, user: JwtUser, now = new Date()) {
     const today = todayIso(now);
-    const from = q.from ?? q.date ?? today;
+    let from = q.from ?? q.date ?? today;
     let to = q.to ?? q.date ?? from;
     if (to > today) to = today;
     if (from > to) throw new BadRequestException('لا يمكن عرض حالات لتاريخ لم يأتِ بعد');
     if (daysBetween(from, to) + 1 > MAX_RANGE_DAYS) {
       throw new BadRequestException(`الحد الأقصى للفترة ${MAX_RANGE_DAYS} يومًا`);
     }
+    // Nothing before the tracking start date («بداية متابعة الحالات») is ever listed.
+    const { trackingStart } = await this.rules();
+    if (trackingStart && from < trackingStart) from = trackingStart;
     const branches = this.scope.resolveListFilter(user, q.branchId);
     const gender = q.gender ?? this.defaultSection(user) ?? 'all';
     const section = gender === 'all' ? null : gender;
@@ -207,7 +227,7 @@ export class AttendanceExceptionsService {
       this.scopedEmployees(branches),
       this.branchOptions(user),
     ]);
-    let items = await this.computeCases(employees, from, to, branches, now);
+    let items = from > to ? [] : await this.computeCases(employees, from, to, branches, now);
     if (section) items = items.filter((item) => caseInScope(item, null, section));
     if (q.status === 'open') items = items.filter((item) => !item.resolution);
     if (q.status === 'stale') items = items.filter((item) => !item.resolution && isStaleDate(item.date, today));
@@ -218,6 +238,7 @@ export class AttendanceExceptionsService {
     return {
       from,
       to,
+      trackingStartDate: trackingStart,
       gender,
       staleAfterDays: STALE_AFTER_DAYS,
       branchOptions,
@@ -281,6 +302,10 @@ export class AttendanceExceptionsService {
 
   /** Open (undecided) cases over [from, to] for the branches (null = all). */
   async openCases(branches: number[] | null, from: string, to: string, now = new Date()): Promise<AttendanceExceptionItem[]> {
+    // Banner, reminders and escalations never see cases before the tracking start date.
+    const { trackingStart } = await this.rules();
+    if (trackingStart && from < trackingStart) from = trackingStart;
+    if (from > to) return [];
     const employees = await this.scopedEmployees(branches);
     const items = await this.computeCases(employees, from, to, branches, now);
     return items.filter((item) => !item.resolution);
@@ -351,8 +376,9 @@ export class AttendanceExceptionsService {
       emp_code: employee.emp_code,
       branch_id_fk: employee.branch_id_fk,
     }));
+    const { defaultOffDay } = await this.rules();
     const [schedule, rows, holidays, leaves, permissions, resolutionList] = await Promise.all([
-      ScheduleResolver.load(this.prisma, scheduleEmployees, from, to, { defaultOffDay: this.defaultOffDay, includeSpecial: true }),
+      ScheduleResolver.load(this.prisma, scheduleEmployees, from, to, { defaultOffDay, includeSpecial: true }),
       this.prisma.tbl_hdoor_emps.findMany({
         where: {
           member_code: { in: codes },

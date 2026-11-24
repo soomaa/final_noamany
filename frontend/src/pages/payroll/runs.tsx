@@ -69,6 +69,8 @@ interface SalaryPreviewRow extends Record<string, unknown> {
   lateValue: number;
   permissionMinutes: number;
   permissionValue: number;
+  earlyLeaveMinutes?: number;
+  earlyLeaveValue?: number;
   forgottenFingerprintCount: number;
   forgottenFingerprintValue: number;
   penalties: number;
@@ -119,7 +121,7 @@ const exportColumns: Array<{ key: string; header: string }> = [
   { key: 'evaluation', header: 'التقييم' }, { key: 'proteinCommission', header: 'عمولة البروتين' }, { key: 'targetBase', header: 'التارجت' }, { key: 'targetValue', header: 'نسبة التارجت' },
   { key: 'displayedEarnings', header: 'إجمالي الاستحقاقات' }, { key: 'absenceDays', header: 'أيام الغياب' }, { key: 'absenceValue', header: 'قيمة الغياب' }, { key: 'paidLeaveDays', header: 'أيام الإجازة' },
   { key: 'paidLeaveValue', header: 'قيمة الإجازة' }, { key: 'lateMinutes', header: 'دقائق التأخير' }, { key: 'lateValue', header: 'قيمة التأخير' }, { key: 'permissionMinutes', header: 'دقائق الإذن' },
-  { key: 'permissionValue', header: 'قيمة الإذن' }, { key: 'forgottenFingerprintCount', header: 'مرات نسيان البصمة' }, { key: 'forgottenFingerprintValue', header: 'قيمة نسيان البصمة' }, { key: 'penalties', header: 'جزاءات' },
+  { key: 'permissionValue', header: 'قيمة الإذن' }, { key: 'earlyLeaveMinutes', header: 'دقائق الانصراف المبكر' }, { key: 'earlyLeaveValue', header: 'قيمة الانصراف المبكر' }, { key: 'forgottenFingerprintCount', header: 'مرات نسيان البصمة' }, { key: 'forgottenFingerprintValue', header: 'قيمة نسيان البصمة' }, { key: 'penalties', header: 'جزاءات' },
   { key: 'insurance', header: 'التأمينات' }, { key: 'loans', header: 'السلف' }, { key: 'totalDeductions', header: 'إجمالي الاستقطاعات' }, { key: 'displayedNet', header: 'صافي المرتب' },
 ];
 
@@ -276,7 +278,7 @@ export function PayrollRunsPage() {
   ] as Array<[string, number]> : [];
   const deductionsReport = selectedReport ? [
     ['قيمة الغياب', selectedReport.absenceValue], ['قيمة الإجازة', selectedReport.paidLeaveValue], ['إجازة بدون راتب', selectedReport.unpaidLeaveValue], ['قيمة التأخير', selectedReport.lateValue],
-    ['قيمة الإذن', selectedReport.permissionValue], ['قيمة نسيان البصمة', selectedReport.forgottenFingerprintValue], ['جزاءات', selectedReport.penalties], ['التأمينات', selectedReport.insurance], ['السلف', selectedReport.loans],
+    ['قيمة الإذن', selectedReport.permissionValue], ['قيمة الانصراف المبكر', selectedReport.earlyLeaveValue ?? 0], ['قيمة نسيان البصمة', selectedReport.forgottenFingerprintValue], ['جزاءات', selectedReport.penalties], ['التأمينات', selectedReport.insurance], ['السلف', selectedReport.loans],
   ] as Array<[string, number]> : [];
 
   return (
@@ -304,12 +306,12 @@ export function PayrollRunsPage() {
                     <TableHead rowSpan={2} className={HEAD}>{ui('م')}</TableHead><TableHead rowSpan={2} className={HEAD}>{ui('اسم الموظف')}</TableHead><TableHead rowSpan={2} className={HEAD}>{ui('الوظيفة')}</TableHead><TableHead rowSpan={2} className={HEAD}>{ui('الفرع')}</TableHead>
                     <TableHead colSpan={20} className={`${HEAD} bg-emerald-100 text-emerald-950 dark:bg-emerald-950 dark:text-emerald-100`}>{ui('الاستحقاقات')}</TableHead>
                     <TableHead rowSpan={2} className={TOTAL}>{ui('إجمالي الاستحقاقات')}</TableHead>
-                    <TableHead colSpan={13} className={`${HEAD} bg-rose-100 text-rose-950 dark:bg-rose-950 dark:text-rose-100`}>{ui('الاستقطاعات')}</TableHead>
+                    <TableHead colSpan={15} className={`${HEAD} bg-rose-100 text-rose-950 dark:bg-rose-950 dark:text-rose-100`}>{ui('الاستقطاعات')}</TableHead>
                     <TableHead rowSpan={2} className={TOTAL}>{ui('إجمالي الاستقطاعات')}</TableHead><TableHead rowSpan={2} className={TOTAL}>{ui('صافي المرتب')}</TableHead><TableHead rowSpan={2} className={HEAD}>{ui('التقرير')}</TableHead>
                   </TableRow>
                   <TableRow className="hover:bg-transparent">
                     {['راتب أساسي', 'بدلات ثابتة', 'بدلات متغيرة', 'بونص', 'منح', 'حافز', 'أجر اليوم', 'أجر الساعة', 'عدد الساعات الإضافية', 'قيمة الساعات الإضافية', 'عدد الأيام الإضافية', 'قيمة الأيام الإضافية', 'زيادة مرتب', 'مكافآت', 'نسبة الكلاسات', 'مكافأة البرايفت', 'التقييم', 'عمولة البروتين', 'التارجت', 'نسبة التارجت'].map((label) => <TableHead key={label} className={HEAD}>{ui(label)}</TableHead>)}
-                    {['أيام الغياب', 'قيمة الغياب', 'أيام الإجازة', 'قيمة الإجازة', 'دقائق التأخير', 'قيمة التأخير', 'دقائق الإذن', 'قيمة الإذن', 'مرات نسيان البصمة', 'قيمة نسيان البصمة', 'جزاءات', 'التأمينات', 'السلف'].map((label) => <TableHead key={label} className={HEAD}>{ui(label)}</TableHead>)}
+                    {['أيام الغياب', 'قيمة الغياب', 'أيام الإجازة', 'قيمة الإجازة', 'دقائق التأخير', 'قيمة التأخير', 'دقائق الإذن', 'قيمة الإذن', 'دقائق الانصراف المبكر', 'قيمة الانصراف المبكر', 'مرات نسيان البصمة', 'قيمة نسيان البصمة', 'جزاءات', 'التأمينات', 'السلف'].map((label) => <TableHead key={label} className={HEAD}>{ui(label)}</TableHead>)}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -321,7 +323,7 @@ export function PayrollRunsPage() {
                     <TableCell className={CELL}><SalaryValue value={row.proteinCommission} /></TableCell><TableCell className={CELL}><SalaryValue value={row.targetBase} /></TableCell>
                     <TableCell className={CELL}><Input aria-label={`${ui('نسبة التارجت')} - ${row.employeeName}`} className="h-8 w-20 text-center" type="number" min={0} step="0.01" value={row.targetValue} onChange={(event) => updateManual(row.id, 'targetValue', event.target.value)} /></TableCell>
                     <TableCell className={TOTAL}><SalaryValue value={row.displayedEarnings} strong /></TableCell>
-                    {[row.absenceDays, row.absenceValue, row.paidLeaveDays, row.paidLeaveValue, row.lateMinutes, row.lateValue, row.permissionMinutes, row.permissionValue, row.forgottenFingerprintCount, row.forgottenFingerprintValue, row.penalties, row.insurance, row.loans].map((value, valueIndex) => <TableCell key={valueIndex} className={CELL}><SalaryValue value={value} /></TableCell>)}
+                    {[row.absenceDays, row.absenceValue, row.paidLeaveDays, row.paidLeaveValue, row.lateMinutes, row.lateValue, row.permissionMinutes, row.permissionValue, row.earlyLeaveMinutes ?? 0, row.earlyLeaveValue ?? 0, row.forgottenFingerprintCount, row.forgottenFingerprintValue, row.penalties, row.insurance, row.loans].map((value, valueIndex) => <TableCell key={valueIndex} className={CELL}><SalaryValue value={value} /></TableCell>)}
                     <TableCell className={TOTAL}><SalaryValue value={row.totalDeductions} strong /></TableCell><TableCell className={TOTAL}><SalaryValue value={row.displayedNet} strong /></TableCell>
                     <TableCell className={`${CELL} no-print`}><Button variant="outline" size="sm" onClick={() => setSelectedReport(row)}><FileText className="size-4" />{ui('التقرير')}</Button></TableCell><TableCell className={`${CELL} hidden print:table-cell`}>{ui('التقرير')}</TableCell>
                   </TableRow>)}
@@ -333,7 +335,7 @@ export function PayrollRunsPage() {
                     <TableHead className={HEAD}><SalaryValue value={0} /></TableHead><TableHead className={HEAD}><SalaryValue value={0} /></TableHead>
                     {(['overtimeHours', 'overtimeHoursValue', 'overtimeDays', 'overtimeDaysValue', 'salaryIncrease', 'rewards', 'classCommission', 'privateBonus', 'evaluation', 'proteinCommission', 'targetBase', 'targetValue'] as const).map((key) => <TableHead key={key} className={HEAD}><SalaryValue value={totals.sum(key)} strong /></TableHead>)}
                     <TableHead className={TOTAL}><SalaryValue value={totals.sum('displayedEarnings')} strong /></TableHead>
-                    {(['absenceDays', 'absenceValue', 'paidLeaveDays', 'paidLeaveValue', 'lateMinutes', 'lateValue', 'permissionMinutes', 'permissionValue', 'forgottenFingerprintCount', 'forgottenFingerprintValue', 'penalties', 'insurance', 'loans'] as const).map((key) => <TableHead key={key} className={HEAD}><SalaryValue value={totals.sum(key)} strong /></TableHead>)}
+                    {(['absenceDays', 'absenceValue', 'paidLeaveDays', 'paidLeaveValue', 'lateMinutes', 'lateValue', 'permissionMinutes', 'permissionValue', 'earlyLeaveMinutes', 'earlyLeaveValue', 'forgottenFingerprintCount', 'forgottenFingerprintValue', 'penalties', 'insurance', 'loans'] as const).map((key) => <TableHead key={key} className={HEAD}><SalaryValue value={totals.sum(key)} strong /></TableHead>)}
                     <TableHead className={TOTAL}><SalaryValue value={totals.sum('totalDeductions')} strong /></TableHead><TableHead className={TOTAL}><SalaryValue value={totals.sum('displayedNet')} strong /></TableHead><TableHead className={HEAD}>{ui('التقرير')}</TableHead>
                   </TableRow>
                 </TableFooter>

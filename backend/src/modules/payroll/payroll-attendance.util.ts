@@ -171,6 +171,16 @@ export function lateTreatment(resolution: ResolutionRecord | undefined): 'keep' 
   return 'drop'; // excused, absent (already counted as absence), leave
 }
 
+/**
+ * What a resolution does to an early-leave row: none → deduct; «إذن» → the permitted bucket;
+ * present / excused (the manager accepted the day) and absent / leave (already counted) → drop.
+ */
+export function earlyLeaveTreatment(resolution: ResolutionRecord | undefined): 'keep' | 'permission' | 'drop' {
+  if (!resolution) return 'keep';
+  if (resolution.decision === 'permission') return 'permission';
+  return 'drop';
+}
+
 export function round4(n: number): number {
   return Math.round((n + Number.EPSILON) * 10_000) / 10_000;
 }

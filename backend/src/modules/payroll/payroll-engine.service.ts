@@ -9,7 +9,7 @@ import { legacyBusinessIsoDate, legacyDateMatchValues } from '../../common/utils
 import { finalApprovalSuspendFilter } from './leave-approval.util';
 import { ScheduleResolver } from '../attendance-exceptions/scheduled-shifts.util';
 import { ResolutionIndex, loadResolutions } from '../attendance-exceptions/resolutions.repo';
-import { dayAbsence, forgottenFingerprint, lateTreatment, round4 } from './payroll-attendance.util';
+import { dayAbsence, earlyLeaveTreatment, forgottenFingerprint, lateTreatment, round4 } from './payroll-attendance.util';
 import { HrPayrollSettingsService } from '../hr-payroll-settings/hr-payroll-settings.service';
 import {
   HrPayrollSettings,
@@ -62,6 +62,8 @@ export interface ComputedEmployeeSalary {
   khasmBasma: number;
   khasmTakher: number;
   khasmEzn: number;
+  /** Early-leave deduction (settings «الانصراف المبكر», off by default); also inside khasmTakher. */
+  khasmEarlyLeave: number;
   khasmGezaa: number;
   khasmTamen: number;
   taminHesaOner: number;
@@ -244,6 +246,10 @@ export class PayrollEngineService {
     let unpaidLeaveDays = round4(keyab.withoutSalaryDays + absence.resolutionLeave.unpaidDays);
     let forgottenFingerprint = await this.getForgottenFingerprintByDate(empCode, fromDate, toDate, attendanceCtx);
     let late = await this.getLateByDate(empCode, fromDate, toDate, attendanceCtx);
+    // Early leave is only read when the owner turned its deduction on (default off = legacy).
+    let earlyLeave = s.earlyLeaveDeduct
+      ? await this.getEarlyLeaveByDate(empCode, fromDate, toDate, attendanceCtx)
+      : { earlyWithPermission: 0, earlyWithoutPermission: 0 };
     const attendanceDeductions = payrollAttendanceDeductions(
       {
         absenceDays,
@@ -252,6 +258,8 @@ export class PayrollEngineService {
         missingPunchDays: forgottenFingerprint.deductionDays,
         lateWithoutPermissionMin: late.lateWithoutPermission,
         lateWithPermissionMin: late.lateWithPermission,
+        earlyWithoutPermissionMin: earlyLeave.earlyWithoutPermission,
+        earlyWithPermissionMin: earlyLeave.earlyWithPermission,
       },
       { agrSa3a, agrYom },
       s,
@@ -264,6 +272,7 @@ export class PayrollEngineService {
     let khasmBasma = attendanceDeductions.khasmBasma;
     let khasmTakherAmount = attendanceDeductions.khasmTakher;
     let khasmEznAmount = attendanceDeductions.khasmEzn;
+    let khasmEarlyLeaveAmount = attendanceDeductions.khasmEarlyLeave;
 
     if (s.deductionExemptEmpCodes.includes(empCode)) {
       absenceDays = 0;
@@ -276,7 +285,9 @@ export class PayrollEngineService {
       forgottenFingerprint = { count: 0, deductionDays: 0 };
       khasmTakherAmount = 0;
       khasmEznAmount = 0;
+      khasmEarlyLeaveAmount = 0;
       late = { lateWithPermission: 0, lateWithoutPermission: 0 };
+      earlyLeave = { earlyWithPermission: 0, earlyWithoutPermission: 0 };
     }
 
     // Manual slip overrides (مكافأة خاصة / تقييم / تارجت) — earnings additions.
@@ -309,6 +320,7 @@ export class PayrollEngineService {
       khasmBasma +
       khasmTakherAmount +
       khasmEznAmount +
+      khasmEarlyLeaveAmount +
       khasmGezaa +
       khasmTamen +
       khasmSolaf;
@@ -357,8 +369,10 @@ export class PayrollEngineService {
       agazaBdonRateb,
       khasmAgazat,
       khasmBasma,
-      khasmTakher: khasmTakherAmount + khasmEznAmount,
+      // Persisted as one khasm_takher line (late + permitted late + early leave).
+      khasmTakher: khasmTakherAmount + khasmEznAmount + khasmEarlyLeaveAmount,
       khasmEzn: khasmEznAmount,
+      khasmEarlyLeave: khasmEarlyLeaveAmount,
       khasmGezaa,
       khasmTamen,
       taminHesaOner,
@@ -386,6 +400,8 @@ export class PayrollEngineService {
         late,
         khasmTakherAmount,
         khasmEznAmount,
+        earlyLeave,
+        khasmEarlyLeaveAmount,
         privateBonus,
         taqeemValue,
         targetValue,
@@ -631,6 +647,53 @@ export class PayrollEngineService {
       }
     }
     return { lateWithPermission, lateWithoutPermission };
+  }
+
+  /**
+   * Early-leave minutes (tbl_hdoor_emps.mobaker_min) in the window. Days with a finally-approved
+   * permission or a «إذن» resolution go to the permitted bucket; days the manager resolved as
+   * present / excused / absent / leave are skipped.
+   */
+  async getEarlyLeaveByDate(
+    empCode: number,
+    fromDate: string,
+    toDate: string,
+    ctx?: PayrollAttendanceContext,
+  ): Promise<{ earlyWithPermission: number; earlyWithoutPermission: number }> {
+    const attendance = ctx ?? (await this.loadAttendanceContext({ emp_code: empCode }, fromDate, toDate));
+    const ozonat = await this.prisma.hr_all_ozonat_orders.findMany({
+      where: {
+        emp_code_fk: empCode,
+        ezn_date: { gte: fromDate, lte: toDate },
+        suspend: finalApprovalSuspendFilter(),
+      },
+      select: { ezn_date: true },
+    });
+    const approvedDates = new Set(ozonat.map((o) => o.ezn_date).filter(Boolean));
+    const rows = await this.prisma.tbl_hdoor_emps.findMany({
+      where: {
+        member_code: empCode,
+        action_date: { gte: fromDate, lte: toDate },
+        mobaker_min: { gt: 0 },
+      },
+      select: { mobaker_min: true, action_date: true, dwam_id_fk: true },
+    });
+    let earlyWithPermission = 0;
+    let earlyWithoutPermission = 0;
+    for (const row of rows) {
+      const minutes = Math.floor(row.mobaker_min ?? 0);
+      if (minutes <= 0) continue;
+      const date = row.action_date ?? '';
+      const splitDay = this.countedSlots(attendance, empCode, date).length > 1;
+      const resolution = splitDay
+        ? attendance.resolutions.forSlot(date, row.dwam_id_fk)
+        : attendance.resolutions.forDay(date, row.dwam_id_fk);
+      const treatment = earlyLeaveTreatment(resolution);
+      if (treatment === 'drop') continue;
+      if (treatment === 'permission' || approvedDates.has(date)) earlyWithPermission += minutes;
+      else earlyWithoutPermission += minutes;
+    }
+    return { earlyWithPermission, earlyWithoutPermission };
   }
 
   /** Faithful get_actual_absence from Employee_salaries_model (incl. off-day & type-19 replacement leave). */
@@ -1098,6 +1161,8 @@ export function payrollAttendanceDeductions(
     missingPunchDays: number;
     lateWithoutPermissionMin: number;
     lateWithPermissionMin: number;
+    earlyWithoutPermissionMin?: number;
+    earlyWithPermissionMin?: number;
   },
   rates: { agrSa3a: number; agrYom: number },
   s: Pick<
@@ -1108,8 +1173,14 @@ export function payrollAttendanceDeductions(
     | 'lateHourMultiplier'
     | 'permittedLateDeduct'
     | 'permittedLateRatePercent'
+    | 'earlyLeaveDeduct'
+    | 'earlyLeaveHourMultiplier'
+    | 'permittedEarlyLeaveDeduct'
   >,
 ) {
+  const earlyMinutes = s.earlyLeaveDeduct
+    ? (counts.earlyWithoutPermissionMin ?? 0) + (s.permittedEarlyLeaveDeduct ? counts.earlyWithPermissionMin ?? 0 : 0)
+    : 0;
   return {
     khasmKeyab: counts.absenceDays * rates.agrYom * s.absenceDayMultiplier,
     khasmAgazat: counts.paidLeaveDays * rates.agrYom * s.paidLeaveDeductMultiplier,
@@ -1119,6 +1190,7 @@ export function payrollAttendanceDeductions(
     khasmEzn: s.permittedLateDeduct
       ? (counts.lateWithPermissionMin / 60) * rates.agrSa3a * (s.permittedLateRatePercent / 100)
       : 0,
+    khasmEarlyLeave: (earlyMinutes / 60) * rates.agrSa3a * s.earlyLeaveHourMultiplier,
   };
 }
 

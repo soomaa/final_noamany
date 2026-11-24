@@ -39,6 +39,7 @@ describe('payroll settings: defaults reproduce the legacy formulas', () => {
       khasmBasma: 0.75 * 200,
       khasmTakher: (90 / 60) * 25,
       khasmEzn: (30 / 60) * 25,
+      khasmEarlyLeave: 0,
     });
   });
 
@@ -72,6 +73,35 @@ describe('payroll settings: owner changes take effect', () => {
 
   it('permitted lateness at 50% → half the hourly value', () => {
     expect(payrollAttendanceDeductions(counts, rates, { ...defaults, permittedLateRatePercent: 50 }).khasmEzn).toBe(6.25);
+  });
+
+  it('early leave: off by default; when on, minutes × hourly rate × multiplier (permitted only if allowed)', () => {
+    const early = { ...counts, lateWithPermissionMin: 0, earlyWithoutPermissionMin: 60, earlyWithPermissionMin: 30 };
+    expect(payrollAttendanceDeductions(early, rates, defaults).khasmEarlyLeave).toBe(0);
+    expect(payrollAttendanceDeductions(early, rates, { ...defaults, earlyLeaveDeduct: true }).khasmEarlyLeave).toBe(25);
+    expect(payrollAttendanceDeductions(early, rates, { ...defaults, earlyLeaveDeduct: true, earlyLeaveHourMultiplier: 2 }).khasmEarlyLeave).toBe(50);
+    expect(payrollAttendanceDeductions(early, rates, { ...defaults, earlyLeaveDeduct: true, permittedEarlyLeaveDeduct: true }).khasmEarlyLeave).toBe(37.5);
+  });
+
+  it('early-leave minutes skip days the manager resolved; «إذن» goes to the permitted bucket', async () => {
+    const prisma = {
+      hr_all_ozonat_orders: { findMany: jest.fn().mockResolvedValue([{ ezn_date: '2026-08-04' }]) },
+      tbl_hdoor_emps: {
+        findMany: jest.fn().mockResolvedValue([
+          { mobaker_min: 40, action_date: '2026-08-01', dwam_id_fk: null },
+          { mobaker_min: 20, action_date: '2026-08-02', dwam_id_fk: null },
+          { mobaker_min: 15, action_date: '2026-08-03', dwam_id_fk: null },
+          { mobaker_min: 10, action_date: '2026-08-04', dwam_id_fk: null },
+        ]),
+      },
+    };
+    const decisions: Record<string, string> = { '2026-08-02': 'excused', '2026-08-03': 'permission' };
+    const ctx = {
+      schedule: null,
+      resolutions: { forDay: (date: string) => (decisions[date] ? { decision: decisions[date] } : undefined), forSlot: () => undefined },
+    } as never;
+    await expect(engineWith(prisma, { earlyLeaveDeduct: true }).getEarlyLeaveByDate(1001, '2026-07-26', '2026-08-25', ctx))
+      .resolves.toEqual({ earlyWithPermission: 25, earlyWithoutPermission: 40 });
   });
 
   it('rate basis without housing and with 26 days changes the hourly rate', () => {

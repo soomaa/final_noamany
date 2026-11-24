@@ -22,6 +22,10 @@ export interface HrPayrollSettings {
   lateCapEnabled: boolean;
   lateCapThresholdMin: number;
   lateCapValueMin: number;
+  // ── الانصراف المبكر ──
+  earlyLeaveDeduct: boolean;
+  earlyLeaveHourMultiplier: number;
+  permittedEarlyLeaveDeduct: boolean;
   // ── الأذونات ──
   permittedLateDeduct: boolean;
   permittedLateRatePercent: number;
@@ -44,11 +48,14 @@ export interface HrPayrollSettings {
   defaultWeeklyOffDay: string;
   // ── المستثنون من الخصم ──
   deductionExemptEmpCodes: number[];
+  // ── الحالات اليومية ──
+  /** YYYY-MM-DD: daily-exception cases before this date are never listed, counted or reminded. null = all history. */
+  exceptionsTrackingStartDate: string | null;
 }
 
 export type HrPayrollSettingKey = keyof HrPayrollSettings;
 
-export type SettingKind = 'boolean' | 'number' | 'weekday' | 'codes';
+export type SettingKind = 'boolean' | 'number' | 'weekday' | 'codes' | 'date';
 
 export interface SettingDef {
   key: HrPayrollSettingKey;
@@ -72,6 +79,9 @@ export const HR_PAYROLL_SETTING_DEFS: readonly SettingDef[] = [
   { key: 'lateCapEnabled', kind: 'boolean' },
   { key: 'lateCapThresholdMin', kind: 'number', min: 0, max: 1440, integer: true },
   { key: 'lateCapValueMin', kind: 'number', min: 0, max: 1440, integer: true },
+  { key: 'earlyLeaveDeduct', kind: 'boolean' },
+  { key: 'earlyLeaveHourMultiplier', kind: 'number', min: 0, max: 10 },
+  { key: 'permittedEarlyLeaveDeduct', kind: 'boolean' },
   { key: 'permittedLateDeduct', kind: 'boolean' },
   { key: 'permittedLateRatePercent', kind: 'number', min: 0, max: 1000 },
   { key: 'missingPunchFreePerMonth', kind: 'number', min: 0, max: 31, integer: true },
@@ -87,6 +97,7 @@ export const HR_PAYROLL_SETTING_DEFS: readonly SettingDef[] = [
   { key: 'compDayInWeeklyScheduleMode', kind: 'boolean' },
   { key: 'defaultWeeklyOffDay', kind: 'weekday' },
   { key: 'deductionExemptEmpCodes', kind: 'codes' },
+  { key: 'exceptionsTrackingStartDate', kind: 'date' },
 ];
 
 /** The env-driven `payroll.*` config values the defaults start from. */
@@ -113,6 +124,9 @@ export function defaultHrPayrollSettings(config: PayrollConfigDefaults = {}): Hr
     lateCapEnabled: true,
     lateCapThresholdMin: 120,
     lateCapValueMin: 240,
+    earlyLeaveDeduct: false,
+    earlyLeaveHourMultiplier: 1,
+    permittedEarlyLeaveDeduct: false,
     permittedLateDeduct: true,
     permittedLateRatePercent: 100,
     missingPunchFreePerMonth: 0,
@@ -128,6 +142,7 @@ export function defaultHrPayrollSettings(config: PayrollConfigDefaults = {}): Hr
     compDayInWeeklyScheduleMode: true,
     defaultWeeklyOffDay: normalizeWeekday(config.defaultOffDay) ?? 'Friday',
     deductionExemptEmpCodes: [...new Set((config.deductionExemptEmpCodes ?? []).filter((c) => Number.isInteger(c) && c > 0))],
+    exceptionsTrackingStartDate: null,
   };
 }
 
@@ -135,6 +150,13 @@ export function normalizeWeekday(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const v = value.trim().toLowerCase();
   return WEEKDAYS.find((day) => day.toLowerCase() === v) ?? null;
+}
+
+/** A real calendar date written YYYY-MM-DD. */
+export function isIsoDate(value: unknown): boolean {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value.trim())) return false;
+  const date = new Date(`${value.trim()}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value.trim();
 }
 
 function parseCodes(value: unknown): number[] | null {
@@ -176,6 +198,9 @@ export function coerceSettingValue(def: SettingDef, raw: unknown): HrPayrollSett
       return normalizeWeekday(raw) ?? undefined;
     case 'codes':
       return parseCodes(raw) ?? undefined;
+    case 'date':
+      if (raw === null || raw === '') return null;
+      return isIsoDate(raw) ? (raw as string).trim().slice(0, 10) : undefined;
   }
 }
 

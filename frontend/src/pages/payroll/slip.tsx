@@ -47,6 +47,8 @@ const DEDUCTION_LABELS: Record<string, string> = {
   absence: uiStatic('غياب'),
   unpaidLeave: uiStatic('إجازة بدون راتب'),
   lateness: uiStatic('تأخير'),
+  permitLateness: uiStatic('تأخير بإذن'),
+  earlyLeave: uiStatic('انصراف مبكر'),
   penalty: uiStatic('جزاءات'),
   insurance: uiStatic('تأمينات'),
   loan: uiStatic('سلف'),

@@ -441,6 +441,7 @@ export class PayrollService {
     // Re-derive the late split (permit vs non-permit) from the engine breakdown,
     // since hr_mosayer_details persists only the combined khasm_takher line.
     let latePermit = 0;
+    let earlyLeave = 0;
     let lateNoPermit = decimal(line.khasm_takher);
     if (line.emp_id != null && run.mosayer_month != null && run.mosayer_year != null) {
       const recomputed = await this.engine.computeOneById(
@@ -449,9 +450,10 @@ export class PayrollService {
         run.mosayer_year,
       );
       if (recomputed) {
-        const b = recomputed.breakdown as { khasmTakherAmount?: number; khasmEznAmount?: number };
+        const b = recomputed.breakdown as { khasmTakherAmount?: number; khasmEznAmount?: number; khasmEarlyLeaveAmount?: number };
         lateNoPermit = b.khasmTakherAmount ?? lateNoPermit;
         latePermit = b.khasmEznAmount ?? 0;
+        earlyLeave = b.khasmEarlyLeaveAmount ?? 0;
       }
     }
 
@@ -486,6 +488,7 @@ export class PayrollService {
         unpaidLeave: decimal(line.agaza_bdon_rateb),
         lateness: lateNoPermit,
         permitLateness: latePermit,
+        earlyLeave,
         penalty: decimal(line.khasm_gezaa),
         insurance: decimal(line.khasm_tamen),
         loan: decimal(line.khasm_solaf),
@@ -1269,6 +1272,8 @@ export class PayrollService {
       late?: { lateWithPermission?: number; lateWithoutPermission?: number };
       khasmTakherAmount?: number;
       khasmEznAmount?: number;
+      earlyLeave?: { earlyWithPermission?: number; earlyWithoutPermission?: number };
+      khasmEarlyLeaveAmount?: number;
       incentives?: {
         targetBase?: number;
         targetCommission?: number;
@@ -1312,6 +1317,8 @@ export class PayrollService {
       lateValue: breakdown.khasmTakherAmount ?? 0,
       permissionMinutes: breakdown.late?.lateWithPermission ?? 0,
       permissionValue: breakdown.khasmEznAmount ?? 0,
+      earlyLeaveMinutes: (breakdown.earlyLeave?.earlyWithoutPermission ?? 0) + (breakdown.earlyLeave?.earlyWithPermission ?? 0),
+      earlyLeaveValue: breakdown.khasmEarlyLeaveAmount ?? 0,
       forgottenFingerprintCount: breakdown.forgottenFingerprint?.count ?? 0,
       forgottenFingerprintValue: row.khasmBasma,
       penalties: row.khasmGezaa,
