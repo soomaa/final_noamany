@@ -16,7 +16,8 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
     "club.members.measurements:view"
   ],
   "ClubInbodyMeasurementsController.create": [
-    "club.members.measurements:create"
+    "club.members.measurements:create",
+    "club.reception:create"
   ],
   "ClubInbodyMeasurementsController.update": [
     "club.members.measurements:update"
@@ -1378,7 +1379,8 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
     "club.fitness.inbody_invoices:view"
   ],
   "ClubInbodyInvoicesController.create": [
-    "club.fitness.inbody_invoices:create"
+    "club.fitness.inbody_invoices:create",
+    "club.reception:create"
   ],
   "ClubInbodyInvoicesController.update": [
     "club.fitness.inbody_invoices:update"
