@@ -2982,7 +2982,8 @@ export class AttendanceService {
       let unexcused = 0;
       for (const d = new Date(`${from}T12:00:00`); d <= new Date(`${to}T12:00:00`); d.setDate(d.getDate() + 1)) {
         const iso = d.toISOString().slice(0, 10);
-        if (d.getDay() === 5 || weekly.get(emp.emp_code) === weekday[d.getDay()]) continue;
+        // Skip the employee's own weekly day off; Friday only when none is configured (payroll's default).
+        if ((weekly.get(emp.emp_code) ?? 'friday') === weekday[d.getDay()]) continue;
         const key = `${emp.emp_code}|${iso}`;
         if (present.has(key) || official.has(key)) continue;
         if (leaveDates.has(key)) excused += 1;
