@@ -1187,3 +1187,20 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   الفرع ده هتقف في الفحص (البصمات اتغيرت) — لازم تتبني فوق claude/meeting-followups-20261124.
 - 20261124-r7 اتثبت واتأكد (UPDATE VERIFIED): صورة العضو ومرفقاته من الاستقبال لأي عضو في الفرع (club-members.service.js بس).
   backup: tmp/nov24-r7-update-backup.0HyARq — الرجوع: انسخ club-members.service.js* من الـbackup لـ dist/modules/club-members/ و touch tmp/restart.txt
+
+آخر تثبيت مؤكد: 20261125-r2 — 25-r1 (ما اترفعش لوحده) + شغل الـ HR كله (25 نوفمبر 2026)
+-----------------------------------------------------------------------------------
+- الفرع: claude/hr-fixes-20261124 (فوق claude/meeting-followups-20261124 لحد efb606d). الأساس 24-r7 (system.html 78606b70…،
+  schema 4c68c02d…، Client 8304f9e6… — ما اتغيروش في الرفعة دي).
+- release-tools/daily-update-20261125-r2، الحزمة noamany-daily-update-20261125-r2.zip (sha256 8aea7445…)، المشغّل release/run-install-20261125-r2.sh.
+- قاعدة البيانات: sql/01–09 (10 جداول جديدة كلها raw SQL: tbl_hdodr_setting_day_overrides، hr_comp_day_credits،
+  hr_attendance_exception_resolutions، hr_overtime_requests، hr_employee_exits، hr_payroll_settings، hr_request_timeline،
+  hr_request_returns، hr_attendance_exception_reminders، attendance_offline_punch_reviews؛ أعمدة في tbl_emps_hours_edafi
+  وhr_all_agzat_orders؛ صلاحيات attendance.exceptions وpayroll.attendance_settings وخلايا مدير الفرع). اتسجلوا في _prisma_migrations.
+  exceptionsTrackingStartDate = 2026-11-25.
+- البصمة (ZKTeco agent) كانت مترفوعة يدوي 24 نوفمبر 14:35 (attendance.module.js + device-agent controller/service/dto،
+  جدول attendance_device_punches، ATTENDANCE_AGENT_TOKEN في .env). الرفعة دي اتبنت فوق نسخ السيرفر دي.
+- الخلفية: 43 ملف متغير + 32 جديد. main.js والملفات المعدلة يدوي (ما عدا attendance.module.js) متلمستش.
+- اتأكد: UPDATE VERIFIED: 2026-11-25-r2، العملية 906910 → 1135695. backup: tmp/nov25-r2-update-backup.GNUUzg (فيه dump كامل 65M)
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261125-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov25-r2-update-backup.GNUUzg
+- المرجع للرفع اللي جاي: system.html = payload 25-r2، الخلفية = ملفات 25-r2، أي رفعة لازم تتبني فوق claude/hr-fixes-20261124.
