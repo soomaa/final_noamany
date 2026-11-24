@@ -18,7 +18,6 @@ import { useForm } from 'react-hook-form';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { z } from 'zod';
-import { GymoraSideBadge } from '@/components/brand/gymora-side-badge';
 import { PreferenceToggles } from '@/components/layout/preference-toggles';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -156,8 +155,6 @@ export function LoginPage() {
 
               <div>
                 <p className="text-sm font-semibold text-white/80 lg:hidden">{t('login.badge')}</p>
-                {/* Gymora vendor block at the foot of the side panel, as in SWAT. */}
-                <GymoraSideBadge className="mt-5 lg:mt-0" />
               </div>
             </div>
           </section>

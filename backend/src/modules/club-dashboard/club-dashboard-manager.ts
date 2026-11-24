@@ -208,7 +208,7 @@ async function todayAtGlance(ctx: ManagerContext) {
   };
 }
 
-async function followUpAlerts(ctx: ManagerContext) {
+export async function followUpAlerts(ctx: ManagerContext) {
   const { prisma, scopedBranches, today } = ctx;
   const in3 = addDays(today, 3);
   const absentCutoff = addDays(today, -ABSENT_DAYS);

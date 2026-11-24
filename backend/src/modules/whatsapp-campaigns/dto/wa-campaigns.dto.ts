@@ -47,6 +47,11 @@ export class WaAbsenceLookupDto {
   @IsOptional() @Matches(DATE) date?: string;
 }
 
+export class WaCommitmentLookupDto {
+  /** Comma-separated subscription ids from one page of the member commitment report. */
+  @Matches(/^\d+(,\d+){0,199}$/) subscriptions!: string;
+}
+
 export class WaAudienceDto {
   @Type(() => Number) @IsInt() @Min(1) branchId!: number;
   @IsIn(['expired', 'expiring', 'members', 'birthdays']) source!: 'expired' | 'expiring' | 'members' | 'birthdays';

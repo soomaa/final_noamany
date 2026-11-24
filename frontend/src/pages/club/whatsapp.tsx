@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { MaskedPhone } from '@/components/club/masked-phone';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Ban, Cake, CalendarClock, Check, Copy, Eye, FileText, Laptop, MessageCircle, Pause, Play, Plus, RotateCcw, Search, Send, Shuffle, Smile, Trash2, UserX, X } from 'lucide-react';
@@ -36,7 +37,7 @@ type Counts = { total: number; queued: number; sending: number; sent: number; fa
 interface Campaign { id: number; name: string; branchId: number; source: string; status: CampaignStatus; createdAt: string; startedAt: string | null; finishedAt: string | null; counts: Counts }
 interface Message { id: number; memberId: number | null; name: string; phone: string; body: string; status: MessageStatus; reason: string | null; sentAt: string | null }
 interface TemplateField { label: string; options: string[] }
-interface Template { id: number; name: string; body: string; isActive: boolean; isBirthday?: boolean; isAbsence?: boolean; addOptOutLine?: boolean; fields?: TemplateField[] }
+interface Template { id: number; name: string; body: string; isActive: boolean; isBirthday?: boolean; isAbsence?: boolean; isCommitment?: boolean; addOptOutLine?: boolean; fields?: TemplateField[] }
 interface AbsenceSettings { yellowDays: number; redDays: number; templateId: number | null }
 interface BirthdayInfo { enabled: boolean; time: string; activeOnly: boolean; template: { id: number; name: string; body: string; addOptOutLine: boolean } | null; pairedBranchIds: number[]; today: string; ranToday: number[]; todaysCampaigns: { id: number; branchId: number; name: string; status: CampaignStatus }[] }
 interface Device { id: string; branchId: number; label: string; paired: boolean; pairedAt: string | null; lastSeenAt: string | null; pairCodeActive: boolean }
@@ -64,6 +65,9 @@ const VARIABLES: { key: string; label: string }[] = [
   { key: 'code', label: 'كود العضو' },
   { key: 'age', label: 'السن' },
   { key: 'last_visit', label: 'آخر حضور' },
+  { key: 'visits', label: 'أيام الحضور' },
+  { key: 'period_days', label: 'أيام الاشتراك لحد دلوقتي' },
+  { key: 'rate', label: 'نسبة الحضور' },
 ];
 
 // ── template fields (mirrors the server: wa-campaigns.utils.ts) ───────────────
@@ -78,7 +82,7 @@ function fieldsToBody(fields: TemplateField[]): string {
     .map((o) => (o.length > 1 ? `{${o.join('|')}}` : o[0]))
     .join('\n');
 }
-const SAMPLE_VARS: Record<string, string> = { first_name: 'أحمد', name: 'أحمد محمد', end_date: '24/11/2026', days: '7', package: 'اشتراك شهر', branch: 'الجلاء', code: 'B1234', age: '28', last_visit: '10/11/2026' };
+const SAMPLE_VARS: Record<string, string> = { first_name: 'أحمد', name: 'أحمد محمد', end_date: '24/11/2026', days: '7', package: 'اشتراك شهر', branch: 'الجلاء', code: 'B1234', age: '28', last_visit: '10/11/2026', visits: '4', period_days: '20', rate: '20%' };
 /** One random wording with sample values, the way a member would receive it. */
 function sampleMessage(body: string): string {
   const versions = body.replace(/\r\n?/g, '\n').split(/\n[ \t]*-{3,}[ \t]*(?:\n|$)/).map((v) => v.trim()).filter(Boolean);
@@ -143,10 +147,24 @@ const campaignBadge: Record<CampaignStatus, 'default' | 'secondary' | 'success' 
 
 // ── page ────────────────────────────────────────────────────────────────────
 
+/** Quick links from the notifications bell / birthdays list open a ready campaign: `?campaign=birthdays|expiring_today`. */
+type QuickCampaign = 'birthdays' | 'expiring_today';
+
 export function ClubWhatsappPage() {
   const { ui } = useLocale();
   const { can } = usePermission();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const quick = searchParams.get('campaign');
   const [creating, setCreating] = useState(false);
+  const [quickCampaign, setQuickCampaign] = useState<QuickCampaign | null>(null);
+  useEffect(() => {
+    if ((quick === 'birthdays' || quick === 'expiring_today') && can('club.whatsapp:create')) {
+      setQuickCampaign(quick);
+      setCreating(true);
+    }
+    if (quick) setSearchParams((prev) => { const next = new URLSearchParams(prev); next.delete('campaign'); return next; }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quick]);
   return (
     <ListPageShell>
       <PageHeader
@@ -166,7 +184,7 @@ export function ClubWhatsappPage() {
         <TabsContent value="devices"><DevicesTab /></TabsContent>
         <TabsContent value="opt-outs"><OptOutsTab /></TabsContent>
       </Tabs>
-      {creating && <NewCampaignDialog onClose={() => setCreating(false)} />}
+      {creating && <NewCampaignDialog initial={quickCampaign} onClose={() => { setCreating(false); setQuickCampaign(null); }} />}
     </ListPageShell>
   );
 }
@@ -603,7 +621,7 @@ function BodyEditor({ value, onChange, optOutLine = true }: { value: string; onC
   );
 }
 
-function NewCampaignDialog({ onClose }: { onClose: () => void }) {
+function NewCampaignDialog({ onClose, initial = null }: { onClose: () => void; initial?: QuickCampaign | null }) {
   const { ui } = useLocale();
   const labels = useLabels();
   const qc = useQueryClient();
@@ -659,6 +677,19 @@ function NewCampaignDialog({ onClose }: { onClose: () => void }) {
     if (next === 'birthdays' && birthdayTemplate) { setTemplateId(birthdayTemplate.id); setBody(birthdayTemplate.body); setName(`${ui('تهنئة أعياد الميلاد')} ${today}`); }
     else if (source === 'birthdays') { setTemplateId(null); setBody(DEFAULT_BODY); setName(`${ui('تذكير تجديد')} ${today}`); }
   };
+  // Opened from a quick link: birthdays today, or subscriptions ending today with their template.
+  const [initialApplied, setInitialApplied] = useState(false);
+  useEffect(() => {
+    if (!initial || initialApplied || !templates) return;
+    setInitialApplied(true);
+    if (initial === 'birthdays') { pickSource('birthdays'); return; }
+    setSource('expiring');
+    setWithinDays('0');
+    const endingToday = templates.find((t) => t.isActive && t.name.includes('بينتهي النهاردة'));
+    if (endingToday) { setTemplateId(endingToday.id); setBody(endingToday.body); }
+    setName(`${ui('اشتراكات تنتهي اليوم')} ${today}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initial, initialApplied, templates]);
   const toggleExcluded = (memberId: number) => {
     setExcluded((prev) => { const next = new Set(prev); if (next.has(memberId)) next.delete(memberId); else next.add(memberId); return next; });
   };
@@ -881,13 +912,19 @@ function CopyButton({ text, label, small }: { text: string; label: string; small
 
 // ── templates ───────────────────────────────────────────────────────────────
 
-function TemplatesTab() {
+/**
+ * The campaign templates. `only="reminders"` shows just the two messages staff send by hand from
+ * lists — «لم يحضر منذ مدة» (reception attendance) and «عدم الالتزام بالحضور» (member commitment) —
+ * for the subscription WhatsApp templates page, so they are edited where the other templates are.
+ */
+export function TemplatesTab({ only }: { only?: 'reminders' } = {}) {
   const { ui } = useLocale();
   const { can } = usePermission();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Partial<Template> | null>(null);
   const [saving, setSaving] = useState(false);
-  const { data, isLoading, isError, refetch } = useTemplates();
+  const { data: allTemplates, isLoading, isError, refetch } = useTemplates();
+  const data = only === 'reminders' ? allTemplates?.filter((t) => t.isAbsence || t.isCommitment) : allTemplates;
   const save = async () => {
     const fields = (editing?.fields ?? []).map((f) => ({ label: f.label.trim(), options: f.options.map((o) => o.trim()).filter(Boolean) })).filter((f) => f.options.length);
     if (!editing?.name?.trim() || !fields.length) return void toast.error(ui('اسم القالب وسطر واحد على الأقل مطلوبين'));
@@ -917,8 +954,8 @@ function TemplatesTab() {
   const newTemplate = { name: '', isActive: true, fields: [{ label: 'التحية', options: ['أهلًا يا {first_name} 👋'] }, { label: 'الرسالة', options: [''] }, { label: 'الختام', options: [''] }] };
   return (
     <div className="space-y-3">
-      <AbsenceCard templates={data ?? []} />
-      {can('club.whatsapp:create') && <Button variant="outline" onClick={() => setEditing(newTemplate)}><Plus className="h-4 w-4" />{ui('قالب جديد')}</Button>}
+      <AbsenceCard templates={allTemplates ?? []} />
+      {!only && can('club.whatsapp:create') && <Button variant="outline" onClick={() => setEditing(newTemplate)}><Plus className="h-4 w-4" />{ui('قالب جديد')}</Button>}
       {isLoading ? <p className="text-sm text-muted-foreground">{ui('جاري التحميل…')}</p> : isError ? <ErrorState onRetry={() => void refetch()} /> : !data?.length ? <EmptyState title={ui('لا توجد قوالب')} description={ui('احفظ نص الرسالة المتكرر كقالب لاستخدامه في كل حملة')} /> : (
         <div className="grid gap-3 md:grid-cols-2">
           {data.map((t) => (
@@ -928,12 +965,13 @@ function TemplatesTab() {
                   <h3 className="font-semibold">{t.name}</h3>
                   {t.isBirthday && <Badge variant="success" className="gap-1"><Cake className="h-3 w-3" />{ui('قالب أعياد الميلاد')}</Badge>}
                   {t.isAbsence && <Badge variant="warning" className="gap-1"><UserX className="h-3 w-3" />{ui('لم يحضر منذ مدة')}</Badge>}
+                  {t.isCommitment && <Badge variant="warning" className="gap-1"><UserX className="h-3 w-3" />{ui('التزام الأعضاء')}</Badge>}
                   {t.addOptOutLine === false && <Badge variant="outline">{ui('من غير سطر الإيقاف')}</Badge>}
                   {!t.isActive && <Badge variant="outline">{ui('غير نشط')}</Badge>}
                 </div>
                 <div className="flex gap-1">
                   {can('club.whatsapp:update') && <Button size="sm" variant="ghost" onClick={() => setEditing({ ...t, fields: t.fields?.length ? t.fields : [{ label: '', options: [''] }] })}>{ui('تعديل')}</Button>}
-                  {can('club.whatsapp:delete') && !t.isBirthday && !t.isAbsence && <Button size="icon" variant="ghost" aria-label={ui('حذف')} onClick={() => void remove(t)}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
+                  {can('club.whatsapp:delete') && !t.isBirthday && !t.isAbsence && !t.isCommitment && <Button size="icon" variant="ghost" aria-label={ui('حذف')} onClick={() => void remove(t)}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                 </div>
               </div>
               <div className="mt-2 grid gap-1 text-sm">

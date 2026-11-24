@@ -26,13 +26,28 @@ export const EXPIRED_FIELDS: TemplateField[] = [
 export const ABSENCE_FIELDS: TemplateField[] = [
   { label: 'التحية', options: ['منوّر يا {first_name} 💪', 'أهلًا بيك تاني يا {first_name} 👋', 'نوّرت {branch} يا {first_name} 🙌'] },
   { label: 'الحضور', options: ['جامد إنك حضرت النهاردة 🔥', 'فرحنا إنك رجعت تتمرن النهاردة 💪', 'حلو أوي إنك جيت النهاردة 👏'] },
-  { label: 'الغياب', options: ['بس بقالك {days} يوم ماجيتش، آخر مرة كانت {last_visit}', 'بس بنفكرك إنك غبت عننا {days} يوم 😅', 'آخر حضور ليك كان من {days} يوم ({last_visit})'] },
+  { label: 'الغياب', options: ['بس بقالك {days} يوم ماجيتش', 'بس بنفكرك إنك غبت عننا {days} يوم 😅', 'آخر حضور ليك كان من {days} يوم'] },
   { label: 'الختام', options: ['طمّنا عليك، كله تمام؟ ❤️', 'لو في حاجة نقدر نساعدك فيها قولنا 🙏', 'مستنيينك بانتظام علشان نوصل لهدفك سوا 💪'] },
 ];
+
+/**
+ * Sent by hand from the member commitment report («التزام الأعضاء») to a member who attends
+ * little of the subscription they paid for.
+ */
+export const COMMITMENT_FIELDS: TemplateField[] = [
+  { label: 'التحية', options: ['أهلًا يا {first_name} 👋', 'إزيك يا {first_name}؟ 😊', '{first_name} وحشتنا في {branch} 🙌'] },
+  { label: 'الحضور', options: ['من أول اشتراك {package} حضرت {visits} يوم من {period_days} يوم ({rate})', 'لاحظنا إن حضورك في اشتراك {package} {rate} بس ({visits} من {period_days} يوم)', 'بقالك {days} يوم ماجيتش، وحضورك في الاشتراك ده {visits} يوم بس'] },
+  { label: 'الدعوة', options: ['اشتراكك لسه شغال لحد {end_date}، استغله وخلّينا نوصل لهدفك سوا 💪', 'عايزينك تستفيد من كل يوم في اشتراكك لحد {end_date} 🔥', 'لو في حاجة مضايقاك أو محتاج برنامج يناسب وقتك قولنا 🙏'] },
+  { label: 'الختام', options: ['مستنيينك في {branch} ❤️', 'طمّنا عليك، كله تمام؟ ❤️', 'نشوفك قريب في الجيم 💪'] },
+];
+
+/** The «الغياب» line before 25 Nov showed the date too; a template still on it is moved to days only. */
+export const ABSENCE_LINE_WITH_DATE = ['بس بقالك {days} يوم ماجيتش، آخر مرة كانت {last_visit}', 'بس بنفكرك إنك غبت عننا {days} يوم 😅', 'آخر حضور ليك كان من {days} يوم ({last_visit})'];
 
 /** Created once each (in this order); a default staff later delete is not recreated. */
 export const DEFAULT_TEMPLATES: { key: string; name: string; fields: TemplateField[] }[] = [
   { key: 'expiring_today', name: 'اشتراكك بينتهي النهاردة ⏰', fields: EXPIRING_TODAY_FIELDS },
   { key: 'expired', name: 'اشتراكك منتهي من فترة', fields: EXPIRED_FIELDS },
   { key: 'absence', name: 'لم يحضر منذ مدة', fields: ABSENCE_FIELDS },
+  { key: 'commitment', name: 'عدم الالتزام بالحضور', fields: COMMITMENT_FIELDS },
 ];

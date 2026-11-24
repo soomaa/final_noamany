@@ -287,7 +287,7 @@ function BranchComparison({
     { key: 'expenses', label: ui('إجمالي المصروفات'), currency: true, tone: 'rose', icon: TrendingDown, lowerIsBetter: true },
     { key: 'subscriptionsCount', label: ui('عدد الاشتراكات'), currency: false, tone: 'blue', icon: PackageCheck },
     { key: 'newMembers', label: ui('الأعضاء الجدد'), currency: false, tone: 'fuchsia', icon: UserPlus },
-    { key: 'inbodyCount', label: ui('جلسات InBody'), currency: false, tone: 'teal', icon: HeartPulse },
+    { key: 'inbodyCount', label: ui('قياسات InBody'), currency: false, tone: 'teal', icon: HeartPulse },
     { key: 'blockedMembers', label: ui('الأعضاء المحظورون'), currency: false, tone: 'slate', icon: AlertTriangle, lowerIsBetter: true },
   ];
 

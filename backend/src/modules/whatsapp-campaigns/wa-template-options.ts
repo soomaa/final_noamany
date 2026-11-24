@@ -17,6 +17,11 @@ export interface AbsenceSettings {
   templateId: number | null;
 }
 
+/** «عدم الالتزام بالحضور»: the message offered on the member commitment report. */
+export interface CommitmentSettings {
+  templateId: number | null;
+}
+
 export interface TemplateOptions {
   /** Templates whose messages go out without the automatic «ابعت إيقاف» line. */
   noOptOutLine: number[];
@@ -25,9 +30,11 @@ export interface TemplateOptions {
   /** Default templates already created once (a template staff delete is not recreated). */
   seeded: string[];
   absence: AbsenceSettings;
+  commitment: CommitmentSettings;
 }
 
 export const DEFAULT_ABSENCE: AbsenceSettings = { yellowDays: 5, redDays: 10, templateId: null };
+export const DEFAULT_COMMITMENT: CommitmentSettings = { templateId: null };
 
 type Db = PrismaService | Prisma.TransactionClient;
 
@@ -39,6 +46,7 @@ export async function readTemplateOptions(prisma: Db): Promise<TemplateOptions> 
     fields: stored.fields && typeof stored.fields === 'object' ? { ...stored.fields } : {},
     seeded: Array.isArray(stored.seeded) ? [...stored.seeded] : [],
     absence: { ...DEFAULT_ABSENCE, ...(stored.absence ?? {}) },
+    commitment: { ...DEFAULT_COMMITMENT, ...(stored.commitment ?? {}) },
   };
 }
 

@@ -1,6 +1,6 @@
 /** Pure helpers for WhatsApp campaigns — phone format, template rendering, recipient filtering. */
 
-export const TEMPLATE_VARIABLES = ['name', 'first_name', 'end_date', 'days', 'package', 'branch', 'code', 'age', 'last_visit'] as const;
+export const TEMPLATE_VARIABLES = ['name', 'first_name', 'end_date', 'days', 'package', 'branch', 'code', 'age', 'last_visit', 'visits', 'period_days', 'rate'] as const;
 export type TemplateVars = Partial<Record<(typeof TEMPLATE_VARIABLES)[number], string>>;
 
 /**

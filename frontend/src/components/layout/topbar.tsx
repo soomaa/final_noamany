@@ -1,8 +1,12 @@
 import {
   Bell,
   Cake,
+  CalendarClock,
   CalendarDays,
   Clock3,
+  Send,
+  Snowflake,
+  TimerOff,
   EllipsisVertical,
   Languages,
   LogOut,
@@ -48,6 +52,7 @@ import { useBranches } from "@/hooks/use-branches";
 import { useAuth } from "@/store/auth";
 import { useLocale } from "@/store/locale";
 import type { MenuNode } from "@/types";
+import { CLUB_ROUTES } from "@/lib/club-routes";
 import { SearchableSelect } from '@/components/common/searchable-select';
 
 function getGreetingKey(hour: number) {
@@ -135,6 +140,8 @@ function toWaPhone(phone: string | null): string | null {
 
 function BirthdayDropdown() {
   const { user } = useAuth();
+  const { can } = usePermission();
+  const canSendCampaign = can('club.whatsapp:create');
   const { locale } = useLocale();
   const isAdmin = user?.level === 1;
   const [selectedBranch, setSelectedBranch] = useState('');
@@ -169,7 +176,7 @@ function BirthdayDropdown() {
     // The list is masked (phone privacy): the real number comes through the audited reveal.
     void openContactLink(member.phone, { memberId: member.id }, (phone) => {
       const wa = toWaPhone(phone);
-      return wa ? `https://wa.me/${wa}?text=${msg}` : null;
+      return wa ? `https://api.whatsapp.com/send?phone=${wa}&text=${msg}` : null;
     }, () => toast.error('مش مسموح لك تشوف رقم العضو ده، أو الرقم مش صالح لواتساب.'));
   };
 
@@ -200,6 +207,14 @@ function BirthdayDropdown() {
               {count > 0 ? `${formatDigits(count, locale)} عضو` : 'لا توجد أعياد ميلاد'}
             </p>
           </div>
+          {canSendCampaign && allBirthdays.length > 0 && (
+            <Button asChild size="sm" className="h-8 gap-1.5 rounded-lg bg-pink-600 px-3 text-xs text-white hover:bg-pink-700">
+              <Link to={`${CLUB_ROUTES.sales.whatsapp}?campaign=birthdays`}>
+                <Send className="size-3.5" />
+                إرسال حملة
+              </Link>
+            </Button>
+          )}
         </div>
         {/* Branch filter — admin only */}
         {isAdmin && branches.length > 0 && (
@@ -298,6 +313,27 @@ function findOwningDepartment(
   return menu.find(nodeMatches) ?? null;
 }
 
+/** «مركز التنبيهات» counts (same as the dashboard card), shown at the top of the notifications bell. */
+type FollowUpAlerts = {
+  endingToday: number;
+  ending3Days: number;
+  frozen: number;
+  birthdaysToday: number;
+  absentMembers: number;
+  absentDays: number;
+};
+
+function useFollowUpAlerts(enabled: boolean) {
+  return useQuery<FollowUpAlerts>({
+    queryKey: ["club-dashboard", "alerts"],
+    queryFn: async () => (await api.get<FollowUpAlerts>("/club-dashboard/alerts")).data,
+    enabled,
+    staleTime: 60_000,
+    refetchInterval: 5 * 60_000,
+    retry: false,
+  });
+}
+
 export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const { user, logout } = useAuth();
   const { locale, t, ui } = useLocale();
@@ -307,6 +343,20 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const { data: count = 0 } = useNotificationCount();
   const { data: notifications } = useNotifications();
   const unreadPreview = notifications?.filter((n) => !n.read).slice(0, 5) ?? [];
+  const { can: canDo } = usePermission();
+  const canSeeAlerts = canDo("club.dashboard:view") || canDo("club.reception:view") || canDo("club.members:view");
+  const canCampaign = canDo("club.whatsapp:create");
+  const { data: followUps } = useFollowUpAlerts(canSeeAlerts);
+  const alertItems: Array<{ key: string; label: string; value: number; icon: typeof Bell; tone: string; href: string; campaign?: string }> = followUps
+    ? [
+        { key: "endingToday", label: "اشتراكات تنتهي اليوم", value: followUps.endingToday, icon: TimerOff, tone: "bg-rose-500/12 text-rose-600 dark:text-rose-300", href: CLUB_ROUTES.subscriptions.expiring, campaign: "expiring_today" },
+        { key: "birthdays", label: "أعياد ميلاد اليوم", value: followUps.birthdaysToday, icon: Cake, tone: "bg-pink-500/12 text-pink-600 dark:text-pink-300", href: CLUB_ROUTES.sales.whatsapp, campaign: "birthdays" },
+        { key: "ending3", label: "تنتهي خلال ٣ أيام", value: followUps.ending3Days, icon: CalendarClock, tone: "bg-orange-500/12 text-orange-600 dark:text-orange-300", href: CLUB_ROUTES.subscriptions.expiring },
+        { key: "absent", label: `غائبون ${formatDigits(followUps.absentDays, locale)} أيام أو أكثر`, value: followUps.absentMembers, icon: Clock3, tone: "bg-amber-500/12 text-amber-700 dark:text-amber-300", href: CLUB_ROUTES.sales.whatsapp },
+        { key: "frozen", label: "اشتراكات موقوفة حاليًا", value: followUps.frozen, icon: Snowflake, tone: "bg-sky-500/12 text-sky-600 dark:text-sky-300", href: CLUB_ROUTES.subscriptions.list },
+      ].filter((item) => item.value > 0)
+    : [];
+  const bellCount = count + alertItems.length;
   const greeting = useMemo(() => t(getGreetingKey(new Date().getHours())), [t]);
   const activeUnit = useMemo(
     () =>
@@ -386,14 +436,44 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
                 aria-label={t("common.notifications")}
               >
                 <Bell className="size-[18px] text-primary/80" />
-                {count > 0 && (
+                {bellCount > 0 && (
                   <span className="absolute -end-0.5 -top-0.5 flex size-4 items-center justify-center rounded-full bg-destructive text-[10px] font-bold text-white ring-2 ring-card">
-                    {formatDigits(count > 9 ? "9+" : count, locale)}
+                    {formatDigits(bellCount > 9 ? "9+" : bellCount, locale)}
                   </span>
                 )}
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-80">
+            <DropdownMenuContent align="end" className="w-[22rem] max-w-[calc(100vw-1rem)]">
+              {alertItems.length > 0 && (
+                <>
+                  <DropdownMenuLabel className="flex items-center justify-between">
+                    <span>{ui("مركز التنبيهات")}</span>
+                    <span className="text-[11px] font-normal text-muted-foreground">{ui("محتاجة متابعة النهارده")}</span>
+                  </DropdownMenuLabel>
+                  <div className="space-y-1 px-1 pb-1">
+                    {alertItems.map((item) => (
+                      <div key={item.key} className="flex items-center gap-2 rounded-xl px-1.5 py-1 hover:bg-muted/50">
+                        <Link to={item.href} className="flex min-w-0 flex-1 items-center gap-2.5">
+                          <span className={`flex size-8 shrink-0 items-center justify-center rounded-lg ${item.tone}`}>
+                            <item.icon className="size-4" />
+                          </span>
+                          <span className="min-w-0 flex-1 truncate text-sm font-semibold">{ui(item.label)}</span>
+                          <span className="nums rounded-md bg-muted px-1.5 py-0.5 text-xs font-black">{formatDigits(item.value, locale)}</span>
+                        </Link>
+                        {item.campaign && canCampaign && (
+                          <Button asChild size="sm" variant="outline" className="h-7 shrink-0 gap-1 rounded-lg px-2 text-[11px]">
+                            <Link to={`${CLUB_ROUTES.sales.whatsapp}?campaign=${item.campaign}`} title={ui("إرسال حملة واتساب")}>
+                              <Send className="size-3" />
+                              {ui("حملة")}
+                            </Link>
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuLabel>{t("common.notifications")}</DropdownMenuLabel>
               <DropdownMenuSeparator />
               {unreadPreview.length === 0 ? (

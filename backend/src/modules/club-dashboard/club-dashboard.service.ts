@@ -7,7 +7,7 @@ import { localDateString } from '../club-members/club-member.utils';
 import { addDays, toNum } from '../club-subscriptions/club-subscription.utils';
 import { resolveTreasuryPeriod } from '../gym-ops/treasury-range.util';
 import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
-import { managerInsights, revenueMix, summarizeDiscounts } from './club-dashboard-manager';
+import { followUpAlerts, managerInsights, revenueMix, summarizeDiscounts } from './club-dashboard-manager';
 import {
   createdByFilter,
   resolveFinanceCreatorScope,
@@ -58,6 +58,18 @@ export class ClubDashboardService {
     private readonly branchScope: BranchScopeService,
     private readonly permissions: PermissionEngineService,
   ) {}
+
+  /**
+   * The «مركز التنبيهات» counts on their own (ending today / in 3 days, frozen, birthdays, absent),
+   * for the notifications bell on every page — without the cost of the whole dashboard.
+   */
+  async followUpAlerts(user?: JwtUser) {
+    return followUpAlerts({
+      prisma: this.prisma,
+      scopedBranches: this.branchIds(user),
+      today: localDateString(),
+    });
+  }
 
   private branchIds(user?: JwtUser, requested?: string | number | null) {
     return this.branchScope.resolveListFilter(user, requested ?? null);
@@ -812,6 +824,16 @@ export class ClubDashboardService {
     const newMembersByBranch = byBranch(branchNewMembers);
     const blockedMembersByBranch = byBranch(branchBlockedMembers);
     const inbodyByBranch = byBranch(branchInbody);
+    // «قياسات InBody»: measurements recorded on «قياسات الأعضاء» in the period, by the member's
+    // branch — not InBody invoices (most measurements come from the package, with no invoice).
+    const measurementRows = await this.prisma.$queryRaw<Array<{ branch_id: number; total: bigint }>>(Prisma.sql`
+      SELECT m.branch_id, COUNT(*) AS total
+      FROM club_inbody_measurements im
+      INNER JOIN club_members m ON m.id = im.member_id AND m.is_deleted = 0
+      WHERE im.measurement_date BETWEEN ${start} AND ${end}
+        ${scopedBranches ? Prisma.sql`AND m.branch_id IN (${Prisma.join(scopedBranches.length ? scopedBranches : [-1])})` : Prisma.empty}
+      GROUP BY m.branch_id`);
+    const measurementsByBranch = new Map(measurementRows.map((row) => [Number(row.branch_id), Number(row.total)]));
     const expensesByBranch = byBranch(branchExpenses);
     const salesByBranch = new Map<number, { barRevenue: number; productRevenue: number }>();
     for (const sale of branchSales) {
@@ -837,7 +859,7 @@ export class ClubDashboardService {
         expenses: Math.round(toNum(expensesByBranch.get(branch.branch_id)?.amount ?? 0) * 100) / 100,
         subscriptionsCount: subscription?._count._all ?? 0,
         newMembers: newMembersByBranch.get(branch.branch_id)?._count._all ?? 0,
-        inbodyCount: inbody?._count._all ?? 0,
+        inbodyCount: measurementsByBranch.get(branch.branch_id) ?? 0,
         inbodyRevenue: Math.round(toNum(inbody?._sum.total_amount ?? 0) * 100) / 100,
         blockedMembers: blockedMembersByBranch.get(branch.branch_id)?._count._all ?? 0,
       };

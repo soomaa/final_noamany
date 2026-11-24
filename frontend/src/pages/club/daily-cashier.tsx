@@ -98,6 +98,26 @@ interface ReceiptRow extends MoneyRow {
   subscriptionType: string | null;
 }
 
+interface SubscriptionMoneyRow {
+  key: string;
+  number: string | null;
+  source: CashierSource | null;
+  sourceLabel: string;
+  subscriptionNumber: string | null;
+  customerName: string | null;
+  subscriptionType: string | null;
+  createdByName: string;
+  amount: number;
+  payments: PaymentLine[];
+  paymentMethod: string;
+  isReconciled: boolean;
+  reconciliationDifference: number;
+  date: string;
+  createdAt: string;
+  /** The subscription contract this money belongs to, when it was registered in the period. */
+  contract: ContractRow | null;
+}
+
 interface ServiceRow extends MoneyRow {
   serviceName: string;
 }
@@ -456,6 +476,60 @@ export function ClubDailyCashierPage() {
     () => (data?.rows ?? []).filter((r) => matches(r.subscriptionNumber, r.customerName, r.subscriptionType, r.createdByName)),
     [data?.rows, needle],
   );
+  /**
+   * One list for subscriptions money: every receipt/installment collected in the period, each with
+   * its contract's value and what is still owed, plus contracts registered in the period that had
+   * no payment in it (so nothing registered today is hidden). Replaces the separate receipts and
+   * contracts tables, which showed the same subscriptions twice.
+   */
+  const subscriptionRows = useMemo<SubscriptionMoneyRow[]>(() => {
+    const contractsById = new Map((data?.rows ?? []).map((c) => [c.id, c]));
+    const paidContractIds = new Set<number>();
+    const rows: SubscriptionMoneyRow[] = receiptRows.map((r) => {
+      const contract = r.subscriptionId != null ? contractsById.get(r.subscriptionId) : undefined;
+      if (r.subscriptionId != null) paidContractIds.add(r.subscriptionId);
+      return {
+        key: r.key,
+        number: r.number,
+        source: r.source,
+        sourceLabel: r.sourceLabel,
+        subscriptionNumber: r.subscriptionNumber,
+        customerName: r.customerName,
+        subscriptionType: r.subscriptionType,
+        createdByName: r.createdByName,
+        amount: r.amount,
+        payments: r.payments,
+        paymentMethod: r.paymentMethod,
+        isReconciled: r.isReconciled,
+        reconciliationDifference: r.reconciliationDifference,
+        date: r.date,
+        createdAt: r.createdAt,
+        contract: contract ?? null,
+      };
+    });
+    for (const c of contractRows) {
+      if (paidContractIds.has(c.id)) continue;
+      rows.push({
+        key: `contract-${c.id}`,
+        number: null,
+        source: null,
+        sourceLabel: 'عقد بدون تحصيل',
+        subscriptionNumber: c.subscriptionNumber,
+        customerName: c.customerName,
+        subscriptionType: c.subscriptionType,
+        createdByName: c.createdByName ?? '',
+        amount: 0,
+        payments: [],
+        paymentMethod: '',
+        isReconciled: true,
+        reconciliationDifference: 0,
+        date: c.registrationDate ?? c.createdAt.slice(0, 10),
+        createdAt: c.createdAt,
+        contract: c,
+      });
+    }
+    return rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [receiptRows, contractRows, data?.rows]);
   const barRows = useMemo(
     () => (data?.bar.rows ?? []).filter((r) => matches(r.saleNumber, r.customerName, r.cashierName)),
     [data?.bar.rows, needle],
@@ -514,13 +588,19 @@ export function ClubDailyCashierPage() {
             rows: data.byUser as unknown as Record<string, unknown>[],
           },
           {
-            name: ui('إيصالات الاشتراكات'),
+            name: ui('الاشتراكات والأقساط'),
             columns: [
               col('number', 'رقم الإيصال'), col('sourceLabel', 'النوع'), col('subscriptionNumber', 'رقم الاشتراك'),
               col('customerName', 'العميل'), col('subscriptionType', 'نوع الاشتراك'), col('createdByName', 'المستخدم'),
-              col('amount', 'المبلغ'), col('method', 'طريقة الدفع'), col('date', 'التاريخ'),
+              col('amount', 'المحصل'), col('contractValue', 'قيمة العقد'), col('remaining', 'المتبقي'),
+              col('method', 'طريقة الدفع'), col('date', 'التاريخ'),
             ],
-            rows: data.receiptRows.map((r) => ({ ...r, method: methodsLabel(r.payments, r.paymentMethod) })),
+            rows: subscriptionRows.map((r) => ({
+              ...r,
+              contractValue: r.contract?.subscriptionValue ?? '',
+              remaining: r.contract?.remainingAmount ?? '',
+              method: r.number ? methodsLabel(r.payments, r.paymentMethod) : '',
+            })) as unknown as Record<string, unknown>[],
           },
           {
             name: ui('خدمات الاستقبال'),
@@ -537,15 +617,6 @@ export function ClubDailyCashierPage() {
               col('createdByName', 'المستخدم'), col('amount', 'المبلغ'), col('method', 'طريقة الدفع'), col('date', 'التاريخ'),
             ],
             rows: data.expenseRows.map((r) => ({ ...r, kind: r.isRefund ? 'مرتجع' : 'مصروف', method: methodLabel(r.paymentMethod) })),
-          },
-          {
-            name: ui('العقود'),
-            columns: [
-              col('subscriptionNumber', 'رقم الاشتراك'), col('customerName', 'العميل'), col('subscriptionType', 'نوع الاشتراك'),
-              col('createdByName', 'المستخدم'), col('subscriptionValue', 'القيمة'), col('paidAmount', 'المدفوع'),
-              col('remainingAmount', 'المتبقي'), col('registrationDate', 'التاريخ'),
-            ],
-            rows: data.rows as unknown as Record<string, unknown>[],
           },
           {
             name: ui('البار - الكاشير'),
@@ -593,7 +664,7 @@ export function ClubDailyCashierPage() {
         }
       : null;
 
-  const methodColumn = <T extends MoneyRow>(): Column<T> => ({
+  const methodColumn = <T extends Pick<MoneyRow, 'payments' | 'paymentMethod' | 'isReconciled' | 'reconciliationDifference'>>(): Column<T> => ({
     header: ui('طريقة الدفع'),
     cell: (row) => (
       <span className="inline-flex flex-wrap items-center gap-1">
@@ -982,25 +1053,27 @@ export function ClubDailyCashierPage() {
       ) : null}
 
       <Section
-        title={ui('إيصالات الاشتراكات والأقساط')}
-        description={`${ui('كل تحصيل اشتراك أو قسط في الفترة، حتى لو العقد متسجل قبلها')} · ${toArabicDigits(receiptRows.length)} ${ui('إيصال')}`}
+        title={ui('الاشتراكات والأقساط')}
+        description={`${ui('كل تحصيل اشتراك أو قسط في الفترة مع قيمة العقد والمتبقي عليه، والعقود اللي اتسجلت من غير تحصيل')} · ${toArabicDigits(subscriptionRows.length)}`}
         icon={ReceiptText}
       >
         <DataTable
-          caption={ui('إيصالات الاشتراكات والأقساط')}
-          rows={receiptRows}
+          caption={ui('الاشتراكات والأقساط')}
+          rows={subscriptionRows}
           rowKey={(row) => row.key}
           loading={query.isLoading}
-          empty={ui('مفيش إيصالات اشتراكات في الفترة دي')}
+          empty={ui('مفيش اشتراكات أو أقساط في الفترة دي')}
           columns={[
-            { header: ui('رقم الإيصال'), cell: (r) => <span className="nums font-mono font-semibold text-primary">{toArabicDigits(r.number)}</span>, className: 'whitespace-nowrap' },
-            { header: ui('النوع'), cell: (r) => <Badge variant={sourceVariant[r.source] ?? 'secondary'}>{ui(r.sourceLabel)}</Badge> },
+            { header: ui('رقم الإيصال'), cell: (r) => (r.number ? <span className="nums font-mono font-semibold text-primary">{toArabicDigits(r.number)}</span> : '—'), className: 'whitespace-nowrap' },
+            { header: ui('النوع'), cell: (r) => <Badge variant={r.source ? sourceVariant[r.source] ?? 'secondary' : 'warning'}>{ui(r.sourceLabel)}</Badge> },
             { header: ui('رقم الاشتراك'), cell: (r) => <span className="nums">{r.subscriptionNumber ? toArabicDigits(r.subscriptionNumber) : '—'}</span>, className: 'whitespace-nowrap' },
             { header: ui('اسم العميل'), cell: (r) => r.customerName || '—', className: 'font-medium' },
             { header: ui('نوع الاشتراك'), cell: (r) => r.subscriptionType || '—' },
-            userColumn<ReceiptRow>(),
-            { header: ui('المبلغ'), cell: (r) => money(r.amount), className: 'nums whitespace-nowrap font-semibold' },
-            methodColumn<ReceiptRow>(),
+            userColumn<SubscriptionMoneyRow>(),
+            { header: ui('المحصّل'), cell: (r) => money(r.amount), className: 'nums whitespace-nowrap font-semibold' },
+            { header: ui('قيمة العقد'), cell: (r) => (r.contract ? money(r.contract.subscriptionValue) : '—'), className: 'nums whitespace-nowrap' },
+            { header: ui('المتبقي'), cell: (r) => (r.contract ? <span className={cn(r.contract.remainingAmount > 0 && 'font-semibold text-amber-600')}>{money(r.contract.remainingAmount)}</span> : '—'), className: 'nums whitespace-nowrap' },
+            methodColumn<SubscriptionMoneyRow>(),
             { header: isRange ? ui('التاريخ والوقت') : ui('الوقت'), cell: (r) => whenLabel(r.date, r.createdAt, isRange), className: 'nums whitespace-nowrap' },
           ]}
         />
@@ -1051,31 +1124,6 @@ export function ClubDailyCashierPage() {
             { header: ui('المبلغ'), cell: (r) => <span className="text-destructive">−{money(r.amount)}</span>, className: 'nums whitespace-nowrap font-semibold' },
             { header: ui('طريقة الدفع'), cell: (r) => methodLabel(r.paymentMethod) },
             { header: ui('التاريخ'), cell: (r) => formatDate(r.date, 'd MMM yyyy', locale), className: 'nums whitespace-nowrap' },
-          ]}
-        />
-      </Section>
-
-      <Section
-        title={isRange ? ui('العقود المسجلة في الفترة') : ui('العقود المسجلة النهارده')}
-        description={`${ui('قيمة كل عقد والمدفوع والمتبقي عليه')} · ${toArabicDigits(contractRows.length)} ${ui('عقد')}`}
-        icon={UserRound}
-      >
-        <DataTable
-          caption={ui('العقود')}
-          rows={contractRows}
-          rowKey={(row) => row.id}
-          loading={query.isLoading}
-          empty={ui('مفيش عقود متسجلة في الفترة دي')}
-          columns={[
-            { header: ui('رقم الاشتراك'), cell: (r) => <span className="nums font-mono font-semibold text-primary">{toArabicDigits(r.subscriptionNumber)}</span>, className: 'whitespace-nowrap' },
-            { header: ui('اسم العميل'), cell: (r) => r.customerName || '—', className: 'font-medium' },
-            { header: ui('نوع الاشتراك'), cell: (r) => r.subscriptionType || '—' },
-            userColumn<ContractRow>(),
-            { header: ui('القيمة'), cell: (r) => money(r.subscriptionValue), className: 'nums whitespace-nowrap' },
-            { header: ui('المدفوع'), cell: (r) => money(r.paidAmount), className: 'nums whitespace-nowrap' },
-            { header: ui('المتبقي'), cell: (r) => <span className={cn(r.remainingAmount > 0 && 'font-semibold text-amber-600')}>{money(r.remainingAmount)}</span>, className: 'nums whitespace-nowrap' },
-            { header: ui('الحالة'), cell: (r) => { const meta = statusMeta[r.status] ?? statusMeta.active; return <Badge variant={meta.variant}>{ui(meta.label)}</Badge>; } },
-            { header: isRange ? ui('التاريخ والوقت') : ui('وقت التسجيل'), cell: (r) => whenLabel(r.registrationDate ?? r.createdAt.slice(0, 10), r.createdAt, isRange), className: 'nums whitespace-nowrap' },
           ]}
         />
       </Section>

@@ -14,6 +14,7 @@ import {
   ListWaMessagesDto,
   UpsertWaTemplateDto,
   WaAbsenceLookupDto,
+  WaCommitmentLookupDto,
   WaAbsenceSettingsDto,
   WaAudienceDto,
   WaOptOutDto,
@@ -37,7 +38,7 @@ import {
 import { ControlUnavailableError, WaControlClient } from './wa-control.client';
 import { readBirthdaySettings } from './wa-birthdays.settings';
 import { readTemplateOptions, setOptOutLine, updateTemplateOptions } from './wa-template-options';
-import { BIRTHDAY_FIELDS, DEFAULT_TEMPLATES } from './wa-default-templates';
+import { ABSENCE_FIELDS, ABSENCE_LINE_WITH_DATE, BIRTHDAY_FIELDS, DEFAULT_TEMPLATES } from './wa-default-templates';
 import { runWithMysqlLock } from '../../common/automation/cron-dedup.util';
 
 const MAX_AUDIENCE = 5000;
@@ -103,6 +104,7 @@ export class WaCampaignsService {
       isActive: t.is_active,
       isBirthday: t.id === birthdays.templateId,
       isAbsence: t.id === options.absence.templateId,
+      isCommitment: t.id === options.commitment.templateId,
       addOptOutLine: !options.noOptOutLine.includes(t.id),
       fields: options.fields[String(t.id)] ?? bodyToFields(t.body),
       updatedAt: t.updated_at,
@@ -117,6 +119,7 @@ export class WaCampaignsService {
     const options = await readTemplateOptions(this.prisma);
     const birthdays = await readBirthdaySettings(this.prisma);
     const birthdayPending = !!birthdays.templateId && !options.fields[String(birthdays.templateId)] && !options.seeded.includes('birthday_fields');
+    await this.absenceDaysOnly(options);
     if (DEFAULT_TEMPLATES.every((d) => options.seeded.includes(d.key)) && !birthdayPending) return;
     await runWithMysqlLock(this.prisma, 'wa:templates-seed', 10, async () => {
       const current = await readTemplateOptions(this.prisma);
@@ -139,6 +142,7 @@ export class WaCampaignsService {
           o.fields[String(created[d.key])] = d.fields;
           o.seeded.push(d.key);
           if (d.key === 'absence' && !o.absence.templateId) o.absence.templateId = created[d.key];
+          if (d.key === 'commitment' && !o.commitment.templateId) o.commitment.templateId = created[d.key];
         }
         if (birthday && birthdayFields) {
           o.fields[String(birthday.id)] = birthdayFields;
@@ -192,7 +196,9 @@ export class WaCampaignsService {
 
   async removeTemplate(id: number) {
     if ((await readBirthdaySettings(this.prisma)).templateId === id) throw new ConflictException('ده قالب أعياد الميلاد — اختار قالب تاني لأعياد الميلاد الأول');
-    if ((await readTemplateOptions(this.prisma)).absence.templateId === id) throw new ConflictException('ده قالب «لم يحضر منذ مدة» — اختار قالب تاني ليه الأول');
+    const templateOptions = await readTemplateOptions(this.prisma);
+    if (templateOptions.absence.templateId === id) throw new ConflictException('ده قالب «لم يحضر منذ مدة» — اختار قالب تاني ليه الأول');
+    if (templateOptions.commitment.templateId === id) throw new ConflictException('ده قالب «عدم الالتزام بالحضور» المستخدم في تقرير التزام الأعضاء');
     await this.prisma.wa_templates.deleteMany({ where: { id } });
     await setOptOutLine(this.prisma, id, true);
     await updateTemplateOptions(this.prisma, (o) => { delete o.fields[String(id)]; });
@@ -638,6 +644,24 @@ export class WaCampaignsService {
     return device;
   }
 
+  /**
+   * Client, 25 Nov: the absence message says how many days, not the date. The default template's
+   * «الغياب» line, if staff never changed it, becomes the days-only wording (once).
+   */
+  private async absenceDaysOnly(options: Awaited<ReturnType<typeof readTemplateOptions>>) {
+    const id = options.absence.templateId;
+    if (!id || options.seeded.includes('absence_days_only')) return;
+    const fields = options.fields[String(id)];
+    const line = fields?.find((f) => f.label === 'الغياب');
+    const untouched = !!line && JSON.stringify(line.options) === JSON.stringify(ABSENCE_LINE_WITH_DATE);
+    const next = untouched ? fields!.map((f) => (f === line ? ABSENCE_FIELDS.find((d) => d.label === 'الغياب')! : f)) : null;
+    if (next) await this.prisma.wa_templates.update({ where: { id }, data: { body: fieldsToBody(next) } });
+    await updateTemplateOptions(this.prisma, (o) => {
+      if (next) o.fields[String(id)] = next;
+      o.seeded.push('absence_days_only');
+    });
+  }
+
   // ── «لم يحضر منذ مدة» (attendance list) ─────────────────────────────────────
 
   async absenceSettings() {
@@ -719,6 +743,72 @@ export class WaCampaignsService {
             })
           : null;
         return { memberId: m.id, lastVisit: last, days, level, phone, text, newSubscription };
+      }),
+    };
+  }
+
+  // ── «عدم الالتزام بالحضور» (member commitment report) ────────────────────────
+
+  /**
+   * For the subscriptions on one page of the commitment report: the member's WhatsApp number and
+   * the «عدم الالتزام بالحضور» message filled with that subscription's attendance (distinct days
+   * attended out of the days elapsed so far, or sessions used for session packages), ready to open
+   * in WhatsApp from the branch phone.
+   */
+  async commitmentLookup(q: WaCommitmentLookupDto, user: JwtUser) {
+    await this.seedDefaultTemplates();
+    const today = localDateString();
+    const ids = [...new Set(q.subscriptions.split(',').map(Number))];
+    const { commitment } = await readTemplateOptions(this.prisma);
+    const scope = this.branches.allowedBranchIds(user);
+    const [subscriptions, template] = await Promise.all([
+      this.prisma.club_subscriptions.findMany({
+        where: { id: { in: ids }, ...(scope !== null ? { branch_id: { in: scope } } : {}) },
+        select: {
+          id: true, subscription_type: true, subscription_start_date: true, subscription_end_date: true,
+          is_linked_to_sessions: true, sessions_count: true, sessions_used: true, branch_id: true,
+          member: { select: { id: true, name: true, member_code: true, phone: true } },
+        },
+      }),
+      commitment.templateId ? this.prisma.wa_templates.findUnique({ where: { id: commitment.templateId } }) : null,
+    ]);
+    const found = subscriptions.map((s) => s.id);
+    const attendance = found.length
+      ? await this.prisma.$queryRaw<{ subscription_id: number; days: bigint; last_date: string | null }[]>(Prisma.sql`
+          SELECT subscription_id, COUNT(DISTINCT attendance_date) AS days, MAX(attendance_date) AS last_date
+          FROM club_attendance WHERE subscription_id IN (${Prisma.join(found)}) GROUP BY subscription_id`)
+      : [];
+    const bySub = new Map(attendance.map((a) => [Number(a.subscription_id), { days: Number(a.days), last: a.last_date ? String(a.last_date).slice(0, 10) : null }]));
+    const branchNames = new Map<number, string>();
+    for (const id of new Set(subscriptions.map((s) => s.branch_id))) branchNames.set(id, await this.branchName(id));
+    return {
+      rows: subscriptions.flatMap((s) => {
+        if (!s.member) return [];
+        const start = s.subscription_start_date.slice(0, 10);
+        const end = s.subscription_end_date.slice(0, 10);
+        const total = Math.max(0, daysBetween(start, end));
+        const elapsed = Math.min(total, Math.max(0, daysBetween(start, today < end ? today : end)));
+        const a = bySub.get(s.id) ?? { days: 0, last: null };
+        const sessions = s.is_linked_to_sessions && s.sessions_count;
+        const visits = sessions ? s.sessions_used : a.days;
+        const period = sessions ? s.sessions_count! : Math.max(elapsed, 1);
+        const rate = Math.min(100, Math.max(0, Math.round((visits / Math.max(period, 1)) * 100)));
+        const text = template
+          ? renderTemplate(varyTemplate(template.body), {
+              name: s.member.name,
+              first_name: firstName(s.member.name),
+              code: s.member.member_code,
+              package: s.subscription_type ?? '',
+              branch: branchNames.get(s.branch_id) ?? '',
+              visits: String(visits),
+              period_days: String(period),
+              rate: `${rate}%`,
+              days: a.last ? String(daysBetween(a.last, today)) : '',
+              last_visit: a.last ? formatDate(a.last) : 'مفيش حضور لسه',
+              end_date: formatDate(end),
+            })
+          : null;
+        return [{ subscriptionId: s.id, memberId: s.member.id, phone: toWhatsAppPhone(s.member.phone), text }];
       }),
     };
   }

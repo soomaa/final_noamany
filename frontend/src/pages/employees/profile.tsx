@@ -143,7 +143,7 @@ export function EmployeeProfilePage() {
 
             <TabsContent value="personal">
               <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                <Field label={ui('رقم الجوال')} value={data.phone ? toArabicDigits(data.phone) : '—'} />
+                <Field label={ui('رقم الجوال')} value={data.phone || '—'} />
                 <Field label={ui('رقم الهوية')} value={data.card_num ? toArabicDigits(data.card_num) : '—'} />
                 <Field label={ui('تاريخ الميلاد')} value={<DateText value={data.birth_date} />} />
                 <Field label={ui('المؤهل الدراسي')} value={data.employee_qualification ?? '—'} />
