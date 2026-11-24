@@ -141,7 +141,8 @@
       "resignation": "طلب استقالة",
       "transfer": "طلب نقل",
       "promotion": "طلب ترقية",
-      "data-change": "طلب تعديل بيانات"
+      "data-change": "طلب تعديل بيانات",
+      "overtime": "طلب ساعات إضافية"
     },
     "alerts": {
       "contractExpiring": "انتهاء العقد",

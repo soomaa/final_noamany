@@ -54,9 +54,12 @@ export function LeavesPage() {
   const [editing, setEditing] = useState<LeaveRow | null>(null);
   const [editForm, setEditForm] = useState({ startDate: '', endDate: '', returnToWorkDate: '', reason: '', addressSinceAgaza: '' });
 
+  // Partial approval: the approver may narrow from/to inside the requested range.
+  const [approving, setApproving] = useState<LeaveRow | null>(null);
+  const [approveForm, setApproveForm] = useState({ startDate: '', endDate: '' });
   const approveMutation = useMutationWithToast(
-    (id: number) => api.post(`/leaves/${id}/approve`),
-    { success: ui('تم اعتماد الإجازة'), invalidate: ['leaves'] },
+    ({ id, ...body }: { id: number; startDate?: string; endDate?: string }) => api.post(`/leaves/${id}/approve`, body),
+    { success: ui('تم اعتماد الإجازة'), invalidate: ['leaves'], onSuccess: () => setApproving(null) },
   );
 
   const rejectMutation = useMutationWithToast(
@@ -75,13 +78,28 @@ export function LeavesPage() {
     { success: ui('تم حذف طلب الإجازة نهائيًا'), invalidate: ['leaves'] },
   );
 
-  const handleApprove = async (row: LeaveRow) => {
-    const ok = await confirm({
-      title: ui('اعتماد الإجازة'),
-      description: `${ui('هل تريد اعتماد إجازة «')}${row.employeeName ?? ui('الموظف')}${ui('»؟')}`,
-      confirmLabel: ui('اعتماد'),
-    });
-    if (ok) approveMutation.mutate(row.id);
+  const handleApprove = (row: LeaveRow) => {
+    setApproving(row);
+    setApproveForm({ startDate: row.startDate ?? '', endDate: row.endDate ?? '' });
+  };
+  const approveRangeInvalid =
+    !!approving &&
+    (!approveForm.startDate ||
+      !approveForm.endDate ||
+      approveForm.startDate > approveForm.endDate ||
+      (!!approving.startDate && approveForm.startDate < approving.startDate) ||
+      (!!approving.endDate && approveForm.endDate > approving.endDate));
+  const isPartial =
+    !!approving && (approveForm.startDate !== (approving.startDate ?? '') || approveForm.endDate !== (approving.endDate ?? ''));
+  const approvedDays =
+    approveForm.startDate && approveForm.endDate && approveForm.startDate <= approveForm.endDate
+      ? Math.round((new Date(`${approveForm.endDate}T12:00:00`).getTime() - new Date(`${approveForm.startDate}T12:00:00`).getTime()) / 86_400_000) + 1
+      : 0;
+  const submitApprove = () => {
+    if (!approving || approveRangeInvalid) return;
+    approveMutation.mutate(
+      isPartial ? { id: approving.id, startDate: approveForm.startDate, endDate: approveForm.endDate } : { id: approving.id },
+    );
   };
 
   const handleReject = async (row: LeaveRow) => {
@@ -191,7 +209,7 @@ export function LeavesPage() {
                 variant="outline"
                 size="sm"
                 disabled={approveMutation.isPending}
-                onClick={() => void handleApprove(leave)}
+                onClick={() => handleApprove(leave)}
               >
                 <Check className="size-4 text-success" /> {ui('اعتماد')}
               </Button>
@@ -288,6 +306,36 @@ export function LeavesPage() {
               <p className="mt-1 text-sm font-medium">{value}</p>
             </div>)}
           </div>}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={approving != null} onOpenChange={(open) => !open && setApproving(null)}>
+        <DialogContent size="md">
+          <DialogHeader>
+            <DialogTitle>{ui('اعتماد الإجازة')}</DialogTitle>
+            <DialogDescription>
+              {`${ui('اعتماد إجازة «')}${approving?.employeeName ?? ui('الموظف')}${ui('». يمكنك اعتماد عدد أيام أقل بتعديل التاريخين داخل الفترة المطلوبة.')}`}
+            </DialogDescription>
+          </DialogHeader>
+          {approving && <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              {ui('الفترة المطلوبة')}: <DateText value={approving.startDate} /> — <DateText value={approving.endDate} />
+              {approving.days != null && <> ({toArabicDigits(approving.days)} {ui('يوم')})</>}
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2"><label className="text-sm font-medium">{ui('من')}</label><Input type="date" min={approving.startDate || undefined} max={approving.endDate || undefined} value={approveForm.startDate} onChange={(event) => setApproveForm((current) => ({ ...current, startDate: event.target.value }))} /></div>
+              <div className="space-y-2"><label className="text-sm font-medium">{ui('إلى')}</label><Input type="date" min={approveForm.startDate || approving.startDate || undefined} max={approving.endDate || undefined} value={approveForm.endDate} onChange={(event) => setApproveForm((current) => ({ ...current, endDate: event.target.value }))} /></div>
+            </div>
+            {approveRangeInvalid
+              ? <p className="text-sm text-destructive">{ui('الفترة المعتمدة يجب أن تكون داخل الفترة المطلوبة')}</p>
+              : isPartial && <p className="text-sm font-medium text-warning">{ui('اعتماد جزئي')}: {toArabicDigits(approvedDays)} {ui('يوم')}</p>}
+          </div>}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setApproving(null)}>{ui('إلغاء')}</Button>
+            <Button variant="brand" disabled={approveRangeInvalid || approveMutation.isPending} onClick={submitApprove}>
+              <Check className="size-4" /> {isPartial ? ui('اعتماد جزئي') : ui('اعتماد')}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

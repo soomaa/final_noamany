@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Inbox, Plus } from 'lucide-react';
+import { Clock, Inbox, Plus } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { DataTable } from '@/components/common/data-table';
 import { DateText } from '@/components/common/formatters';
@@ -104,8 +104,12 @@ export function RequestsPage() {
     <div>
       <PageHeader
         title={ui('طلبات الموظفين')}
-        description={ui('إجازة · إذن · سلفة · قرض · بدل · تعريف مرتب · استقالة · نقل · ترقية · تعديل بيانات')}
+        description={ui('إجازة · إذن · ساعات إضافية · سلفة · قرض · بدل · تعريف مرتب · استقالة · نقل · ترقية · تعديل بيانات')}
         actions={
+          <div className="flex gap-2">
+          <Button variant="outline" asChild>
+            <Link to="/requests/overtime"><Clock className="size-4" /> {ui('الساعات الإضافية')}</Link>
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="brand">
@@ -120,6 +124,7 @@ export function RequestsPage() {
               ))}
             </DropdownMenuContent>
           </DropdownMenu>
+          </div>
         }
       />
       <FilterBar

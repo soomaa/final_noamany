@@ -141,7 +141,8 @@
       "resignation": "Resignation request",
       "transfer": "Transfer request",
       "promotion": "Promotion request",
-      "data-change": "Data change request"
+      "data-change": "Data change request",
+      "overtime": "Overtime request"
     },
     "alerts": {
       "contractExpiring": "Contract expiring",
