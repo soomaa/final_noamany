@@ -34,7 +34,7 @@ describe('payroll settings: defaults reproduce the legacy formulas', () => {
     };
     expect(payrollAttendanceDeductions(counts, rates, defaults)).toEqual({
       khasmKeyab: 2 * 200,
-      khasmAgazat: 1 * 200,
+      khasmAgazat: 0, // owner decision 2026-11-25: paid leave is not deducted (default multiplier 0)
       agazaBdonRateb: 1.5 * 200,
       khasmBasma: 0.75 * 200,
       khasmTakher: (90 / 60) * 25,

@@ -134,7 +134,7 @@ export function defaultHrPayrollSettings(config: PayrollConfigDefaults = {}): Hr
     missingPunchSecondDays: 0.5,
     missingPunchThirdPlusDays: 1,
     absenceDayMultiplier: 1,
-    paidLeaveDeductMultiplier: 1,
+    paidLeaveDeductMultiplier: 0,
     unpaidLeaveDayMultiplier: 1,
     overtimeHourMultiplier: 1,
     extraShiftDayMultiplier: 1,
