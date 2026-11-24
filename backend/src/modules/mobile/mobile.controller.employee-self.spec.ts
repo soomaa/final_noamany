@@ -17,6 +17,7 @@ describe('MobileController employee self-service lookups', () => {
     attendance as never,
     compat as never,
     loans as never,
+    {} as never,
   );
   const user = { sub: 44, emp_code: 8, name: 'موظف' } as any;
 
@@ -63,7 +64,7 @@ describe('MobileController employee self-service lookups', () => {
     leaves.action.mockResolvedValue({ id: 18, status: 'accepted' });
 
     await expect(controller.actionLeave(18, { action: 'accept' }, user)).resolves.toEqual({ id: 18, status: 'accepted' });
-    expect(leaves.action).toHaveBeenCalledWith(18, { action: 'accept' }, user.sub, user.name);
+    expect(leaves.action).toHaveBeenCalledWith(18, { action: 'accept' }, user.sub, user.name, user);
   });
 
   it('keeps the requested permission tab and forwards its approval action', async () => {
@@ -75,7 +76,7 @@ describe('MobileController employee self-service lookups', () => {
     await expect(controller.actionPermission(9, { action: 'accept' }, user)).resolves.toEqual({ id: 9, status: 'accepted' });
 
     expect(permissions.list).toHaveBeenCalledWith(expect.objectContaining({ mode: 'wared' }), user.sub);
-    expect(permissions.action).toHaveBeenCalledWith(9, { action: 'accept' }, user.sub, user.name);
+    expect(permissions.action).toHaveBeenCalledWith(9, { action: 'accept' }, user.sub, user.name, user);
   });
 
   it('submits an employee leave without activating the legacy leave-balance check', async () => {

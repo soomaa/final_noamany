@@ -21,15 +21,21 @@ import { CreatePermissionDto } from "./dto/create-permission.dto";
 import { ActionPermissionDto } from "./dto/action-permission.dto";
 import { ListPermissionsDto } from "./dto/list-permissions.dto";
 import { UpdatePermissionDto } from "./dto/update-permission.dto";
+import { PROCESS_CODE } from "./approval-chain.util";
 import {
-  ACCEPT_SUSPEND,
-  ChainStage,
-  NEXT_STAGE_BY_CURRENT,
-  PROCESS_CODE,
-  REJECT_SUSPEND,
-  STAGE_DATE_FIELD,
-  nextRecipientMosama,
-} from "./approval-chain.util";
+  ChainStageKey,
+  FINAL_APPROVAL_SUSPEND,
+  INTERMEDIATE_APPROVAL_SUSPEND,
+  STAGE_DATE_COLUMN,
+  STAGE_LABEL_AR,
+  authorizeApprover,
+  pendingStage,
+  requesterUserIds,
+  routeNext,
+} from "../../common/hr-approval/approval-chain";
+import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
+import { isSystemAdmin } from "../../common/utils/system-admin.util";
+import { PushService } from "../push/push.service";
 import { ownOnlyEmployeeIds } from "../../common/hr-scope/own-hr-records";
 import { PermissionEngineService } from "../rbac/engine/permission-engine.service";
 import type { JwtUser } from "../../common/types/jwt-user";
@@ -51,7 +57,51 @@ export class PermissionsService {
     private readonly prisma: PrismaService,
     // Optional so the unit specs can still construct the service with Prisma only.
     @Optional() private readonly engine?: PermissionEngineService,
+    // Stateless; defaulted so the unit specs can construct the service with Prisma only.
+    private readonly scope: BranchScopeService = new BranchScopeService(),
+    @Optional() private readonly push?: PushService,
   ) {}
+
+  // ---- branch scope ---------------------------------------------------------------------
+
+  /** Employee ids inside the user's branch scope; `null` = unrestricted (system admin). */
+  private async scopedEmployeeIds(user: JwtUser): Promise<number[] | null> {
+    const branches = this.scope.allowedBranchIds(user);
+    if (branches === null) return null;
+    if (!branches.length) return [];
+    const rows = await this.prisma.employees.findMany({
+      where: { branch_id_fk: { in: branches } },
+      select: { id: true },
+    });
+    return rows.map((r) => r.id);
+  }
+
+  /** 403 unless the employee is the caller's own record or belongs to an allowed branch. */
+  async assertEmployeeInScope(user: JwtUser, empId: number | null | undefined) {
+    if (isSystemAdmin(user)) return;
+    if (empId != null && user.emp_code != null && empId === user.emp_code) return;
+    const emp = empId
+      ? await this.prisma.employees.findUnique({ where: { id: empId }, select: { branch_id_fk: true } })
+      : null;
+    this.scope.assertBranchAllowed(user, emp?.branch_id_fk, "لا تملك صلاحية الوصول لأذونات هذا الموظف");
+  }
+
+  /** A permit is in scope for its publisher, its current recipient, or same-branch staff. */
+  private async assertRowInScope(
+    user: JwtUser | undefined,
+    row: { emp_id_fk: number | null; publisher: number | null; current_to_user_id: number | null },
+  ) {
+    if (!user || isSystemAdmin(user)) return;
+    if (row.publisher === user.sub || row.current_to_user_id === user.sub) return;
+    await this.assertEmployeeInScope(user, row.emp_id_fk);
+  }
+
+  private async findInScope(id: number, user?: JwtUser) {
+    const row = await this.prisma.hr_all_ozonat_orders.findUnique({ where: { id } });
+    if (!row || row.cancel === "yes") throw new NotFoundException("طلب الإذن غير موجود");
+    await this.assertRowInScope(user, row);
+    return row;
+  }
 
   /** Parse a HH:mm / h:i A time string into minutes-since-midnight (mirrors strtotime/60). */
   private timeToMinutes(raw: string): number {
@@ -84,6 +134,15 @@ export class PermissionsService {
     if (typeof actor === "object" && q.mode !== "wared") {
       const own = await ownOnlyEmployeeIds(this.prisma, this.engine, actor, "leaves.permissions");
       if (own) and.push({ emp_id_fk: { in: own } });
+    }
+
+    // The unfiltered board (no personal tab) defaults a web user to their branch scope.
+    const personal =
+      q.mode === "wared" ||
+      (userId != null && (q.mode === "sader" || q.mode === "accept" || q.mode === "reject"));
+    if (!personal && typeof actor === "object") {
+      const empIds = await this.scopedEmployeeIds(actor);
+      if (empIds) and.push({ emp_id_fk: { in: empIds } });
     }
 
     // legacy tabs (get_datatables_ozonat)
@@ -163,8 +222,8 @@ export class PermissionsService {
       canAction:
         userId != null &&
         r.current_to_user_id === userId &&
-        r.actions_sends !== "close_talab" &&
-        NEXT_STAGE_BY_CURRENT[r.actions_sends ?? ""] != null,
+        pendingStage(r) != null,
+      pendingStage: pendingStage(r) ?? undefined,
       canModify: r.suspend === SuspendStatus.INCOMING && r.cancel !== "yes",
     }));
 
@@ -172,7 +231,8 @@ export class PermissionsService {
   }
 
   /** Remaining monthly minutes + permit-count for a personal permit (no3_ezn=1). */
-  async available(empId: number, eznDate: string, excludeId?: number) {
+  async available(empId: number, eznDate: string, excludeId?: number, actor?: JwtUser) {
+    if (actor) await this.assertEmployeeInScope(actor, empId);
     const { month, year } = this.monthYearOf(eznDate);
     const agg = await this.prisma.hr_all_ozonat_orders.aggregate({
       where: {
@@ -197,9 +257,8 @@ export class PermissionsService {
   }
 
   /** Full data for the read-only details dialog. */
-  async details(id: number) {
-    const row = await this.prisma.hr_all_ozonat_orders.findUnique({ where: { id } });
-    if (!row || row.cancel === "yes") throw new NotFoundException("طلب الإذن غير موجود");
+  async details(id: number, actor?: JwtUser) {
+    const row = await this.findInScope(id, actor);
     return {
       id: row.id,
       eznRkm: row.ezn_rkm,
@@ -221,7 +280,8 @@ export class PermissionsService {
   }
 
   /** Update an unreviewed request while preserving its employee and workflow owner. */
-  async update(id: number, body: UpdatePermissionDto) {
+  async update(id: number, body: UpdatePermissionDto, actor?: JwtUser) {
+    if (actor) await this.findInScope(id, actor);
     const row = await this.prisma.hr_all_ozonat_orders.findUnique({ where: { id } });
     const employeeId = row?.emp_id_fk;
     this.assertEditable(row, "تعديل");
@@ -261,7 +321,8 @@ export class PermissionsService {
   }
 
   /** Preserve the workflow audit trail while removing a pending request from the list. */
-  async remove(id: number) {
+  async remove(id: number, actor?: JwtUser) {
+    if (actor) await this.findInScope(id, actor);
     const row = await this.prisma.hr_all_ozonat_orders.findUnique({ where: { id } });
     this.assertEditable(row, "حذف");
     await this.prisma.hr_all_ozonat_orders.update({
@@ -295,7 +356,10 @@ export class PermissionsService {
     body: CreatePermissionDto,
     currentUserId?: number,
     currentUserName?: string,
+    actor?: JwtUser,
   ) {
+    // Filing for someone else from the web: that employee must be inside the caller's branch scope.
+    if (body.empId && actor) await this.assertEmployeeInScope(actor, body.empId);
     const emp = await this.resolveEmployee(body.empId, currentUserId);
     if (!emp) throw new NotFoundException("الموظف غير موجود");
     const empId = emp.id;
@@ -340,17 +404,11 @@ export class PermissionsService {
           select: { id: true, emp_code: true, employee: true },
         })
       : null;
-    let managerUser =
-      managerEmp != null
-        ? await this.prisma.users.findFirst({
-            where: { emp_code: managerEmp.id, approved: 1 },
-          })
-        : null;
-    if (!managerUser && managerEmp?.emp_code != null) {
-      managerUser = await this.prisma.users.findFirst({
-        where: { emp_code: managerEmp.emp_code, approved: 1 },
-      });
-    }
+    // Chain: direct manager → HR → department manager. Never routed to the requester.
+    const requester = await requesterUserIds(this.prisma, emp, currentUserId ?? null);
+    const route = await routeNext(this.prisma, null, emp, requester);
+    const firstStage = route.final ? null : route;
+    const skippedFlags = Object.fromEntries(route.skipped.map((stage) => [stage, "yes"]));
     const empUser = await this.prisma.users.findFirst({
       where: { OR: [{ emp_code: emp.id }, { emp_code: emp.emp_code ?? -1 }] },
     });
@@ -397,69 +455,70 @@ export class PermissionsService {
         current_from_user_name: emp.employee,
         current_from_emp_id: empId,
         current_from_user_id: empUser?.user_id ?? null,
-        current_to_user_name: managerEmp?.employee ?? null,
-        current_to_emp_id: managerEmp?.id ?? null,
-        current_to_user_id: managerUser?.user_id ?? null,
+        current_to_user_name: firstStage?.recipient?.name ?? null,
+        current_to_emp_id: firstStage?.recipient?.empId ?? null,
+        current_to_user_id: firstStage?.recipient?.userId ?? null,
         send_to_direct_manager: "yes",
         actions_sends: "send_to_direct_manager",
+        ...skippedFlags,
       },
     });
 
+    for (const stage of route.skipped) {
+      await this.insertHistory({
+        eznRkm,
+        eznId: row.id,
+        fromUserId: currentUserId,
+        fromUserName: currentUserName,
+        msg: `تخطي ${STAGE_LABEL_AR[stage]} (لا يوجد مستلم غير مقدم الطلب)`,
+        reason: `skip_${stage}`,
+        suspend: "0",
+        processCode: PROCESS_CODE.ACCEPT,
+      });
+    }
     await this.insertHistory({
       eznRkm,
       eznId: row.id,
       fromUserId: currentUserId,
       fromUserName: currentUserName,
-      toUserId: managerUser?.user_id,
-      toUserName: managerEmp?.employee ?? undefined,
-      msg: "تحويل للمدير المباشر",
+      toUserId: firstStage?.recipient?.userId,
+      toUserName: firstStage?.recipient?.name ?? undefined,
+      msg: `تحويل إلى ${STAGE_LABEL_AR[firstStage?.stage ?? "approve_hr"]}`,
       reason: "send_to_direct_manager",
       suspend: "0",
       processCode: PROCESS_CODE.ACCEPT,
     });
-    await insertLegacyNotification(
-      this.prisma,
-      row.id,
-      102,
-      currentUserId,
-      managerUser?.user_id,
-    );
+    await this.notify(row.id, 102, currentUserId, firstStage?.recipient?.userId, {
+      title: "لديك طلب إذن جديد",
+      body: `${emp.employee ?? ""} — ${body.eznDate} ${body.fromHour}–${body.toHour}`,
+    });
 
     return { id: row.id, eznRkm, minutes };
   }
 
   /**
-   * Multi-stage approval action by a `wared` recipient (faithful process_ta7welat_procedures).
-   * The stage acted on is derived from the order's current `actions_sends`.
+   * One decision on the pending step (direct manager → HR → department manager).
+   * Only the routed recipient, or HR / an admin (override, recorded in the history), may act.
+   * Final approval = suspend 4 + close_talab 'yes' (FINAL_APPROVAL_SUSPEND).
    */
   async action(
     id: number,
     body: ActionPermissionDto,
     userId?: number,
     userName?: string,
+    actor?: JwtUser,
   ) {
     const row = await this.prisma.hr_all_ozonat_orders.findUnique({
       where: { id },
     });
-    if (!row) throw new NotFoundException("طلب الإذن غير موجود");
-
-    // only the addressed recipient may act
-    if (
-      row.current_to_user_id != null &&
-      userId != null &&
-      row.current_to_user_id !== userId
-    ) {
-      throw new BadRequestException("هذا الطلب غير محول إليك");
-    }
+    if (!row || row.cancel === "yes") throw new NotFoundException("طلب الإذن غير موجود");
 
     const workflowState = row.actions_sends ?? "";
     // Demo/legacy rows use start/progress and never entered the current approval chain.
-    // They are intentionally not converted or actioned by the modern mobile endpoint.
     if (workflowState === "start" || workflowState === "progress") {
       throw new BadRequestException("هذا الإذن ليس ضمن مسار الاعتماد الجديد");
     }
-
-    const stage = NEXT_STAGE_BY_CURRENT[workflowState];
+    const stage = pendingStage(row);
     if (!stage)
       throw new BadRequestException("لا يوجد إجراء متاح على هذا الطلب");
 
@@ -469,30 +528,61 @@ export class PermissionsService {
           select: EMPLOYEE_WORKFLOW_SELECT,
         })
       : null;
+    const requester = await requesterUserIds(this.prisma, emp, row.publisher);
+    if (row.emp_user_id) requester.add(row.emp_user_id);
+    const auth = await authorizeApprover(
+      this.prisma,
+      { userId: userId ?? actor?.sub, isSuperAdmin: actor?.is_super_admin === true },
+      row,
+      requester,
+      (uid) => this.hasHrApproveGrant(uid),
+    );
 
     const reason = body.reason ?? null;
     let toUserId: number | null;
     let toUserName: string | null = null;
+    let toEmpId: number | null = null;
     let suspend: number;
     let stageFlag: "yes" | "no";
     let processCode: number;
+    let final = false;
+    let nextStage: ChainStageKey | null = null;
+    let skipped: ChainStageKey[] = [];
+    const autoApproved: ChainStageKey[] = [];
+    const data: Record<string, unknown> = {};
 
     if (body.action === "accept") {
       stageFlag = "yes";
-      suspend = ACCEPT_SUSPEND[stage];
-      if (stage === "approve_moder_3am") {
-        // final: route back to publisher
+      const done = {
+        approve_direct_manager: row.approve_direct_manager,
+        approve_hr: row.approve_hr,
+        approve_moder_edara: row.approve_moder_edara,
+      } as Record<ChainStageKey, string | null>;
+      let route = await routeNext(this.prisma, stage, emp, requester, done);
+      skipped = [...route.skipped];
+      // The next step belongs to the person deciding now (e.g. the direct manager is also the
+      // HR officer): their decision covers it, no second click.
+      const actingId = userId ?? actor?.sub;
+      while (!route.final && route.recipient?.userId != null && route.recipient.userId === actingId) {
+        autoApproved.push(route.stage);
+        data[route.stage] = "yes";
+        data[STAGE_DATE_COLUMN[route.stage]] = todayIso();
+        done[route.stage] = "yes";
+        route = await routeNext(this.prisma, route.stage, emp, requester, done);
+        skipped.push(...route.skipped);
+      }
+      for (const s of skipped) data[s] = "yes";
+      if (route.final) {
+        final = true;
+        suspend = FINAL_APPROVAL_SUSPEND;
         toUserId = row.publisher ?? null;
         processCode = PROCESS_CODE.ACCEPT_LATER;
       } else {
-        const mosama = nextRecipientMosama(stage, {
-          empType: emp?.emp_type ?? null,
-          edaraId: emp?.edara_id ?? null,
-        });
-        const recipient =
-          mosama != null ? await this.resolveByMosama(mosama) : null;
-        toUserId = recipient?.userId ?? row.publisher ?? null;
-        toUserName = recipient?.name ?? null;
+        suspend = INTERMEDIATE_APPROVAL_SUSPEND;
+        nextStage = route.stage;
+        toUserId = route.recipient?.userId ?? null;
+        toUserName = route.recipient?.name ?? null;
+        toEmpId = route.recipient?.empId ?? null;
         processCode =
           stage === "approve_direct_manager"
             ? PROCESS_CODE.ACCEPT
@@ -500,7 +590,7 @@ export class PermissionsService {
       }
     } else {
       stageFlag = "no";
-      suspend = REJECT_SUSPEND[stage];
+      suspend = SuspendStatus.REJECTED;
       toUserId = row.publisher ?? null;
       processCode =
         stage === "approve_direct_manager"
@@ -508,35 +598,38 @@ export class PermissionsService {
           : PROCESS_CODE.REJECT_LATER;
     }
 
-    const toUser = toUserId
-      ? await this.prisma.users.findUnique({ where: { user_id: toUserId } })
-      : null;
-    if (!toUserName && toUser?.emp_code != null) {
-      const recEmp = await this.prisma.employees.findFirst({
-        where: { emp_code: toUser.emp_code },
-        select: { employee: true },
-      });
-      toUserName = recEmp?.employee ?? null;
+    if (!toUserName && toUserId) {
+      const toUser = await this.prisma.users.findUnique({ where: { user_id: toUserId } });
+      if (toUser?.emp_code != null) {
+        const recEmp = await this.prisma.employees.findFirst({
+          where: { OR: [{ id: toUser.emp_code }, { emp_code: toUser.emp_code }] },
+          select: { employee: true },
+        });
+        toUserName = recEmp?.employee ?? null;
+      }
+      toUserName ??= toUser?.name ?? null;
     }
 
-    const data: Prisma.hr_all_ozonat_ordersUpdateInput = {
+    Object.assign(data, {
       [stage]: stageFlag,
       suspend,
       actions_sends: stage,
-      reason_action: reason,
-      [STAGE_DATE_FIELD[stage]]: todayIso(),
+      reason_action: reason?.slice(0, 50) ?? null,
+      [STAGE_DATE_COLUMN[stage]]: todayIso(),
       current_from_user_id: userId ?? null,
       current_from_user_name: userName ?? null,
       current_to_user_id: toUserId,
       current_to_user_name: toUserName,
-    } as Prisma.hr_all_ozonat_ordersUpdateInput;
+      current_to_emp_id: toEmpId,
+    });
+    if (final) data.close_talab = "yes";
 
-    if (stage === "approve_moder_3am" && body.action === "accept") {
-      (data as Record<string, unknown>).close_talab = "yes";
-    }
+    await this.prisma.hr_all_ozonat_orders.update({
+      where: { id },
+      data: data as Prisma.hr_all_ozonat_ordersUpdateInput,
+    });
 
-    await this.prisma.hr_all_ozonat_orders.update({ where: { id }, data });
-
+    const decision = body.action === "accept" ? "اعتماد" : "رفض";
     await this.insertHistory({
       eznRkm: row.ezn_rkm,
       eznId: id,
@@ -544,13 +637,38 @@ export class PermissionsService {
       fromUserName: userName,
       toUserId: toUserId ?? undefined,
       toUserName: toUserName ?? undefined,
-      msg: body.action === "accept" ? "اعتماد" : "رفض",
+      msg: auth.override
+        ? `${decision} — تجاوز من ${auth.role === "hr" ? "الموارد البشرية" : "مدير النظام"} بدلًا من ${STAGE_LABEL_AR[stage]}`
+        : decision,
       reason: stage,
       suspend: String(suspend),
       processCode,
     });
-
-    if (stage === "approve_moder_3am" && body.action === "accept") {
+    for (const s of autoApproved) {
+      await this.insertHistory({
+        eznRkm: row.ezn_rkm,
+        eznId: id,
+        fromUserId: userId,
+        fromUserName: userName,
+        msg: `اعتماد ${STAGE_LABEL_AR[s]} (نفس المعتمد)`,
+        reason: s,
+        suspend: String(suspend),
+        processCode,
+      });
+    }
+    for (const s of skipped) {
+      await this.insertHistory({
+        eznRkm: row.ezn_rkm,
+        eznId: id,
+        fromUserId: userId,
+        fromUserName: userName,
+        msg: `تخطي ${STAGE_LABEL_AR[s]} (لا يوجد مستلم غير مقدم الطلب)`,
+        reason: `skip_${s}`,
+        suspend: String(suspend),
+        processCode,
+      });
+    }
+    if (final) {
       await this.insertHistory({
         eznRkm: row.ezn_rkm,
         eznId: id,
@@ -565,62 +683,62 @@ export class PermissionsService {
       });
     }
 
-    const notificationCode =
-      stage === "approve_direct_manager"
-        ? 115
-        : stage === "approve_moder_edara"
-          ? 116
-          : stage === "approve_hr"
-            ? 117
-            : body.action === "accept"
-              ? 119
-              : 120;
-    await insertLegacyNotification(
-      this.prisma,
-      id,
-      notificationCode,
-      userId,
-      toUserId,
-    );
-    if (
-      row.publisher != null &&
-      row.publisher !== toUserId &&
-      row.publisher !== userId
-    ) {
-      await insertLegacyNotification(
-        this.prisma,
-        id,
-        notificationCode,
-        userId,
-        row.publisher,
-      );
+    const when = `${row.ezn_date_ar ?? row.date_ar ?? ""} ${row.from_hour ?? ""}–${row.to_hour ?? ""}`;
+    if (body.action === "accept" && !final) {
+      await this.notify(id, nextStage === "approve_hr" ? 116 : 115, userId, toUserId, {
+        title: "لديك طلب إذن بانتظار اعتمادك",
+        body: `${row.emp_name ?? ""} — ${when}`,
+      });
+      if (row.publisher != null && row.publisher !== toUserId && row.publisher !== userId) {
+        await insertLegacyNotification(this.prisma, id, nextStage === "approve_hr" ? 116 : 115, userId, row.publisher);
+      }
+    } else {
+      await this.notify(id, body.action === "accept" ? 119 : 120, userId, row.publisher, {
+        title: body.action === "accept" ? "تم اعتماد طلب الإذن" : "تم رفض طلب الإذن",
+        body: body.action === "accept" ? when : reason ?? when,
+      });
     }
 
-    return { id, stage, suspend, status: suspendToListStatus(suspend) };
+    return { id, stage, suspend, status: suspendToListStatus(suspend), final, nextStage, override: auth.override };
   }
 
-  /** Legacy get_emps_by_mosama: resolve the active recipient by job-title code. */
-  private async resolveByMosama(
+  /** HR authority through RBAC (the HR job-title role holds hr:approve). */
+  private async hasHrApproveGrant(userId: number): Promise<boolean> {
+    if (!this.engine) return false;
+    try {
+      return await this.engine.can(userId, "hr", "approve");
+    } catch {
+      return false;
+    }
+  }
+
+  /** In-app notification row (legacy codes) + best-effort push. */
+  private async notify(
+    targetId: number,
     code: number,
-  ): Promise<{ userId: number; name: string | null } | null> {
-    const setting = await this.prisma.hr_egraat_emp_setting.findFirst({
-      where: { job_title_code_fk: code, person_suspend: 1 },
-    });
-    if (!setting?.person_id) return null;
-    const user = await this.prisma.users.findFirst({
-      where: { emp_code: setting.person_id, role_id_fk: 3 },
-    });
-    if (!user) return null;
-    return { userId: user.user_id, name: setting.person_name ?? null };
+    fromUser: number | null | undefined,
+    toUser: number | null | undefined,
+    push: { title: string; body: string },
+  ) {
+    await insertLegacyNotification(this.prisma, targetId, code, fromUser, toUser);
+    if (toUser && toUser !== fromUser && this.push) {
+      try {
+        await this.push.pushToUsers([toUser], push.title, push.body);
+      } catch {
+        // best-effort
+      }
+    }
   }
 
   /** Kept for backward-compatible single-step approve route (delegates to chain action). */
-  async approve(id: number, userId?: number, userName?: string) {
-    return this.action(id, { action: "accept" }, userId, userName);
+  async approve(id: number, userId?: number, userName?: string, actor?: JwtUser) {
+    if (actor) await this.findInScope(id, actor);
+    return this.action(id, { action: "accept" }, userId, userName, actor);
   }
 
-  async reject(id: number, userId?: number, userName?: string) {
-    return this.action(id, { action: "reject" }, userId, userName);
+  async reject(id: number, userId?: number, userName?: string, actor?: JwtUser, reason?: string) {
+    if (actor) await this.findInScope(id, actor);
+    return this.action(id, { action: "reject", reason }, userId, userName, actor);
   }
 
   /** Resolve both legacy linkage conventions: users.emp_code may hold employees.id or employees.emp_code. */

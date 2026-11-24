@@ -447,6 +447,7 @@ export class LegacyMobileController {
         },
         user.sub,
         user.name ?? undefined,
+        user,
       ),
     );
   }
@@ -481,6 +482,7 @@ export class LegacyMobileController {
         },
         user.sub,
         user.name ?? undefined,
+        user,
       ),
     );
   }

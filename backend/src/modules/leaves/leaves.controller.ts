@@ -18,6 +18,7 @@ import { JwtUser } from '../../common/types/jwt-user';
 import { LeavesService } from './leaves.service';
 import { CreateLeaveDto } from './dto/create-leave.dto';
 import { ListLeavesDto } from './dto/list-leaves.dto';
+import { ApproveLeaveDto } from './dto/action-leave.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('leaves')
@@ -31,6 +32,7 @@ export class LeavesController {
   }
 
   @Post('types')
+  @RequiresPermission('leaves.types:create', 'leaves:configure')
   createType(
     @Body()
     body: {
@@ -48,6 +50,7 @@ export class LeavesController {
   }
 
   @Patch('types/:id')
+  @RequiresPermission('leaves.types:update', 'leaves:configure')
   updateType(
     @Param('id', ParseIntPipe) id: number,
     @Body()
@@ -66,6 +69,7 @@ export class LeavesController {
   }
 
   @Delete('types/:id')
+  @RequiresPermission('leaves.types:delete', 'leaves:configure')
   removeType(@Param('id', ParseIntPipe) id: number) {
     return this.leaves.removeType(id);
   }
@@ -116,14 +120,29 @@ export class LeavesController {
 
   @Post(':id/approve')
   @RequiresPermission('leaves.list:approve')
-  approve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    return this.leaves.approve(id, user.sub, user.name ?? undefined, user);
+  approve(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
+    @Body() body?: ApproveLeaveDto,
+  ) {
+    // Optional startDate/endDate = partial approval inside the requested range.
+    return this.leaves.approve(id, user.sub, user.name ?? undefined, user, body ?? undefined);
   }
 
   @Post(':id/reject')
   @RequiresPermission('leaves.list:reject')
-  reject(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    return this.leaves.reject(id, user.sub, user.name ?? undefined, user);
+  reject(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
+    @Body() body?: ApproveLeaveDto,
+  ) {
+    return this.leaves.reject(id, user.sub, user.name ?? undefined, user, body?.reason);
+  }
+
+  /** Original requested range when the leave was partially approved (null otherwise). */
+  @Get(':id/requested-range')
+  requestedRange(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.leaves.requestedRange(id, user);
   }
 
   @Post(':id/cancel')

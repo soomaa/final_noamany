@@ -1,6 +1,6 @@
 import { JwtUser } from '../types/jwt-user';
 import { assertManagerMayModify, clampManagerDays, managerKind, managerPeriodBounds, managerSection } from './manager-scope.util';
-import { branchManagerCells, defaultPermissionCellsForJobTitle, isBranchManagerSheetTitle } from '../../modules/rbac/job-title-defaults';
+import { branchManagerCells, branchManagerHrCells, defaultPermissionCellsForJobTitle, isBranchManagerSheetTitle } from '../../modules/rbac/job-title-defaults';
 
 const user = (job_title: string, extra: Partial<JwtUser> = {}): JwtUser => ({
   sub: 9, level: 2, emp_code: 9, branch: 3, branch_name: null, man_women_type: 3, name: null, image: null,
@@ -45,11 +45,17 @@ describe('manager scope (client sheet, 22 Nov)', () => {
     expect(() => assertManagerMayModify(user('محاسب'))).not.toThrow();
   });
 
-  it('job titles get the sheet as starter permissions, view/print/export only (viewPhone = seeing full customer numbers, still read-only)', () => {
+  it('job titles get the sheet as starter permissions: read-only reports plus the 24 Nov HR approvals, never delete', () => {
     expect(isBranchManagerSheetTitle('مديرة فرع')).toBe(true);
     expect(isBranchManagerSheetTitle('مشرف إدارة حريمي')).toBe(true);
     expect(isBranchManagerSheetTitle('مدير عام')).toBe(false);
     expect(defaultPermissionCellsForJobTitle('مدير فرع')).toEqual(branchManagerCells());
-    expect(branchManagerCells().every((c) => ['view', 'print', 'export', 'viewPhone'].includes(c.actionKey))).toBe(true);
+    const hrResources = new Set(branchManagerHrCells().map((c) => c.resourceKey));
+    expect(
+      branchManagerCells()
+        .filter((c) => !hrResources.has(c.resourceKey))
+        .every((c) => ['view', 'print', 'export', 'viewPhone'].includes(c.actionKey)),
+    ).toBe(true);
+    expect(branchManagerCells().some((c) => c.actionKey === 'delete')).toBe(false);
   });
 });

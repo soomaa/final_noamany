@@ -35,30 +35,35 @@ export class PermissionsController {
   available(
     @Query('empId', ParseIntPipe) empId: number,
     @Query('eznDate') eznDate: string,
+    @CurrentUser() user: JwtUser,
   ) {
-    return this.permissions.available(empId, eznDate);
+    return this.permissions.available(empId, eznDate, undefined, user);
   }
 
   @Get(':id')
-  details(@Param('id', ParseIntPipe) id: number) {
-    return this.permissions.details(id);
+  details(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.permissions.details(id, user);
   }
 
   @Post()
   create(@Body() body: CreatePermissionDto, @CurrentUser() user: JwtUser) {
-    return this.permissions.create(body, user.sub, user.name ?? undefined);
+    return this.permissions.create(body, user.sub, user.name ?? undefined, user);
   }
 
   @Put(':id')
   @RequiresPermission('leaves.permissions:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: UpdatePermissionDto) {
-    return this.permissions.update(id, body);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: UpdatePermissionDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.permissions.update(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('leaves.permissions:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.permissions.remove(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.permissions.remove(id, user);
   }
 
   @Post(':id/action')
@@ -67,18 +72,22 @@ export class PermissionsController {
     @Body() body: ActionPermissionDto,
     @CurrentUser() user: JwtUser,
   ) {
-    return this.permissions.action(id, body, user.sub, user.name ?? undefined);
+    return this.permissions.action(id, body, user.sub, user.name ?? undefined, user);
   }
 
   @Post(':id/approve')
   @RequiresPermission('leaves.permissions:approve')
   approve(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    return this.permissions.approve(id, user.sub, user.name ?? undefined);
+    return this.permissions.approve(id, user.sub, user.name ?? undefined, user);
   }
 
   @Post(':id/reject')
   @RequiresPermission('leaves.permissions:reject')
-  reject(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
-    return this.permissions.reject(id, user.sub, user.name ?? undefined);
+  reject(
+    @Param('id', ParseIntPipe) id: number,
+    @CurrentUser() user: JwtUser,
+    @Body() body?: { reason?: string },
+  ) {
+    return this.permissions.reject(id, user.sub, user.name ?? undefined, user, body?.reason);
   }
 }

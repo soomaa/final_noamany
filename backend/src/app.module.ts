@@ -33,6 +33,7 @@ import { MissionsModule } from './modules/missions/missions.module';
 import { PenaltiesModule } from './modules/penalties/penalties.module';
 import { RewardsModule } from './modules/rewards/rewards.module';
 import { RequestsModule } from './modules/requests/requests.module';
+import { OvertimeRequestsModule } from './modules/overtime-requests/overtime-requests.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { LeavesModule } from './modules/leaves/leaves.module';
@@ -137,6 +138,7 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     PenaltiesModule,
     RewardsModule,
     RequestsModule,
+    OvertimeRequestsModule,
     // --- Wave 2 ---
     DocumentsModule,
     ReportsModule,

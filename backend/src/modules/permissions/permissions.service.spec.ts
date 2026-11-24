@@ -147,15 +147,23 @@ describe("PermissionsService action", () => {
         findUnique: jest.fn().mockResolvedValue({
           id: 18,
           current_to_user_id: 1,
-          actions_sends: "approve_hr",
-          publisher: 1,
+          actions_sends: "approve_direct_manager",
+          approve_direct_manager: "yes",
+          publisher: 2,
           emp_id_fk: 25,
           ezn_rkm: 18,
         }),
         update: jest.fn().mockResolvedValue({}),
       },
-      employees: { findUnique: employeeFindUnique },
-      users: { findUnique: jest.fn().mockResolvedValue(null) },
+      employees: { findUnique: employeeFindUnique, findFirst: jest.fn().mockResolvedValue(null) },
+      users: {
+        findUnique: jest.fn().mockResolvedValue(null),
+        findFirst: jest.fn().mockResolvedValue(null),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      hr_egraat_emp_setting: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+      tbl_sys_notifications_settings: { findFirst: jest.fn().mockResolvedValue(null) },
+      tbl_notifications: { create: jest.fn().mockResolvedValue({}) },
       hr_all_ozonat_history: {
         aggregate: jest.fn().mockResolvedValue({ _max: { id: 10 } }),
         create: jest.fn().mockResolvedValue({}),
@@ -197,7 +205,8 @@ describe("PermissionsService action", () => {
   });
 
   it.each([
-    ["accept", "approve_hr", "approve_moder_3am", 4, "approved"],
+    // HR (the routed recipient) accepts; no department manager is configured → final approval.
+    ["accept", "approve_direct_manager", "approve_hr", 4, "approved"],
     [
       "reject",
       "send_to_direct_manager",
@@ -220,13 +229,22 @@ describe("PermissionsService action", () => {
             id: 16,
             current_to_user_id: 1,
             actions_sends: currentState,
-            publisher: 1,
+            approve_direct_manager: currentState === "approve_direct_manager" ? "yes" : "wait",
+            publisher: 2,
             emp_id_fk: null,
             ezn_rkm: 16,
           }),
           update: jest.fn().mockResolvedValue({}),
         },
-        users: { findUnique: jest.fn().mockResolvedValue(null) },
+        employees: { findFirst: jest.fn().mockResolvedValue(null) },
+        users: {
+          findUnique: jest.fn().mockResolvedValue(null),
+          findFirst: jest.fn().mockResolvedValue(null),
+          findMany: jest.fn().mockResolvedValue([]),
+        },
+        hr_egraat_emp_setting: { findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
+        tbl_sys_notifications_settings: { findFirst: jest.fn().mockResolvedValue(null) },
+        tbl_notifications: { create: jest.fn().mockResolvedValue({}) },
         hr_all_ozonat_history: {
           aggregate: jest.fn().mockResolvedValue({ _max: { id: 10 } }),
           create: jest.fn().mockResolvedValue({}),
@@ -234,7 +252,7 @@ describe("PermissionsService action", () => {
       };
       const service = new PermissionsService(prisma as never);
 
-      await expect(service.action(16, { action }, 1, "مدير")).resolves.toEqual({
+      await expect(service.action(16, { action }, 1, "مدير")).resolves.toMatchObject({
         id: 16,
         stage: expectedStage,
         suspend: expectedSuspend,

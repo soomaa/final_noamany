@@ -28,17 +28,28 @@ import { CreateLeaveDto } from "./dto/create-leave.dto";
 import { ActionLeaveDto } from "./dto/action-leave.dto";
 import { ListLeavesDto } from "./dto/list-leaves.dto";
 import { JwtUser } from "../../common/types/jwt-user";
+import { PROCESS_CODE } from "./approval-chain.util";
 import {
-  ACCEPT_SUSPEND,
-  LeaveStage,
-  NEXT_STAGE_BY_CURRENT,
-  PROCESS_CODE,
-  REJECT_SUSPEND,
-  STAGE_DATE_FIELD,
-  nextRecipientMosama,
-} from "./approval-chain.util";
+  ChainStageKey,
+  FINAL_APPROVAL_SUSPEND,
+  INTERMEDIATE_APPROVAL_SUSPEND,
+  STAGE_DATE_COLUMN,
+  STAGE_LABEL_AR,
+  authorizeApprover,
+  pendingStage,
+  requesterUserIds,
+  routeNext,
+} from "../../common/hr-approval/approval-chain";
+import { PushService } from "../push/push.service";
 import { ownOnlyEmployeeIds } from "../../common/hr-scope/own-hr-records";
 import { PermissionEngineService } from "../rbac/engine/permission-engine.service";
+
+/** Requested range kept when an approver narrows a leave (partial approval). */
+export interface OriginalRange {
+  from: string;
+  to: string;
+  days: number;
+}
 
 /** legacy day-name array indexed by PHP date('N') (1=Mon .. 7=Sun). */
 const AR_DAYS = [
@@ -60,6 +71,7 @@ export class LeavesService {
     private readonly scope: BranchScopeService = new BranchScopeService(),
     // Optional so the unit specs can still construct the service without the RBAC engine.
     @Optional() private readonly engine?: PermissionEngineService,
+    @Optional() private readonly push?: PushService,
   ) {}
 
   // ---- branch scope ---------------------------------------------------------------------
@@ -210,8 +222,8 @@ export class LeavesService {
       canAction:
         userId != null &&
         r.current_to_user_id === userId &&
-        r.actions_sends !== "close_talab" &&
-        NEXT_STAGE_BY_CURRENT[r.actions_sends ?? ""] != null,
+        pendingStage(r) != null,
+      pendingStage: pendingStage(r) ?? undefined,
       canManage:
         r.suspend === SuspendStatus.INCOMING &&
         (isAdmin || (userId != null && r.publisher === userId)),
@@ -355,17 +367,6 @@ export class LeavesService {
           select: { id: true, emp_code: true, employee: true },
         })
       : null;
-    let managerUser =
-      managerEmp != null
-        ? await this.prisma.users.findFirst({
-            where: { emp_code: managerEmp.id, approved: 1 },
-          })
-        : null;
-    if (!managerUser && managerEmp?.emp_code != null) {
-      managerUser = await this.prisma.users.findFirst({
-        where: { emp_code: managerEmp.emp_code, approved: 1 },
-      });
-    }
     const empUser =
       emp != null
         ? await this.prisma.users.findFirst({
@@ -383,6 +384,12 @@ export class LeavesService {
     }
     // legacy: level=1 when a substitute is set (route to substitute first), else level=2
     const level = body.substituteEmpId ? 1 : 2;
+
+    // Chain: direct manager → HR → department manager. Never routed to the requester.
+    const requester = await requesterUserIds(this.prisma, emp, currentUserId ?? null);
+    const route = await routeNext(this.prisma, null, emp, requester);
+    const firstStage = route.final ? null : route;
+    const skippedFlags = Object.fromEntries(route.skipped.map((stage) => [stage, "yes"]));
 
     const row = await this.prisma.hr_all_agzat_orders.create({
       data: {
@@ -441,58 +448,65 @@ export class LeavesService {
         current_from_user_name: emp?.employee ?? null,
         current_from_user_id: empUser?.user_id ?? null,
         current_from_emp_id: empId != null ? String(empId) : null,
-        current_to_user_name: managerEmp?.employee ?? null,
-        current_to_user_id: managerUser?.user_id ?? null,
+        current_to_user_name: firstStage?.recipient?.name ?? null,
+        current_to_user_id: firstStage?.recipient?.userId ?? null,
         current_to_emp_id:
-          managerEmp?.id != null ? String(managerEmp.id) : null,
+          firstStage?.recipient?.empId != null ? String(firstStage.recipient.empId) : null,
         send_to_direct_manager: "yes",
         actions_sends: "send_to_direct_manager",
+        ...skippedFlags,
       },
     });
 
+    for (const stage of route.skipped) {
+      await this.insertHistory({
+        agazaRkm,
+        agazaId: row.id,
+        fromUser: currentUserId,
+        fromUserName: currentUserName,
+        msg: `تخطي ${STAGE_LABEL_AR[stage]}`.slice(0, 30),
+        reason: `skip_${stage}`.slice(0, 30),
+        processCode: PROCESS_CODE.ACCEPT,
+      });
+    }
     await this.insertHistory({
       agazaRkm,
       agazaId: row.id,
       fromUser: currentUserId,
       fromUserName: currentUserName,
-      toUser: managerUser?.user_id,
-      toUserName: managerEmp?.employee ?? undefined,
-      msg: "تحويل للمدير المباشر",
+      toUser: firstStage?.recipient?.userId,
+      toUserName: firstStage?.recipient?.name ?? undefined,
+      msg: `تحويل إلى ${STAGE_LABEL_AR[firstStage?.stage ?? "approve_hr"]}`.slice(0, 30),
       reason: "send_to_direct_manager",
       processCode: PROCESS_CODE.ACCEPT,
     });
-    await insertLegacyNotification(
-      this.prisma,
-      row.id,
-      101,
-      currentUserId,
-      managerUser?.user_id,
-    );
+    await this.notify(row.id, 101, currentUserId, firstStage?.recipient?.userId, {
+      title: "لديك طلب إجازة جديد",
+      body: `${emp?.employee ?? currentUserName ?? ""} — من ${body.startDate} إلى ${body.endDate}`,
+    });
 
     return { id: row.id, agaza_rkm: row.agaza_rkm };
   }
 
-  /** Multi-stage chain action (faithful process_ta7welat_procedures for agazat). */
+  /**
+   * One decision on the pending step (direct manager → HR → department manager).
+   * Only the routed recipient, or HR / an admin (override, recorded in the history), may act.
+   * On accept the approver may narrow the dates (partial approval) inside the requested range.
+   * Final approval = suspend 4 + close_talab 'yes' (see FINAL_APPROVAL_SUSPEND).
+   */
   async action(
     id: number,
     body: ActionLeaveDto,
     userId?: number,
     userName?: string,
+    actor?: JwtUser,
   ) {
     const row = await this.prisma.hr_all_agzat_orders.findUnique({
       where: { id },
     });
     if (!row) throw new NotFoundException("طلب الإجازة غير موجود");
 
-    if (
-      row.current_to_user_id != null &&
-      userId != null &&
-      row.current_to_user_id !== userId
-    ) {
-      throw new BadRequestException("هذا الطلب غير محول إليك");
-    }
-
-    const stage = NEXT_STAGE_BY_CURRENT[row.actions_sends ?? ""];
+    const stage = pendingStage(row);
     if (!stage)
       throw new BadRequestException("لا يوجد إجراء متاح على هذا الطلب");
 
@@ -502,29 +516,66 @@ export class LeavesService {
           select: EMPLOYEE_WORKFLOW_SELECT,
         })
       : null;
+    const requester = await requesterUserIds(this.prisma, emp, row.publisher);
+    const auth = await authorizeApprover(
+      this.prisma,
+      { userId: userId ?? actor?.sub, isSuperAdmin: actor?.is_super_admin === true },
+      row,
+      requester,
+      (uid) => this.hasHrApproveGrant(uid),
+    );
+    // Never route the next step back to the person deciding now, nor to the requester.
+    const exclude = new Set(requester);
 
     const reason = body.reason ?? null;
     let toUserId: number | null;
     let toUserName: string | null = null;
+    let toEmpId: number | null = null;
     let suspend: number;
     let stageFlag: "yes" | "no";
     let processCode: number;
+    let final = false;
+    let nextStage: ChainStageKey | null = null;
+    let skipped: ChainStageKey[] = [];
+    const autoApproved: ChainStageKey[] = [];
+    let original: OriginalRange | null = null;
+    const data: Record<string, unknown> = {};
 
     if (body.action === "accept") {
       stageFlag = "yes";
-      suspend = ACCEPT_SUSPEND[stage];
-      if (stage === "approve_moder_3am") {
+      const partial = await this.partialApprovalData(row, body);
+      original = partial.original;
+      Object.assign(data, partial.data);
+      const done = {
+        approve_direct_manager: row.approve_direct_manager,
+        approve_hr: row.approve_hr,
+        approve_moder_edara: row.approve_moder_edara,
+      } as Record<ChainStageKey, string | null>;
+      let route = await routeNext(this.prisma, stage, emp, exclude, done);
+      skipped = [...route.skipped];
+      // The next step belongs to the person deciding now (e.g. the direct manager is also the
+      // HR officer): their decision covers it, no second click.
+      const actingId = userId ?? actor?.sub;
+      while (!route.final && route.recipient?.userId != null && route.recipient.userId === actingId) {
+        autoApproved.push(route.stage);
+        data[route.stage] = "yes";
+        data[STAGE_DATE_COLUMN[route.stage]] = todayIso();
+        done[route.stage] = "yes";
+        route = await routeNext(this.prisma, route.stage, emp, exclude, done);
+        skipped.push(...route.skipped);
+      }
+      for (const s of skipped) data[s] = "yes";
+      if (route.final) {
+        final = true;
+        suspend = FINAL_APPROVAL_SUSPEND;
         toUserId = row.publisher ?? null;
         processCode = PROCESS_CODE.ACCEPT_LATER;
       } else {
-        const mosama = nextRecipientMosama(stage, {
-          empType: emp?.emp_type ?? null,
-          edaraId: emp?.edara_id ?? null,
-        });
-        const recipient =
-          mosama != null ? await this.resolveByMosama(mosama) : null;
-        toUserId = recipient?.userId ?? row.publisher ?? null;
-        toUserName = recipient?.name ?? null;
+        suspend = INTERMEDIATE_APPROVAL_SUSPEND;
+        nextStage = route.stage;
+        toUserId = route.recipient?.userId ?? null;
+        toUserName = route.recipient?.name ?? null;
+        toEmpId = route.recipient?.empId ?? null;
         processCode =
           stage === "approve_direct_manager"
             ? PROCESS_CODE.ACCEPT
@@ -532,7 +583,7 @@ export class LeavesService {
       }
     } else {
       stageFlag = "no";
-      suspend = REJECT_SUSPEND[stage];
+      suspend = SuspendStatus.REJECTED;
       toUserId = row.publisher ?? null;
       processCode =
         stage === "approve_direct_manager"
@@ -540,41 +591,45 @@ export class LeavesService {
           : PROCESS_CODE.REJECT_LATER;
     }
 
-    const toUser = toUserId
-      ? await this.prisma.users.findUnique({ where: { user_id: toUserId } })
-      : null;
-    if (!toUserName && toUser?.emp_code != null) {
-      let recEmp = await this.prisma.employees.findUnique({
-        where: { id: toUser.emp_code },
-        select: { employee: true },
-      });
-      recEmp ??= await this.prisma.employees.findFirst({
-        where: { emp_code: toUser.emp_code },
-        select: { employee: true },
-      });
-      toUserName = recEmp?.employee ?? null;
+    if (!toUserName && toUserId) {
+      const toUser = await this.prisma.users.findUnique({ where: { user_id: toUserId } });
+      if (toUser?.emp_code != null) {
+        let recEmp = await this.prisma.employees.findUnique({
+          where: { id: toUser.emp_code },
+          select: { employee: true },
+        });
+        recEmp ??= await this.prisma.employees.findFirst({
+          where: { emp_code: toUser.emp_code },
+          select: { employee: true },
+        });
+        toUserName = recEmp?.employee ?? null;
+      }
+      toUserName ??= toUser?.name ?? null;
     }
 
-    const data: Record<string, unknown> = {
+    Object.assign(data, {
       [stage]: stageFlag,
       suspend,
       actions_sends: stage,
-      reason_action: reason,
-      [STAGE_DATE_FIELD[stage]]: todayIso(),
+      reason_action: reason?.slice(0, 50) ?? null,
+      [STAGE_DATE_COLUMN[stage]]: todayIso(),
       current_from_user_id: userId ?? null,
       current_from_user_name: userName ?? null,
       current_to_user_id: toUserId,
       current_to_user_name: toUserName,
-    };
-    if (stage === "approve_moder_3am" && body.action === "accept") {
-      data.close_talab = "yes";
-    }
+      current_to_emp_id: toEmpId != null ? String(toEmpId) : null,
+    });
+    if (final) data.close_talab = "yes";
 
     await this.prisma.hr_all_agzat_orders.update({
       where: { id },
       data: data as Prisma.hr_all_agzat_ordersUpdateInput,
     });
+    if (original) await this.recordOriginalRange(id, original);
 
+    const decision = body.action === "accept"
+      ? original ? "اعتماد جزئي" : "اعتماد"
+      : "رفض";
     await this.insertHistory({
       agazaRkm: row.agaza_rkm,
       agazaId: id,
@@ -582,12 +637,44 @@ export class LeavesService {
       fromUserName: userName,
       toUser: toUserId ?? undefined,
       toUserName: toUserName ?? undefined,
-      msg: body.action === "accept" ? "اعتماد" : "رفض",
+      msg: (auth.override ? `${decision} (تجاوز ${auth.role === "hr" ? "HR" : "مدير"})` : decision).slice(0, 30),
       reason: stage,
       processCode,
     });
-
-    if (stage === "approve_moder_3am" && body.action === "accept") {
+    if (original) {
+      await this.insertHistory({
+        agazaRkm: row.agaza_rkm,
+        agazaId: id,
+        fromUser: userId,
+        fromUserName: userName,
+        msg: `الأصل ${original.days} يوم→${data.num_days} يوم`.slice(0, 30),
+        reason: `${original.from}~${original.to}`.slice(0, 30),
+        processCode,
+      });
+    }
+    for (const s of autoApproved) {
+      await this.insertHistory({
+        agazaRkm: row.agaza_rkm,
+        agazaId: id,
+        fromUser: userId,
+        fromUserName: userName,
+        msg: `اعتماد ${STAGE_LABEL_AR[s]} (نفس المعتمد)`.slice(0, 30),
+        reason: s,
+        processCode,
+      });
+    }
+    for (const s of skipped) {
+      await this.insertHistory({
+        agazaRkm: row.agaza_rkm,
+        agazaId: id,
+        fromUser: userId,
+        fromUserName: userName,
+        msg: `تخطي ${STAGE_LABEL_AR[s]}`.slice(0, 30),
+        reason: `skip_${s}`.slice(0, 30),
+        processCode,
+      });
+    }
+    if (final) {
       await this.insertHistory({
         agazaRkm: row.agaza_rkm,
         agazaId: id,
@@ -601,50 +688,153 @@ export class LeavesService {
       });
     }
 
-    const notificationCode =
-      stage === "approve_direct_manager"
-        ? 105
-        : stage === "approve_moder_edara"
-          ? 106
-          : stage === "approve_hr"
-            ? 107
-            : body.action === "accept"
-              ? 110
-              : 111;
-    await insertLegacyNotification(
-      this.prisma,
-      id,
-      notificationCode,
-      userId,
-      toUserId,
-    );
-    // The next approver is notified above. Also notify the request owner about
-    // every decision, including intermediate approvals in a multi-step chain.
-    if (
-      row.publisher != null &&
-      row.publisher !== toUserId &&
-      row.publisher !== userId
-    ) {
-      await insertLegacyNotification(
-        this.prisma,
-        id,
-        notificationCode,
-        userId,
-        row.publisher,
-      );
+    const rangeText = `${(data.agaza_from_date_m as string) ?? row.agaza_from_date_m ?? ""} → ${(data.agaza_to_date_m as string) ?? row.agaza_to_date_m ?? ""}`;
+    if (body.action === "accept" && !final) {
+      // next approver
+      await this.notify(id, nextStage === "approve_hr" ? 106 : 105, userId, toUserId, {
+        title: "لديك طلب إجازة بانتظار اعتمادك",
+        body: `${emp?.employee ?? ""} — ${rangeText}`,
+      });
+      // the employee follows each intermediate step (in-app only, like before)
+      if (row.publisher != null && row.publisher !== toUserId && row.publisher !== userId) {
+        await insertLegacyNotification(this.prisma, id, nextStage === "approve_hr" ? 106 : 105, userId, row.publisher);
+      }
+    } else {
+      const code = body.action === "accept" ? 110 : 111;
+      await this.notify(id, code, userId, row.publisher, {
+        title: body.action === "accept" ? "تم اعتماد طلب الإجازة" : "تم رفض طلب الإجازة",
+        body: body.action === "accept"
+          ? `${original ? "اعتماد جزئي: " : ""}${rangeText}`
+          : reason ?? rangeText,
+      });
     }
 
-    // `status` describes the action just completed by the current approver.
-    // The request can still continue through later workflow recipients, so the
-    // persisted workflow state is returned separately rather than reporting a
-    // direct-manager approval as a rejection/pending action.
+    // `status` describes the action just completed by the current approver; the persisted
+    // workflow state is returned separately (shape kept for the mobile app).
     return {
       id,
       stage,
       suspend,
       status: body.action === "accept" ? "accepted" : "rejected",
       workflowStatus: suspendToListStatus(suspend),
+      final,
+      nextStage,
+      override: auth.override,
+      ...(original
+        ? {
+            approvedFrom: data.agaza_from_date_m as string,
+            approvedTo: data.agaza_to_date_m as string,
+            approvedDays: data.num_days as number,
+          }
+        : {}),
     };
+  }
+
+  /** HR authority through RBAC (the HR job-title role holds hr:approve). */
+  private async hasHrApproveGrant(userId: number): Promise<boolean> {
+    if (!this.engine) return false;
+    try {
+      return await this.engine.can(userId, "hr", "approve");
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Partial approval: the approver narrows from/to inside the requested range. Returns the
+   * columns to update (plus `__original`, stripped before the update) or {} when unchanged.
+   */
+  private async partialApprovalData(
+    row: { agaza_from_date_m: string | null; agaza_to_date_m: string | null; num_days: number | null },
+    body: ActionLeaveDto,
+  ): Promise<{ data: Record<string, unknown>; original: OriginalRange | null }> {
+    if (!body.startDate && !body.endDate) return { data: {}, original: null };
+    const origFrom = row.agaza_from_date_m;
+    const origTo = row.agaza_to_date_m;
+    if (!origFrom || !origTo) throw new BadRequestException("تواريخ الطلب الأصلية غير متوفرة");
+    const from = body.startDate ?? origFrom;
+    const to = body.endDate ?? origTo;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+      throw new BadRequestException("صيغة التاريخ غير صحيحة");
+    }
+    if (from > to) throw new BadRequestException("تاريخ النهاية يجب أن يكون بعد البداية");
+    if (from < origFrom || to > origTo) {
+      throw new BadRequestException("الاعتماد الجزئي يجب أن يكون داخل الفترة المطلوبة");
+    }
+    if (from === origFrom && to === origTo) return { data: {}, original: null };
+    const start = new Date(`${from}T12:00:00`);
+    const end = new Date(`${to}T12:00:00`);
+    const days = Math.round((end.getTime() - start.getTime()) / 86_400_000) + 1;
+    const original: OriginalRange = {
+      from: origFrom,
+      to: origTo,
+      days: row.num_days != null ? Math.round(row.num_days) : Math.round((new Date(`${origTo}T12:00:00`).getTime() - new Date(`${origFrom}T12:00:00`).getTime()) / 86_400_000) + 1,
+    };
+    const resume = new Date(end.getTime() + 86_400_000).toISOString().slice(0, 10);
+    const out: Record<string, unknown> = {
+      agaza_from_date_m: from,
+      agaza_to_date_m: to,
+      agaza_from_date: Math.floor(start.getTime() / 1000),
+      agaza_to_date: Math.floor(end.getTime() / 1000),
+      agaza_from_day_n: this.arDayName(from),
+      agaza_to_day_n: this.arDayName(to),
+      num_days: days,
+    };
+    if (to !== origTo) {
+      out.mobashret_amal_date_m = resume;
+      out.mobashret_amal_day_n = this.arDayName(resume);
+    }
+    return { data: out, original };
+  }
+
+  /**
+   * Original requested range of a partially approved leave. New columns (migration
+   * 20261124140000_hr_approvals) → raw SQL; best-effort: the history row keeps the same facts.
+   * Only the first narrowing is stored as the original.
+   */
+  private async recordOriginalRange(id: number, original: OriginalRange) {
+    try {
+      await this.prisma.$executeRaw(Prisma.sql`
+        UPDATE hr_all_agzat_orders
+           SET requested_from_date_m = COALESCE(requested_from_date_m, ${original.from}),
+               requested_to_date_m = COALESCE(requested_to_date_m, ${original.to}),
+               requested_num_days = COALESCE(requested_num_days, ${original.days})
+         WHERE id = ${id}`);
+    } catch {
+      // column missing (migration not applied yet): the history row still records it
+    }
+  }
+
+  /** Original vs approved range for the details screens (null when never narrowed). */
+  async requestedRange(id: number, actor?: JwtUser): Promise<OriginalRange | null> {
+    if (actor) await this.assertLeaveIdInScope(actor, id);
+    try {
+      const rows = await this.prisma.$queryRaw<Array<{ f: string | null; t: string | null; d: number | null }>>(Prisma.sql`
+        SELECT requested_from_date_m AS f, requested_to_date_m AS t, requested_num_days AS d
+          FROM hr_all_agzat_orders WHERE id = ${id}`);
+      const r = rows[0];
+      return r?.f && r?.t ? { from: r.f, to: r.t, days: Number(r.d ?? 0) } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** In-app notification row (legacy codes) + best-effort push. */
+  private async notify(
+    targetId: number,
+    code: number,
+    fromUser: number | null | undefined,
+    toUser: number | null | undefined,
+    push: { title: string; body: string },
+  ) {
+    await insertLegacyNotification(this.prisma, targetId, code, fromUser, toUser);
+    if (toUser && toUser !== fromUser && this.push) {
+      try {
+        await this.push.pushToUsers([toUser], push.title, push.body);
+      } catch {
+        // best-effort
+      }
+    }
   }
 
   /** Exact balance ladder used by the active legacy Api.php Add_Agaza endpoint. */
@@ -749,29 +939,27 @@ export class LeavesService {
     };
   }
 
-  private async resolveByMosama(
-    code: number,
-  ): Promise<{ userId: number; name: string | null } | null> {
-    const setting = await this.prisma.hr_egraat_emp_setting.findFirst({
-      where: { job_title_code_fk: code, person_suspend: 1 },
-    });
-    if (!setting?.person_id) return null;
-    const user = await this.prisma.users.findFirst({
-      where: { emp_code: setting.person_id, role_id_fk: 3 },
-    });
-    if (!user) return null;
-    return { userId: user.user_id, name: setting.person_name ?? null };
-  }
-
   /** Backward-compatible single-step routes (delegate to chain). */
-  async approve(id: number, userId?: number, userName?: string, actor?: JwtUser) {
+  async approve(
+    id: number,
+    userId?: number,
+    userName?: string,
+    actor?: JwtUser,
+    partial?: { startDate?: string; endDate?: string; reason?: string },
+  ) {
     if (actor) await this.assertLeaveIdInScope(actor, id);
-    return this.action(id, { action: "accept" }, userId, userName);
+    return this.action(
+      id,
+      { action: "accept", startDate: partial?.startDate, endDate: partial?.endDate, reason: partial?.reason },
+      userId,
+      userName,
+      actor,
+    );
   }
 
-  async reject(id: number, userId?: number, userName?: string, actor?: JwtUser) {
+  async reject(id: number, userId?: number, userName?: string, actor?: JwtUser, reason?: string) {
     if (actor) await this.assertLeaveIdInScope(actor, id);
-    return this.action(id, { action: "reject" }, userId, userName);
+    return this.action(id, { action: "reject", reason }, userId, userName, actor);
   }
 
   private async assertLeaveIdInScope(actor: JwtUser, id: number) {

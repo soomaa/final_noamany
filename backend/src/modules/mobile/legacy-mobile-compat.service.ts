@@ -828,7 +828,7 @@ export class LegacyMobileCompatService {
     const row = await this.prisma.hr_all_ozonat_orders.findFirst({
       where: { id, emp_id_fk: emp.id },
     });
-    if (!row || (row.suspend ?? 0) > 1)
+    if (!row || (row.suspend ?? 0) > 0)
       throw new BadRequestException("لا يمكن تعديل طلب الإذن");
     const from = this.text(input, "from_time", "fromHour");
     const to = this.text(input, "to_time", "toHour");
@@ -852,7 +852,7 @@ export class LegacyMobileCompatService {
     const emp = await this.employee(user);
     const id = this.positiveId(input, "ezn_id", "id");
     const result = await this.prisma.hr_all_ozonat_orders.deleteMany({
-      where: { id, emp_id_fk: emp.id, suspend: { lte: 1 } },
+      where: { id, emp_id_fk: emp.id, suspend: 0 },
     });
     if (!result.count) throw new BadRequestException("لا يمكن حذف طلب الإذن");
     return "";
@@ -864,7 +864,7 @@ export class LegacyMobileCompatService {
     const row = await this.prisma.hr_all_agzat_orders.findFirst({
       where: { id, emp_id_fk: emp.id },
     });
-    if (!row || (row.suspend ?? 0) > 1)
+    if (!row || (row.suspend ?? 0) > 0)
       throw new BadRequestException("لا يمكن تعديل طلب الإجازة");
     const from = this.text(input, "from_date", "startDate");
     const to = this.text(input, "to_date", "endDate");
