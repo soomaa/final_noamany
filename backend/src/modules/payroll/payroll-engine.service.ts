@@ -1,6 +1,6 @@
 import { EmployeeType, LeaveType } from '../../common/constants/hr-codes';
 import { SuspendStatus } from '../../common/utils/suspend-status.util';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -10,6 +10,12 @@ import { finalApprovalSuspendFilter } from './leave-approval.util';
 import { ScheduleResolver } from '../attendance-exceptions/scheduled-shifts.util';
 import { ResolutionIndex, loadResolutions } from '../attendance-exceptions/resolutions.repo';
 import { dayAbsence, forgottenFingerprint, lateTreatment, round4 } from './payroll-attendance.util';
+import { HrPayrollSettingsService } from '../hr-payroll-settings/hr-payroll-settings.service';
+import {
+  HrPayrollSettings,
+  defaultHrPayrollSettings,
+  missingPunchLadder,
+} from '../hr-payroll-settings/hr-payroll-settings.defaults';
 
 /**
  * Per-employee attendance inputs shared by the absence, missing-punch and late calculations:
@@ -83,21 +89,26 @@ export interface SalaryOverrides {
 
 @Injectable()
 export class PayrollEngineService {
-  private readonly workingDays: number;
-  private readonly hoursPerDay: number;
-  private readonly defaultOffDay: string;
-  private readonly deductionExemptEmpCodes: Set<number>;
+  /** Env-driven defaults, used as-is when no settings service is wired (direct construction in specs). */
+  private readonly fallbackSettings: HrPayrollSettings;
 
   constructor(
     private readonly prisma: PrismaService,
     config: ConfigService,
+    /** Owner-editable rules («إعدادات الحضور والمرتبات»); defaults = the legacy behaviour. */
+    @Optional() private readonly settingsService?: HrPayrollSettingsService,
   ) {
-    this.workingDays = config.get<number>('payroll.workingDays') ?? 30;
-    this.hoursPerDay = config.get<number>('payroll.hoursPerDay') ?? 8;
-    this.defaultOffDay = config.get<string>('payroll.defaultOffDay') ?? 'Friday';
-    this.deductionExemptEmpCodes = new Set(
-      config.get<number[]>('payroll.deductionExemptEmpCodes') ?? [],
-    );
+    this.fallbackSettings = defaultHrPayrollSettings({
+      workingDays: config.get<number>('payroll.workingDays'),
+      hoursPerDay: config.get<number>('payroll.hoursPerDay'),
+      defaultOffDay: config.get<string>('payroll.defaultOffDay'),
+      deductionExemptEmpCodes: config.get<number[]>('payroll.deductionExemptEmpCodes'),
+    });
+  }
+
+  /** Effective HR/payroll rules; never throws (the settings service falls back to defaults). */
+  async settings(): Promise<HrPayrollSettings> {
+    return this.settingsService ? this.settingsService.get() : this.fallbackSettings;
   }
 
   async computeAll(month: number, year: number): Promise<ComputedEmployeeSalary[]> {
@@ -125,11 +136,12 @@ export class PayrollEngineService {
 
     // Insurance rates are nationality-keyed and shared across employees → load once.
     const insuranceRates = await this.loadInsuranceRates();
+    const settings = await this.settings();
 
     const results: ComputedEmployeeSalary[] = [];
     for (const emp of employees) {
       if (!emp.emp_code) continue;
-      const computed = await this.computeOne(emp, fromDate, toDate, month, year, insuranceRates);
+      const computed = await this.computeOne(emp, fromDate, toDate, month, year, insuranceRates, undefined, settings);
       if (computed) results.push(computed);
     }
     return results;
@@ -148,7 +160,7 @@ export class PayrollEngineService {
     });
     if (!emp || !emp.emp_code) return null;
     const insuranceRates = await this.loadInsuranceRates();
-    return this.computeOne(emp, fromDate, toDate, month, year, insuranceRates, overrides);
+    return this.computeOne(emp, fromDate, toDate, month, year, insuranceRates, overrides, await this.settings());
   }
 
   private async computeOne(
@@ -172,7 +184,9 @@ export class PayrollEngineService {
     year: number,
     insuranceRates: InsuranceRateTable,
     overrides?: SalaryOverrides,
+    settingsArg?: HrPayrollSettings,
   ): Promise<ComputedEmployeeSalary | null> {
+    const s = settingsArg ?? (await this.settings());
     const empCode = emp.emp_code!;
     const badlBasic = await this.getBadlValue(BADL.BASIC, empCode);
     const ratebAsasy = decimal(emp.basic_salary) || badlBasic;
@@ -195,14 +209,14 @@ export class PayrollEngineService {
     ins.empShare = khasmTamen;
     const taminHesaOner = ins.ownerShare;
 
-    const baseSalary = ratebAsasy + badalSakn + badalMowaslat + zeyadaRateb;
-    const agrSa3a = baseSalary / (this.workingDays * this.hoursPerDay);
-    const agrYom = agrSa3a * this.hoursPerDay;
+    // Rate basis (settings «أساس الحساب»; default basic + housing + transport + raise over 30 × 8).
+    const baseSalary = payrollRateBase({ ratebAsasy, badalSakn, badalMowaslat, zeyadaRateb }, s);
+    const { agrSa3a, agrYom } = payrollRates(baseSalary, s);
 
     const hoursEdafi = await this.getHoursEdafi(empCode, fromDate, toDate);
     const sheftEdafi = await this.getSheftEdafi(empCode, fromDate, toDate);
-    const hoursEdafiValue = hoursEdafi * agrSa3a;
-    const daysEdafiValue = sheftEdafi * agrYom;
+    const hoursEdafiValue = hoursEdafi * agrSa3a * s.overtimeHourMultiplier;
+    const daysEdafiValue = sheftEdafi * agrYom * s.extraShiftDayMultiplier;
     const totEdafi = hoursEdafiValue + daysEdafiValue;
 
     const khasmGezaa = await this.getGezaaByDate(empCode, fromDate, toDate);
@@ -230,14 +244,28 @@ export class PayrollEngineService {
     let unpaidLeaveDays = round4(keyab.withoutSalaryDays + absence.resolutionLeave.unpaidDays);
     let forgottenFingerprint = await this.getForgottenFingerprintByDate(empCode, fromDate, toDate, attendanceCtx);
     let late = await this.getLateByDate(empCode, fromDate, toDate, attendanceCtx);
-    let khasmKeyabAmount = absenceDays * agrYom;
-    let khasmAgazat = paidLeaveDays * agrYom;
-    let agazaBdonRateb = unpaidLeaveDays * agrYom;
-    let khasmBasma = forgottenFingerprint.deductionDays * agrYom;
-    let khasmTakherAmount = (late.lateWithoutPermission / 60) * agrSa3a;
-    let khasmEznAmount = (late.lateWithPermission / 60) * agrSa3a;
+    const attendanceDeductions = payrollAttendanceDeductions(
+      {
+        absenceDays,
+        paidLeaveDays,
+        unpaidLeaveDays,
+        missingPunchDays: forgottenFingerprint.deductionDays,
+        lateWithoutPermissionMin: late.lateWithoutPermission,
+        lateWithPermissionMin: late.lateWithPermission,
+      },
+      { agrSa3a, agrYom },
+      s,
+    );
+    let khasmKeyabAmount = attendanceDeductions.khasmKeyab;
+    // NOTE (reported to the owner): approved PAID leave days are deducted at the daily rate here,
+    // exactly like the legacy sheet. Kept as-is; the multiplier on the settings page can set it to 0.
+    let khasmAgazat = attendanceDeductions.khasmAgazat;
+    let agazaBdonRateb = attendanceDeductions.agazaBdonRateb;
+    let khasmBasma = attendanceDeductions.khasmBasma;
+    let khasmTakherAmount = attendanceDeductions.khasmTakher;
+    let khasmEznAmount = attendanceDeductions.khasmEzn;
 
-    if (this.deductionExemptEmpCodes.has(empCode)) {
+    if (s.deductionExemptEmpCodes.includes(empCode)) {
       absenceDays = 0;
       paidLeaveDays = 0;
       unpaidLeaveDays = 0;
@@ -295,7 +323,7 @@ export class PayrollEngineService {
     const dayFlags = dwam
       ? [dwam.saturday, dwam.sunday, dwam.monday, dwam.tuesday, dwam.wednesday, dwam.thursday, dwam.friday]
       : [];
-    const workDays = dayFlags.length ? dayFlags.filter((d) => d === 1).length : this.workingDays;
+    const workDays = dayFlags.length ? dayFlags.filter((d) => d === 1).length : s.workingDaysPerMonth;
     const parseHm = (t: string | null | undefined) => {
       const m = (t ?? '').match(/^(\d{1,2}):(\d{2})/);
       return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
@@ -305,7 +333,7 @@ export class PayrollEngineService {
     const workHours =
       inMin != null && outMin != null && outMin > inMin
         ? Math.round((outMin - inMin) / 60)
-        : this.hoursPerDay;
+        : s.hoursPerDay;
 
     return {
       empId: emp.id,
@@ -562,6 +590,7 @@ export class PayrollEngineService {
     ctx?: PayrollAttendanceContext,
   ): Promise<{ lateWithPermission: number; lateWithoutPermission: number }> {
     const attendance = ctx ?? (await this.loadAttendanceContext({ emp_code: empCode }, fromDate, toDate));
+    const settings = await this.settings();
     // Permissions count only once finally approved (not at the direct manager's step).
     const ozonat = await this.prisma.hr_all_ozonat_orders.findMany({
       where: {
@@ -596,7 +625,8 @@ export class PayrollEngineService {
       if (approvedDates.has(date) || treatment === 'permission') {
         lateWithPermission += late;
       } else {
-        if (late > 120) late = 240;
+        // Legacy cap (default): a day late more than 120 min counts as 240 min.
+        if (settings.lateCapEnabled && late > settings.lateCapThresholdMin) late = settings.lateCapValueMin;
         lateWithoutPermission += late;
       }
     }
@@ -619,7 +649,7 @@ export class PayrollEngineService {
     const offRow = await this.prisma.hr_emp_agazat_dayes.findFirst({
       where: { emp_code_fk: empCode },
     });
-    const empOffDay = offRow?.off_day ?? this.defaultOffDay;
+    const empOffDay = offRow?.off_day ?? (await this.settings()).defaultWeeklyOffDay;
     const weekday = (ds: string) => weekdayName(ds);
 
     // 1+2) all working days in window, excluding the weekly off-day.
@@ -763,7 +793,7 @@ export class PayrollEngineService {
     }
     const schedule = ref
       ? await ScheduleResolver.load(this.prisma, [ref], fromDate, toDate, {
-          defaultOffDay: this.defaultOffDay,
+          defaultOffDay: (await this.settings()).defaultWeeklyOffDay,
           includeSpecial: true,
         })
       : null;
@@ -843,6 +873,7 @@ export class PayrollEngineService {
       rows,
       (date) => this.countedSlots(attendance, empCode, date),
       attendance.resolutions,
+      missingPunchLadder(await this.settings()),
     );
   }
 
@@ -1034,6 +1065,61 @@ export class PayrollEngineService {
       nameInBank: row.emp_bank_name ?? null,
     };
   }
+}
+
+/** Salary components the hourly/daily rate is built on (settings «أساس الحساب»). */
+export function payrollRateBase(
+  parts: { ratebAsasy: number; badalSakn: number; badalMowaslat: number; zeyadaRateb: number },
+  s: Pick<HrPayrollSettings, 'rateIncludeBasic' | 'rateIncludeHousing' | 'rateIncludeTransport' | 'rateIncludeRaise'>,
+): number {
+  return (
+    (s.rateIncludeBasic ? parts.ratebAsasy : 0) +
+    (s.rateIncludeHousing ? parts.badalSakn : 0) +
+    (s.rateIncludeTransport ? parts.badalMowaslat : 0) +
+    (s.rateIncludeRaise ? parts.zeyadaRateb : 0)
+  );
+}
+
+/** أجر الساعة = base / (days × hours); أجر اليوم = أجر الساعة × hours. */
+export function payrollRates(
+  baseSalary: number,
+  s: Pick<HrPayrollSettings, 'workingDaysPerMonth' | 'hoursPerDay'>,
+): { agrSa3a: number; agrYom: number } {
+  const agrSa3a = baseSalary / (s.workingDaysPerMonth * s.hoursPerDay);
+  return { agrSa3a, agrYom: agrSa3a * s.hoursPerDay };
+}
+
+/** Attendance-driven deductions in money, from the counted days/minutes and the owner's rules. */
+export function payrollAttendanceDeductions(
+  counts: {
+    absenceDays: number;
+    paidLeaveDays: number;
+    unpaidLeaveDays: number;
+    missingPunchDays: number;
+    lateWithoutPermissionMin: number;
+    lateWithPermissionMin: number;
+  },
+  rates: { agrSa3a: number; agrYom: number },
+  s: Pick<
+    HrPayrollSettings,
+    | 'absenceDayMultiplier'
+    | 'paidLeaveDeductMultiplier'
+    | 'unpaidLeaveDayMultiplier'
+    | 'lateHourMultiplier'
+    | 'permittedLateDeduct'
+    | 'permittedLateRatePercent'
+  >,
+) {
+  return {
+    khasmKeyab: counts.absenceDays * rates.agrYom * s.absenceDayMultiplier,
+    khasmAgazat: counts.paidLeaveDays * rates.agrYom * s.paidLeaveDeductMultiplier,
+    agazaBdonRateb: counts.unpaidLeaveDays * rates.agrYom * s.unpaidLeaveDayMultiplier,
+    khasmBasma: counts.missingPunchDays * rates.agrYom,
+    khasmTakher: (counts.lateWithoutPermissionMin / 60) * rates.agrSa3a * s.lateHourMultiplier,
+    khasmEzn: s.permittedLateDeduct
+      ? (counts.lateWithPermissionMin / 60) * rates.agrSa3a * (s.permittedLateRatePercent / 100)
+      : 0,
+  };
 }
 
 /** Round a money amount to 2 decimals (avoids binary-float drift, e.g. 0.1+0.2). */

@@ -1,6 +1,6 @@
 import { SUSPEND_APPROVED } from '../../common/utils/suspend-status.util';
 import { parseStrictNumeric, parseEmployeeCode } from '../../common/validators/validation.util';
-import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, InternalServerErrorException, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, HttpException, Injectable, InternalServerErrorException, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { createHash, randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -28,6 +28,8 @@ import { AttendanceReportDto } from './dto/report.dto';
 import { JwtUser } from '../../common/types/jwt-user';
 import { Workbook } from 'exceljs';
 import { resolveOfflinePunchClock } from './offline-attendance.util';
+import { HrPayrollSettingsService } from '../hr-payroll-settings/hr-payroll-settings.service';
+import { HrPayrollSettings, defaultHrPayrollSettings } from '../hr-payroll-settings/hr-payroll-settings.defaults';
 
 interface CapturedAttendanceClock {
   actionDate: string;
@@ -394,7 +396,18 @@ export class AttendanceService {
     private readonly prisma: PrismaService,
     // Stateless; defaulted so the existing unit specs can still construct the service.
     private readonly scope: BranchScopeService = new BranchScopeService(),
+    /** Owner-editable HR rules (comp-day minimum, weekly-schedule credits, default off day). */
+    @Optional() private readonly hrSettings?: HrPayrollSettingsService,
   ) {}
+
+  /** «إعدادات الحضور والمرتبات»; the legacy defaults when the settings service is not wired (specs). */
+  private async hrRules(): Promise<HrPayrollSettings> {
+    try {
+      return this.hrSettings ? await this.hrSettings.get() : defaultHrPayrollSettings();
+    } catch {
+      return defaultHrPayrollSettings();
+    }
+  }
 
   /**
    * `branch_id_fk` filter for the board and reports. Web callers pass their JWT and are
@@ -1552,15 +1565,23 @@ export class AttendanceService {
       } });
       this.logPunchDecision(requestId, code, branchIdOverride, 'success', { detectedAction: 'ensraf', hodoorId: row.hodoor_id });
       // Worked a full in+out on the weekly day off ⇒ earned compensatory day (taken later as leave type 19).
-      // Extra shifts are already paid as extra shifts, and the weekly-schedule mode has no off_day concept.
+      // Extra shifts are already paid as extra shifts. Legacy mode: the main shift on the
+      // hr_emp_agazat_dayes off day. Weekly-schedule mode (settings «أيام البدل», default on): a
+      // replacement shift worked on a weekday whose schedule slots are all rest (shift_id NULL).
       let compDayEarned = false;
-      if (row.hdoor_time && candidate.source === 'main' && !weeklySettings?.enabled) {
-        compDayEarned = await this.recordCompDayIfOffDay(db, {
-          empId: emp.id,
-          empCode: emp.emp_code ?? code,
-          workDate: date,
-          minutes: Math.floor(pairDurationSeconds(row.hdoor_time, currentTimeStr) / 60),
-        });
+      if (row.hdoor_time && candidate.source !== 'extra') {
+        const weeklyMode = Boolean(weeklySettings?.enabled);
+        const hrRules = await this.hrRules();
+        if (weeklyMode ? hrRules.compDayInWeeklyScheduleMode : candidate.source === 'main') {
+          compDayEarned = await this.recordCompDayIfOffDay(db, {
+            empId: emp.id,
+            empCode: emp.emp_code ?? code,
+            workDate: date,
+            minutes: Math.floor(pairDurationSeconds(row.hdoor_time, currentTimeStr) / 60),
+            weeklyMode,
+            minWorkedMinutes: hrRules.compDayMinWorkedMinutes,
+          });
+        }
       }
       return {
         id: row.hodoor_id,
@@ -1639,23 +1660,63 @@ export class AttendanceService {
   }
 
   /**
+   * Weekly-schedule mode: `date` is a rest day when the employee's active schedule has slots for
+   * that weekday (Saturday = 0) and every one is rest (shift_id NULL) — the same rule as the full
+   * attendance sheet.
+   */
+  private async isWeeklyScheduleRestDay(
+    db: Prisma.TransactionClient | PrismaService,
+    empId: number,
+    date: string,
+  ): Promise<boolean> {
+    const delegate = (db as { employee_weekly_schedules?: { findFirst?: (args: unknown) => Promise<{ slots?: Array<{ shift_id: number | null }> } | null> } })
+      .employee_weekly_schedules;
+    if (typeof delegate?.findFirst !== 'function' || !/^\d{4}-\d{2}-\d{2}/.test(date)) return false;
+    const day = date.slice(0, 10);
+    const weekday = (new Date(`${day}T12:00:00Z`).getUTCDay() + 1) % 7;
+    const schedule = await delegate.findFirst({
+      where: {
+        employee_id: empId,
+        status: 'active',
+        effective_from: { lte: day },
+        OR: [{ effective_to: null }, { effective_to: { gte: day } }],
+      },
+      orderBy: { effective_from: 'desc' },
+      include: { slots: { where: { weekday } } },
+    });
+    const slots = schedule?.slots ?? [];
+    return slots.length > 0 && slots.every((slot) => slot.shift_id == null);
+  }
+
+  /**
    * Record a compensatory day (hr_comp_day_credits, raw SQL) when `workDate` is the employee's
-   * weekly day off. Several shifts on the same day add their minutes to one credit.
+   * weekly day off (legacy hr_emp_agazat_dayes.off_day, or a rest weekday in weekly-schedule mode).
+   * Several shifts on the same day add their minutes to one credit; with a minimum set
+   * («أقل مدة شغل», default 0) the day counts once the credit's total minutes reach it.
    * Never fails the punch: any error is logged and ignored.
    */
   private async recordCompDayIfOffDay(
     db: Prisma.TransactionClient | PrismaService,
-    input: { empId: number; empCode: number; workDate: string; minutes: number },
+    input: { empId: number; empCode: number; workDate: string; minutes: number; weeklyMode?: boolean; minWorkedMinutes?: number },
   ): Promise<boolean> {
     try {
-      const offDay = await this.weeklyOffDayOf(db, input.empId, input.empCode);
-      if (!isWeeklyOffDay(offDay, input.workDate)) return false;
+      const offDay = input.weeklyMode
+        ? await this.isWeeklyScheduleRestDay(db, input.empId, input.workDate)
+        : isWeeklyOffDay(await this.weeklyOffDayOf(db, input.empId, input.empCode), input.workDate);
+      if (!offDay) return false;
       if (typeof (db as { $executeRaw?: unknown }).$executeRaw !== 'function') return false;
       const minutes = Math.max(0, Math.floor(input.minutes));
       await db.$executeRaw(Prisma.sql`
         INSERT INTO hr_comp_day_credits (emp_code, work_date, minutes, status)
         VALUES (${input.empCode}, ${input.workDate.slice(0, 10)}, ${minutes}, 'earned')
         ON DUPLICATE KEY UPDATE minutes = minutes + VALUES(minutes)`);
+      const minimum = Math.max(0, Math.floor(input.minWorkedMinutes ?? 0));
+      if (minimum > 0) {
+        const total = await db.$queryRaw<Array<{ minutes: number | bigint | null }>>(Prisma.sql`
+          SELECT minutes FROM hr_comp_day_credits
+           WHERE emp_code = ${input.empCode} AND work_date = ${input.workDate.slice(0, 10)} LIMIT 1`);
+        return Number(total?.[0]?.minutes ?? minutes) >= minimum;
+      }
       return true;
     } catch (error) {
       this.logger.warn(`comp day credit not recorded for ${input.empCode} ${input.workDate}: ${error instanceof Error ? error.message : String(error)}`);
@@ -2399,6 +2460,10 @@ export class AttendanceService {
       this.logger.warn(`comp day credits unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
 
+    // Credits below the owner's minimum worked time («أيام البدل») are kept but do not count.
+    const minWorked = Math.max(0, Math.floor((await this.hrRules()).compDayMinWorkedMinutes));
+    if (minWorked > 0) credits = credits.filter((c) => c.minutes >= minWorked);
+
     const codes = [...new Set(credits.map((c) => c.emp_code))];
     const branchFilter = this.reportBranchFilter(user);
     const employees = codes.length
@@ -2975,6 +3040,7 @@ export class AttendanceService {
     const official = new Set(officialDays.filter((r) => /^\d{4}-\d{2}-\d{2}/.test(r.date_ar)).map((r) => `${r.emp_code_fk}|${r.date_ar.slice(0, 10)}`));
     const weekly = new Map(officialDays.map((r) => [r.emp_code_fk, r.off_day.toLowerCase()]));
     const weekday = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const defaultOffDay = (await this.hrRules()).defaultWeeklyOffDay.toLowerCase();
 
     const rows = employees.flatMap((emp) => {
       if (emp.emp_code == null) return [];
@@ -2982,8 +3048,8 @@ export class AttendanceService {
       let unexcused = 0;
       for (const d = new Date(`${from}T12:00:00`); d <= new Date(`${to}T12:00:00`); d.setDate(d.getDate() + 1)) {
         const iso = d.toISOString().slice(0, 10);
-        // Skip the employee's own weekly day off; Friday only when none is configured (payroll's default).
-        if ((weekly.get(emp.emp_code) ?? 'friday') === weekday[d.getDay()]) continue;
+        // Skip the employee's own weekly day off; the settings' default (Friday) only when none is configured.
+        if ((weekly.get(emp.emp_code) ?? defaultOffDay) === weekday[d.getDay()]) continue;
         const key = `${emp.emp_code}|${iso}`;
         if (present.has(key) || official.has(key)) continue;
         if (leaveDates.has(key)) excused += 1;

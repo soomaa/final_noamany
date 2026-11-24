@@ -4,6 +4,7 @@ import {
   isWeeklyOffDay,
   punchConfirmedOvertimeMinutes,
 } from './attendance.service';
+import { defaultHrPayrollSettings } from '../hr-payroll-settings/hr-payroll-settings.defaults';
 
 /** Shift 09:00 (deduction from 09:05) – 05:00 PM; on Friday the branch opens at 10:00. */
 const dayShift = {
@@ -285,6 +286,39 @@ describe('compensatory day for working on the weekly day off', () => {
     );
     expect(result).not.toHaveProperty('compDayEarned');
     expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('below the minimum worked time («أيام البدل») the day is recorded but not announced as earned', async () => {
+    const prisma = punchPrisma({ recentRows: [openRow], existing: openRow, offDay: 'Friday' });
+    const settings = { get: jest.fn().mockResolvedValue({ ...defaultHrPayrollSettings(), compDayMinWorkedMinutes: 600 }) };
+    const service = new AttendanceService(prisma as never, undefined, settings as never);
+    const result = await service.manualCheck(
+      { empCode: '1007', type: 'out', checkOut: '05:00 PM', channel: 'app' },
+      9,
+      1,
+      { actionDate: '2026-11-27', time: '05:00 PM' },
+    );
+    expect(result).not.toHaveProperty('compDayEarned');
+  });
+
+  it('weekly-schedule mode: a replacement shift on a rest weekday earns a comp day', async () => {
+    const replacementRow = { ...openRow, sheft_type: 1 };
+    const prisma = punchPrisma({ recentRows: [replacementRow], existing: replacementRow, offDay: null });
+    prisma.attendance_weekly_schedule_settings = { findUnique: jest.fn().mockResolvedValue({ id: 1, enabled: true }) };
+    prisma.employee_weekly_schedules = {
+      findFirst: jest.fn().mockResolvedValue({ id: 1, slots: [{ weekday: 6, shift_id: null, branch_id: 1 }] }),
+    };
+    prisma.tbl_emps_shef_edafi.findMany.mockResolvedValue([
+      { id: 3, emp_code_fk: 1007, sheft_date: '2026-11-27', ttype: 1, dwam_id_fk: 10, branch_id_fk: 1 },
+    ]);
+    const service = new AttendanceService(prisma as never);
+    const result = await service.manualCheck(
+      { empCode: '1007', type: 'out', checkOut: '05:00 PM', channel: 'app' },
+      9,
+      1,
+      { actionDate: '2026-11-27', time: '05:00 PM' },
+    );
+    expect(result).toEqual(expect.objectContaining({ type: 'out', compDayEarned: true }));
   });
 
   it('isWeeklyOffDay accepts English and Arabic day names', () => {

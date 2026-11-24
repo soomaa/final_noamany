@@ -481,6 +481,7 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: '/payroll/runs' },
           { to: '/payroll/increases' },
           { to: '/payroll/increases/report' },
+          { to: '/hr/payroll-settings' },
         ],
       },
       {

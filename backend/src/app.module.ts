@@ -36,6 +36,7 @@ import { RequestsModule } from './modules/requests/requests.module';
 import { OvertimeRequestsModule } from './modules/overtime-requests/overtime-requests.module';
 import { AttendanceModule } from './modules/attendance/attendance.module';
 import { AttendanceExceptionsModule } from './modules/attendance-exceptions/attendance-exceptions.module';
+import { HrPayrollSettingsModule } from './modules/hr-payroll-settings/hr-payroll-settings.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { LeavesModule } from './modules/leaves/leaves.module';
 import { PermissionsModule } from './modules/permissions/permissions.module';
@@ -145,6 +146,7 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     ReportsModule,
     AttendanceModule,
     AttendanceExceptionsModule,
+    HrPayrollSettingsModule,
     LeavesModule,
     PermissionsModule,
     // --- Wave 3 ---

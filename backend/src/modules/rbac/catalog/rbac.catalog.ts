@@ -176,6 +176,7 @@ export const RESOURCE_TREE: ResourceNode[] = [
           { key: 'payroll.setup', nameAr: 'إعداد الرواتب', nameEn: 'Payroll setup', type: 'page', route: '/payroll/setup', actions: SETTINGS },
           { key: 'payroll.pay_components', nameAr: 'الاستحقاقات والاستقطاعات', nameEn: 'Earnings & deductions', type: 'page', route: '/settings/pay-components', actions: LIST },
           { key: 'payroll.salary_scale', nameAr: 'سلّم الرواتب', nameEn: 'Salary scale', type: 'page', route: '/payroll/salary-scale', actions: LIST },
+          { key: 'payroll.attendance_settings', nameAr: 'إعدادات الحضور والمرتبات', nameEn: 'Attendance & payroll rules', type: 'page', route: '/hr/payroll-settings', actions: SETTINGS },
         ],
       },
       {

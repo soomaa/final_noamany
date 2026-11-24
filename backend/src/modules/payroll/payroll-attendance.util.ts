@@ -1,5 +1,6 @@
 import type { ScheduledSlot } from '../attendance-exceptions/scheduled-shifts.util';
 import type { ResolutionIndex, ResolutionRecord } from '../attendance-exceptions/resolutions.repo';
+import { DEFAULT_MISSING_PUNCH_LADDER, MissingPunchLadder } from '../hr-payroll-settings/hr-payroll-settings.defaults';
 
 /**
  * Pure per-shift attendance maths for payroll.
@@ -101,12 +102,16 @@ export function dayAbsence<R extends PayrollAttendanceRow>(
   return out;
 }
 
-/** Legacy ladder: 1st occurrence 1/4 day, 2nd 1/2 day, every later one a full day. */
-export function ladderDays(occurrence: number): number {
-  if (occurrence <= 0) return 0;
-  if (occurrence === 1) return 0.25;
-  if (occurrence === 2) return 0.5;
-  return 1;
+/**
+ * Ladder (defaults = legacy): 1st occurrence 1/4 day, 2nd 1/2 day, every later one a full day.
+ * With `ladder.free` = N the first N occurrences of the period cost nothing and the ladder starts after them.
+ */
+export function ladderDays(occurrence: number, ladder: MissingPunchLadder = DEFAULT_MISSING_PUNCH_LADDER): number {
+  const step = occurrence - Math.max(0, Math.floor(ladder.free));
+  if (step <= 0) return 0;
+  if (step === 1) return ladder.first;
+  if (step === 2) return ladder.second;
+  return ladder.thirdPlus;
 }
 
 /**
@@ -117,6 +122,7 @@ export function forgottenFingerprint<R extends PayrollAttendanceRow>(
   rows: R[],
   slotsFor: (date: string) => ScheduledSlot[],
   resolutions: ResolutionIndex,
+  ladder: MissingPunchLadder = DEFAULT_MISSING_PUNCH_LADDER,
 ): { count: number; deductionDays: number } {
   const byDate = new Map<string, R[]>();
   const order: string[] = [];
@@ -153,7 +159,7 @@ export function forgottenFingerprint<R extends PayrollAttendanceRow>(
     }
     if (affected > 0) weights.push(Math.min(1, affected));
   }
-  const deductionDays = weights.reduce((sum, weight, index) => sum + ladderDays(index + 1) * weight, 0);
+  const deductionDays = weights.reduce((sum, weight, index) => sum + ladderDays(index + 1, ladder) * weight, 0);
   return { count: weights.length, deductionDays: round4(deductionDays) };
 }
 
