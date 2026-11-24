@@ -29,7 +29,7 @@ import { BranchesService } from "../branches/branches.service";
 import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
 import { CurrentUser } from "../../common/decorators/current-user.decorator";
 import type { JwtUser } from "../../common/types/jwt-user";
-import { canonicalClubMemberBranchId } from "../club-members/club-branch-groups";
+import { canonicalClubMemberBranchId, clubMemberIdentityBranchIds } from "../club-members/club-branch-groups";
 import { isSystemAdmin } from "../../common/utils/system-admin.util";
 import { ClubBranchGroupService, ClubBranchGroupReader } from '../../common/branch-groups/club-branch-group.service';
 
@@ -133,17 +133,29 @@ export class ClubOpsController {
 
   @Get("entitlement/validate")
   @RequiresPermission("club.members:view", "club.reception:view")
-  validateEntitlement(
+  async validateEntitlement(
     @Query() query: ValidateEntitlementDto,
     @CurrentUser() user?: JwtUser,
   ) {
     const scope = this.receptionBranchIds(user, query.branchId);
     const effectiveBranchId =
       query.branchId ?? (scope?.length === 1 ? scope[0] : undefined);
+    // Same branch scope as the real check-in (club-attendance compatibleAttendanceBranches): a branch
+    // group (e.g. «شبين الكوم - الجلاء والبر الشرقي») and the Tanta sections share members, so an
+    // active subscription booked at the sibling branch must not show «لا يوجد اشتراك نشط».
+    const branchIds = effectiveBranchId != null
+      ? await this.entitlementBranchIds(effectiveBranchId)
+      : undefined;
     return this.entitlement.validate({
       memberId: query.memberId,
       branchId: effectiveBranchId,
+      branchIds,
     });
+  }
+
+  private async entitlementBranchIds(branchId: number): Promise<number[]> {
+    const siblings = await this.branchGroups.siblingBranchIds(branchId);
+    return Array.from(new Set([branchId, ...siblings, ...clubMemberIdentityBranchIds(branchId)])).sort((a, b) => a - b);
   }
 
   @Get("gym-policies")
