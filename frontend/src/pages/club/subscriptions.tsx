@@ -23,6 +23,7 @@ import {
   ContactRound,
   ArrowRightLeft,
   CalendarClock,
+  Trash2,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -45,6 +46,7 @@ import {
   type SubscriptionDiscountMode,
 } from '@/components/club/subscription-discount-fields';
 import { SubscriptionInvoicePrint } from '@/components/club/subscription-invoice-print';
+import { SubscriptionPurgeDialog } from '@/components/club/subscription-purge-dialog';
 import {
   ClubPaymentMethodSelect,
   clubPaymentMethodsLabel,
@@ -498,6 +500,7 @@ export function ClubSubscriptionsPage({
   const [editOriginal, setEditOriginal] = useState<{ startDate: string; typeId: string } | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [printSub, setPrintSub] = useState<ClubSubscriptionListItem | null>(null);
+  const [purgeSubId, setPurgeSubId] = useState<number | null>(null);
   const [transferOpen, setTransferOpen] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -1626,6 +1629,11 @@ export function ClubSubscriptionsPage({
                 )
               ))}
               {canDeleteSubscriptions ? <DropdownMenuItem className="text-destructive" onSelect={() => void remove(row.original.id)}>{ct('common.delete')}</DropdownMenuItem> : null}
+              {canDeleteSubscriptions ? (
+                <DropdownMenuItem className="text-destructive" onSelect={() => afterMenuClose(() => setPurgeSubId(row.original.id))}>
+                  <Trash2 className="size-4" /> حذف (اتعمل بالغلط)
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
         ),
@@ -2959,6 +2967,12 @@ export function ClubSubscriptionsPage({
         onOpenChange={(open) => !open && setPrintSub(null)}
         subscription={printSub}
         receipts={printSub ? subscriptionReceipts : []}
+      />
+
+      <SubscriptionPurgeDialog
+        subscriptionId={purgeSubId}
+        onOpenChange={(open) => !open && setPurgeSubId(null)}
+        onPurged={invalidateAll}
       />
     </div>
   );

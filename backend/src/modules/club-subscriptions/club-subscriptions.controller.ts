@@ -24,6 +24,8 @@ import {
 } from './dto/club-subscription-payment.dto';
 import { ListClubSubscriptionsDto } from './dto/list-club-subscriptions.dto';
 import { UpsertClubSubscriptionDto } from './dto/upsert-club-subscription.dto';
+import { PurgeClubSubscriptionDto } from './dto/purge-club-subscription.dto';
+import { ClubSubscriptionPurgeService } from './club-subscription-purge.service';
 import {
   SubscriptionReportQuery,
   SubscriptionReportsService,
@@ -40,6 +42,7 @@ export class ClubSubscriptionsController {
   constructor(
     private readonly service: ClubSubscriptionsService,
     private readonly reports: SubscriptionReportsService,
+    private readonly purgeService: ClubSubscriptionPurgeService,
   ) {}
 
   @Get()
@@ -222,6 +225,24 @@ export class ClubSubscriptionsController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.service.update(id, body, user);
+  }
+
+  /** What «حذف (اتعمل بالغلط)» would remove: receipts, money, GL, points … plus any blockers. */
+  @Get(':id/purge-preview')
+  @RequiresPermission('club.subscriptions:delete', 'club.subscriptions.list:delete')
+  purgePreview(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.purgeService.preview(id, user);
+  }
+
+  /** Remove a subscription created by mistake with every money/accounting trace, as if it never happened. */
+  @Delete(':id/purge')
+  @RequiresPermission('club.subscriptions:delete', 'club.subscriptions.list:delete')
+  purge(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: PurgeClubSubscriptionDto,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.purgeService.purge(id, body, user);
   }
 
   @Delete(':id')
