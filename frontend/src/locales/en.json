@@ -111,6 +111,7 @@
       "/hub/financial-reports": "Dashboard",
       "/reports/finance/daily-closing": "Daily Closing",
       "/reports/finance/target": "Target Report",
+      "/reports/period-summary": "Period summary",
       "/hub/accounting": "Dashboard",
       "/hub/app-management": "Dashboard",
       "/hub/hr": "Dashboard",

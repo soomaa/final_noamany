@@ -79,6 +79,7 @@ export const FinancePaymentMethodsReportPage = lazyPage(() => import('@/pages/re
 export const FinanceOutstandingReportPage = lazyPage(() => import('@/pages/reports/finance/outstanding-payments'), 'FinanceOutstandingReportPage');
 export const DailyClosingReportPage = lazyPage(() => import('@/pages/reports/finance/daily-closing-target'), 'DailyClosingReportPage');
 export const TargetReportPage = lazyPage(() => import('@/pages/reports/finance/daily-closing-target'), 'TargetReportPage');
+export const PeriodSummaryPage = lazyPage(() => import('@/pages/reports/period-summary'), 'PeriodSummaryPage');
 export const OrgBranchesPage = lazyPage(() => import('@/pages/org/branches'), 'OrgBranchesPage');
 export const OrgDepartmentsPage = lazyPage(() => import('@/pages/org/departments'), 'OrgDepartmentsPage');
 export const OrgJobTitlesPage = lazyPage(() => import('@/pages/org/job-titles'), 'OrgJobTitlesPage');

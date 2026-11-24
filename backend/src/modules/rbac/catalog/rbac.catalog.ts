@@ -557,6 +557,9 @@ export const RESOURCE_TREE: ResourceNode[] = [
     children: [
       page('admin.dashboard', 'لوحة التحكم الرئيسية', '/dashboard', REPORT, 'Main dashboard'),
       page('admin.hub', 'لوحة التحكم', '/hub/settings', REPORT, 'Settings hub'),
+      // «ملخص الفترة» — annual management-meeting summary. Lives under `admin` (not `club` /
+      // `financial-reports`) so manager/captain job-title defaults never inherit it.
+      page('admin.period_summary', 'ملخص الفترة', '/reports/period-summary', REPORT, 'Period summary'),
       { key: 'org.branches', nameAr: 'إدارة الفروع', nameEn: 'Branches', type: 'page', route: '/org/branches', actions: LIST },
       { key: 'org.departments', nameAr: 'مسميات وظيفية', nameEn: 'Job titles', type: 'page', route: '/org/job-titles', actions: LIST },
       page('admin.roles', 'الأدوار والصلاحيات', '/admin/roles', ['view', 'manage', 'audit'], 'Roles & permissions'),

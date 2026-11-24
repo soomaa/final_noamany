@@ -76,6 +76,7 @@ import { ClubCustomerSourcesModule } from './modules/club-customer-sources/club-
 import { ClubLockersModule } from './modules/club-lockers/club-lockers.module';
 import { ClubFitnessModule } from './modules/club-fitness/club-fitness.module';
 import { ClubDashboardModule } from './modules/club-dashboard/club-dashboard.module';
+import { PeriodSummaryModule } from './modules/period-summary/period-summary.module';
 import { ClubEventsModule } from './modules/club-events/club-events.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { CafeProductsModule } from './modules/cafe/cafe-products.module';
@@ -180,6 +181,7 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     ClubLockersModule,
     ClubFitnessModule,
     ClubDashboardModule,
+    PeriodSummaryModule,
     ClubEventsModule,
     // --- Wave 5 — gym-sales retail ---
     InventoryModule,

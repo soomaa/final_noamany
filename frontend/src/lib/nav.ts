@@ -252,6 +252,7 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: BarChart3,
         items: [
           { to: FR.dashboard },
+          { to: FR.periodSummary },
           { to: FR.expenses },
           { to: FR.revenues },
           { to: FR.expenseReports },
