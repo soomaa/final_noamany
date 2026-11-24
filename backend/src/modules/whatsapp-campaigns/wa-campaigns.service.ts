@@ -32,6 +32,7 @@ import {
 } from './wa-campaigns.utils';
 import { ControlUnavailableError, WaControlClient } from './wa-control.client';
 import { readBirthdaySettings } from './wa-birthdays.settings';
+import { readTemplateOptions, setOptOutLine } from './wa-template-options';
 
 const MAX_AUDIENCE = 5000;
 /** A phone that got any campaign message this recently is skipped, so reminders never stack. */
@@ -83,17 +84,27 @@ export class WaCampaignsService {
   // ── templates ─────────────────────────────────────────────────────────────
 
   async listTemplates() {
-    const [rows, birthdays] = await Promise.all([
+    const [rows, birthdays, options] = await Promise.all([
       this.prisma.wa_templates.findMany({ orderBy: [{ is_active: 'desc' }, { id: 'desc' }] }),
       readBirthdaySettings(this.prisma),
+      readTemplateOptions(this.prisma),
     ]);
-    return rows.map((t) => ({ id: t.id, name: t.name, body: t.body, isActive: t.is_active, isBirthday: t.id === birthdays.templateId, updatedAt: t.updated_at }));
+    return rows.map((t) => ({
+      id: t.id,
+      name: t.name,
+      body: t.body,
+      isActive: t.is_active,
+      isBirthday: t.id === birthdays.templateId,
+      addOptOutLine: !options.noOptOutLine.includes(t.id),
+      updatedAt: t.updated_at,
+    }));
   }
 
   async createTemplate(dto: UpsertWaTemplateDto, user: JwtUser) {
     const row = await this.prisma.wa_templates.create({
       data: { name: dto.name.trim(), body: dto.body.trim(), is_active: dto.isActive ?? true, created_by: user.sub },
     });
+    if (dto.addOptOutLine === false) await setOptOutLine(this.prisma, row.id, false);
     return { id: row.id };
   }
 
@@ -105,12 +116,14 @@ export class WaCampaignsService {
       where: { id },
       data: { name: dto.name.trim(), body: dto.body.trim(), ...(dto.isActive !== undefined ? { is_active: dto.isActive } : {}) },
     });
+    if (dto.addOptOutLine !== undefined) await setOptOutLine(this.prisma, id, dto.addOptOutLine);
     return { id };
   }
 
   async removeTemplate(id: number) {
     if ((await readBirthdaySettings(this.prisma)).templateId === id) throw new ConflictException('ده قالب أعياد الميلاد — اختار قالب تاني لأعياد الميلاد الأول');
     await this.prisma.wa_templates.deleteMany({ where: { id } });
+    await setOptOutLine(this.prisma, id, true);
     return { id };
   }
 
@@ -157,7 +170,7 @@ export class WaCampaignsService {
     const since = new Date(Date.now() - RECENT_DAYS * 86400_000);
     const deadSince = new Date(Date.now() - NOT_ON_WHATSAPP_DAYS * 86400_000);
     const memberIds = audience.map((r) => r.memberId);
-    const [optOuts, recent, notOnWhatsApp, branchName, greeted] = await Promise.all([
+    const [optOuts, recent, notOnWhatsApp, branchName, greeted, templateOptions] = await Promise.all([
       phones.length ? this.prisma.wa_opt_outs.findMany({ where: { phone: { in: phones } }, select: { phone: true } }) : [],
       phones.length && !birthdays
         ? this.prisma.wa_messages.findMany({
@@ -186,7 +199,10 @@ export class WaCampaignsService {
             distinct: ['member_id'],
           })
         : [],
+      readTemplateOptions(this.prisma),
     ]);
+    // A template can opt out of the automatic «ابعت إيقاف» line (staff choice per template).
+    const addOptOutLine = !(dto.templateId && templateOptions.noOptOutLine.includes(dto.templateId));
     const classified = classifyRecipients(audience, {
       optedOut: new Set(optOuts.map((o) => o.phone)),
       recentlyMessaged: new Set(recent.map((m) => m.phone)),
@@ -197,7 +213,7 @@ export class WaCampaignsService {
     const recipients = classified.map((r) => ({
       ...r,
       // Each member gets their own wording (version + {a|b} choices) and a way to stop the messages.
-      body: withOptOutLine(renderTemplate(varyTemplate(dto.body), {
+      body: (addOptOutLine ? withOptOutLine : (text: string) => text)(renderTemplate(varyTemplate(dto.body), {
         name: r.name,
         first_name: firstName(r.name),
         code: r.code,

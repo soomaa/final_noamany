@@ -13,6 +13,7 @@ import {
   writeBirthdaySettings,
 } from './wa-birthdays.settings';
 import { WaCampaignsService } from './wa-campaigns.service';
+import { readTemplateOptions } from './wa-template-options';
 
 const CAIRO = 'Africa/Cairo';
 const LOCK = 'cron:wa-birthdays';
@@ -55,17 +56,18 @@ export class WaBirthdaysService {
       settings = (await runWithMysqlLock(this.prisma, LOCK, 10, async () => this.ensureTemplate(await readBirthdaySettings(this.prisma), user.sub))) ?? settings;
     }
     const today = localDateString();
-    const [template, devices, recent] = await Promise.all([
+    const [template, devices, recent, options] = await Promise.all([
       settings.templateId ? this.prisma.wa_templates.findUnique({ where: { id: settings.templateId } }) : null,
       this.pairedBranches(),
       this.prisma.wa_campaigns.findMany({ where: { source: 'birthdays', created_at: { gte: new Date(Date.now() - 36 * 3600_000) } }, select: { id: true, branch_id: true, name: true, status: true, created_at: true } }),
+      readTemplateOptions(this.prisma),
     ]);
     const todays = recent.filter((c) => localDateString(c.created_at) === today);
     return {
       enabled: settings.enabled,
       time: settings.time,
       activeOnly: settings.activeOnly,
-      template: template ? { id: template.id, name: template.name, body: template.body } : null,
+      template: template ? { id: template.id, name: template.name, body: template.body, addOptOutLine: !options.noOptOutLine.includes(template.id) } : null,
       pairedBranchIds: devices,
       today,
       ranToday: Object.entries(settings.runs).filter(([, day]) => day === today).map(([branchId]) => Number(branchId)),

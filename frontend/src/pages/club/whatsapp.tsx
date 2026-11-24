@@ -34,8 +34,8 @@ type Source = 'expired' | 'expiring' | 'members' | 'birthdays';
 type Counts = { total: number; queued: number; sending: number; sent: number; failed: number; uncertain: number; cancelled: number };
 interface Campaign { id: number; name: string; branchId: number; source: string; status: CampaignStatus; createdAt: string; startedAt: string | null; finishedAt: string | null; counts: Counts }
 interface Message { id: number; memberId: number | null; name: string; phone: string; body: string; status: MessageStatus; reason: string | null; sentAt: string | null }
-interface Template { id: number; name: string; body: string; isActive: boolean; isBirthday?: boolean }
-interface BirthdayInfo { enabled: boolean; time: string; activeOnly: boolean; template: { id: number; name: string; body: string } | null; pairedBranchIds: number[]; today: string; ranToday: number[]; todaysCampaigns: { id: number; branchId: number; name: string; status: CampaignStatus }[] }
+interface Template { id: number; name: string; body: string; isActive: boolean; isBirthday?: boolean; addOptOutLine?: boolean }
+interface BirthdayInfo { enabled: boolean; time: string; activeOnly: boolean; template: { id: number; name: string; body: string; addOptOutLine: boolean } | null; pairedBranchIds: number[]; today: string; ranToday: number[]; todaysCampaigns: { id: number; branchId: number; name: string; status: CampaignStatus }[] }
 interface Device { id: string; branchId: number; label: string; paired: boolean; pairedAt: string | null; lastSeenAt: string | null; pairCodeActive: boolean }
 interface OptOut { phone: string; key: string; reason: string | null; createdAt: string }
 interface ControlInfo {
@@ -326,6 +326,17 @@ function CampaignDetailDialog({ id, onClose }: { id: number; onClose: () => void
   );
 }
 
+/** Per template: add the automatic «ابعت إيقاف» line at the end of every message (on by default). */
+function OptOutLineToggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
+  const { ui } = useLocale();
+  return (
+    <div className="grid gap-1">
+      <label className="flex items-center gap-2 text-sm"><Checkbox checked={checked} onCheckedChange={(v) => onChange(v === true)} />{ui('إضافة سطر «لو مش حابب توصلك رسايل ابعت إيقاف» في آخر الرسالة')}</label>
+      {!checked && <p className="text-xs text-warning">{ui('من غير السطر ده خطر حظر رقم الجيم من واتساب بيزيد شوية — الأفضل يفضل في رسايل التذكير والحملات الكبيرة.')}</p>}
+    </div>
+  );
+}
+
 // ── birthdays ───────────────────────────────────────────────────────────────
 
 /** Daily birthday greetings: on/off, time, «only current subscribers», the greeting text, and «send today's now». */
@@ -336,6 +347,7 @@ function BirthdayCard() {
   const { data: branches } = useBranches();
   const [busy, setBusy] = useState<'save' | 'run' | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [optOutLine, setOptOutLine] = useState(true);
   const { data } = useQuery({ queryKey: ['wa-campaigns', 'birthdays'], queryFn: async () => (await api.get<BirthdayInfo>('/wa-campaigns/birthdays')).data });
   if (!data) return null;
   const canConfigure = can('club.whatsapp:configure');
@@ -355,7 +367,7 @@ function BirthdayCard() {
     if (!data.template || !editing?.trim()) return;
     setBusy('save');
     try {
-      await api.patch(`/wa-campaigns/templates/${data.template.id}`, { name: data.template.name, body: editing, isActive: true });
+      await api.patch(`/wa-campaigns/templates/${data.template.id}`, { name: data.template.name, body: editing, isActive: true, addOptOutLine: optOutLine });
       toast.success(ui('تم حفظ نص التهنئة'));
       setEditing(null);
       void qc.invalidateQueries({ queryKey: ['wa-campaigns'] });
@@ -400,7 +412,7 @@ function BirthdayCard() {
           <Input type="time" dir="ltr" className="h-9 w-32" key={data.time} defaultValue={data.time} disabled={!canConfigure || busy !== null} onBlur={(e) => { if (/^\d{2}:\d{2}$/.test(e.target.value) && e.target.value !== data.time) void save({ time: e.target.value }); }} />
         </label>
         <label className="flex items-center gap-2"><Checkbox checked={data.activeOnly} disabled={!canConfigure || busy !== null} onCheckedChange={(v) => void save({ activeOnly: v === true })} />{ui('المشتركين حاليًا بس')}</label>
-        {canConfigure && data.template && <Button size="sm" variant="outline" permissionAction="configure" onClick={() => setEditing(data.template!.body)}>{ui('تعديل نص التهنئة')}</Button>}
+        {canConfigure && data.template && <Button size="sm" variant="outline" permissionAction="configure" onClick={() => { setEditing(data.template!.body); setOptOutLine(data.template!.addOptOutLine); }}>{ui('تعديل نص التهنئة')}</Button>}
         {canConfigure && <Button size="sm" permissionAction="configure" disabled={busy !== null || !data.pairedBranchIds.length} onClick={() => void runNow()}><Send className="h-4 w-4" />{busy === 'run' ? ui('جاري التجهيز…') : ui('ابعت تهنئة النهارده دلوقتي')}</Button>}
       </div>
       <div className="mt-2 space-y-1 text-xs">
@@ -422,7 +434,8 @@ function BirthdayCard() {
               <DialogTitle>{ui('نص تهنئة عيد الميلاد')}</DialogTitle>
               <DialogDescription>{ui('استخدم {first_name} للاسم و{branch} للفرع و{age} للسن. اكتب أكتر من صيغة وافصل بينهم بسطر ---')}</DialogDescription>
             </DialogHeader>
-            <BodyEditor value={editing} onChange={setEditing} />
+            <BodyEditor value={editing} onChange={setEditing} optOutLine={optOutLine} />
+            <OptOutLineToggle checked={optOutLine} onChange={setOptOutLine} />
             <DialogFooter>
               <Button variant="outline" permissionAction={null} onClick={() => setEditing(null)}>{ui('إلغاء')}</Button>
               <Button permissionAction="configure" disabled={busy !== null || !editing.trim()} onClick={() => void saveText()}>{busy === 'save' ? ui('جاري الحفظ…') : ui('حفظ')}</Button>
@@ -440,7 +453,7 @@ function BirthdayCard() {
 const versionCount = (body: string) => body.replace(/\r\n?/g, '\n').split(/\n[ \t]*-{3,}[ \t]*(?:\n|$)/).filter((p) => p.trim()).length;
 const hasLink = (body: string) => /https?:\/\/|www\.|\b[a-z0-9-]+\.(?:com|net|org|eg|me|app|link|ly)\b/i.test(body);
 
-function BodyEditor({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function BodyEditor({ value, onChange, optOutLine = true }: { value: string; onChange: (v: string) => void; optOutLine?: boolean }) {
   const { ui } = useLocale();
   const versions = versionCount(value);
   const choices = (value.match(/\{[^{}\n]*\|[^{}\n]*\}/g) ?? []).length;
@@ -468,7 +481,7 @@ function BodyEditor({ value, onChange }: { value: string; onChange: (v: string) 
           <b className="text-foreground">{versions} {ui('صيغة')}</b>{choices > 0 && <> · <b className="text-foreground">{choices} {ui('اختيارات للكلمات')}</b></>}
         </p>
         <p>{ui('افصل بين الصيغ بسطر فيه --- بس، ولتنويع كلمة اكتب الاختيارات كده:')} <bdi dir="rtl" className="font-mono">{'{أهلًا|إزيك|مساء الخير}'}</bdi></p>
-        <p>{ui('هيتضاف تلقائيًا سطر قصير «لو مش حابب توصلك رسايل ابعت إيقاف»، واللي يرد بإيقاف بيتشال من الإرسال.')}</p>
+        <p>{optOutLine ? ui('هيتضاف تلقائيًا سطر قصير «لو مش حابب توصلك رسايل ابعت إيقاف»، واللي يرد بإيقاف بيتشال من الإرسال.') : ui('الرسالة هتتبعت من غير سطر «ابعت إيقاف» (اختيار القالب). اللي يرد بإيقاف لسه بيتشال من الإرسال.')}</p>
       </div>
       {versions < 2 && <p className="text-xs text-warning">{ui('الأفضل تكتب صيغتين أو تلاتة للرسالة — نفس النص لكل الأعضاء بيرفع احتمال حظر الرقم.')}</p>}
       {hasLink(value) && <p role="alert" className="text-xs text-warning">{ui('بلاش لينكات في أول رسالة — اللينك لحد مكلمكش قبل كده من أقوى علامات السبام. ابعته بعد ما العضو يرد.')}</p>}
@@ -503,11 +516,11 @@ function NewCampaignDialog({ onClose }: { onClose: () => void }) {
 
   useEffect(() => { if (!branchId && branches?.length) setBranchId(branches[0].id); }, [branches, branchId]);
   // Any change to the audience or text makes the shown preview stale.
-  useEffect(() => { setPreview(null); }, [branchId, source, expiredFrom, expiredTo, withinDays, gender, members, body, activeOnly]);
+  useEffect(() => { setPreview(null); }, [branchId, source, expiredFrom, expiredTo, withinDays, gender, members, body, activeOnly, templateId]);
   useEffect(() => { setExcluded(new Set()); }, [branchId, source]);
 
   const audience = () => ({
-    branchId, source, body,
+    branchId, source, body, templateId: templateId ?? undefined,
     ...(source === 'expired' ? { expiredFrom, expiredTo } : {}),
     ...(source === 'expiring' ? { withinDays: Number(withinDays) || 0 } : {}),
     ...(source === 'members' ? { memberIds: members.map((m) => m.id) } : {}),
@@ -544,7 +557,7 @@ function NewCampaignDialog({ onClose }: { onClose: () => void }) {
   const create = async () => {
     setLoading('create');
     try {
-      const { data } = await api.post<{ queued: number; skipped: number }>('/wa-campaigns', { ...audience(), name: name.trim(), templateId: templateId ?? undefined, start: startNow });
+      const { data } = await api.post<{ queued: number; skipped: number }>('/wa-campaigns', { ...audience(), name: name.trim(), start: startNow });
       toast.success(`${ui('تم إنشاء الحملة')}: ${data.queued} ${ui('رسالة')}`);
       void qc.invalidateQueries({ queryKey: ['wa-campaigns'] });
       onClose();
@@ -621,7 +634,7 @@ function NewCampaignDialog({ onClose }: { onClose: () => void }) {
                 {(templates ?? []).filter((t) => t.isActive).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
-            <div className="grid gap-2"><Label>{ui('نص الرسالة')}</Label><BodyEditor value={body} onChange={setBody} /></div>
+            <div className="grid gap-2"><Label>{ui('نص الرسالة')}</Label><BodyEditor value={body} onChange={setBody} optOutLine={templates?.find((t) => t.id === templateId)?.addOptOutLine ?? true} /></div>
           </div>
         </div>
 
@@ -757,7 +770,7 @@ function TemplatesTab() {
     if (!editing?.name?.trim() || !editing.body?.trim()) return void toast.error(ui('الاسم والنص مطلوبان'));
     setSaving(true);
     try {
-      const body = { name: editing.name.trim(), body: editing.body, isActive: editing.isActive ?? true };
+      const body = { name: editing.name.trim(), body: editing.body, isActive: editing.isActive ?? true, addOptOutLine: editing.addOptOutLine ?? true };
       if (editing.id) await api.patch(`/wa-campaigns/templates/${editing.id}`, body);
       else await api.post('/wa-campaigns/templates', body);
       toast.success(ui('تم الحفظ'));
@@ -786,7 +799,7 @@ function TemplatesTab() {
           {data.map((t) => (
             <div key={t.id} className="rounded-xl border bg-card p-4">
               <div className="flex items-start justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{t.name}</h3>{t.isBirthday && <Badge variant="success" className="gap-1"><Cake className="h-3 w-3" />{ui('قالب أعياد الميلاد')}</Badge>}{!t.isActive && <Badge variant="outline">{ui('غير نشط')}</Badge>}</div>
+                <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{t.name}</h3>{t.isBirthday && <Badge variant="success" className="gap-1"><Cake className="h-3 w-3" />{ui('قالب أعياد الميلاد')}</Badge>}{t.addOptOutLine === false && <Badge variant="outline">{ui('من غير سطر الإيقاف')}</Badge>}{!t.isActive && <Badge variant="outline">{ui('غير نشط')}</Badge>}</div>
                 <div className="flex gap-1">
                   {can('club.whatsapp:update') && <Button size="sm" variant="ghost" onClick={() => setEditing(t)}>{ui('تعديل')}</Button>}
                   {can('club.whatsapp:delete') && !t.isBirthday && <Button size="icon" variant="ghost" aria-label={ui('حذف')} onClick={() => void remove(t)}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
@@ -803,8 +816,9 @@ function TemplatesTab() {
             <DialogHeader><DialogTitle>{editing.id ? ui('تعديل القالب') : ui('قالب جديد')}</DialogTitle></DialogHeader>
             <div className="grid gap-4">
               <div className="grid gap-2"><Label>{ui('اسم القالب')}</Label><Input value={editing.name ?? ''} onChange={(e) => setEditing({ ...editing, name: e.target.value })} maxLength={120} /></div>
-              <div className="grid gap-2"><Label>{ui('نص الرسالة')}</Label><BodyEditor value={editing.body ?? ''} onChange={(body) => setEditing({ ...editing, body })} /></div>
+              <div className="grid gap-2"><Label>{ui('نص الرسالة')}</Label><BodyEditor value={editing.body ?? ''} onChange={(body) => setEditing({ ...editing, body })} optOutLine={editing.addOptOutLine ?? true} /></div>
               <label className="flex items-center gap-2 text-sm"><Checkbox checked={editing.isActive ?? true} onCheckedChange={(v) => setEditing({ ...editing, isActive: v === true })} />{ui('نشط')}</label>
+              <OptOutLineToggle checked={editing.addOptOutLine ?? true} onChange={(v) => setEditing({ ...editing, addOptOutLine: v })} />
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setEditing(null)}>{ui('إلغاء')}</Button>

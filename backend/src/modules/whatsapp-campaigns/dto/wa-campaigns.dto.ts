@@ -21,6 +21,8 @@ export class UpsertWaTemplateDto {
   @IsString() @Length(1, 120) name!: string;
   @IsString() @Length(1, 4000) body!: string;
   @IsOptional() @IsBoolean() isActive?: boolean;
+  /** false = this template's messages go out without the automatic «ابعت إيقاف» line. */
+  @IsOptional() @IsBoolean() addOptOutLine?: boolean;
 }
 
 export class WaAudienceDto {
@@ -38,11 +40,12 @@ export class WaAudienceDto {
   @IsOptional() @IsString() @MaxLength(150) packageName?: string;
   @IsOptional() @IsArray() @ArrayMaxSize(5000) @Type(() => Number) @IsInt({ each: true }) excludeMemberIds?: number[];
   @IsString() @Length(1, 4000) body!: string;
+  /** The template the text came from (its options apply, e.g. no opt-out line). */
+  @IsOptional() @Type(() => Number) @IsInt() templateId?: number;
 }
 
 export class CreateWaCampaignDto extends WaAudienceDto {
   @IsString() @Length(1, 160) name!: string;
-  @IsOptional() @Type(() => Number) @IsInt() templateId?: number;
   @IsOptional() @IsBoolean() start?: boolean;
 }
 
