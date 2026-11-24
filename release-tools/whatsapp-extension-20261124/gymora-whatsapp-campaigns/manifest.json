@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "GYMORA WhatsApp Campaigns",
   "short_name": "WA Campaigns",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "يرسل حملات التذكير من سيستم الجيم عبر واتساب ويب، رسالة رسالة وبحدود الإرسال المتفق عليها.",
   "default_locale": "ar",
   "icons": {
