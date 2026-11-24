@@ -47,6 +47,22 @@ import { nextFollowUpFromDate } from '../club-mos/lead-follow-up-date';
 import { feedbackOption } from '../club-mos/lead-feedback';
 import { syncLeadReminder } from '../club-mos/lead-reminder.sync';
 
+/**
+ * club_leads naming differs between schemas: locally `name` is mapped onto the `full_name` column,
+ * while production's Prisma Client has both `name` and `full_name` as separate NOT NULL columns.
+ * Detect the running Client once and send both columns when they exist separately.
+ */
+const LEAD_HAS_SEPARATE_FULL_NAME: boolean = (() => {
+  const models = (Prisma as unknown as { dmmf?: { datamodel?: { models?: Array<{ name: string; fields: Array<{ name: string }> }> } } })
+    .dmmf?.datamodel?.models;
+  const lead = models?.find((m) => m.name === 'club_leads');
+  return Boolean(lead?.fields.some((field) => field.name === 'full_name'));
+})();
+
+function leadNameData(name: string): { name: string } {
+  return (LEAD_HAS_SEPARATE_FULL_NAME ? { name, full_name: name } : { name }) as { name: string };
+}
+
 /** The states a lead leaves the working list in — reachable through their own filter. */
 const CLOSED_LEAD_STATUSES = ['membership_done', 'lost', 'converted'];
 
@@ -455,7 +471,7 @@ export class ClubLeadsService {
     if (existing) return { success: true };
     await this.prisma.club_leads.create({
       data: {
-        name: fullName,
+        ...leadNameData(fullName),
         phone,
         source: 'app_browse',
         interested_program: this.cacheProgramName(program.name),
@@ -503,7 +519,7 @@ export class ClubLeadsService {
       const gender = String(body.gender ?? '').trim().toLowerCase();
       await this.prisma.club_leads.create({
         data: {
-          name: fullName,
+          ...leadNameData(fullName),
           phone,
           gender: gender === 'male' || gender === 'female' ? gender : null,
           source: 'app_signup',
@@ -676,7 +692,7 @@ export class ClubLeadsService {
     const followUpDate = dto.followUpAt ? String(dto.followUpAt).slice(0, 10) : null;
     const row = await this.withActiveAssignee(assignment.assignedToId, tx => tx.club_leads.create({
       data: {
-        name: dto.fullName.trim(),
+        ...leadNameData(dto.fullName.trim()),
         phone: normalizePhone(dto.phone),
         email: dto.email?.trim() || null,
         source: dto.source ?? 'walk_in',
@@ -745,7 +761,7 @@ export class ClubLeadsService {
     return this.withActiveAssignee(assignedToId, async (client) => {
       const lead = await client.club_leads.create({
         data: {
-          name: input.guestName.trim(),
+          ...leadNameData(input.guestName.trim()),
           phone: normalizePhone(input.phone),
           source: 'staff_invitation',
           status: 'new',
@@ -1036,7 +1052,7 @@ export class ClubLeadsService {
 
     const row = await this.prisma.club_leads.create({
       data: {
-        name: member.name.trim(),
+        ...leadNameData(member.name.trim()),
         phone,
         source: 'walk_in',
         interested_program: 'متابعة تجديد العضوية',
