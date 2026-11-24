@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ArrowDown, ArrowUp, Ban, Cake, CalendarClock, Check, Copy, Eye, FileText, Laptop, MessageCircle, Pause, Play, Plus, RotateCcw, Search, Send, Shuffle, Smile, Trash2, UserX, X } from 'lucide-react';
 import { toast } from 'sonner';
@@ -324,7 +325,7 @@ function CampaignDetailDialog({ id, onClose }: { id: number; onClose: () => void
                 {data?.data.map((m) => (
                   <tr key={m.id} className="border-t align-top">
                     <td className="p-2"><div className="font-medium">{m.name}</div><details className="text-xs text-muted-foreground"><summary className="cursor-pointer">{ui('نص الرسالة')}</summary><p className="whitespace-pre-wrap pt-1">{m.body}</p></details></td>
-                    <td className="p-2" dir="ltr">{m.phone}</td>
+                    <td className="p-2"><MaskedPhone value={m.phone} /></td>
                     <td className="p-2"><div>{labels.message[m.status]}</div>{m.reason && <div className="text-xs text-muted-foreground">{labels.reason[m.reason] ?? m.reason}</div>}</td>
                     <td className="p-2 text-xs">{fmtTime(m.sentAt)}</td>
                     <td className="p-2">{can('club.whatsapp:update') && (m.status === 'uncertain' || m.status === 'failed') && <div className="flex flex-col gap-1">
@@ -776,7 +777,7 @@ function NewCampaignDialog({ onClose }: { onClose: () => void }) {
                     <tr key={r.memberId} className={off ? 'border-t text-muted-foreground' : 'border-t'}>
                       <td className="p-2">{r.skip && r.skip !== 'excluded_manually' ? null : <Checkbox checked={!off} onCheckedChange={() => toggleExcluded(r.memberId)} aria-label={r.name} />}</td>
                       <td className="p-2">{r.name} <span className="text-xs text-muted-foreground">#{r.code}</span></td>
-                      <td className="p-2" dir="ltr">{r.phone ?? '—'}</td>
+                      <td className="p-2"><MaskedPhone value={r.phone} /></td>
                       <td className="p-2" dir="ltr">{source === 'birthdays' ? (r.age ?? '—') : (r.endDate ?? '—')}</td>
                       <td className="p-2 text-xs">{r.skip ? labels.skip[r.skip] : excluded.has(r.memberId) ? labels.skip.excluded_manually : ''}</td>
                     </tr>
@@ -819,7 +820,7 @@ function MemberPicker({ branchId, members, onChange }: { branchId: number; membe
         <div className="rounded-lg border bg-card">
           {hits.map((h) => (
             <button key={h.id} type="button" className="flex w-full items-center justify-between gap-3 border-b p-2 text-start text-sm last:border-0 hover:bg-muted disabled:opacity-50" disabled={members.some((m) => m.id === h.id)} onClick={() => { onChange([...members, h]); setQ(''); }}>
-              <span>{h.name} <span className="text-xs text-muted-foreground">#{h.memberCode}</span></span><span dir="ltr" className="text-xs">{h.phone ?? '—'}</span>
+              <span>{h.name} <span className="text-xs text-muted-foreground">#{h.memberCode}</span></span><MaskedPhone className="text-xs" value={h.phone} memberId={h.id} />
             </button>
           ))}
         </div>
@@ -1153,7 +1154,7 @@ function OptOutsTab() {
             <thead className="bg-muted text-muted-foreground"><tr><th className="p-2 text-start">{ui('الرقم')}</th><th className="p-2 text-start">{ui('السبب')}</th><th className="p-2 text-start">{ui('التاريخ')}</th><th className="p-2" /></tr></thead>
             <tbody>{data.map((o) => (
               <tr key={o.key} className="border-t">
-                <td className="p-2" dir="ltr">{o.phone}</td><td className="p-2">{o.reason ?? '—'}</td><td className="p-2 text-xs">{fmtTime(o.createdAt)}</td>
+                <td className="p-2"><MaskedPhone value={o.phone} /></td><td className="p-2">{o.reason ?? '—'}</td><td className="p-2 text-xs">{fmtTime(o.createdAt)}</td>
                 <td className="p-2">{can('club.whatsapp:delete') && <Button size="icon" variant="ghost" aria-label={ui('حذف')} onClick={() => void remove(o)}><Trash2 className="h-4 w-4 text-destructive" /></Button>}</td>
               </tr>
             ))}</tbody>

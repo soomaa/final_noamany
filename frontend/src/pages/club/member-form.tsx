@@ -1,4 +1,5 @@
 import { FileText, Printer } from 'lucide-react';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -111,7 +112,7 @@ export function ClubMemberFormPage() {
           <div className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
             <p>
               <span className="text-muted-foreground">{ct('members.phone')}:</span>{' '}
-              <span className="nums">{data.member.phone ? toArabicDigits(data.member.phone) : '—'}</span>
+              <MaskedPhone value={data.member.phone} memberId={data.member.id} />
             </p>
             <p>
               <span className="text-muted-foreground">{ct('members.nationalId')}:</span>{' '}

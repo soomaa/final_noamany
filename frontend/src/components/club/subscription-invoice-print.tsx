@@ -1,4 +1,5 @@
 import { useRef } from 'react';
+import { printedPhone } from '@/lib/phone-mask';
 import { QRCodeSVG } from 'qrcode.react';
 import { Button } from '@/components/ui/button';
 import {
@@ -166,7 +167,7 @@ export function SubscriptionInvoicePrint({
 
             <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">استلمنا من المحترم :</span><span className="val flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{subscription.customerName ?? '—'}</span></div>
             <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">رقم الكود :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(subscription.memberCode)}</span></div>
-            <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">رقم الموبايل :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(subscription.memberPhone)}</span></div>
+            <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">رقم الموبايل :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(subscription.memberPhone ? printedPhone(subscription.memberPhone) : subscription.memberPhone)}</span></div>
             <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">طريقة الدفع :</span><span className="val flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{clubPaymentMethodsLabel(ct, tenderLines, subscription.paymentMethod)}</span></div>
             <div className="row flex items-baseline gap-2 py-1"><span className="lbl whitespace-nowrap text-xs">مبلغ وقدره :</span><span className="val nums flex-1 border-b border-dotted border-black text-center text-sm font-extrabold">{invoiceDigits(formatMoneyNumber(received, 'en'))}</span></div>
             {tenderLines.length > 1 ? tenderLines.map((line) => (
@@ -191,7 +192,8 @@ export function SubscriptionInvoicePrint({
                 subscription.memberCode || String(subscription.memberId ?? subscription.id),
                 subscription.subscriptionNumber,
                 displayReceiptNumbers || String(subscription.id),
-                subscription.memberPhone || String(subscription.memberId ?? subscription.id),
+                // A QR of stars is useless; a masked number falls back to the member id.
+                (subscription.memberPhone && !subscription.memberPhone.includes('*') ? subscription.memberPhone : null) || String(subscription.memberId ?? subscription.id),
               ].map((value, index) => <QRCodeSVG key={`${value}-${index}`} value={String(value)} level="M" includeMargin className="h-[18mm] w-[18mm]" />)}
             </div>
 

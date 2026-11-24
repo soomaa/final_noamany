@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { MaskedPhone } from '@/components/club/masked-phone';
+import { isMaskedValue } from '@/lib/masked-value';
 import { useQuery } from '@tanstack/react-query';
 import { Copy, ExternalLink, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
@@ -135,7 +137,8 @@ export function ReceptionMemberWhatsApp({ member, subscriptionBranch, overviewSu
   const pending = (kind === 'single' ? packages.isFetching : subscriptions.isFetching) || templates.isPending;
   const failed = kind === 'single' ? packages.isError : subscriptions.isError;
   const ready = !!message && !pending && !failed;
-  const phone = whatsappPhone(member.phone);
+  // A masked number (phone privacy) is resolved through the audited reveal when WhatsApp opens.
+  const phone = isMaskedValue(member.phone) ? member.phone : whatsappPhone(member.phone);
 
   const copy = async () => {
     try {
@@ -248,7 +251,7 @@ export function ReceptionMemberWhatsApp({ member, subscriptionBranch, overviewSu
 
           {!phone ? (
             <p role="alert" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-              رقم الموبايل <bdi dir="ltr">{member.phone || '—'}</bdi> مش رقم واتساب صالح. تقدر تنسخ الرسالة وتبعتها يدويًا.
+              رقم الموبايل <MaskedPhone value={member.phone} memberId={member.id} /> مش رقم واتساب صالح. تقدر تنسخ الرسالة وتبعتها يدويًا.
             </p>
           ) : null}
 
@@ -326,7 +329,7 @@ export function ReceptionMemberWhatsApp({ member, subscriptionBranch, overviewSu
               <Copy className="size-4" />
               نسخ الرسالة
             </Button>
-            <Button type="button" variant="brand" disabled={!ready || !phone} onClick={() => void openWhatsAppMessage(member.phone, message)}>
+            <Button type="button" variant="brand" disabled={!ready || !phone} onClick={() => void openWhatsAppMessage(member.phone, message, null, { memberId: member.id })}>
               <ExternalLink className="size-4" />
               فتح واتساب
             </Button>

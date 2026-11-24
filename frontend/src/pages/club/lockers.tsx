@@ -1,4 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { MemberCell } from '@/components/club/member-cell';
 import { Eye, Lock, MoreHorizontal, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
@@ -127,7 +128,10 @@ function SubscriptionDetailBlock({
         <LockerDetailRow label={ct('lockers.memberId')} value={sub.memberCode} nums />
       )}
       {sub.memberPhone && (
-        <LockerDetailRow label={ct('members.phone')} value={sub.memberPhone} nums />
+        <div className="flex items-start justify-between gap-4 border-b border-border/60 py-2 last:border-0">
+          <span className="shrink-0 text-sm text-muted-foreground">{ct('members.phone')}</span>
+          <MaskedPhone className="text-end text-sm font-medium" value={sub.memberPhone} memberId={sub.memberId} />
+        </div>
       )}
       <LockerDetailRow label={ct('lockers.subType')} value={sub.subscriptionTypeName} />
       <LockerDetailRow

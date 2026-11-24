@@ -1,4 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -310,7 +311,7 @@ export function ClubSubscriptionReportsPage() {
         cell: ({ row }) => (
           <div>
             <p className="font-medium">{row.original.memberName || '—'}</p>
-            <p className="text-xs text-muted-foreground nums">{toArabicDigits(row.original.memberCode ?? row.original.phone ?? '—')}</p>
+            <p className="text-xs text-muted-foreground nums">{row.original.memberCode ? toArabicDigits(row.original.memberCode) : <MaskedPhone value={row.original.phone} />}</p>
           </div>
         ),
       },

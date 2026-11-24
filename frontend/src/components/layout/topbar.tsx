@@ -3,10 +3,21 @@ import {
   Cake,
   CalendarDays,
   Clock3,
+  EllipsisVertical,
+  Languages,
   LogOut,
   Menu,
+  Moon,
+  Sun,
   User,
 } from "lucide-react";
+import { CameraBarcodeScanner } from "@/components/club/camera-barcode-scanner";
+import { buildReceptionScanUrl, pathOwnsItsOwnScanner } from "@/lib/camera-scan-route";
+import { usePermission } from "@/hooks/use-permission";
+import { useTheme } from "@/store/theme";
+import { ScanBarcode } from "lucide-react";
+import { MaskedPhone, openContactLink } from '@/components/club/masked-phone';
+import { toast } from 'sonner';
 import { format } from "date-fns";
 import { ar, enUS } from "date-fns/locale";
 import { useEffect, useMemo, useState } from "react";
@@ -154,10 +165,12 @@ function BirthdayDropdown() {
   };
 
   const openWhatsApp = (member: BirthdayMember) => {
-    const wa = toWaPhone(member.phone);
-    if (!wa) return;
     const msg = encodeURIComponent(`مرحباً ${member.name}، كل عام وأنت بخير بمناسبة عيد ميلادك 🎂🎉`);
-    window.open(`https://wa.me/${wa}?text=${msg}`, '_blank');
+    // The list is masked (phone privacy): the real number comes through the audited reveal.
+    void openContactLink(member.phone, { memberId: member.id }, (phone) => {
+      const wa = toWaPhone(phone);
+      return wa ? `https://wa.me/${wa}?text=${msg}` : null;
+    }, () => toast.error('مش مسموح لك تشوف رقم العضو ده، أو الرقم مش صالح لواتساب.'));
   };
 
   return (
@@ -166,7 +179,7 @@ function BirthdayDropdown() {
         <Button
           variant="ghost"
           size="icon"
-          className="relative size-11 rounded-xl border border-transparent bg-muted/40 hover:border-pink-300/40 hover:bg-pink-500/10"
+          className="relative size-10 rounded-xl border border-transparent bg-muted/40 hover:border-pink-300/40 hover:bg-pink-500/10 sm:size-11"
           aria-label="أعياد الميلاد"
         >
           <Cake className="size-[18px] text-pink-500/90" />
@@ -233,7 +246,7 @@ function BirthdayDropdown() {
                 {/* Name + phone */}
                 <div className="min-w-0">
                   <p className="truncate text-[13px] font-semibold text-foreground">{m.name}</p>
-                  <p className="nums text-[11px] text-muted-foreground">{m.phone ?? '—'}</p>
+                  <p className="nums text-[11px] text-muted-foreground"><MaskedPhone value={m.phone} memberId={m.id} /></p>
                 </div>
                 {/* DOB + age */}
                 <div className="text-end">
@@ -319,7 +332,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
       <div className="pointer-events-none absolute -start-20 top-0 size-40 rounded-full bg-primary/5 blur-3xl" />
       <div className="h-1 bg-brand-gradient" aria-hidden />
 
-      <div className="relative flex h-[5.5rem] items-center gap-3 px-4 md:gap-4 md:px-6 xl:px-8">
+      <div className="relative flex h-[5.5rem] items-center gap-2 px-3 sm:gap-3 sm:px-4 md:gap-4 md:px-6 xl:px-8">
         <Button
           variant="ghost"
           size="icon"
@@ -354,10 +367,12 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
 
         <div className="flex-1" />
 
-        <div className="flex flex-1 items-center justify-end gap-1.5 md:flex-none md:gap-2">
+        <div className="flex min-w-0 flex-1 items-center justify-end gap-1 sm:gap-1.5 md:flex-none md:gap-2">
           <DateTimePill />
 
-          <PreferenceToggles />
+          {/* On a phone, language and theme move into the «⋮» menu so nothing overflows (390px). */}
+          <PreferenceToggles className="hidden sm:flex" />
+          <MobileCameraScan />
           <DashboardShortcuts />
 
           <BirthdayDropdown />
@@ -367,7 +382,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
               <Button
                 variant="ghost"
                 size="icon"
-                className="relative size-11 rounded-xl border border-transparent bg-muted/40 hover:border-primary/15 hover:bg-primary/5"
+                className="relative size-10 rounded-xl border border-transparent bg-muted/40 hover:border-primary/15 hover:bg-primary/5 sm:size-11"
                 aria-label={t("common.notifications")}
               >
                 <Bell className="size-[18px] text-primary/80" />
@@ -418,11 +433,13 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
             </DropdownMenuContent>
           </DropdownMenu>
 
+          <MobilePreferencesMenu />
+
           <div className="mx-0.5 hidden h-9 w-px bg-gradient-to-b from-transparent via-border to-transparent sm:block" />
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="flex h-14 items-center gap-3 rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/[0.07] to-transparent p-1.5 ps-3 transition-all hover:border-primary/30 hover:shadow-md">
+              <button className="flex h-12 shrink-0 items-center gap-3 rounded-2xl border border-primary/15 bg-gradient-to-br from-primary/[0.07] to-transparent p-1 transition-all hover:border-primary/30 hover:shadow-md sm:h-14 sm:p-1.5 sm:ps-3">
                 <div className="hidden text-end leading-tight sm:block">
                   <div className="max-w-[160px] truncate text-[15px] font-bold">
                     {user?.name ?? t("common.user")}
@@ -459,5 +476,73 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
         </div>
       </div>
     </header>
+  );
+}
+
+/**
+ * Phone-only «⋮» menu: language and theme, which sit as separate buttons from `sm` up.
+ */
+function MobilePreferencesMenu() {
+  const { locale, toggleLocale, t, ui } = useLocale();
+  const { theme, toggle } = useTheme();
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="size-10 shrink-0 rounded-xl border border-transparent bg-muted/40 sm:hidden"
+          aria-label={ui("خيارات أكتر")}
+          title={ui("خيارات أكتر")}
+        >
+          <EllipsisVertical className="size-[18px] text-primary/80" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuItem onClick={toggleLocale} className="min-h-11">
+          <Languages /> {locale === "ar" ? t("common.english") : t("common.arabic")}
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={toggle} className="min-h-11">
+          {theme === "dark" ? <Sun /> : <Moon />}
+          {theme === "dark" ? t("common.lightMode") : t("common.darkMode")}
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * Phone-only camera button (no USB scanner, or the power is out): scans a member card and opens
+ * it at reception. Hidden on pages that read cards themselves (reception, barcode check-in, events).
+ */
+function MobileCameraScan() {
+  const { ui } = useLocale();
+  const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const { canNavRoute, isReady } = usePermission();
+  const [open, setOpen] = useState(false);
+  useEffect(() => { setOpen(false); }, [pathname]);
+  if (!isReady || !canNavRoute("/club/reception") || pathOwnsItsOwnScanner(pathname)) return null;
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="size-10 shrink-0 rounded-xl border border-primary/20 bg-primary/10 text-primary md:hidden"
+        aria-label={ui("مسح كارت العضو بالكاميرا")}
+        title={ui("مسح كارت العضو بالكاميرا")}
+        aria-pressed={open}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <ScanBarcode className="size-[18px]" />
+      </Button>
+      <CameraBarcodeScanner
+        open={open}
+        onOpenChange={setOpen}
+        closeOnDetect
+        title={ui("مسح كارت العضو بالكاميرا")}
+        onDetected={(code) => navigate(buildReceptionScanUrl(code))}
+      />
+    </>
   );
 }

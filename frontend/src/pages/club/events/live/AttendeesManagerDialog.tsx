@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useClubEventsLiveApi } from './use-club-events-live-api';
@@ -139,7 +140,7 @@ export const AttendeesManagerDialog = ({
                       {formatNameWithTitle(a.title, a.name)}
                     </div>
                     <div className="text-[11px] text-muted-foreground flex items-center gap-2 mt-0.5">
-                      <span className="tabular-nums" dir="ltr">{a.phone}</span>
+                      <MaskedPhone className="tabular-nums" value={a.phone} />
                       <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-bold ${
                         isQr ? "border-[#558B2F]/40 text-[#558B2F] bg-[#7CB342]/10" : "border-[#A8801F]/40 text-[#A8801F] bg-[#D4A229]/10"
                       }`}>

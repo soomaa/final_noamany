@@ -4,6 +4,8 @@ import { toast } from 'sonner';
 import { api, apiError } from '@/lib/api';
 import { localToday } from '@/lib/formatters';
 import { whatsappMessageLink, whatsappPhone } from '@/lib/member-whatsapp';
+import { isMaskedValue } from '@/lib/masked-value';
+import { resolvePhone } from '@/components/club/masked-phone';
 import {
   DEFAULT_WHATSAPP_TEMPLATES,
   mergeWhatsAppTemplates,
@@ -32,7 +34,26 @@ export const GYM_NAME = 'النعماني';
  * Open the member's WhatsApp chat with the message typed in. Long messages are copied whole
  * instead (the browser URL limit would cut them). Returns false when nothing was opened.
  */
-export async function openWhatsAppMessage(phone: string | null | undefined, message: string, tab?: Window | null): Promise<boolean> {
+export async function openWhatsAppMessage(
+  phone: string | null | undefined,
+  message: string,
+  tab?: Window | null,
+  ids?: { memberId?: number | null; leadId?: number | null },
+): Promise<boolean> {
+  // A masked number (phone privacy) is fetched through the audited reveal first. The tab is
+  // reserved now, inside the click, so the popup blocker does not eat it during the request.
+  if (isMaskedValue(phone)) {
+    if (!tab) {
+      tab = window.open('about:blank', '_blank');
+      if (tab) tab.opener = null;
+    }
+    phone = ids ? await resolvePhone(phone, ids) : null;
+    if (!phone) {
+      tab?.close();
+      toast.error('مش مسموح لك تشوف رقم العضو ده، أو العضو مالوش رقم.');
+      return false;
+    }
+  }
   const number = whatsappPhone(phone);
   if (!number) {
     tab?.close();
@@ -86,7 +107,7 @@ export function useSaveAndWhatsApp() {
       const { data: saved } = await api.get<ClubSubscriptionListItem>(`/club-subscriptions/${subscriptionId}`);
       const template = (templates.data ?? DEFAULT_WHATSAPP_TEMPLATES)[kind];
       const message = subscriptionMessage(template, saved, { today: localToday(), gymName: GYM_NAME }, operation);
-      await openWhatsAppMessage(saved.memberPhone || fallbackPhone, message, tab);
+      await openWhatsAppMessage(saved.memberPhone || fallbackPhone, message, tab, { memberId: saved.memberId });
     } catch (error) {
       tab?.close();
       toast.warning(`تم الحفظ، لكن تعذر تجهيز رسالة واتساب: ${apiError(error)}`);

@@ -1,4 +1,5 @@
 import { Copy, CreditCard, IdCard, LayoutGrid, Printer, ScanBarcode, Search, Table2 } from 'lucide-react';
+import { printedPhone } from '@/lib/phone-mask';
 import { useEffect, useMemo, useState } from 'react';
 import { normalizeScannedCode } from '@/components/club/club-member-search';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
@@ -162,7 +163,8 @@ function MembershipCard({ member }: { member: ClubMemberListItem }) {
       <p className="mt-3 text-center text-lg font-bold">{member.name}</p>
       <p className="text-center font-mono text-sm nums text-muted-foreground">{member.memberCode}</p>
       <p className="mt-1 text-center text-xs text-muted-foreground">{member.membershipType?.name ?? '—'}</p>
-      <p className="mt-2 text-center text-xs nums">{member.phone ? toArabicDigits(member.phone) : ''}</p>
+      {/* Printed card: the number is printed masked (phone privacy). */}
+      <p className="mt-2 text-center text-xs nums" dir="ltr">{member.phone ? printedPhone(member.phone) : ''}</p>
     </div>
   );
 }

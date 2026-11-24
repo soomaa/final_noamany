@@ -1,4 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { Eye, MessageSquarePlus, Pencil, Printer, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -69,7 +70,7 @@ function SubscriptionTable({ rows, onAddFeedback, onViewDetails, showCallStatus 
     // Name and code open the member's profile (they were plain text, client 20 Nov 2026).
     { accessorKey: 'clientName', header: ui('اسم العميل'), cell: ({ row }) => row.original.clientId ? <Link className="font-medium text-primary underline-offset-4 hover:underline" to={`/club/members/${row.original.clientId}/details`} target="_blank" rel="noopener">{row.original.clientName}</Link> : row.original.clientName },
     { accessorKey: 'clientCode', header: ui('كود العميل'), cell: ({ row }) => row.original.clientId ? <Link className="nums text-primary underline-offset-4 hover:underline" dir="ltr" to={`/club/members/${row.original.clientId}/details`} target="_blank" rel="noopener">{row.original.clientCode}</Link> : <span className="nums">{row.original.clientCode}</span> },
-    { accessorKey: 'phone', header: ui('رقم الهاتف'), cell: ({ getValue }) => <span className="nums" dir="ltr">{getValue() as string}</span> },
+    { accessorKey: 'phone', header: ui('رقم الهاتف'), cell: ({ row, getValue }) => <MaskedPhone value={getValue() as string} memberId={row.original.clientId} /> },
     { accessorKey: 'subscription', header: ui('الاشتراك') },
     { accessorKey: 'startDate', header: ui('بداية الاشتراك') },
     { accessorKey: 'endDate', header: ui('نهاية الاشتراك') },

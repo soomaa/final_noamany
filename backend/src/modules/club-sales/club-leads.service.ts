@@ -31,6 +31,7 @@ import {
   type LeadStatus,
   FOLLOW_LATER_STATUSES,
   LEGACY_LEAD_STATUS,
+  SYSTEM_LEAD_SOURCES,
 } from './club-sales.constants';
 import {
   CompleteLeadReminderDto,
@@ -110,6 +111,8 @@ export class ClubLeadsService {
     assignment_mode: string | null;
     converted_member_id: number | null;
     invitation_id: number | null;
+    staff_invitation_id?: number | null;
+    invited_by_employee_id?: number | null;
     notes: string | null;
     last_contacted_at: Date | null;
     next_follow_up_at: Date | null;
@@ -159,6 +162,10 @@ export class ClubLeadsService {
       assignmentMode: row.assignment_mode,
       convertedMemberId: row.converted_member_id,
       invitationId: row.invitation_id,
+      /** «دعوة بكود موظف»: the guest row and the employee whose code brought them. */
+      staffInvitationId: row.staff_invitation_id ?? null,
+      invitedByEmployeeId: row.invited_by_employee_id ?? null,
+      invitedByName: row.invited_by_employee_id ? names.get(row.invited_by_employee_id) ?? `#${row.invited_by_employee_id}` : null,
       notes: row.notes,
       lastContactedAt: row.last_contacted_at,
       nextFollowUpAt: row.next_follow_up_at,
@@ -557,6 +564,7 @@ export class ClubLeadsService {
     ]);
     const names = await this.namesFor([
       ...rows.map((row) => row.assigned_to),
+      ...rows.map((row) => row.invited_by_employee_id),
       ...rows.flatMap((row) => row.follow_ups.map((item) => item.created_by)),
     ]);
     const packageNames = await this.packageNamesFor(rows.map((row) => row.subscription_type_id));
@@ -644,7 +652,7 @@ export class ClubLeadsService {
         data: { assignment_seen_at: row.assignment_seen_at },
       });
     }
-    const names = await this.namesFor([row.assigned_to, ...row.follow_ups.map((item) => item.created_by)]);
+    const names = await this.namesFor([row.assigned_to, row.invited_by_employee_id, ...row.follow_ups.map((item) => item.created_by)]);
     const packageNames = await this.packageNamesFor([row.subscription_type_id]);
     const member = row.converted_member_id ? await this.prisma.club_members.findFirst({
       where: { id: row.converted_member_id, ...(row.branch_id != null ? { branch_id: row.branch_id } : {}), is_deleted: false },
@@ -696,6 +704,69 @@ export class ClubLeadsService {
     const names = await this.namesFor([row.assigned_to]);
     const packageNames = await this.packageNamesFor([row.subscription_type_id]);
     return this.map(row, names, packageNames);
+  }
+
+  /**
+   * Who works a guest who came with an employee's invitation code: the inviter themselves when
+   * they are an active sales specialist serving that branch («بنقفلهم عليه»), otherwise the
+   * usual automatic round-robin. The inviter is recorded on the lead either way.
+   */
+  async staffInvitationAssignment(inviterEmployeeId: number, branchId: number) {
+    const reps = await this.assignableReps();
+    const inviter = reps.find((rep) => rep.id === inviterEmployeeId);
+    if (inviter && this.repsForBranch([inviter], branchId).length) {
+      return { assignedToId: inviter.id, assignmentMode: 'manual' as const, lockedToInviter: true };
+    }
+    const next = await this.nextRoundRobinRep(branchId);
+    return { assignedToId: next?.id ?? null, assignmentMode: 'automatic' as const, lockedToInviter: false };
+  }
+
+  /**
+   * The sales lead behind a «دعوة بكود موظف» guest, written inside the caller's transaction
+   * (the one that consumed the allowance). Source `staff_invitation`; the guest's notes become
+   * the first follow-up so they show in the sales history.
+   */
+  async createStaffInvitationLead(
+    input: {
+      guestName: string;
+      phone: string;
+      branchId: number;
+      inviterEmployeeId: number;
+      inviterName: string;
+      code: string;
+      staffInvitationId: number;
+      notes?: string | null;
+      assignment: { assignedToId: number | null; assignmentMode: 'manual' | 'automatic' };
+    },
+    user: JwtUser,
+    tx: Prisma.TransactionClient,
+  ) {
+    const { assignedToId, assignmentMode } = input.assignment;
+    return this.withActiveAssignee(assignedToId, async (client) => {
+      const lead = await client.club_leads.create({
+        data: {
+          name: input.guestName.trim(),
+          phone: normalizePhone(input.phone),
+          source: 'staff_invitation',
+          status: 'new',
+          assigned_to: assignedToId,
+          assignment_mode: assignedToId ? assignmentMode : null,
+          ...(assignedToId ? { assigned_at: new Date(), assigned_by: user.emp_code ?? null } : {}),
+          notes: `دعوة من ${input.inviterName} — كود ${input.code}`,
+          staff_invitation_id: input.staffInvitationId,
+          invited_by_employee_id: input.inviterEmployeeId,
+          branch_id: input.branchId,
+          created_by: user.sub,
+        },
+      });
+      const note = input.notes?.trim();
+      if (note) {
+        await client.club_lead_follow_ups.create({
+          data: { lead_id: lead.id, note, status: 'new', activity_type: 'note', created_by: user.emp_code ?? user.sub },
+        });
+      }
+      return lead;
+    }, tx);
   }
 
   /**
@@ -1057,7 +1128,7 @@ export class ClubLeadsService {
           { key: 'key', header: 'القيمة', width: 22 },
           { key: 'label', header: 'المعنى', width: 28 },
         ],
-        rows: LEAD_SOURCES.filter((source) => source !== 'member_invitation').map((source) => ({
+        rows: LEAD_SOURCES.filter((source) => !SYSTEM_LEAD_SOURCES.includes(source)).map((source) => ({
           key: source,
           label: LEAD_SOURCE_LABELS[source],
         })),
@@ -1406,7 +1477,7 @@ export class ClubLeadsService {
         errors.push(`صف ${i}: الاسم والهاتف مطلوبان`);
         continue;
       }
-      if (!isLeadSource(source) || source === 'member_invitation') {
+      if (!isLeadSource(source) || SYSTEM_LEAD_SOURCES.includes(source)) {
         errors.push(`صف ${i}: مصدر غير صالح`);
         continue;
       }

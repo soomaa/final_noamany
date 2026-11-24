@@ -1,4 +1,5 @@
 import { Building2 } from 'lucide-react';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { MemberAvatar } from '@/components/club/member-avatar';
 import { api } from '@/lib/api';
 import { toArabicDigits } from '@/lib/utils';
@@ -80,7 +81,7 @@ export function ClubMemberSearchHits({
               {h.isBlocked && h.blockReason ? <p className="truncate text-xs text-destructive">السبب: {h.blockReason}</p> : null}
               <p className="text-xs text-muted-foreground nums">
                 {h.memberCode}
-                {h.phone ? ` · ${toArabicDigits(h.phone)}` : ''}
+                {h.phone ? <> · <MaskedPhone value={h.phone} memberId={h.id} /></> : ''}
               </p>
             </div>
             {branch ? (

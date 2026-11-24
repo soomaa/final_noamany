@@ -1,4 +1,5 @@
 import { SalesRepActivation } from './sales-rep-activation';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { Activity, CalendarDays, Clock3, Dumbbell, MessageSquareText, Phone, ReceiptText, Target, Users } from 'lucide-react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
@@ -230,7 +231,7 @@ function SalesPerformance({ data, params }: { data: SalesDrilldown; params: { da
             <TableShell headers={[ui('العميل'), ui('الحالة'), ui('آخر تواصل'), ui('آخر ملاحظة'), ui('إعادة التوزيع')]}>
               {data.leads.map((lead) => (
                 <tr key={lead.id} className="border-t">
-                  <td className="px-3 py-3"><p className="font-semibold">{lead.fullName}</p><p className="nums text-xs text-muted-foreground">{lead.phone}</p></td>
+                  <td className="px-3 py-3"><p className="font-semibold">{lead.fullName}</p><p className="nums text-xs text-muted-foreground"><MaskedPhone value={lead.phone} leadId={lead.id} /></p></td>
                   <td className="px-3 py-3">{ui(leadStatus[lead.status] ?? lead.status)}</td>
                   <td className="px-3 py-3 nums">{formatDateTime(lead.lastContactedAt ?? lead.createdAt)}</td>
                   <td className="max-w-[260px] px-3 py-3 text-muted-foreground"><p className="line-clamp-2">{lead.notes || '—'}</p></td>

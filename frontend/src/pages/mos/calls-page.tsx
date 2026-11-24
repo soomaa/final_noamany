@@ -16,7 +16,9 @@ import { formatDate, formatNum } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { SELECT_CLS } from '../club/fitness/shared';
-import { MaskedPhone } from '@/components/club/masked-phone';
+import { MaskedPhone, resolvePhone } from '@/components/club/masked-phone';
+import { isMaskedValue } from '@/lib/masked-value';
+import { toast } from 'sonner';
 
 interface CallLogRow {
   id: string;
@@ -276,6 +278,20 @@ export function MosCallsPage() {
                             {dialHref ? (
                               <Button asChild size="icon" variant="ghost" aria-label={`${ui('اتصال')} ${row.clientName}`}>
                                 <a href={dialHref}><Phone className="size-4" /></a>
+                              </Button>
+                            ) : isMaskedValue(row.phone) && row.leadId ? (
+                              // Masked number (phone privacy): dial after the audited reveal.
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                aria-label={`${ui('اتصال')} ${row.clientName}`}
+                                onClick={async () => {
+                                  const href = toDialLink(await resolvePhone(row.phone, { leadId: row.leadId }));
+                                  if (href) window.location.href = href;
+                                  else toast.error(ui('مش مسموح لك تشوف الرقم ده'));
+                                }}
+                              >
+                                <Phone className="size-4" />
                               </Button>
                             ) : (
                               <span className="grid size-9 place-items-center text-muted-foreground/50" aria-hidden="true">

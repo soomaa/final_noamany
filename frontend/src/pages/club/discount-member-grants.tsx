@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { BadgePercent, Loader2, Search, Trash2, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
@@ -47,7 +48,7 @@ function MemberCard({ member }: { member: GrantMember }) {
         <p className="truncate text-base font-semibold">{member.name}</p>
         <p className="text-muted-foreground">
           <span className="nums font-mono" dir="ltr">{member.memberCode}</span>
-          {member.phone ? <> · <span className="nums">{toArabicDigits(member.phone)}</span></> : null}
+          {member.phone ? <> · <MaskedPhone value={member.phone} memberId={member.id} /></> : null}
         </p>
       </div>
     </div>

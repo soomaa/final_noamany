@@ -26,7 +26,9 @@ export type ActionKey =
   | 'configure'
   | 'execute'
   | 'manage'
-  | 'use';
+  | 'use'
+  | 'viewPhone'
+  | 'revealPhone';
 
 export interface ActionDef {
   key: ActionKey;
@@ -52,6 +54,10 @@ export const ACTIONS: ActionDef[] = [
   { key: 'execute', labelAr: 'تنفيذ', labelEn: 'Execute', sensitive: false, sortOrder: 11 },
   { key: 'manage', labelAr: 'إدارة', labelEn: 'Manage', sensitive: true, sortOrder: 12 },
   { key: 'use', labelAr: 'استخدام', labelEn: 'Use', sensitive: false, sortOrder: 13 },
+  // Customer phone privacy: numbers are stars in every list unless the role holds viewPhone;
+  // revealPhone is the audited eye that shows one number at a time.
+  { key: 'viewPhone', labelAr: 'إظهار أرقام الهواتف', labelEn: 'Show phone numbers', sensitive: true, sortOrder: 14 },
+  { key: 'revealPhone', labelAr: 'إظهار رقم بالعين', labelEn: 'Reveal a phone (eye)', sensitive: true, sortOrder: 15 },
 ];
 
 export const SENSITIVE_ACTIONS = new Set<ActionKey>(
@@ -86,6 +92,8 @@ const APPROVAL: ActionKey[] = [
 const REPORT: ActionKey[] = ['view', 'export', 'print'];
 const SETTINGS: ActionKey[] = ['view', 'update', 'configure', 'audit'];
 const RECORD: ActionKey[] = ['view', 'update', 'audit']; // single-record screens (e.g. company data)
+/** The two phone-privacy grants, offered on every screen that lists customers (and the club module). */
+const CONTACT: ActionKey[] = ['viewPhone', 'revealPhone'];
 
 export type ResType = 'module' | 'group' | 'page';
 
@@ -273,12 +281,12 @@ export const RESOURCE_TREE: ResourceNode[] = [
     nameEn: 'Club',
     type: 'module',
     icon: 'Dumbbell',
-    actions: ALL,
+    actions: [...ALL, ...CONTACT],
     children: [
       page('club.dashboard', 'لوحة التحكم', '/hub/club', REPORT, 'Dashboard'),
       group('club.membership', 'إدارة العضوية والأعضاء', 'Users', [
         // APPROVAL (not LIST): `approve` gates grace sessions — letting an expired member in.
-        page('club.reception', 'الاستقبال', '/club/reception', APPROVAL, 'Reception'),
+        page('club.reception', 'الاستقبال', '/club/reception', [...APPROVAL, ...CONTACT], 'Reception'),
         page(
           'club.reception.quick_services',
           'خدمات سريعة',
@@ -286,27 +294,31 @@ export const RESOURCE_TREE: ResourceNode[] = [
           LIST,
           'Quick services',
         ),
-        page('club.members', 'إدارة العضوية', '/club/members', LIST, 'Members'),
+        page('club.members', 'إدارة العضوية', '/club/members', [...LIST, ...CONTACT], 'Members'),
         page('club.members.barcode_management', 'إدارة الباركود', '/club/members/barcode-management', LIST, 'Barcode management'),
         page('club.members.attendance', 'حضور الأعضاء', '/club/members/attendance', LIST, 'Member attendance'),
         page('club.members.groups', 'المجموعات والفئات', '/club/members/groups', LIST, 'Groups'),
         page('club.members.surveys', 'الاستبيانات', '/club/members/surveys', LIST, 'Surveys'),
-        { key: 'sales.portal', nameAr: 'بوابة المبيعات', nameEn: 'Sales portal', type: 'page', actions: ['view', 'update'] },
+        { key: 'sales.portal', nameAr: 'بوابة المبيعات', nameEn: 'Sales portal', type: 'page', actions: ['view', 'update', ...CONTACT] },
       ], 'Membership'),
       // «إدارة المبيعات والعملاء المحتملين» (ported from MetaFit).
       group('club.sales-management', 'إدارة المبيعات', 'Handshake', [
-        page('club.leads', 'العملاء المحتملون', '/mos/potential-members', LIST, 'Potential members'),
-        page('club.calls', 'سجل المكالمات', '/mos/calls', REPORT, 'Calls log'),
+        page('club.leads', 'العملاء المحتملون', '/mos/potential-members', [...LIST, ...CONTACT], 'Potential members'),
+        page('club.calls', 'سجل المكالمات', '/mos/calls', [...REPORT, ...CONTACT], 'Calls log'),
         // configure = pair devices / add to the do-not-message list; delete = unpair / remove from it.
         page('club.whatsapp', 'رسائل واتساب', '/club/whatsapp', ['view', 'create', 'update', 'delete', 'configure', 'audit'], 'WhatsApp messages'),
         page('club.sales.dashboard', 'أداء فريق المبيعات', '/club/sales-reports', [...REPORT, 'update'], 'Sales team performance'),
         // Permission scopes inside the unified sales screen, not separate sidebar links.
         { key: 'club.sales.settings', nameAr: 'أهداف وعمولات المبيعات', nameEn: 'Sales targets & commissions', type: 'page', actions: SETTINGS },
         { key: 'club.sales.reports', nameAr: 'فريق المبيعات', nameEn: 'Sales team', type: 'page', actions: REPORT },
+        // «أكواد الدعوات للموظفين»: view = list (admin all / manager own staff / others self),
+        // create = record a guest, update = codes & quotas, approve = record over the quota.
+        page('club.staff_invitations', 'أكواد الدعوات للموظفين', '/club/staff-invitations', ['view', 'create', 'update', 'delete', 'approve', 'export', 'print', 'audit'], 'Staff invitation codes'),
+        page('club.staff_invitations.mine', 'كود الدعوات الخاص بي', '/club/my-invitation-code', ['view', 'print'], 'My invitation code'),
       ], 'Sales Management'),
       group('club.subscriptions', 'إدارة الاشتراكات والمدفوعات', 'CreditCard', [
         page('club.packages.settings', 'الباقات والأسعار', '/club/packages/settings', SETTINGS, 'Packages'),
-        page('club.subscriptions.list', 'الاشتراكات', '/club/subscriptions', APPROVAL, 'Subscriptions'),
+        page('club.subscriptions.list', 'الاشتراكات', '/club/subscriptions', [...APPROVAL, ...CONTACT], 'Subscriptions'),
         page('club.subscriptions.member_transfer', 'تحويلات الاشتراكات', '/club/subscriptions/member-transfer', ['view', 'create', 'update', 'delete', 'export'], 'Subscription transfers'),
         page('club.subscriptions.expiring', 'اشتراكات على وشك الانتهاء', '/club/subscriptions/expiring', REPORT, 'Expiring subscriptions'),
         page('club.subscriptions.new', 'إضافة اشتراك جديد', '/club/subscriptions/new', APPROVAL, 'New subscription'),

@@ -52,6 +52,11 @@ type LeadRow = {
   phone: string | null;
   email: string | null;
   sourceId: number | null;
+  /** EMS source key + label (e.g. staff_invitation → «دعوة موظف»). */
+  source?: string;
+  sourceLabel?: string;
+  /** «دعوة بكود موظف»: the employee whose code brought this guest. */
+  invitedByName?: string | null;
   assignedToId: number | null;
   assignedToName: string | null;
   status: string;
@@ -69,6 +74,20 @@ type LeadRow = {
 };
 
 type LeadPage = { data: LeadRow[]; total: number };
+
+/**
+ * «مصدر المعرفة», falling back to the system source for leads the system writes (a guest
+ * through an employee's invitation code shows «دعوة موظف — <employee>»).
+ */
+function LeadSourceCell({ lead, name }: { lead: LeadRow; name: string }) {
+  if (lead.sourceId != null || lead.source !== 'staff_invitation') return <>{name}</>;
+  return (
+    <span>
+      {lead.sourceLabel ?? 'دعوة موظف'}
+      {lead.invitedByName ? <span className="block text-xs text-muted-foreground">{lead.invitedByName}</span> : null}
+    </span>
+  );
+}
 
 /**
  * Every state offered as a filter card (FIT90's pipeline). `closes` marks the ones that leave
@@ -383,7 +402,7 @@ export function MosLeadsPage() {
     {
       accessorKey: 'sourceId',
       header: isRtl ? 'مصدر المعرفة' : 'Knowledge source',
-      cell: ({ row }) => sourceName(row.original.sourceId),
+      cell: ({ row }) => <LeadSourceCell lead={row.original} name={sourceName(row.original.sourceId)} />,
     },
     {
       accessorKey: 'status',
@@ -651,7 +670,10 @@ export function MosLeadsPage() {
                   <span dir="ltr" className="break-all">{detailsLead?.email || '—'}</span>
                 </Field>
                 <Field label={isRtl ? 'أخصائي المبيعات' : 'Sales rep'}>{detailsLead?.assignedToName ?? '—'}</Field>
-                <Field label={isRtl ? 'مصدر المعرفة' : 'Knowledge source'}>{sourceName(detailsLead?.sourceId)}</Field>
+                <Field label={isRtl ? 'مصدر المعرفة' : 'Knowledge source'}>{detailsLead ? <LeadSourceCell lead={detailsLead} name={sourceName(detailsLead.sourceId)} /> : '—'}</Field>
+                {detailsLead?.invitedByName ? (
+                  <Field label={isRtl ? 'جاي من خلال' : 'Invited by'}>{detailsLead.invitedByName}</Field>
+                ) : null}
                 <Field label={ct('common.status')}>{statusLabel(detailsLead?.status)}</Field>
                 <Field label={isRtl ? 'المتابعة' : 'Follow-up'}>
                   <span className="nums">{detailsLead?.followUpAt || '—'}</span>

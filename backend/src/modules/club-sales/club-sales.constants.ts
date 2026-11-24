@@ -12,7 +12,12 @@ export const LEAD_SOURCES = [
   'app_browse',
   // The app's "create account" form: a join request — the club issues the login itself.
   'app_signup',
+  // A guest recorded with an employee's invitation code («دعوة بكود موظف»).
+  'staff_invitation',
 ] as const;
+
+/** Sources only the system writes — never typed on the form or imported from Excel. */
+export const SYSTEM_LEAD_SOURCES: readonly LeadSource[] = ['member_invitation', 'staff_invitation'];
 
 export type LeadSource = (typeof LEAD_SOURCES)[number];
 
@@ -26,6 +31,7 @@ export const LEAD_SOURCE_LABELS: Record<LeadSource, string> = {
   renewal: 'تجديد اشتراك منتهي',
   app_browse: 'تطبيق الموبايل (زائر)',
   app_signup: 'طلب انضمام من التطبيق',
+  staff_invitation: 'دعوة موظف',
 };
 
 /**

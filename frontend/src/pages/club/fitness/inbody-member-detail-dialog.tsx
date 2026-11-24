@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { FileText, Loader2 } from 'lucide-react';
 import { isImageHref } from '@/components/common/image-preview';
 import { uploadUrl } from '@/components/employees/use-uploads';
@@ -107,7 +108,7 @@ export function InbodyMemberDetailDialog({ memberId, open, onOpenChange }: Inbod
                   <div className="grid gap-1 pt-2 sm:grid-cols-2">
                     <p>
                       <span className="text-muted-foreground">{ft('inbody.phone')}:</span>{' '}
-                      <span className="nums">{data.member.phone ? toArabicDigits(data.member.phone) : '—'}</span>
+                      <MaskedPhone value={data.member.phone} memberId={data.member.id} />
                     </p>
                     <p>
                       <span className="text-muted-foreground">{ft('inbody.nationalId')}:</span>{' '}

@@ -10,6 +10,8 @@ import { ClubSalesDashboardController } from './club-sales-dashboard.controller'
 import { ClubSalesDashboardService } from './club-sales-dashboard.service';
 import { ClubSalesReportsController } from './club-sales-reports.controller';
 import { ClubSalesReportsService } from './club-sales-reports.service';
+import { ClubStaffInvitationsController } from './club-staff-invitations.controller';
+import { ClubStaffInvitationsService } from './club-staff-invitations.service';
 
 @Module({
   imports: [GymOpsModule, EmployeesModule, ClubMosModule],
@@ -18,12 +20,14 @@ import { ClubSalesReportsService } from './club-sales-reports.service';
     ClubCommissionSettingsController,
     ClubSalesDashboardController,
     ClubSalesReportsController,
+    ClubStaffInvitationsController,
   ],
   providers: [
     ClubLeadsService,
     ClubCommissionSettingsService,
     ClubSalesDashboardService,
     ClubSalesReportsService,
+    ClubStaffInvitationsService,
   ],
   exports: [ClubLeadsService, ClubSalesReportsService],
 })

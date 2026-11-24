@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import * as ExcelJS from 'exceljs';
 import { Response } from 'express';
+import { contactVisibilityStore, maskContactTree } from '../privacy/contact-masking';
 
 export interface ExportColumn {
   key: string;
@@ -14,13 +15,23 @@ export interface ExportSheet {
   rows: Record<string, unknown>[];
 }
 
+/**
+ * A download is the easiest way to lift every number at once, so exports of customer data mask
+ * exactly like the JSON of the same screen: the contact-masking interceptor puts the caller's
+ * visibility in scope for the request, and every sheet passes through it here.
+ */
+function maskRows(rows: Record<string, unknown>[]): Record<string, unknown>[] {
+  const vis = contactVisibilityStore.getStore();
+  return vis ? maskContactTree(rows, vis) : rows;
+}
+
 @Injectable()
 export class ExportService {
   /** Build CSV string with UTF-8 BOM for Excel Arabic compatibility. */
   toCsv(columns: ExportColumn[], rows: Record<string, unknown>[]): string {
     const bom = '\uFEFF';
     const header = columns.map((c) => this.escapeCsv(c.header)).join(',');
-    const lines = rows.map((row) =>
+    const lines = maskRows(rows).map((row) =>
       columns.map((c) => this.escapeCsv(String(row[c.key] ?? ''))).join(','),
     );
     return bom + [header, ...lines].join('\r\n');
@@ -38,7 +49,7 @@ export class ExportService {
         width: c.width ?? 18,
       }));
       ws.getRow(1).font = { bold: true };
-      for (const row of sheet.rows) {
+      for (const row of maskRows(sheet.rows)) {
         ws.addRow(row);
       }
     }

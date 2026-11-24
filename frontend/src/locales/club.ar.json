@@ -39,7 +39,12 @@
     "discountValue": "قيمة الخصم",
     "gender": "الجنس",
     "paymentMethod": "طريقة الدفع",
-    "remaining": "المتبقي"
+    "remaining": "المتبقي",
+    "phone": "رقم الموبايل",
+    "name": "الاسم",
+    "email": "البريد الإلكتروني",
+    "close": "إغلاق",
+    "saved": "تم الحفظ"
   },
   "dashboard": {
     "title": "لوحة التحكم",
@@ -295,7 +300,6 @@
     "invoiceFooter": "شكراً لانضمامكم",
     "printInvoice": "طباعة الفاتورة",
     "registrationDate": "تاريخ التسجيل",
-    "endDate": "تاريخ الانتهاء",
     "subscriptionValue": "قيمة الاشتراك",
     "paidAmount": "المبلغ المدفوع",
     "remainingAmount": "المبلغ المتبقي",

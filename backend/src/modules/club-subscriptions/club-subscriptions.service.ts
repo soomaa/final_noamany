@@ -66,6 +66,28 @@ import {
 import { ListClubSubscriptionsDto } from './dto/list-club-subscriptions.dto';
 import { UpsertClubSubscriptionDto } from './dto/upsert-club-subscription.dto';
 import { isSubscriptionTypeAvailableAtBranch } from './subscription-type-branch-scope';
+import {
+  CashierEntry,
+  CashierExpense,
+  CashierPayment,
+  CashierSource,
+  isReceptionServiceSource,
+  normalizeCashierMethod,
+  resolveCashierPeriod,
+  summarizeDailyCashier,
+} from './daily-cashier-report.util';
+import { REFUND_EXPENSE_CATEGORY } from '../finance/finance.utils';
+
+const CASHIER_SOURCE_LABELS: Record<CashierSource, string> = {
+  subscription: 'اشتراك',
+  installment: 'قسط / سداد متبقي',
+  quick_service: 'خدمة سريعة',
+  locker: 'لوكر',
+  spa: 'سبا',
+  inbody: 'InBody',
+  other: 'إيصال آخر',
+  bar: 'البار / الكافيه',
+};
 
 @Injectable()
 export class ClubSubscriptionsService {
@@ -518,14 +540,32 @@ export class ClubSubscriptionsService {
   }
 
   /**
-   * Today's subscription activity for the cashier who entered it.
+   * «يومية الاستقبال» — everything the reception collected in a period, the payment-method split
+   * with its reconciliation check, the expenses / refunds paid out, the bar (POS) sales, and the
+   * cash that should be in the drawer, overall and per collecting user.
    *
    * Regular users are always forced to their own user id. A system administrator may view one
    * user or everyone. The server owns this scope so changing query parameters in the browser
-   * cannot reveal another cashier's activity.
+   * cannot reveal another cashier's activity. The branch is intersected with the user's scope.
+   *
+   * Backward compatible: called with only (user, userId, gender) it reports today.
    */
-  async dailyCashierReport(user: JwtUser, requestedUserId?: string, gender?: string) {
+  async dailyCashierReport(
+    user: JwtUser,
+    requestedUserId?: string,
+    gender?: string,
+    options: { date?: string; dateFrom?: string; dateTo?: string; branchId?: string } = {},
+  ) {
     const today = localDateString();
+    let period: { dateFrom: string; dateTo: string };
+    try {
+      period = resolveCashierPeriod(options, today);
+    } catch (error) {
+      throw new BadRequestException(error instanceof Error ? error.message : 'تاريخ غير صالح');
+    }
+    const { dateFrom, dateTo } = period;
+    const dateWhere = dateFrom === dateTo ? dateFrom : { gte: dateFrom, lte: dateTo };
+
     const memberGender = this.branchScope.resolveMemberGenderRequest(user, gender);
     const isSystemAdmin = await this.permissions.isSuperAdmin(user.sub);
     const parsedUserId = Number(requestedUserId);
@@ -535,22 +575,28 @@ export class ClubSubscriptionsService {
         : isSystemAdmin
           ? null
           : user.sub;
+    const requestedBranch = Number(options.branchId);
+    const hasBranchRequest = Number.isInteger(requestedBranch) && requestedBranch > 0;
     const allowedBranchIds = isSystemAdmin
-      ? null
-      : this.branchScope.resolveListFilter(user, null);
+      ? hasBranchRequest
+        ? [requestedBranch]
+        : null
+      : this.branchScope.resolveListFilter(user, hasBranchRequest ? requestedBranch : null);
+    const branchIn = allowedBranchIds ? { branch_id: { in: allowedBranchIds } } : {};
+    const createdBy = selectedUserId != null ? { created_by: selectedUserId } : {};
 
     const subscriptionWhere: Prisma.club_subscriptionsWhereInput = {
-      registration_date: today,
+      registration_date: dateWhere,
       // An entitlement moved from another member is not a new cashier sale.
       transferred_credit_amount: 0,
-      ...(selectedUserId != null ? { created_by: selectedUserId } : {}),
-      ...(allowedBranchIds ? { branch_id: { in: allowedBranchIds } } : {}),
+      ...createdBy,
+      ...branchIn,
       ...(memberGender ? { AND: [subscriptionGenderWhere(memberGender)] } : {}),
     };
     const receiptWhere: Prisma.club_receiptsWhereInput = {
-      receipt_date: today,
+      receipt_date: dateWhere,
       status: { in: ['مدفوعة', 'paid'] },
-      ...(selectedUserId != null ? { created_by: selectedUserId } : {}),
+      ...createdBy,
       ...(memberGender ? { AND: [receiptGenderWhere(memberGender)] } : {}),
       ...(allowedBranchIds
         ? {
@@ -561,26 +607,172 @@ export class ClubSubscriptionsService {
           }
         : {}),
     };
+    const invoiceWhere = {
+      invoice_date: dateWhere,
+      is_active: true,
+      status: 'paid',
+      covered_by_subscription: false,
+      total_amount: { gt: 0 },
+      ...branchIn,
+      ...createdBy,
+    };
+    const expenseWhere: Prisma.fin_expensesWhereInput = {
+      is_deleted: false,
+      expense_date: dateWhere,
+      payment_status: { in: ['مدفوع', 'paid'] },
+      approval_status: { not: 'مرفوض' },
+      ...branchIn,
+      ...createdBy,
+      // Expenses without a section are shared by both sections.
+      ...(memberGender ? { OR: [{ gender_scope: memberGender }, { gender_scope: null }] } : {}),
+    };
+    // Bar/café money has no member section: the رجالي/حريمي pick does not filter it.
+    const barWhere: Prisma.sales_quick_salesWhereInput = {
+      sale_date: dateWhere,
+      status: 'completed',
+      ...branchIn,
+      ...(selectedUserId != null
+        ? { OR: [{ cashier_id: selectedUserId }, { cashier_id: null, created_by: selectedUserId }] }
+        : {}),
+    };
 
-    const [subscriptions, receipts, accounts] = await Promise.all([
-      this.prisma.club_subscriptions.findMany({
-        where: subscriptionWhere,
-        orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
-      }),
-      this.prisma.club_receipts.findMany({
-        where: receiptWhere,
-        select: { amount: true },
-      }),
-      this.prisma.users.findMany({
-        where: isSystemAdmin
-          ? { approved: 1 }
-          : { user_id: user.sub },
-        select: { user_id: true, name: true, username: true },
-        orderBy: { name: 'asc' },
-      }),
-    ]);
+    const [subscriptions, receipts, spaInvoices, inbodyInvoices, expenses, barSales, accounts] =
+      await Promise.all([
+        this.prisma.club_subscriptions.findMany({
+          where: subscriptionWhere,
+          orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        }),
+        this.prisma.club_receipts.findMany({
+          where: receiptWhere,
+          select: {
+            id: true,
+            receipt_number: true,
+            subscription_id: true,
+            locker_subscription_id: true,
+            member_name: true,
+            amount: true,
+            type: true,
+            payment_method: true,
+            receipt_date: true,
+            description: true,
+            created_at: true,
+            created_by: true,
+            subscription: {
+              select: { subscription_number: true, subscription_type: true, registration_date: true },
+            },
+            payments: { select: { method: true, amount: true }, orderBy: { id: 'asc' } },
+          },
+          orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        }),
+        this.prisma.club_spa_invoices.findMany({
+          where: invoiceWhere,
+          select: {
+            id: true,
+            invoice_number: true,
+            member_id: true,
+            total_amount: true,
+            payment_method: true,
+            invoice_date: true,
+            created_at: true,
+            created_by: true,
+            service: { select: { name: true } },
+          },
+          orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        }),
+        this.prisma.club_inbody_invoices.findMany({
+          where: invoiceWhere,
+          select: {
+            id: true,
+            invoice_number: true,
+            member_id: true,
+            customer_name: true,
+            total_amount: true,
+            payment_method: true,
+            invoice_date: true,
+            created_at: true,
+            created_by: true,
+            service: { select: { name: true } },
+          },
+          orderBy: [{ created_at: 'desc' }, { id: 'desc' }],
+        }),
+        this.prisma.fin_expenses.findMany({
+          where: expenseWhere,
+          select: {
+            id: true,
+            expense_number: true,
+            expense_date: true,
+            category: true,
+            sub_category: true,
+            description: true,
+            vendor: true,
+            total_amount: true,
+            payment_method: true,
+            created_by: true,
+            created_at: true,
+          },
+          orderBy: [{ expense_date: 'desc' }, { id: 'desc' }],
+        }),
+        this.prisma.sales_quick_sales.findMany({
+          where: barWhere,
+          select: {
+            id: true,
+            sale_number: true,
+            sale_date: true,
+            sale_time: true,
+            customer_name: true,
+            total_amount: true,
+            collected_amount: true,
+            payment_method: true,
+            cashier_id: true,
+            created_by: true,
+            payments: { select: { method: true, amount: true } },
+          },
+          orderBy: [{ sale_date: 'desc' }, { sale_time: 'desc' }, { id: 'desc' }],
+        }),
+        this.prisma.users.findMany({
+          where: isSystemAdmin ? { approved: 1 } : { user_id: user.sub },
+          select: { user_id: true, name: true, username: true },
+          orderBy: { name: 'asc' },
+        }),
+      ]);
+
+    // Spa / InBody invoices carry only a member id: resolve names and the رجالي/حريمي section.
+    const invoiceMemberIds = [
+      ...new Set(
+        [...spaInvoices, ...inbodyInvoices]
+          .map((row) => row.member_id)
+          .filter((id): id is number => id != null),
+      ),
+    ];
+    const invoiceMembers = invoiceMemberIds.length
+      ? await this.prisma.club_members.findMany({
+          where: { id: { in: invoiceMemberIds } },
+          select: { id: true, name: true, gender: true },
+        })
+      : [];
+    const memberById = new Map(invoiceMembers.map((row) => [row.id, row]));
+    const inSection = (memberId: number | null) =>
+      !memberGender || (memberId != null && memberById.get(memberId)?.gender === memberGender);
+    const spaRows = spaInvoices.filter((row) => inSection(row.member_id));
+    const inbodyRows = inbodyInvoices.filter((row) => inSection(row.member_id));
 
     const accountById = new Map(accounts.map((row) => [row.user_id, row]));
+    const referencedUserIds = new Set<number>();
+    for (const row of [...receipts, ...spaRows, ...inbodyRows, ...expenses, ...subscriptions]) {
+      if (row.created_by != null) referencedUserIds.add(row.created_by);
+    }
+    for (const sale of barSales) {
+      const id = sale.cashier_id ?? sale.created_by;
+      if (id != null) referencedUserIds.add(id);
+    }
+    const missingUserIds = [...referencedUserIds].filter((id) => !accountById.has(id));
+    if (missingUserIds.length) {
+      const extra = await this.prisma.users.findMany({
+        where: { user_id: { in: missingUserIds } },
+        select: { user_id: true, name: true, username: true },
+      });
+      for (const row of extra) accountById.set(row.user_id, row);
+    }
     const displayName = (userId: number | null) => {
       if (userId == null) return 'غير محدد';
       const account = accountById.get(userId);
@@ -592,6 +784,7 @@ export class ClubSubscriptionsService {
       return {
         id: mapped.id,
         subscriptionNumber: mapped.subscriptionNumber,
+        registrationDate: row.registration_date,
         customerName: mapped.customerName,
         subscriptionType: mapped.subscriptionType,
         subscriptionValue: mapped.subscriptionValue,
@@ -604,26 +797,255 @@ export class ClubSubscriptionsService {
       };
     });
 
+    const entries: CashierEntry[] = [];
+    const lineCheck = (amount: number, payments: CashierPayment[]) => {
+      const paymentsTotal = roundMoney(payments.reduce((sum, p) => sum + p.amount, 0));
+      const reconciliationDifference = roundMoney(amount - paymentsTotal);
+      return { paymentsTotal, reconciliationDifference, isReconciled: reconciliationDifference === 0 };
+    };
+
+    const receiptRows: Array<Record<string, unknown>> = [];
+    const serviceRows: Array<Record<string, unknown>> = [];
+    for (const receipt of receipts) {
+      const amount = toNum(receipt.amount);
+      const payments: CashierPayment[] = receipt.payments.length
+        ? receipt.payments.map((line) => ({ method: line.method, amount: toNum(line.amount) }))
+        : [{ method: receipt.payment_method ?? 'cash', amount }];
+      const source: CashierSource =
+        receipt.type === 'quick_service'
+          ? 'quick_service'
+          : receipt.type === 'locker' || receipt.locker_subscription_id != null
+            ? 'locker'
+            : receipt.subscription_id != null
+              ? receipt.subscription?.registration_date &&
+                receipt.subscription.registration_date < receipt.receipt_date
+                ? 'installment'
+                : 'subscription'
+              : 'other';
+      entries.push({ source, amount, payments, userId: receipt.created_by });
+      const common = {
+        key: `receipt-${receipt.id}`,
+        id: receipt.id,
+        source,
+        sourceLabel: CASHIER_SOURCE_LABELS[source],
+        number: receipt.receipt_number,
+        customerName: receipt.member_name || null,
+        amount,
+        paymentMethod: receipt.payment_method ?? payments[0]?.method ?? 'cash',
+        payments,
+        ...lineCheck(amount, payments),
+        date: receipt.receipt_date,
+        createdAt: receipt.created_at,
+        createdByUserId: receipt.created_by,
+        createdByName: displayName(receipt.created_by),
+      };
+      if (isReceptionServiceSource(source)) {
+        const description = receipt.description?.trim() || '';
+        const named = description.match(/^خدمة سريعة:\s*(.+?)(?:\s+—|$)/);
+        serviceRows.push({
+          ...common,
+          serviceName: named?.[1]?.trim() || description || CASHIER_SOURCE_LABELS[source],
+        });
+      } else {
+        receiptRows.push({
+          ...common,
+          subscriptionId: receipt.subscription_id,
+          subscriptionNumber: receipt.subscription?.subscription_number ?? null,
+          subscriptionType: receipt.subscription?.subscription_type ?? receipt.type ?? null,
+        });
+      }
+    }
+
+    const pushInvoice = (
+      source: 'spa' | 'inbody',
+      row: {
+        id: number;
+        invoice_number: string;
+        member_id: number | null;
+        total_amount: Prisma.Decimal;
+        payment_method: string | null;
+        invoice_date: string;
+        created_at: Date;
+        created_by: number | null;
+        service: { name: string } | null;
+        customer_name?: string | null;
+      },
+    ) => {
+      const amount = toNum(row.total_amount);
+      const method = row.payment_method && row.payment_method !== 'mixed' ? row.payment_method : 'cash';
+      const payments = [{ method, amount }];
+      entries.push({ source, amount, payments, userId: row.created_by });
+      serviceRows.push({
+        key: `${source}-${row.id}`,
+        id: row.id,
+        source,
+        sourceLabel: CASHIER_SOURCE_LABELS[source],
+        number: row.invoice_number,
+        customerName:
+          (row.member_id != null ? memberById.get(row.member_id)?.name : null) ?? row.customer_name ?? null,
+        serviceName: row.service?.name ?? CASHIER_SOURCE_LABELS[source],
+        amount,
+        paymentMethod: method,
+        payments,
+        ...lineCheck(amount, payments),
+        date: row.invoice_date,
+        createdAt: row.created_at,
+        createdByUserId: row.created_by,
+        createdByName: displayName(row.created_by),
+      });
+    };
+    spaRows.forEach((row) => pushInvoice('spa', row));
+    inbodyRows.forEach((row) => pushInvoice('inbody', row));
+    serviceRows.sort(
+      (a, b) => new Date(b.createdAt as Date).getTime() - new Date(a.createdAt as Date).getTime(),
+    );
+
+    const expenseEntries: CashierExpense[] = [];
+    const expenseRows = expenses.map((row) => {
+      const amount = toNum(row.total_amount);
+      const isRefund = row.category === REFUND_EXPENSE_CATEGORY;
+      expenseEntries.push({ amount, method: row.payment_method, userId: row.created_by, isRefund });
+      return {
+        id: row.id,
+        expenseNumber: row.expense_number,
+        date: row.expense_date,
+        category: row.category,
+        subCategory: row.sub_category,
+        description: row.description || row.vendor || null,
+        amount,
+        paymentMethod: normalizeCashierMethod(row.payment_method),
+        paymentMethodRaw: row.payment_method,
+        isRefund,
+        createdAt: row.created_at,
+        createdByUserId: row.created_by,
+        createdByName: displayName(row.created_by),
+      };
+    });
+
+    let barSalesTotal = 0;
+    const barCashiers = new Map<number | null, { count: number; salesTotal: number }>();
+    const barRows = barSales.map((sale) => {
+      const total = toNum(sale.total_amount);
+      const collected = toNum(sale.collected_amount);
+      const cashierId = sale.cashier_id ?? sale.created_by;
+      const payments: CashierPayment[] =
+        sale.payment_method === 'mixed' && sale.payments.length
+          ? sale.payments.map((p) => ({ method: p.method, amount: toNum(p.amount) }))
+          : [{ method: sale.payment_method === 'mixed' ? 'other' : sale.payment_method, amount: collected }];
+      entries.push({ source: 'bar', amount: collected, payments, userId: cashierId });
+      barSalesTotal += total;
+      const cashier = barCashiers.get(cashierId) ?? { count: 0, salesTotal: 0 };
+      cashier.count += 1;
+      cashier.salesTotal += total;
+      barCashiers.set(cashierId, cashier);
+      return {
+        id: sale.id,
+        saleNumber: sale.sale_number,
+        date: sale.sale_date,
+        time: sale.sale_time,
+        customerName: sale.customer_name,
+        total,
+        collected,
+        unpaid: roundMoney(Math.max(0, total - collected)),
+        paymentMethod: sale.payment_method,
+        payments,
+        cashierUserId: cashierId,
+        cashierName: displayName(cashierId),
+      };
+    });
+
+    const summaryMath = summarizeDailyCashier(entries, expenseEntries);
+    const byUser = summaryMath.byUser.map((row) => ({ ...row, name: displayName(row.userId) }));
+    const barByCashier = byUser
+      .filter((row) => barCashiers.has(row.userId))
+      .map((row) => {
+        const meta = barCashiers.get(row.userId)!;
+        // Bar money only: the user's reception columns are not mixed into the bar table.
+        const barEntries = entries.filter((e) => e.source === 'bar' && e.userId === row.userId);
+        const split = summarizeDailyCashier(barEntries, []).byUser[0];
+        return {
+          userId: row.userId,
+          name: row.name,
+          count: meta.count,
+          salesTotal: roundMoney(meta.salesTotal),
+          collected: split?.total ?? 0,
+          cash: split?.cash ?? 0,
+          card: split?.card ?? 0,
+          transfer: split?.transfer ?? 0,
+          other: split?.other ?? 0,
+        };
+      })
+      .sort((a, b) => b.collected - a.collected);
+
+    const BAR_ROWS_LIMIT = 500;
+
     return {
-      date: today,
+      /** Kept for older clients: the last day of the period. */
+      date: dateTo,
+      dateFrom,
+      dateTo,
+      today,
+      isToday: dateFrom === today && dateTo === today,
+      isSingleDay: dateFrom === dateTo,
       isSystemAdmin,
       lockedUser: !isSystemAdmin,
       selectedUserId,
       selectedUserName:
         selectedUserId == null ? 'كل المستخدمين' : displayName(selectedUserId),
+      selectedBranchId: hasBranchRequest && allowedBranchIds?.includes(requestedBranch) ? requestedBranch : null,
+      branchIds: allowedBranchIds,
+      gender: memberGender,
       users: isSystemAdmin
         ? accounts
             .map((account) => ({ id: account.user_id, name: displayName(account.user_id) }))
             .sort((a, b) => a.name.localeCompare(b.name, 'ar'))
         : [{ id: user.sub, name: displayName(user.sub) }],
       summary: {
+        // Contracts registered in the period.
         subscriptionsCount: rows.length,
-        totalValue: rows.reduce((sum, row) => sum + row.subscriptionValue, 0),
-        paidAmount: rows.reduce((sum, row) => sum + row.paidAmount, 0),
-        collectedToday: receipts.reduce((sum, row) => sum + toNum(row.amount), 0),
-        remainingAmount: rows.reduce((sum, row) => sum + row.remainingAmount, 0),
+        totalValue: roundMoney(rows.reduce((sum, row) => sum + row.subscriptionValue, 0)),
+        paidAmount: roundMoney(rows.reduce((sum, row) => sum + row.paidAmount, 0)),
+        remainingAmount: roundMoney(rows.reduce((sum, row) => sum + row.remainingAmount, 0)),
+        // Money collected at reception (bar excluded). `collectedToday` kept for older clients.
+        collectedToday: summaryMath.receptionCollected,
+        collectedTotal: summaryMath.receptionCollected,
+        receiptsCount: summaryMath.receptionCount,
+        subscriptionReceiptsCount: receiptRows.length,
+        subscriptionsCollected: summaryMath.subscriptionsAmount,
+        servicesCount: serviceRows.length,
+        servicesCollected: summaryMath.servicesAmount,
+        otherCollected: summaryMath.otherReceiptsAmount,
+        bySource: summaryMath.bySource,
+        collectedByMethod: summaryMath.receptionByMethod,
+        paymentsTotal: summaryMath.paymentsTotal,
+        reconciliationDifference: summaryMath.reconciliationDifference,
+        unreconciledReceiptsCount: summaryMath.unreconciledCount,
+        isReconciled: summaryMath.isReconciled,
+        expensesCount: expenseRows.filter((row) => !row.isRefund).length,
+        expensesTotal: summaryMath.expenses.total,
+        refundsCount: expenseRows.filter((row) => row.isRefund).length,
+        refundsTotal: summaryMath.expenses.refundsTotal,
+        expensesByMethod: summaryMath.expenses.byMethod,
       },
+      drawer: summaryMath.drawer,
+      byUser,
       rows,
+      receiptRows,
+      serviceRows,
+      /** Gymora name for the quick-services table. */
+      quickServiceRows: serviceRows.filter((row) => row.source === 'quick_service'),
+      expenseRows,
+      bar: {
+        count: barRows.length,
+        salesTotal: roundMoney(barSalesTotal),
+        collected: summaryMath.bar.collected,
+        unpaid: roundMoney(Math.max(0, barSalesTotal - summaryMath.bar.collected)),
+        byMethod: summaryMath.bar.byMethod,
+        cash: summaryMath.drawer.barCash,
+        byCashier: barByCashier,
+        rows: barRows.slice(0, BAR_ROWS_LIMIT),
+        rowsTruncated: barRows.length > BAR_ROWS_LIMIT,
+      },
     };
   }
 

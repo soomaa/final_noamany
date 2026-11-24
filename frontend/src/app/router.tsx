@@ -289,6 +289,8 @@ import {
   MosLeadsPage,
   MosCallsPage,
   ClubWhatsappPage,
+  ClubStaffInvitationsPage,
+  MyInvitationCodePage,
 } from '@/app/lazy-pages';
 
 function Lazy({ children }: { children: ReactNode }) {
@@ -541,6 +543,8 @@ export function AppRouter() {
           <Route path="mos/potential-members" element={<Lazy><MosLeadsPage /></Lazy>} />
           <Route path="mos/calls" element={<Lazy><MosCallsPage /></Lazy>} />
           <Route path="club/whatsapp" element={<Lazy><ClubWhatsappPage /></Lazy>} />
+          <Route path="club/staff-invitations" element={<Lazy><ClubStaffInvitationsPage /></Lazy>} />
+          <Route path="club/my-invitation-code" element={<Lazy><MyInvitationCodePage /></Lazy>} />
           <Route path="club/sales-dashboard" element={<Navigate to="/club/sales-reports?tab=overview" replace />} />
           <Route path="club/sales-settings" element={<Navigate to="/club/sales-reports?tab=settings" replace />} />
           <Route path="club/sales-reports" element={<Lazy><ClubSalesReportsPage /></Lazy>} />

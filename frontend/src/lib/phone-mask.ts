@@ -23,3 +23,11 @@ export function maskPhoneLocally(phone: string): string {
   if (national.length <= PHONE_TAIL) return '*'.repeat(national.length);
   return '*'.repeat(national.length - PHONE_TAIL) + national.slice(-PHONE_TAIL);
 }
+
+/**
+ * The number as printed on paper (invoices, membership cards): always masked, whether the server
+ * already sent stars or the caller holds the grant — paper cannot hide it again after a minute.
+ */
+export function printedPhone(phone: string): string {
+  return phone.includes('*') ? phone : maskPhoneLocally(phone);
+}

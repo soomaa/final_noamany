@@ -39,7 +39,12 @@ function makePrisma() {
     club_subscription_refunds: { findMany: jest.fn().mockResolvedValue([]) },
     club_subscription_transfers: { findMany: jest.fn().mockResolvedValue([]) },
     club_member_subscription_transfers: { findMany: jest.fn().mockResolvedValue([]) },
-    club_members: { findUnique: jest.fn() },
+    club_members: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+    // يومية الاستقبال also reads spa / InBody invoices, expenses and bar sales.
+    club_spa_invoices: { findMany: jest.fn().mockResolvedValue([]) },
+    club_inbody_invoices: { findMany: jest.fn().mockResolvedValue([]) },
+    fin_expenses: { findMany: jest.fn().mockResolvedValue([]) },
+    sales_quick_sales: { findMany: jest.fn().mockResolvedValue([]) },
     users: { findMany: jest.fn().mockResolvedValue([]) },
     tbl_branches: { findMany: jest.fn().mockResolvedValue([]) },
     $queryRawUnsafe: jest.fn().mockResolvedValue([]),

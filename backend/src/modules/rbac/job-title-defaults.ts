@@ -37,6 +37,8 @@ export function receptionCells(): JobTitlePermissionCell[] {
   return [
     // Quick services are not a reception task (Nada, 2 Nov).
     ...grant(['club.reception'], VIEW_OPERATE),
+    // Phone privacy (24 Nov): numbers stay stars; the desk reveals one at a time with the eye (audited).
+    ...grant(['club.reception', 'club.members'], ['revealPhone']),
     // Members: full desk workflow; edits/deletes are limited to members added today.
     ...grant(['club.members'], ['view', 'create', 'update', 'delete', 'print', 'export']),
     ...grant(['club.members.attendance'], ['view', 'create', 'print']),
@@ -49,6 +51,9 @@ export function receptionCells(): JobTitlePermissionCell[] {
     // Discount codes
     ...grant(['club.discount_codes.member_grants'], ['view', 'create']),
     ...grant(['club.discount_codes.captain_codes', 'club.discount_codes.member_search'], ['view']),
+    // Staff invitation codes: record a guest who came with an employee's code; own code.
+    ...grant(['club.staff_invitations'], ['create']),
+    ...grant(['club.staff_invitations.mine'], ['view']),
     // Lockers: reception does not add locker numbers (club.lockers.new).
     ...grant(['club.lockers.list'], ['view']),
     ...grant(['club.lockers.inventory'], ['view', 'create', 'print']),
@@ -85,10 +90,14 @@ export function branchManagerCells(): JobTitlePermissionCell[] {
     ...grant(['club.members.barcode.spa_attendance', 'club.members.barcode.classes_attendance', 'club.members.barcode.scan_times'], VIEW_REPORT),
     // إدارة الاشتراكات والمدفوعات: today's lists
     ...grant(['club.subscriptions.list', 'club.subscriptions.receipts', 'club.subscriptions.refunds'], ['view', 'print']),
+    // Phone privacy: managers may read members' numbers (lists still show stars + eye on screen).
+    ...grant(['club.members', 'club.subscriptions.list'], ['viewPhone']),
     // النقاط
     ...grant(['club.points.member_history', 'club.points.earned_report', 'club.points.active_members_report'], VIEW_REPORT),
     // أكواد الخصم: captains of the branch/section + reception staff
     ...grant(['club.discount_codes.captain_codes', 'club.discount_codes.member_report', 'club.discount_codes.usage_report'], VIEW_REPORT),
+    // أكواد الدعوات للموظفين: their staff's codes, guests and remaining allowance (read-only)
+    ...grant(['club.staff_invitations'], VIEW_REPORT),
     // إدارة اللوكر: today's locker subscriptions and inventory reports
     ...grant(['club.lockers.list', 'club.lockers.inventory_reports'], ['view', 'print']),
     // التقارير المالية
@@ -118,6 +127,8 @@ export function captainCells(): JobTitlePermissionCell[] {
     ...grant(['club.discount_codes.member_grants'], ['view', 'create']),
     ...grant(['club.discount_codes.member_search', 'club.discount_codes.captain_codes'], ['view']),
     ...grant(['club.fitness.trainer_evaluations', 'club.fitness.trainer_targets'], ['view']),
+    // Own invitation code, remaining allowance and the guests who came through it.
+    ...grant(['club.staff_invitations.mine'], ['view']),
     ...grant(['financial-reports.target'], ['view', 'print']),
     // Trainers (مدرب) were merged into كابتن, so the role keeps their portal.
     ...grant(['trainer.portal'], ['view']),
@@ -146,6 +157,7 @@ export function salesCells(): JobTitlePermissionCell[] {
     ...grant(['club.members'], ['view', 'create', 'print', 'export']),
     ...grant(['club.subscriptions.new'], ['view', 'create', 'print']),
     ...grant(['club.subscriptions.list'], ['view', 'print']),
+    ...grant(['club.staff_invitations.mine'], ['view']),
   ];
 }
 
@@ -244,7 +256,10 @@ export function defaultPermissionCellsForJobTitle(name: string): JobTitlePermiss
   if (/(مدير عام|مدير فرع|مديره فرع|مشرف عام)/.test(title)) {
     // Managers start with read/report access. Super-admin elevation stays an explicit
     // human decision and is never inferred from a free-text title.
-    return grant(['club', 'hr', 'gym-sales', 'financial-reports'], VIEW_REPORT);
+    return [
+      ...grant(['club', 'hr', 'gym-sales', 'financial-reports'], VIEW_REPORT),
+      ...grant(['club'], ['viewPhone']),
+    ];
   }
 
   return [];

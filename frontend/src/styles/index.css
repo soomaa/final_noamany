@@ -1088,3 +1088,24 @@ html.reception-tablet .reception-tablet-shell {
   max-width: none;
   min-height: 100vh;
 }
+
+/* Camera barcode scanner (components/club/camera-barcode-scanner.tsx) — ported from Gymora. */
+@keyframes camera-barcode-scan {
+  0% { top: 14%; opacity: 0.15; }
+  12% { opacity: 1; }
+  88% { opacity: 1; }
+  100% { top: 82%; opacity: 0.15; }
+}
+
+.camera-barcode-scan-line {
+  top: 14%;
+  animation: camera-barcode-scan 2.1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .camera-barcode-scan-line {
+    animation: none;
+    top: 48%;
+    opacity: 0.85;
+  }
+}

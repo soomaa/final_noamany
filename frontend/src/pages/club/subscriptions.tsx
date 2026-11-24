@@ -1,4 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   CreditCard,
@@ -2264,7 +2265,7 @@ export function ClubSubscriptionsPage({
                   <span className="font-medium">{selectedMember.name}</span>
                   <span className="nums text-muted-foreground font-mono ms-2">{selectedMember.memberCode}</span>
                   {selectedMember.phone && (
-                    <span className="nums text-muted-foreground"> · {toArabicDigits(selectedMember.phone)}</span>
+                    <span className="nums text-muted-foreground"> · <MaskedPhone value={selectedMember.phone} memberId={selectedMember.id} /></span>
                   )}
                 </div>
               )}

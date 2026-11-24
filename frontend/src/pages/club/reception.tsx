@@ -25,6 +25,7 @@ import {
   X as XIcon,
   Zap,
 } from 'lucide-react';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -37,7 +38,10 @@ import { ReceptionMemberProfile } from '@/components/club/reception-member-profi
 import { ReceptionMemberAttachments, ReceptionMemberEditForm, ReceptionMemberPhotoEdit } from '@/components/club/reception-member-edit';
 import { ReceptionMemberWhatsApp } from '@/components/club/reception-member-whatsapp';
 import { WhatsAppIcon } from '@/components/club/whatsapp-icon';
-import { playEntrySound } from '@/lib/entry-sound';
+import { playEntrySound, prepareEntrySound } from '@/lib/entry-sounds';
+import { isExpiryRefusal } from '@/lib/entry-voice';
+import { CameraScanButton } from '@/components/club/camera-barcode-scanner';
+import { EntrySoundSettings } from '@/components/club/entry-sound-settings';
 import { useSaveAndWhatsApp } from '@/hooks/use-whatsapp-templates';
 import { messageAmount } from '@/lib/whatsapp-message';
 import { ReceptionServiceAllowances } from '@/components/club/reception-service-allowances';
@@ -719,9 +723,14 @@ export function ClubReceptionPage() {
         const ent = await selectMember(hit);
         // Display only (client voice note, 22 Nov): the check-in itself is done by the barcode
         // check-in screen on its own device; this screen shows the member until the next scan.
-        // A card that cannot enter still sounds so reception notices.
-        if (scanned && ent && !ent.allowed) playEntrySound('rejected');
-      } else toast.error(ct('members.noMemberFound'));
+        // A scanned card sounds its result (مقبول / مرفوض / الاشتراك منتهي) so reception notices.
+        if (scanned && ent) {
+          void playEntrySound(ent.allowed ? 'granted' : isExpiryRefusal(ent.reasons) ? 'expired' : 'rejected');
+        }
+      } else {
+        toast.error(ct('members.noMemberFound'));
+        if (raw != null) void playEntrySound('rejected');
+      }
     } catch (error) {
       toast.error(apiError(error));
     }
@@ -734,6 +743,19 @@ export function ClubReceptionPage() {
   runSearchRef.current = runSearch;
   const closePanelRef = useRef(closeMemberPanel);
   closePanelRef.current = closeMemberPanel;
+
+  // A card scanned with the topbar camera on another page lands here as `?scan=<code>`.
+  const scanParam = searchParams.get('scan');
+  useEffect(() => {
+    if (!scanParam) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('scan');
+    setSearchParams(next, { replace: true });
+    closePanelRef.current(false);
+    void runSearchRef.current(scanParam);
+    // Runs once per scanned code; the param is removed straight away.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scanParam]);
   useEffect(() => {
     let buffer = '';
     let last = 0;
@@ -1461,9 +1483,27 @@ export function ClubReceptionPage() {
                 if (memberOpen) { setMemberOpen(false); setSelectedId(null); setEntitlement(null); }
                 setQuery(e.target.value);
               }}
-              onKeyDown={(e) => e.key === 'Enter' && void runSearch()}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter') return;
+                prepareEntrySound();
+                void runSearch();
+              }}
               autoFocus
             />
+          </div>
+          <div className="flex gap-2 sm:contents">
+            {/* No USB scanner, or the power is out: scan the card with the branch phone's camera. */}
+            <CameraScanButton
+              showLabel
+              closeOnDetect
+              title={ui('مسح كارت العضو بالكاميرا')}
+              className={cn('flex-1 rounded-2xl sm:flex-none', tabletMode ? 'h-16' : 'h-14')}
+              onDetected={(code) => {
+                closeMemberPanel(false);
+                void runSearch(code);
+              }}
+            />
+            <EntrySoundSettings className={cn('rounded-2xl', tabletMode ? 'size-16' : 'size-14')} />
           </div>
           <Button
             variant="brand"
@@ -1549,7 +1589,7 @@ export function ClubReceptionPage() {
                 {member?.phone ? (
                   <p className="flex items-center justify-center gap-1.5 text-lg">
                     <Phone className="size-4 text-muted-foreground" aria-hidden="true" />
-                    <bdi dir="ltr" className="nums">{toArabicDigits(member.phone)}</bdi>
+                    <MaskedPhone value={member.phone} memberId={member.id} copyable />
                     <ReceptionMemberWhatsApp
                       key={member.id}
                       member={member}

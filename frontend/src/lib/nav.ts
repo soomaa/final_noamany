@@ -178,6 +178,8 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: CR.sales.leads },
           { to: CR.sales.whatsapp },
           { to: CR.sales.calls },
+          { to: CR.sales.staffInvitations },
+          { to: CR.sales.myInvitationCode },
         ],
       },
       {

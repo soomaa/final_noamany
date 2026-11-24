@@ -7,6 +7,7 @@ import { localDateString } from '../club-members/club-member.utils';
 import { addDays, toNum } from '../club-subscriptions/club-subscription.utils';
 import { resolveTreasuryPeriod } from '../gym-ops/treasury-range.util';
 import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
+import { managerInsights, revenueMix, summarizeDiscounts } from './club-dashboard-manager';
 import {
   createdByFilter,
   resolveFinanceCreatorScope,
@@ -590,6 +591,7 @@ export class ClubDashboardService {
       branchInbody,
       branchExpenses,
       branchSales,
+      manager,
     ] =
       await Promise.all([
         basePromise,
@@ -603,6 +605,8 @@ export class ClubDashboardService {
             registration_date: true,
             subscription_type: true,
             subscription_value: true,
+            discount_enabled: true,
+            discount_value: true,
             paid_amount: true,
             remaining_amount: true,
             type: { select: { name: true } },
@@ -712,6 +716,13 @@ export class ClubDashboardService {
         }),
         this.branchExpenseRows(start, end, scopedBranches),
         this.branchSalesRows(start, end, scopedBranches),
+        managerInsights({
+          prisma: this.prisma,
+          permissions: this.permissions,
+          user,
+          scopedBranches,
+          today,
+        }),
       ]);
 
     const daily = new Map<string, {
@@ -882,6 +893,17 @@ export class ClubDashboardService {
         { name: 'غير نشط', value: base.totalMembers.inactive },
       ],
       branchBreakdown,
+      // Manager widgets (additive; each is null when its data is unavailable or not permitted).
+      todaySnapshot: manager.today,
+      managerAlerts: manager.alerts,
+      salesTeamPerformance: manager.salesTeam,
+      captainsPerformance: manager.captains,
+      revenueMix: revenueMix(
+        subscriptions.reduce((sum, row) => sum + toNum(row.paid_amount), 0),
+        branchSales.reduce((sum, row) => sum + toNum(row.bar_revenue), 0),
+        branchSales.reduce((sum, row) => sum + toNum(row.product_revenue), 0),
+      ),
+      discounts: summarizeDiscounts(subscriptions),
       period: { start, end, days },
       branchId: scopedBranches?.length === 1 ? scopedBranches[0] : null,
     };

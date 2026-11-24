@@ -4900,6 +4900,10 @@ model club_leads {
   assignment_seen_at   DateTime?
   converted_member_id  Int?
   invitation_id        Int?
+  /// «دعوة بكود موظف»: the guest row (club_staff_invitations.id) and the employee whose code
+  /// brought them — kept even when the lead is assigned to another rep, so sales sees «جاي من خلال مين».
+  staff_invitation_id  Int?
+  invited_by_employee_id Int?
   notes                String?                @db.Text
   /// Date-only follow-up the admin list and `club_reminders` read; the portal's
   /// time-of-day scheduling lives in `next_follow_up_at` / `next_call_at`.
@@ -4924,7 +4928,85 @@ model club_leads {
   @@index([source])
   @@index([converted_member_id])
   @@index([created_at])
+  @@index([invited_by_employee_id])
+  @@index([staff_invitation_id])
   @@map("club_leads")
+}
+
+/// «أكواد الدعوات للموظفين»: one invitation code per employee (captain or staff) with a monthly
+/// allowance of guests. A guest recorded with the code becomes a sales lead (source staff_invitation).
+model club_staff_invitation_codes {
+  id            Int      @id @default(autoincrement())
+  employee_id   Int      @unique
+  code          String   @unique @db.VarChar(30)
+  /// Base allowance per calendar month (Cairo). This month's +/− adjustments add on top.
+  monthly_quota Int      @default(0)
+  is_active     Boolean  @default(true)
+  created_by    Int?
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@map("club_staff_invitation_codes")
+}
+
+/// Audit trail of every quota/code change: set quota, this-month +/−, override, (de)activation.
+model club_staff_invitation_adjustments {
+  id           Int      @id @default(autoincrement())
+  code_id      Int
+  employee_id  Int
+  /// set_quota | adjust | override | code | activate | deactivate
+  kind         String   @db.VarChar(20)
+  delta        Int      @default(0)
+  quota_before Int?
+  quota_after  Int?
+  /// YYYY-MM the adjustment counts in (adjust/override only).
+  period       String?  @db.VarChar(7)
+  reason       String   @db.VarChar(500)
+  created_by   Int?
+  created_at   DateTime @default(now())
+
+  @@index([code_id, period])
+  @@index([employee_id])
+  @@map("club_staff_invitation_adjustments")
+}
+
+/// A guest who came through an employee's code. `period` is the allowance month it counts in.
+model club_staff_invitations {
+  id              Int      @id @default(autoincrement())
+  code_id         Int
+  employee_id     Int
+  code            String   @db.VarChar(30)
+  guest_name      String   @db.VarChar(200)
+  guest_phone     String   @db.VarChar(50)
+  phone_key       String   @db.VarChar(30)
+  visit_date      String   @db.VarChar(10)
+  period          String   @db.VarChar(7)
+  branch_id       Int?
+  notes           String?  @db.Text
+  lead_id         Int?
+  over_quota      Boolean  @default(false)
+  override_reason String?  @db.VarChar(500)
+  created_by      Int?
+  created_at      DateTime @default(now())
+
+  @@index([employee_id, period])
+  @@index([code_id, period])
+  @@index([phone_key])
+  @@index([lead_id])
+  @@index([branch_id])
+  @@map("club_staff_invitations")
+}
+
+/// Single-row settings (id = 1) for staff invitation codes.
+model club_staff_invitation_settings {
+  id                    Int      @id
+  /// Refuse the same guest phone through any code within this many days (0 = only warn).
+  duplicate_window_days Int      @default(30)
+  default_monthly_quota Int      @default(5)
+  updated_by            Int?
+  updated_at            DateTime @updatedAt
+
+  @@map("club_staff_invitation_settings")
 }
 
 model club_lead_follow_ups {

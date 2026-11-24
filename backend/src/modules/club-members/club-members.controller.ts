@@ -21,6 +21,8 @@ import { RequiresPermission } from '../../common/decorators/requires-permission.
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { JwtUser } from '../../common/types/jwt-user';
 import { ClubMembersService } from './club-members.service';
+import { ClubMemberPhoneRevealService } from './club-member-phone-reveal.service';
+import { RevealsContact } from '../../common/privacy/contact-masking.interceptor';
 import { BlockClubMemberDto } from './dto/block-club-member.dto';
 import { ListClubMembersDto } from './dto/list-club-members.dto';
 import { UpsertClubMemberDto } from './dto/upsert-club-member.dto';
@@ -32,7 +34,10 @@ import { ClubGroupOperation } from '../../common/branch-groups/club-operation-sc
 @Controller('club-members')
 @RequiresPermission('club.members:view', 'club.reception:view')
 export class ClubMembersController {
-  constructor(private readonly service: ClubMembersService) {}
+  constructor(
+    private readonly service: ClubMembersService,
+    private readonly phoneReveal?: ClubMemberPhoneRevealService,
+  ) {}
 
   @Get('lookup')
   @RequiresPermission('club.members:view', 'club.subscriptions:view')
@@ -161,6 +166,34 @@ export class ClubMembersController {
   selectOptions(@Query() query: ListClubMembersDto, @CurrentUser() user: JwtUser) {
     query.forSelect = true;
     return this.service.list(query, user);
+  }
+
+  /**
+   * One potential member's real number, for the rep who owns the lead or anyone holding
+   * viewPhone / revealPhone. Declared before the `:id` routes so `potential-leads` is never
+   * parsed as a member id.
+   */
+  @Get('potential-leads/:id/phone')
+  @RevealsContact()
+  @RequiresPermission('club.members:view', 'club.leads:view', 'club.calls:view', 'sales.portal:view')
+  revealLeadPhone(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.phoneReveal!.revealLeadPhone(id, user);
+  }
+
+  /** One member's real number — audited, one record at a time; the lists stay masked. */
+  @Get(':id/phone')
+  @RevealsContact()
+  @RequiresPermission(
+    'club.members:view',
+    'club.reception:view',
+    'club.members.attendance:view',
+    'club.subscriptions.list:view',
+    'club.leads:view',
+    'club.calls:view',
+    'sales.portal:view',
+  )
+  revealPhone(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.phoneReveal!.revealMemberPhone(id, user);
   }
 
   @Get(':id/financial-history')

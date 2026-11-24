@@ -25,6 +25,9 @@ export const CLUB_ROUTES = {
     calls: '/mos/calls',
     team: '/club/sales-reports',
     settings: '/club/sales-settings',
+    /** «أكواد الدعوات للموظفين» and the employee's own code. */
+    staffInvitations: '/club/staff-invitations',
+    myInvitationCode: '/club/my-invitation-code',
   },
   packages: {
     settings: '/club/packages/settings',

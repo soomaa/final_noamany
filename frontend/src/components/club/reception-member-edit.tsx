@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { isMaskedValue, isPristineMaskedValue } from '@/lib/masked-value';
 import { Camera, FileText, Image as ImageIcon, Loader2, Paperclip, Save, Trash2, Upload, X } from 'lucide-react';
 import { useRef, useState } from 'react';
 import { toast } from 'sonner';
@@ -143,8 +144,14 @@ export function ReceptionMemberEditForm({ member, onSaved, onCancel }: {
   const save = async () => {
     const original = initialForm(member);
     if (!form.name.trim()) return void toast.error(ui('اسم العضو مطلوب'));
-    const phone = normalizePhone(form.phone);
-    if (!/^\d{11}$/.test(phone)) return void toast.error(ui('رقم الموبايل غير صحيح — يجب أن يكون 11 رقمًا'));
+    // Phone privacy: an untouched masked number is kept as stored (it is never sent back);
+    // half-edited stars cannot be saved.
+    const phoneMasked = isMaskedValue(form.phone);
+    if (phoneMasked && (form.phone.trim() !== original.phone.trim() || !isPristineMaskedValue(form.phone))) {
+      return void toast.error(ui('الرقم ظاهر مخفي — امسحه واكتب الرقم الجديد كامل'));
+    }
+    const phone = phoneMasked ? form.phone.trim() : normalizePhone(form.phone);
+    if (!phoneMasked && !/^\d{11}$/.test(phone)) return void toast.error(ui('رقم الموبايل غير صحيح — يجب أن يكون 11 رقمًا'));
     const cardNumber = normalizeNationalId(form.cardNumber);
     if (cardNumber !== normalizeNationalId(original.cardNumber) && !(/^\d{14}$/.test(cardNumber) || /^\d{14}-C\d{2}$/.test(cardNumber))) {
       return void toast.error(ui('الرقم القومي غير صحيح — يجب أن يكون 14 رقمًا، أو للأطفال: رقم ولي الأمر + كود (مثال: 29801010101234-C01)'));
@@ -155,7 +162,7 @@ export function ReceptionMemberEditForm({ member, onSaved, onCancel }: {
     const next: Form = { ...form, phone, cardNumber, name: form.name.trim(), email: form.email.trim() };
     const payload: Record<string, string> = {};
     (Object.keys(next) as Array<keyof Form>).filter((key) => key !== 'dateOfBirth').forEach((key) => {
-      const before = key === 'phone' ? normalizePhone(original.phone) : key === 'cardNumber' ? normalizeNationalId(original.cardNumber) : original[key];
+      const before = key === 'phone' ? (phoneMasked ? original.phone : normalizePhone(original.phone)) : key === 'cardNumber' ? normalizeNationalId(original.cardNumber) : original[key];
       if (next[key].trim() !== before.trim()) payload[key] = key === 'notes' ? notesPayload(member.notes, next.notes.trim()) : next[key].trim();
     });
     if (!Object.keys(payload).length) {

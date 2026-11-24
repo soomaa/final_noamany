@@ -338,3 +338,5 @@ export const ClubSalesReportsPage = lazyPage(() => import('@/pages/club/sales-re
 export const MosLeadsPage = lazyPage(() => import('@/pages/mos/leads-page'), 'MosLeadsPage');
 export const MosCallsPage = lazyPage(() => import('@/pages/mos/calls-page'), 'MosCallsPage');
 export const ClubWhatsappPage = lazyPage(() => import('@/pages/club/whatsapp'), 'ClubWhatsappPage');
+export const ClubStaffInvitationsPage = lazyPage(() => import('@/pages/club/staff-invitations'), 'ClubStaffInvitationsPage');
+export const MyInvitationCodePage = lazyPage(() => import('@/pages/club/staff-invitations'), 'MyInvitationCodePage');

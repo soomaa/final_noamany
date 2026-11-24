@@ -1,4 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { MaskedPhone } from '@/components/club/masked-phone';
+import type { ReactNode } from 'react';
 import { ArrowRight, CalendarPlus, CreditCard, Dumbbell, Loader2, LockKeyhole, Receipt, RefreshCw, Repeat2, ShieldBan, Snowflake, Sun, WalletCards } from 'lucide-react';
 import { useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -89,10 +91,10 @@ export function ClubMemberDetailsPage() {
   if (isError || !data) return <ErrorState message={error instanceof Error ? error.message : 'تعذر تحميل تفاصيل العضو'} onRetry={() => void refetch()} />;
 
   const { member, summary } = data;
-  const fields = [
+  const fields: Array<[string, ReactNode]> = [
     ['كود العضو', member.memberCode],
     ['الفرع', member.branchId ? `#${toArabicDigits(member.branchId)}` : '—'],
-    ['رقم الموبايل', member.phone ? toArabicDigits(member.phone) : '—'],
+    ['رقم الموبايل', <MaskedPhone key="phone" value={member.phone} memberId={member.id} copyable />],
     ['الرقم القومي', member.cardNumber ? toArabicDigits(member.cardNumber) : '—'],
     ['البريد الإلكتروني', member.email ?? '—'],
     ['العنوان', member.address ?? '—'],

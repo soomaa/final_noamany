@@ -21,11 +21,28 @@ export const PHONE_PERMISSIONS = [
   'club.calls:viewPhone',
 ];
 
-/** Off until Noamany's permission catalog gets the `viewPhone` / `viewSensitive` actions. */
-export const NOAMANY_HAS_CONTACT_PRIVACY = false;
+/**
+ * The eye next to a masked number: reveal ONE record's number at a time, through the audited
+ * endpoint, without unmasking any list. Granted per screen in the permissions matrix.
+ */
+export const REVEAL_PHONE_PERMISSIONS = PHONE_PERMISSIONS.map((key) => key.replace(':viewPhone', ':revealPhone'));
 
-/** Same, for identity documents (national ID, card number). */
-export const SENSITIVE_PERMISSIONS = PHONE_PERMISSIONS.map((key) => key.replace(':viewPhone', ':viewSensitive'));
+/**
+ * The reception desk has to be able to call a member, so anyone who works the desk gets the
+ * audited eye even before an admin ticks «revealPhone» for their role (existing roles predate it).
+ */
+export const DESK_REVEAL_PERMISSIONS = ['club.reception:view'];
+
+/**
+ * Phone privacy is on (client, 24 Nov: «بنخفي كل حاجة بنجمة وجنبها أيقون العين»). Staff-facing
+ * customer lists come back masked unless the caller holds `viewPhone`; the eye reveals one number.
+ */
+export const NOAMANY_HAS_CONTACT_PRIVACY = true;
+
+/**
+ * Noamany does not mask identity documents: `card_number` is the member's barcode card, which the
+ * desk scans and prints, so `sensitive` is always readable.
+ */
 
 export interface ContactVisibility {
   /** Every phone comes back readable. */
@@ -51,20 +68,23 @@ export class ContactVisibilityService {
     private readonly engine: PermissionEngineService,
   ) {}
 
-  /**
-   * Noamany has no phone-privacy permissions (its catalog has no `viewPhone` / `viewSensitive`
-   * actions and every other screen shows numbers in full), so staff always see them here too.
-   * The MetaFit permission check stays below for when those actions are added to the catalog.
-   */
+  /** Lists: readable for super admin and `viewPhone` holders, masked for everyone else. */
   async forUser(user: JwtUser | null | undefined): Promise<ContactVisibility> {
-    if (!user) return { phones: false, sensitive: false, employeeId: null };
+    if (!user) return { phones: false, sensitive: true, employeeId: null };
     const employeeId = await employeeIdForLogin(this.prisma, user.emp_code).catch(() => null);
     if (!NOAMANY_HAS_CONTACT_PRIVACY) return { phones: true, sensitive: true, employeeId: employeeId ?? null };
-    const [phones, sensitive] = await Promise.all([
-      this.engine.canAny(user.sub, PHONE_PERMISSIONS),
-      this.engine.canAny(user.sub, SENSITIVE_PERMISSIONS),
-    ]);
-    return { phones, sensitive, employeeId: employeeId ?? null };
+    const phones = await this.engine.canAny(user.sub, PHONE_PERMISSIONS);
+    return { phones, sensitive: true, employeeId: employeeId ?? null };
+  }
+
+  /**
+   * The audited eye: `viewPhone`, or `revealPhone` on a customer screen. Members' numbers also
+   * open to the reception desk; potential members (sales' pipeline) do not.
+   */
+  async mayRevealAny(user: JwtUser, vis?: ContactVisibility, opts: { desk?: boolean } = {}): Promise<boolean> {
+    if ((vis ?? (await this.forUser(user))).phones) return true;
+    const keys = opts.desk === false ? REVEAL_PHONE_PERMISSIONS : [...REVEAL_PHONE_PERMISSIONS, ...DESK_REVEAL_PERMISSIONS];
+    return this.engine.canAny(user.sub, keys);
   }
 
   /**
@@ -75,26 +95,29 @@ export class ContactVisibilityService {
    */
   async mayRevealMemberPhone(user: JwtUser, memberId: number): Promise<boolean> {
     const vis = await this.forUser(user);
-    if (vis.phones) return true;
-    if (vis.employeeId == null) return false;
+    if (await this.mayRevealAny(user, vis)) return true;
     const member = await this.prisma.club_members.findUnique({
       where: { id: memberId },
-      select: { sales_id: true, employee_id: true },
+      select: { sales_id: true, employee_id: true, created_by: true },
     });
     if (!member) return false;
-    return member.sales_id === vis.employeeId || member.employee_id === vis.employeeId;
+    // Same ownership the sales portal uses: the assigned rep, or whoever registered the member.
+    const mine = new Set([vis.employeeId, user.emp_code].filter((id): id is number => id != null));
+    return (member.sales_id != null && mine.has(member.sales_id))
+      || (member.employee_id != null && mine.has(member.employee_id))
+      || member.created_by === user.sub;
   }
 
   /** Same question for a potential member (`club_leads`). */
   async mayRevealLeadPhone(user: JwtUser, leadId: number): Promise<boolean> {
     const vis = await this.forUser(user);
-    if (vis.phones) return true;
-    if (vis.employeeId == null) return false;
+    if (await this.mayRevealAny(user, vis, { desk: false })) return true;
     const lead = await this.prisma.club_leads.findUnique({
       where: { id: leadId },
       select: { assigned_to: true },
     });
-    return !!lead && lead.assigned_to === vis.employeeId;
+    const mine = new Set([vis.employeeId, user.emp_code].filter((id): id is number => id != null));
+    return !!lead && lead.assigned_to != null && mine.has(lead.assigned_to);
   }
 
   /** Applies the visibility to one row in place of the raw values. */

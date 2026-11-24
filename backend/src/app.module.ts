@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ThrottlerModule } from '@nestjs/throttler';
-import { APP_FILTER, APP_GUARD } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { AppController } from './app.controller';
 import configuration from './common/config/configuration';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
@@ -98,6 +98,7 @@ import { ClubSalesModule } from './modules/club-sales/club-sales.module';
 import { ClubMosModule } from './modules/club-mos/club-mos.module';
 import { WaCampaignsModule } from './modules/whatsapp-campaigns/wa-campaigns.module';
 import { PrivacyModule } from './common/privacy/privacy.module';
+import { ContactMaskingInterceptor } from './common/privacy/contact-masking.interceptor';
 import { LeadScopeModule } from './common/lead-scope/lead-scope.service';
 import { ClubPointsModule } from './modules/club-points/club-points.module';
 
@@ -216,6 +217,8 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     { provide: APP_GUARD, useClass: PermissionsGuard },
     // Global branch isolation: reject explicit access to a branch outside the user's scope.
     { provide: APP_GUARD, useClass: BranchScopeGuard },
+    // Customer phone privacy: masks staff-facing customer lists for callers without viewPhone.
+    { provide: APP_INTERCEPTOR, useClass: ContactMaskingInterceptor },
   ],
 })
 export class AppModule {}

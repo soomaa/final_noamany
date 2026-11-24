@@ -39,7 +39,12 @@
     "discountValue": "Discount value",
     "gender": "Gender",
     "paymentMethod": "Payment method",
-    "remaining": "Remaining"
+    "remaining": "Remaining",
+    "phone": "Phone",
+    "name": "Name",
+    "email": "Email",
+    "close": "Close",
+    "saved": "Saved"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -295,7 +300,6 @@
     "invoiceFooter": "Thank you for your membership",
     "printInvoice": "Print invoice",
     "registrationDate": "Registration date",
-    "endDate": "End date",
     "subscriptionValue": "Subscription value",
     "paidAmount": "Paid amount",
     "remainingAmount": "Remaining amount",

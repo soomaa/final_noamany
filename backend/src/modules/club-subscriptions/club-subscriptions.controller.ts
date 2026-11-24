@@ -142,8 +142,18 @@ export class ClubSubscriptionsController {
     @CurrentUser() user: JwtUser,
     @Query('userId') userId?: string,
     @Query('gender') gender?: string,
+    @Query('date') date?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('branchId') branchId?: string,
+    @Query('branch') branch?: string,
   ) {
-    return this.service.dailyCashierReport(user, userId, gender);
+    return this.service.dailyCashierReport(user, userId, gender, {
+      date,
+      dateFrom,
+      dateTo,
+      branchId: branchId ?? branch,
+    });
   }
 
   @Get('reports/summary')

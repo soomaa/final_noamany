@@ -1,4 +1,5 @@
 import { Loader2, Search, X } from 'lucide-react';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { useClubT } from '@/hooks/use-club-t';
@@ -206,7 +207,7 @@ export function MemberSearchCombobox({
                   <span className="text-xs text-destructive">السبب: {hit.blockReason}</span>
                 ) : null}
                 <span className="nums text-xs text-muted-foreground font-mono">
-                  {hit.memberCode}{hit.phone ? ` · ${toArabicDigits(hit.phone)}` : ''}
+                  {hit.memberCode}{hit.phone ? <> · <MaskedPhone value={hit.phone} memberId={hit.id} /></> : ''}
                 </span>
               </button>
             </li>
@@ -232,7 +233,7 @@ export function MemberSearchCombobox({
 
       {selectedMember?.phone && (
         <p className="mt-1 text-xs text-muted-foreground nums">
-          {toArabicDigits(selectedMember.phone)}
+          <MaskedPhone value={selectedMember.phone} memberId={selectedMember.id} />
         </p>
       )}
     </div>

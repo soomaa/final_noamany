@@ -1,4 +1,6 @@
 import type { ColumnDef } from '@tanstack/react-table';
+import { isMaskedValue } from '@/lib/masked-value';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { CalendarClock, CalendarX2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -148,7 +150,7 @@ export function SubscriptionExpiryReports({ initialTab = 'expiring' }: { initial
   const sendWhatsApp = (row: ClubSubscriptionListItem) => {
     const template = (templates.data ?? DEFAULT_WHATSAPP_TEMPLATES)[expired ? 'expired' : 'expiring'];
     const message = subscriptionMessage(template, row, { today, gymName: GYM_NAME });
-    void openWhatsAppMessage(row.memberPhone, message);
+    void openWhatsAppMessage(row.memberPhone, message, null, { memberId: row.memberId });
   };
 
   const typeName = (row: ClubSubscriptionListItem) => row.subscriptionTypeName || row.subscriptionType || '—';
@@ -174,7 +176,7 @@ export function SubscriptionExpiryReports({ initialTab = 'expiring' }: { initial
     {
       id: 'phone',
       header: 'الموبايل',
-      cell: ({ row }) => row.original.memberPhone ? <bdi dir="ltr" className="nums whitespace-nowrap">{toArabicDigits(row.original.memberPhone)}</bdi> : '—',
+      cell: ({ row }) => row.original.memberPhone ? <MaskedPhone className="whitespace-nowrap" value={row.original.memberPhone} memberId={row.original.memberId} /> : '—',
     },
     { id: 'type', header: 'نوع الاشتراك', cell: ({ row }) => typeName(row.original) },
     {
@@ -200,7 +202,7 @@ export function SubscriptionExpiryReports({ initialTab = 'expiring' }: { initial
     {
       id: 'whatsapp',
       header: 'واتساب',
-      cell: ({ row }) => whatsappPhone(row.original.memberPhone) ? (
+      cell: ({ row }) => isMaskedValue(row.original.memberPhone) || whatsappPhone(row.original.memberPhone) ? (
         <Button
           type="button"
           size="icon"
@@ -237,6 +239,7 @@ export function SubscriptionExpiryReports({ initialTab = 'expiring' }: { initial
             registrationDate: row.registrationDate ?? '',
             memberCode: row.memberCode ?? '',
             name: row.customerName ?? '',
+            // Already masked by the server for anyone without viewPhone; full for those who hold it.
             phone: row.memberPhone ?? '',
             type: typeName(row),
             value: row.subscriptionValue,

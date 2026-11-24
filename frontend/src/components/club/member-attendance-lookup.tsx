@@ -17,6 +17,11 @@ import {
   UsersRound,
   X,
 } from 'lucide-react';
+import { CameraScanButton } from '@/components/club/camera-barcode-scanner';
+import { EntrySoundSettings } from '@/components/club/entry-sound-settings';
+import { playEntrySound, prepareEntrySound } from '@/lib/entry-sounds';
+import { isExpiryRefusal, refusalReasons } from '@/lib/entry-voice';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
@@ -27,6 +32,7 @@ import {
   CLUB_MEMBER_SEARCH_MIN_CHARS,
   ClubMemberSearchHits,
   exactCodeHit,
+  normalizeScannedCode,
   preferredSearchHit,
   searchClubMembersUniversal,
 } from '@/components/club/club-member-search';
@@ -50,6 +56,11 @@ import type {
 import type { ClubSearchHit } from '@/types/gym-ops';
 
 type OverviewStatus = 'active' | 'expired' | 'upcoming' | 'frozen';
+
+/** Refusal cue: «الاشتراك منتهي» for an expired subscription, otherwise «مرفوض». */
+function playRefusal(error: unknown) {
+  void playEntrySound(isExpiryRefusal(refusalReasons(error)) ? 'expired' : 'rejected');
+}
 
 function checkInError(error: unknown, english: boolean): string {
   if (axios.isAxiosError(error)) {
@@ -331,7 +342,10 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
           setOverview(null);
           setCommittedMemberId(null);
           setNotFound(true);
-          if (notifyError) toast.error(ct('members.noMemberFound'));
+          if (notifyError) {
+            toast.error(ct('members.noMemberFound'));
+            void playEntrySound('rejected');
+          }
         }
         return;
       }
@@ -379,11 +393,13 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
             ...(user?.branch ? { branchId: user.branch } : {}),
           });
           toast.success(ct('members.checkInNamed', { name: data.member.name }));
+          void playEntrySound('granted');
           void qc.invalidateQueries({ queryKey: ['club-attendance'] });
           void qc.invalidateQueries({ queryKey: ['barcode-scan-times'] });
           await refresh(data.member.id);
         } catch (error) {
           toast.error(checkInError(error, locale === 'en'));
+          playRefusal(error);
         } finally {
           mutationRef.current = false;
           setCheckingIn(false);
@@ -469,10 +485,12 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
         toast.success(ct('members.checkInNamed', { name: overview.member.name }));
         void qc.invalidateQueries({ queryKey: ['club-attendance'] });
       }
+      void playEntrySound('granted');
       if (committedMemberId) await refresh(committedMemberId);
       setCode('');
     } catch (error) {
       toast.error(checkInError(error, locale === 'en'));
+      playRefusal(error);
     } finally {
       mutationRef.current = false;
       setCheckingIn(false);
@@ -489,12 +507,14 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
         memberId: overview.member.id, subscriptionId: subscription.id, attendanceType,
       });
       toast.success(ui(attendanceType === 'class' ? 'تم تسجيل حضور الحصة' : attendanceType === 'spa' ? 'تم تسجيل حضور السبا' : 'تم تسجيل حضور الإنبودي'));
+      void playEntrySound('granted');
       for (const key of ['club-attendance', 'barcode-scan-times', 'club-classes', 'club-spa-attendance', 'club-subscriptions', 'club-inbody']) {
         void qc.invalidateQueries({ queryKey: [key] });
       }
       if (committedMemberId) await refresh(committedMemberId);
     } catch (error) {
       toast.error(checkInError(error, locale === 'en'));
+      playRefusal(error);
     } finally {
       mutationRef.current = false;
       setCheckingIn(false);
@@ -546,6 +566,7 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
         <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-brand-gradient" />
         <h3 className="mb-3 flex items-center gap-2 font-medium">
           <ScanLine className="size-4 text-primary" /> {ct('members.barcodeTitle')}
+          <EntrySoundSettings className="ms-auto" />
         </h3>
         <div className="flex flex-wrap items-center gap-2">
           <div className="relative min-w-[16rem] flex-1">
@@ -562,11 +583,21 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   event.preventDefault();
+                  prepareEntrySound();
                   void lookup(event.currentTarget.value, true);
                 }
               }}
             />
           </div>
+          {/* No USB scanner (or no power): scan the card with the phone's camera. */}
+          <CameraScanButton
+            title={mode === 'spa' ? ui('مسح كارت السبا بالكاميرا') : mode === 'class' ? ui('مسح كارت الحصة بالكاميرا') : ui('مسح كارت العضو بالكاميرا')}
+            onDetected={(scanned) => {
+              const value = normalizeScannedCode(scanned);
+              setCode(value);
+              void lookup(value, true);
+            }}
+          />
           <Button variant="brand" onClick={() => void lookup(code, true)} disabled={searching || checkingIn}>
             {searching ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
             {ui('عرض بيانات العضو')}
@@ -709,7 +740,7 @@ export function MemberAttendanceLookup({ onEditMember, mode = 'attendance', auto
                         <Phone className="size-3.5" />
                         {ui('الموبايل')}
                       </dt>
-                      <dd className="nums">{toArabicDigits(overview.member.phone)}</dd>
+                      <dd className="nums"><MaskedPhone value={overview.member.phone} memberId={overview.member.id} /></dd>
                     </div>
                   )}
                   <div className="flex items-center justify-between gap-2">

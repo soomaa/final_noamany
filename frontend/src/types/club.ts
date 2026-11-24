@@ -592,6 +592,57 @@ export interface ExecutiveDashboardSummary extends ClubDashboardSummary {
     inbodyRevenue: number;
     blockedMembers: number;
   }>;
+  /** Manager widgets — optional so older API responses still type-check; null = hide the widget. */
+  todaySnapshot?: {
+    date: string;
+    revenue: number;
+    yesterdayRevenue: number;
+    revenueChangePct: number | null;
+    newSubscriptions: number;
+    renewals: number;
+    subscriptionsTotal: number;
+    checkins: number;
+    insideNow: number;
+    insideWindowHours: number;
+  } | null;
+  managerAlerts?: {
+    endingToday: number;
+    ending3Days: number;
+    frozen: number;
+    birthdaysToday: number;
+    birthdays: Array<{ id: number; name: string; code: string }>;
+    absentMembers: number;
+    absentDays: number;
+  } | null;
+  salesTeamPerformance?: ExecutiveTeamPerformance | null;
+  captainsPerformance?: ExecutiveTeamPerformance | null;
+  revenueMix?: { subscriptions: number; bar: number; products: number; total: number };
+  discounts?: {
+    subscriptionsCount: number;
+    discountedCount: number;
+    grossValue: number;
+    discountValue: number;
+    netValue: number;
+    discountPct: number;
+  };
   period: { start: string; end: string; days: number };
   branchId: number | null;
+}
+
+export interface ExecutiveTeamPerformance {
+  month: string;
+  withTarget: number;
+  hitCount: number;
+  rows: Array<{
+    id: number;
+    name: string;
+    achieved: number;
+    target: number;
+    count: number;
+    unit: 'money' | 'count';
+    branchName?: string | null;
+    nameIsBranch?: boolean;
+    achievementPct: number | null;
+    hitTarget: boolean;
+  }>;
 }

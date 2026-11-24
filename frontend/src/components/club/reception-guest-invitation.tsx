@@ -7,6 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { StaffInvitationButton } from '@/components/club/staff-invitation-dialog';
 import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { toArabicDigits } from '@/lib/utils';
@@ -79,8 +80,15 @@ export function ReceptionGuestInvitation({ memberId, subscriptionId }: { memberI
     }
   };
 
-  // A plan without invitations shows nothing, as it did before this box existed.
-  if (summary.isSuccess && allowed < 1) return null;
+  // A plan without invitations shows only «دعوة بكود موظف» (a guest who came with a captain's /
+  // employee's code is not tied to this member's plan).
+  if (summary.isSuccess && allowed < 1) {
+    return (
+      <div className="flex justify-end">
+        <StaffInvitationButton />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-primary/30 bg-primary/5 p-4">
@@ -94,18 +102,21 @@ export function ReceptionGuestInvitation({ memberId, subscriptionId }: { memberI
               : <>{ui('الدعوات المتبقية')}: <b className="text-foreground">{toArabicDigits(remaining)}</b> {ui('من')} {toArabicDigits(allowed)}</>}
         </p>
       </div>
-      {summary.isError ? (
-        <Button variant="outline" onClick={() => void summary.refetch()}>{ui('إعادة المحاولة')}</Button>
-      ) : (
-        <Button
-          variant="brand"
-          disabled={!canCreate || !allowance?.activeToday || remaining < 1}
-          onClick={() => setOpen(true)}
-        >
-          <TicketPlus className="size-4" />
-          {ui('إضافة دعوة / ضيف')}
-        </Button>
-      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <StaffInvitationButton />
+        {summary.isError ? (
+          <Button variant="outline" onClick={() => void summary.refetch()}>{ui('إعادة المحاولة')}</Button>
+        ) : (
+          <Button
+            variant="brand"
+            disabled={!canCreate || !allowance?.activeToday || remaining < 1}
+            onClick={() => setOpen(true)}
+          >
+            <TicketPlus className="size-4" />
+            {ui('إضافة دعوة / ضيف')}
+          </Button>
+        )}
+      </div>
 
       <Dialog open={open} onOpenChange={(value) => { if (!value && !saving) close(); }}>
         <DialogContent size="sm">

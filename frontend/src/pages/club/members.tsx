@@ -1,4 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { BlockedChip } from '@/components/club/blocked-member-flag';
 import { AlertTriangle, Archive, Building2, CalendarCheck, CalendarPlus, CalendarX, Copy, ExternalLink, Eye, FileText, Loader2, LockKeyhole, LogIn, LogOut, MoreHorizontal, Paperclip, Pencil, Phone, Plus, RefreshCw, Smartphone, Trash2, Undo2, User, UserCheck, UserMinus, UserX, Users, Wallet, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -1015,9 +1016,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       {
         accessorKey: 'phone',
         header: ct('members.phone'),
-        cell: ({ getValue }) => {
+        cell: ({ row, getValue }) => {
           const v = getValue() as string | null;
-          return v ? <span className="nums">{toArabicDigits(v)}</span> : '—';
+          return v ? <MaskedPhone value={v} memberId={row.original.id} /> : '—';
         },
       },
       {
@@ -1124,9 +1125,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       {
         accessorKey: 'phone',
         header: ct('members.phone'),
-        cell: ({ getValue }) => {
+        cell: ({ row, getValue }) => {
           const value = getValue() as string | null;
-          return value ? <span className="nums">{toArabicDigits(value)}</span> : '—';
+          return value ? <MaskedPhone value={value} memberId={row.original.id} /> : '—';
         },
       },
       {

@@ -1,4 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
+import { MaskedPhone } from '@/components/club/masked-phone';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { DataTable } from '@/components/common/data-table';
@@ -57,7 +58,7 @@ export function ClubMembersReportPage() {
     () => [
       { accessorKey: 'memberCode', header: ui('كود العضو') },
       { accessorKey: 'name', header: ui('الاسم') },
-      { accessorKey: 'phone', header: ui('الجوال'), cell: ({ getValue }) => toArabicDigits((getValue() as string) ?? '—') },
+      { accessorKey: 'phone', header: ui('الجوال'), cell: ({ row, getValue }) => <MaskedPhone value={getValue() as string | null} memberId={row.original.id} /> },
       {
         accessorKey: 'gender',
         header: ui('الجنس'),
