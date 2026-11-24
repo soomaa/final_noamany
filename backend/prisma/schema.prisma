@@ -2330,6 +2330,37 @@ model tbl_hdodr_setting {
   @@map("tbl_hdodr_setting")
 }
 
+/// Per-weekday times for a shift (weekday = JS getDay(): 0=Sunday … 5=Friday). Raw SQL only.
+model tbl_hdodr_setting_day_overrides {
+  shift_id          Int      @db.Int
+  weekday           Int      @db.TinyInt
+  hdoor_from_time   String   @db.VarChar(10)
+  hdoor_to_time     String   @db.VarChar(10)
+  hdoor_khasm_from  String   @db.VarChar(10)
+  ensraf_from_time  String   @db.VarChar(10)
+  ensraf_to_time    String   @db.VarChar(10)
+  ensraf_khasm_from String   @db.VarChar(10)
+  updated_at        DateTime @default(now()) @db.DateTime(0)
+
+  @@id([shift_id, weekday])
+  @@map("tbl_hdodr_setting_day_overrides")
+}
+
+/// Compensatory day earned by working on the weekly day off (taken later as leave type 19). Raw SQL only.
+model hr_comp_day_credits {
+  id            Int      @id @default(autoincrement()) @db.Int
+  emp_code      Int      @db.Int
+  work_date     String   @db.Char(10)
+  minutes       Int      @default(0) @db.Int
+  status        String   @default("earned") @db.VarChar(10)
+  used_leave_id Int?     @db.Int
+  created_at    DateTime @default(now()) @db.DateTime(0)
+
+  @@unique([emp_code, work_date], map: "uq_comp_day_emp_date")
+  @@index([emp_code, status], map: "idx_comp_day_status")
+  @@map("hr_comp_day_credits")
+}
+
 /// Attendance status toggles (4 rows). Engine=InnoDB, utf8mb4_0900_ai_ci. PK id (AI=5).
 model tbl_hdodr_status {
   id      Int           @id @default(autoincrement())
@@ -3810,6 +3841,9 @@ model tbl_emps_hours_edafi {
   edafa_date       String @db.VarChar(20)
   publisher        Int    @db.Int
   publisher_emp_id Int    @db.Int
+  // Added by migration 20261124120000_hr_engine and read/written with raw SQL only
+  // (production never regenerates the client): requested_hours INT NULL, confirmed_minutes INT NULL.
+  // num_hours holds the punch-confirmed whole hours that payroll pays.
 
   @@map("tbl_emps_hours_edafi")
 }

@@ -258,6 +258,131 @@ function assertShiftTimingIsComplete(shift: {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Per-weekday shift times (tbl_hdodr_setting_day_overrides, raw SQL only)
+// ---------------------------------------------------------------------------
+
+const SHIFT_TIME_COLUMNS = [
+  'hdoor_from_time',
+  'hdoor_to_time',
+  'hdoor_khasm_from',
+  'ensraf_from_time',
+  'ensraf_to_time',
+  'ensraf_khasm_from',
+] as const;
+
+/** One weekday's replacement for all six shift times. weekday = JS getDay() (0=Sunday … 5=Friday). */
+export interface ShiftDayOverride {
+  weekday: number;
+  hdoor_from_time: string;
+  hdoor_to_time: string;
+  hdoor_khasm_from: string;
+  ensraf_from_time: string;
+  ensraf_to_time: string;
+  ensraf_khasm_from: string;
+}
+
+/** Weekday (0=Sunday … 6=Saturday) of a YYYY-MM-DD calendar date, independent of server timezone. */
+export function weekdayOfIsoDate(isoDate: string): number {
+  return new Date(`${isoDate.slice(0, 10)}T12:00:00Z`).getUTCDay();
+}
+
+/** Shift with the weekday override for `isoDate` applied (unchanged when there is none). */
+export function applyShiftDayOverride<T extends { id: number }>(
+  shift: T,
+  isoDate: string,
+  overrides: Map<number, ShiftDayOverride[]>,
+): T {
+  const list = overrides.get(shift.id);
+  if (!list?.length || !/^\d{4}-\d{2}-\d{2}/.test(isoDate)) return shift;
+  const weekday = weekdayOfIsoDate(isoDate);
+  const match = list.find((item) => item.weekday === weekday);
+  if (!match || !isShiftTimingComplete(match)) return shift;
+  const patched: Record<string, unknown> = { ...shift };
+  for (const column of SHIFT_TIME_COLUMNS) patched[column] = match[column];
+  return patched as T;
+}
+
+/** Keep only well-formed override rows (raw query results / test doubles may contain anything). */
+function parseDayOverrideRows(rows: unknown): Map<number, ShiftDayOverride[]> {
+  const map = new Map<number, ShiftDayOverride[]>();
+  if (!Array.isArray(rows)) return map;
+  for (const raw of rows as Array<Record<string, unknown>>) {
+    if (!raw || raw.shift_id == null || raw.weekday == null) continue;
+    const shiftId = Number(raw.shift_id);
+    const weekday = Number(raw.weekday);
+    if (!Number.isInteger(shiftId) || !Number.isInteger(weekday) || weekday < 0 || weekday > 6) continue;
+    const item = { weekday } as ShiftDayOverride;
+    for (const column of SHIFT_TIME_COLUMNS) item[column] = String(raw[column] ?? '');
+    if (!isShiftTimingComplete(item)) continue;
+    const list = map.get(shiftId) ?? [];
+    list.push(item);
+    map.set(shiftId, list);
+  }
+  return map;
+}
+
+// ---------------------------------------------------------------------------
+// Weekly day off / punch-confirmed overtime helpers
+// ---------------------------------------------------------------------------
+
+const WEEKDAY_NAMES: string[][] = [
+  ['sunday', 'sun', 'الأحد', 'الاحد'],
+  ['monday', 'mon', 'الإثنين', 'الاثنين', 'الأثنين'],
+  ['tuesday', 'tue', 'الثلاثاء'],
+  ['wednesday', 'wed', 'الأربعاء', 'الاربعاء'],
+  ['thursday', 'thu', 'الخميس'],
+  ['friday', 'fri', 'الجمعة'],
+  ['saturday', 'sat', 'السبت'],
+];
+
+/** hr_emp_agazat_dayes.off_day is an English weekday name ("Friday"); Arabic names are accepted too. */
+export function isWeeklyOffDay(offDay: string | null | undefined, isoDate: string): boolean {
+  const value = (offDay ?? '').trim().toLowerCase();
+  if (!value || !/^\d{4}-\d{2}-\d{2}/.test(isoDate)) return false;
+  return WEEKDAY_NAMES[weekdayOfIsoDate(isoDate)].includes(value);
+}
+
+type ShiftTimes = {
+  id: number;
+  hdoor_from_time: string | null;
+  hdoor_to_time: string | null;
+  hdoor_khasm_from: string | null;
+  ensraf_from_time: string | null;
+  ensraf_to_time: string | null;
+  ensraf_khasm_from: string | null;
+};
+
+/**
+ * Overtime minutes the fingerprint actually supports for one employee/day.
+ * - Normal / replacement shift: minutes from the shift's "احتساب الإضافي" time to the check-out.
+ * - Extra shift (sheft_type 2) or the weekly day off: the whole worked duration.
+ * Rows without both check-in and check-out confirm nothing.
+ */
+export function punchConfirmedOvertimeMinutes(
+  rows: Array<{ hdoor_time?: string | null; ensraf_time?: string | null; sheft_type?: number | null; dwam_id_fk?: number | null }>,
+  shiftsById: Map<number, ShiftTimes>,
+  isOffDay: boolean,
+): number {
+  let total = 0;
+  for (const row of rows) {
+    if (!row.hdoor_time || !row.ensraf_time) continue;
+    const worked = Math.floor(pairDurationSeconds(row.hdoor_time, row.ensraf_time) / 60);
+    if (isOffDay || row.sheft_type === 2) {
+      total += worked;
+      continue;
+    }
+    const shift = row.dwam_id_fk != null ? shiftsById.get(row.dwam_id_fk) : undefined;
+    if (!shift || !isShiftTimingComplete(shift)) continue;
+    const win = buildShiftWindow(shift);
+    let outMin = parseTimeToMinutes(row.ensraf_time);
+    if (outMin < win.hdoorFrom) outMin += 1440;
+    // Never more than the time actually spent at work.
+    total += Math.min(Math.max(0, outMin - win.ensrafKhasm), worked);
+  }
+  return total;
+}
+
 @Injectable()
 export class AttendanceService {
   private readonly punchLocks = new Set<number>();
@@ -1156,10 +1281,21 @@ export class AttendanceService {
       return candidates;
     };
 
-    const [todayBuilt, yesterdayBuilt] = await Promise.all([
+    const [todayBuiltRaw, yesterdayBuiltRaw] = await Promise.all([
       buildCandidates(today),
       buildCandidates(yesterday),
     ]);
+    // Per-weekday times (e.g. Friday opens at 10:00): each candidate uses the times of its own date.
+    const dayOverrides = await this.loadShiftDayOverrides(
+      db,
+      [...todayBuiltRaw, ...yesterdayBuiltRaw].map((item) => item.shift.id),
+    );
+    const withDayTimes = (item: ShiftCandidate): ShiftCandidate => ({
+      ...item,
+      shift: applyShiftDayOverride(item.shift, item.date, dayOverrides),
+    });
+    const todayBuilt = todayBuiltRaw.map(withDayTimes);
+    const yesterdayBuilt = yesterdayBuiltRaw.map(withDayTimes);
     if (!todayBuilt.length && !yesterdayBuilt.length) {
       if (weeklySettings?.enabled) throw new BadRequestException('اليوم المحدد راحة أسبوعية ولا يوجد شيفت إضافي');
       throw new BadRequestException('لا يوجد دوام مسجل لهذا الموظف في موقع البصمة');
@@ -1208,12 +1344,14 @@ export class AttendanceService {
           const savedShift = await db.tbl_hdodr_setting.findUnique({ where: { id: row.dwam_id_fk } });
           if (savedShift) {
             const savedDate = row.action_date ?? row.action_date_s;
+            const openDate = savedDate && /^\d{4}-\d{2}-\d{2}/.test(savedDate)
+              ? savedDate.slice(0, 10)
+              : yesterday;
+            const savedOverrides = await this.loadShiftDayOverrides(db, [savedShift.id]);
             openCandidate = {
-              shift: savedShift,
+              shift: applyShiftDayOverride(savedShift, openDate, savedOverrides),
               recordDwamId: savedShift.id,
-              date: savedDate && /^\d{4}-\d{2}-\d{2}/.test(savedDate)
-                ? savedDate.slice(0, 10)
-                : yesterday,
+              date: openDate,
               source: row.sheft_type === 2 ? 'extra' : row.sheft_type === 1 ? 'replacement' : 'main',
             };
           }
@@ -1413,7 +1551,24 @@ export class AttendanceService {
         setting_time: expectedEnsraf, img_path: photoPath, m_lat: body.lat, m_long: body.long,
       } });
       this.logPunchDecision(requestId, code, branchIdOverride, 'success', { detectedAction: 'ensraf', hodoorId: row.hodoor_id });
-      return { id: row.hodoor_id, type: 'out', mobakerMin, overtimeMin: overtime };
+      // Worked a full in+out on the weekly day off ⇒ earned compensatory day (taken later as leave type 19).
+      // Extra shifts are already paid as extra shifts, and the weekly-schedule mode has no off_day concept.
+      let compDayEarned = false;
+      if (row.hdoor_time && candidate.source === 'main' && !weeklySettings?.enabled) {
+        compDayEarned = await this.recordCompDayIfOffDay(db, {
+          empId: emp.id,
+          empCode: emp.emp_code ?? code,
+          workDate: date,
+          minutes: Math.floor(pairDurationSeconds(row.hdoor_time, currentTimeStr) / 60),
+        });
+      }
+      return {
+        id: row.hodoor_id,
+        type: 'out',
+        mobakerMin,
+        overtimeMin: overtime,
+        ...(compDayEarned ? { compDayEarned: true, compDayMessage: 'تم تسجيل يوم بدل راحة لأن اليوم ده إجازتك الأسبوعية' } : {}),
+      };
     }
 
     // check-in: late vs khasm (calculate_late_minutes), then late-rule grace
@@ -1443,6 +1598,71 @@ export class AttendanceService {
     return { id: row.hodoor_id, type: 'in', lateMin };
   }
 
+  /**
+   * Weekday overrides for the given shifts. Raw SQL (the table is not in the production Prisma
+   * client). Any failure — e.g. migration not applied yet — means "no overrides", never a failed punch.
+   */
+  private async loadShiftDayOverrides(
+    db: Prisma.TransactionClient | PrismaService,
+    shiftIds: number[],
+  ): Promise<Map<number, ShiftDayOverride[]>> {
+    const ids = [...new Set(shiftIds.filter((id) => Number.isInteger(id) && id > 0))];
+    if (!ids.length || typeof (db as { $queryRaw?: unknown }).$queryRaw !== 'function') return new Map();
+    try {
+      const rows = await db.$queryRaw<unknown[]>(Prisma.sql`
+        SELECT shift_id, weekday, hdoor_from_time, hdoor_to_time, hdoor_khasm_from,
+               ensraf_from_time, ensraf_to_time, ensraf_khasm_from
+          FROM tbl_hdodr_setting_day_overrides
+         WHERE shift_id IN (${Prisma.join(ids)})`);
+      return parseDayOverrideRows(rows);
+    } catch (error) {
+      this.logger.warn(`shift day overrides unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      return new Map();
+    }
+  }
+
+  /** Weekly day off of an employee (hr_emp_agazat_dayes.off_day), or null. */
+  private async weeklyOffDayOf(
+    db: Prisma.TransactionClient | PrismaService,
+    empId: number,
+    empCode: number,
+  ): Promise<string | null> {
+    const delegate = (db as { hr_emp_agazat_dayes?: { findFirst?: (args: unknown) => Promise<{ off_day: string | null } | null> } })
+      .hr_emp_agazat_dayes;
+    if (typeof delegate?.findFirst !== 'function') return null;
+    const off = await delegate.findFirst({
+      where: { OR: [{ emp_id_fk: empId }, { emp_code_fk: empCode }] },
+      orderBy: { id: 'desc' },
+      select: { off_day: true },
+    });
+    return off?.off_day ?? null;
+  }
+
+  /**
+   * Record a compensatory day (hr_comp_day_credits, raw SQL) when `workDate` is the employee's
+   * weekly day off. Several shifts on the same day add their minutes to one credit.
+   * Never fails the punch: any error is logged and ignored.
+   */
+  private async recordCompDayIfOffDay(
+    db: Prisma.TransactionClient | PrismaService,
+    input: { empId: number; empCode: number; workDate: string; minutes: number },
+  ): Promise<boolean> {
+    try {
+      const offDay = await this.weeklyOffDayOf(db, input.empId, input.empCode);
+      if (!isWeeklyOffDay(offDay, input.workDate)) return false;
+      if (typeof (db as { $executeRaw?: unknown }).$executeRaw !== 'function') return false;
+      const minutes = Math.max(0, Math.floor(input.minutes));
+      await db.$executeRaw(Prisma.sql`
+        INSERT INTO hr_comp_day_credits (emp_code, work_date, minutes, status)
+        VALUES (${input.empCode}, ${input.workDate.slice(0, 10)}, ${minutes}, 'earned')
+        ON DUPLICATE KEY UPDATE minutes = minutes + VALUES(minutes)`);
+      return true;
+    } catch (error) {
+      this.logger.warn(`comp day credit not recorded for ${input.empCode} ${input.workDate}: ${error instanceof Error ? error.message : String(error)}`);
+      return false;
+    }
+  }
+
   // -------------------------------------------------------------------------
   // SHIFT CRUD (tbl_hdodr_setting — all 7 fields)
   // -------------------------------------------------------------------------
@@ -1460,7 +1680,8 @@ export class AttendanceService {
       }),
       this.prisma.tbl_hdodr_setting.count({ where }),
     ]);
-    const data = rows.map((r) => this.mapShift(r));
+    const overrides = await this.loadShiftDayOverrides(this.prisma, rows.map((r) => r.id));
+    const data = rows.map((r) => this.mapShift(r, overrides.get(r.id) ?? []));
     return paginated(data, total, q.page, q.pageSize);
   }
 
@@ -1473,7 +1694,7 @@ export class AttendanceService {
     ensraf_from_time: string | null;
     ensraf_to_time: string | null;
     ensraf_khasm_from: string | null;
-  }) {
+  }, dayOverrides?: ShiftDayOverride[]) {
     const problems = shiftTimingProblems(r);
     return {
       id: r.id,
@@ -1490,7 +1711,65 @@ export class AttendanceService {
       startTime: r.hdoor_from_time ?? undefined,
       endTime: r.ensraf_to_time ?? undefined,
       graceMin: r.hdoor_khasm_from ? parseInt(r.hdoor_khasm_from, 10) || 0 : 0,
+      // Different times for specific weekdays (weekday = 0 Sunday … 5 Friday … 6 Saturday).
+      ...(dayOverrides
+        ? {
+          dayOverrides: [...dayOverrides]
+            .sort((a, b) => a.weekday - b.weekday)
+            .map((o) => ({
+              weekday: o.weekday,
+              hdoorFromTime: o.hdoor_from_time,
+              hdoorToTime: o.hdoor_to_time,
+              hdoorKhasmFrom: o.hdoor_khasm_from,
+              ensrafFromTime: o.ensraf_from_time,
+              ensrafToTime: o.ensraf_to_time,
+              ensrafKhasmFrom: o.ensraf_khasm_from,
+            })),
+        }
+        : {}),
     };
+  }
+
+  /** Validated weekday overrides from the DTO; undefined when the client did not send any. */
+  private dayOverrideData(dto: UpsertShiftDto): ShiftDayOverride[] | undefined {
+    if (!dto.dayOverrides) return undefined;
+    const dayNames = ['الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+    const seen = new Set<number>();
+    return dto.dayOverrides.map((o) => {
+      const weekday = Number(o.weekday);
+      if (!Number.isInteger(weekday) || weekday < 0 || weekday > 6) throw new BadRequestException('اليوم غير صالح');
+      if (seen.has(weekday)) throw new BadRequestException(`يوم ${dayNames[weekday]} مكرر في المواعيد المختلفة`);
+      seen.add(weekday);
+      const data = {
+        weekday,
+        hdoor_from_time: this.toLegacyTime(o.hdoorFromTime, ''),
+        hdoor_to_time: this.toLegacyTime(o.hdoorToTime, ''),
+        hdoor_khasm_from: this.toLegacyTime(o.hdoorKhasmFrom, ''),
+        ensraf_from_time: this.toLegacyTime(o.ensrafFromTime, ''),
+        ensraf_to_time: this.toLegacyTime(o.ensrafToTime, ''),
+        ensraf_khasm_from: this.toLegacyTime(o.ensrafKhasmFrom, ''),
+      };
+      const { errors } = shiftTimingProblems(data);
+      if (errors.length) throw new BadRequestException(`مواعيد يوم ${dayNames[weekday]}: ${errors.join(' • ')}`);
+      return data;
+    });
+  }
+
+  /** Replace a shift's weekday overrides (raw SQL; the table is not in the production client). */
+  private async saveShiftDayOverrides(
+    db: Prisma.TransactionClient,
+    shiftId: number,
+    overrides: ShiftDayOverride[],
+  ) {
+    await db.$executeRaw(Prisma.sql`DELETE FROM tbl_hdodr_setting_day_overrides WHERE shift_id = ${shiftId}`);
+    for (const o of overrides) {
+      await db.$executeRaw(Prisma.sql`
+        INSERT INTO tbl_hdodr_setting_day_overrides
+          (shift_id, weekday, hdoor_from_time, hdoor_to_time, hdoor_khasm_from,
+           ensraf_from_time, ensraf_to_time, ensraf_khasm_from)
+        VALUES (${shiftId}, ${o.weekday}, ${o.hdoor_from_time}, ${o.hdoor_to_time}, ${o.hdoor_khasm_from},
+                ${o.ensraf_from_time}, ${o.ensraf_to_time}, ${o.ensraf_khasm_from})`);
+    }
   }
 
   /** Normalise a free-form time to legacy "h:i A" (date("h:i A", strtotime(...))). */
@@ -1517,24 +1796,44 @@ export class AttendanceService {
   }
 
   async createShift(dto: UpsertShiftDto) {
-    const row = await this.prisma.tbl_hdodr_setting.create({ data: this.shiftData(dto) });
-    return this.mapShift(row);
+    const data = this.shiftData(dto);
+    const overrides = this.dayOverrideData(dto);
+    if (!overrides) {
+      const row = await this.prisma.tbl_hdodr_setting.create({ data });
+      return this.mapShift(row);
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const row = await tx.tbl_hdodr_setting.create({ data });
+      await this.saveShiftDayOverrides(tx, row.id, overrides);
+      return this.mapShift(row, overrides);
+    });
   }
 
   async updateShift(id: number, dto: UpsertShiftDto) {
     const exist = await this.prisma.tbl_hdodr_setting.findUnique({ where: { id } });
     if (!exist) throw new NotFoundException('الوردية غير موجودة');
-    const row = await this.prisma.tbl_hdodr_setting.update({
-      where: { id },
-      data: this.shiftData(dto),
+    const data = this.shiftData(dto);
+    const overrides = this.dayOverrideData(dto);
+    if (!overrides) {
+      const row = await this.prisma.tbl_hdodr_setting.update({ where: { id }, data });
+      return this.mapShift(row);
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const row = await tx.tbl_hdodr_setting.update({ where: { id }, data });
+      await this.saveShiftDayOverrides(tx, id, overrides);
+      return this.mapShift(row, overrides);
     });
-    return this.mapShift(row);
   }
 
   async removeShift(id: number) {
     const row = await this.prisma.tbl_hdodr_setting.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('الوردية غير موجودة');
     await this.prisma.tbl_hdodr_setting.delete({ where: { id } });
+    try {
+      await this.prisma.$executeRaw(Prisma.sql`DELETE FROM tbl_hdodr_setting_day_overrides WHERE shift_id = ${id}`);
+    } catch (error) {
+      this.logger.warn(`shift ${id} day overrides not removed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     return { id };
   }
 
@@ -1783,10 +2082,51 @@ export class AttendanceService {
         publisher_emp_id: publisherEmployee.id,
       },
     });
+    // An extra shift entered for a day that already passed must be backed by a punch.
+    let warning: string | undefined;
+    if (dto.ttype === 2 && /^\d{4}-\d{2}-\d{2}$/.test(sheftDate) && sheftDate < today) {
+      const punched = await this.extraShiftPunchKeys([{ emp_code_fk: emp.emp_code ?? 0, dwam_id_fk: row.dwam_id_fk, sheft_date: sheftDate }]);
+      if (!punched.has(`${emp.emp_code ?? 0}|${row.dwam_id_fk}|${sheftDate}`)) {
+        warning = 'الشيفت الإضافي ده مفيش له بصمة حضور في اليوم ده؛ راجعه قبل ما يتحسب في المرتب';
+      }
+    }
     return {
       id: row.id,
-      message: dto.ttype === 1 ? 'تم تسجيل شيفت التبديل بنجاح' : 'تم تسجيل الشيفت الإضافي بنجاح',
+      message: warning
+        ? `تم التسجيل مع تنبيه: ${warning}`
+        : dto.ttype === 1 ? 'تم تسجيل شيفت التبديل بنجاح' : 'تم تسجيل الشيفت الإضافي بنجاح',
+      ...(warning ? { warning } : {}),
     };
+  }
+
+  /** "empCode|shiftId|YYYY-MM-DD" keys of extra shifts that have at least one punch on their date. */
+  private async extraShiftPunchKeys(
+    rows: Array<{ emp_code_fk: number; dwam_id_fk: number; sheft_date: string }>,
+  ): Promise<Set<string>> {
+    const keys = new Set<string>();
+    const items = rows
+      .map((r) => ({ code: r.emp_code_fk, shiftId: r.dwam_id_fk, date: normalizeLegacyInputDate(r.sheft_date) }))
+      .filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.date));
+    if (!items.length || typeof (this.prisma.tbl_hdoor_emps as { findMany?: unknown } | undefined)?.findMany !== 'function') return keys;
+    const dateValues = [...new Set(items.flatMap((r) => legacyDateMatchValues(r.date)))];
+    const punches = await this.prisma.tbl_hdoor_emps.findMany({
+      where: {
+        member_code: { in: [...new Set(items.map((r) => r.code))] },
+        dwam_id_fk: { in: [...new Set(items.map((r) => r.shiftId))] },
+        OR: [{ action_date: { in: [...new Set(items.map((r) => r.date))] } }, { action_date_s: { in: dateValues } }],
+      },
+      select: { member_code: true, dwam_id_fk: true, action_date: true, action_date_s: true, hdoor_time: true, ensraf_time: true },
+    });
+    for (const item of items) {
+      const matches = legacyDateMatchValues(item.date);
+      const hit = punches.some((p) =>
+        p.member_code === item.code
+        && p.dwam_id_fk === item.shiftId
+        && (p.hdoor_time || p.ensraf_time)
+        && ((p.action_date ?? '').slice(0, 10) === item.date || matches.includes(p.action_date_s ?? '')));
+      if (hit) keys.add(`${item.code}|${item.shiftId}|${item.date}`);
+    }
+    return keys;
   }
 
   async listShiftSwaps(q: ListEdafiDto, user?: JwtUser) {
@@ -1823,16 +2163,27 @@ export class AttendanceService {
     const shiftMap = new Map(shifts.map((s) => [s.id, s.title]));
     const branchMap = new Map(branches.map((b) => [b.branch_id, b.branch_name]));
     const types: Record<number, string> = { 1: 'تبديل شيفت', 2: 'إضافة شيفت' };
-    return rows.map((r) => ({
-      id: r.id,
-      empCode: r.emp_code_fk,
-      empName: r.emp_name,
-      branchTitle: r.branch_id_fk === 0 ? 'الادارة' : (branchMap.get(r.branch_id_fk) ?? undefined),
-      sheftDate: r.sheft_date,
-      ttype: r.ttype,
-      ttypeName: types[r.ttype] ?? '—',
-      dwamTitle: shiftMap.get(r.dwam_id_fk) ?? undefined,
-    }));
+    // Extra shifts on past days without any punch are flagged (payroll counts every extra shift).
+    const today = todayIso();
+    const pastExtras = rows.filter((r) => r.ttype === 2 && normalizeLegacyInputDate(r.sheft_date) < today);
+    const punched = await this.extraShiftPunchKeys(pastExtras);
+    return rows.map((r) => {
+      const date = normalizeLegacyInputDate(r.sheft_date);
+      const isPastExtra = r.ttype === 2 && /^\d{4}-\d{2}-\d{2}$/.test(date) && date < today;
+      const noPunch = isPastExtra && !punched.has(`${r.emp_code_fk}|${r.dwam_id_fk}|${date}`);
+      return {
+        id: r.id,
+        empCode: r.emp_code_fk,
+        empName: r.emp_name,
+        branchTitle: r.branch_id_fk === 0 ? 'الادارة' : (branchMap.get(r.branch_id_fk) ?? undefined),
+        sheftDate: r.sheft_date,
+        ttype: r.ttype,
+        ttypeName: types[r.ttype] ?? '—',
+        dwamTitle: shiftMap.get(r.dwam_id_fk) ?? undefined,
+        ...(r.ttype === 2 ? { punchStatus: noPunch ? 'no_punch' : isPastExtra ? 'confirmed' : 'pending' } : {}),
+        ...(noPunch ? { warning: 'مفيش بصمة للشيفت الإضافي ده — راجعه قبل المرتب' } : {}),
+      };
+    });
   }
 
   async removeShiftSwap(id: number) {
@@ -1845,12 +2196,63 @@ export class AttendanceService {
   // -------------------------------------------------------------------------
   // EXTRA HOURS (tbl_emps_hours_edafi) — Api::add_hours_edafi
   // -------------------------------------------------------------------------
+  /**
+   * Overtime the fingerprint supports for one employee/date (tbl_hdoor_emps rows of that date):
+   * minutes past the shift's "احتساب الإضافي" time, or the whole worked time on an extra shift /
+   * the weekly day off. Per-weekday shift times apply.
+   */
+  private async punchConfirmedOvertime(
+    emp: { id: number; emp_code: number | null },
+    isoDate: string,
+  ): Promise<{ minutes: number; hasPunch: boolean; openPunch: boolean; isOffDay: boolean }> {
+    const code = emp.emp_code ?? 0;
+    const rows = await this.prisma.tbl_hdoor_emps.findMany({
+      where: {
+        member_code: code,
+        OR: [{ action_date: isoDate }, { action_date_s: { in: legacyDateMatchValues(isoDate) } }],
+      },
+      select: { hodoor_id: true, hdoor_time: true, ensraf_time: true, sheft_type: true, dwam_id_fk: true },
+    });
+    const shiftIds = [...new Set(rows.map((row) => row.dwam_id_fk).filter((id): id is number => id != null))];
+    const shifts: ShiftTimes[] = shiftIds.length
+      ? await this.prisma.tbl_hdodr_setting.findMany({ where: { id: { in: shiftIds } } })
+      : [];
+    const overrides = await this.loadShiftDayOverrides(this.prisma, shiftIds);
+    const shiftsById = new Map<number, ShiftTimes>(
+      shifts.map((shift) => [shift.id, applyShiftDayOverride(shift, isoDate, overrides)]),
+    );
+    const weeklySettings = await (this.prisma as any).attendance_weekly_schedule_settings?.findUnique({ where: { id: 1 } });
+    const isOffDay = weeklySettings?.enabled
+      ? false
+      : isWeeklyOffDay(await this.weeklyOffDayOf(this.prisma, emp.id, code), isoDate);
+    return {
+      minutes: punchConfirmedOvertimeMinutes(rows, shiftsById, isOffDay),
+      hasPunch: rows.some((row) => row.hdoor_time || row.ensraf_time),
+      openPunch: rows.some((row) => row.hdoor_time && !row.ensraf_time),
+      isOffDay,
+    };
+  }
+
+  /** "ساعة واحدة" / "ساعتين" / "3 ساعات" — for the overtime warnings. */
+  private hoursLabel(hours: number): string {
+    if (hours <= 0) return 'ولا ساعة';
+    if (hours === 1) return 'ساعة واحدة';
+    if (hours === 2) return 'ساعتين';
+    if (hours <= 10) return `${hours} ساعات`;
+    return `${hours} ساعة`;
+  }
+
   async createExtraHours(dto: CreateExtraHoursDto, userId: number) {
     const emp = await this.prisma.employees.findUnique({ where: { id: dto.empId } });
     if (!emp) throw new BadRequestException('الموظف غير موجود في النظام');
     const publisherEmployee = await this.assertCanManageEdafiEmployee(emp, userId);
 
     const edafaDate = normalizeLegacyInputDate(dto.edafaDate);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(edafaDate)) throw new BadRequestException('تاريخ الساعات الإضافية غير صالح');
+    const today = todayIso();
+    if (edafaDate > today) {
+      throw new BadRequestException('مينفعش تسجل ساعات إضافية ليوم لسه مجاش؛ سجلها بعد بصمة انصراف الموظف');
+    }
 
     const dup = await this.prisma.tbl_emps_hours_edafi.findFirst({
       where: { emp_code_fk: emp.emp_code ?? 0, edafa_date: edafaDate },
@@ -1859,14 +2261,30 @@ export class AttendanceService {
       throw new BadRequestException('تم تسجيل الساعات الإضافية مسبقًا لنفس الموظف في نفس التاريخ');
     }
 
-    const today = todayIso();
+    // Owner's rule: pay only what the fingerprint confirms. num_hours (what payroll pays)
+    // holds the confirmed whole hours; the manager's figure is kept in requested_hours.
+    const proof = await this.punchConfirmedOvertime(emp, edafaDate);
+    if (edafaDate === today && proof.openPunch) {
+      throw new BadRequestException('الموظف لسه ما بصمش انصراف النهارده؛ سجل الساعات الإضافية بعد بصمة الانصراف');
+    }
+    const requestedHours = dto.numHours;
+    const confirmedHours = Math.min(requestedHours, Math.floor(proof.minutes / 60));
+    let warning: string | undefined;
+    if (requestedHours > confirmedHours) {
+      warning = confirmedHours > 0
+        ? `المدير سجل ${this.hoursLabel(requestedHours)} والبصمة بتأكد ${this.hoursLabel(confirmedHours)} بس؛ هيتحسب في المرتب ${this.hoursLabel(confirmedHours)}`
+        : proof.hasPunch
+          ? `المدير سجل ${this.hoursLabel(requestedHours)} والبصمة مش بتأكد أي ساعة إضافية؛ مش هيتحسب حاجة في المرتب`
+          : `المدير سجل ${this.hoursLabel(requestedHours)} ومفيش بصمة حضور وانصراف للموظف في اليوم ده؛ مش هيتحسب حاجة في المرتب`;
+    }
+
     const row = await this.prisma.tbl_emps_hours_edafi.create({
       data: {
         emp_id_fk: emp.id,
         emp_code_fk: emp.emp_code ?? 0,
         emp_name: emp.employee ?? '',
         branch_id_fk: emp.branch_id_fk ?? 0,
-        num_hours: dto.numHours,
+        num_hours: confirmedHours,
         edafa_date: edafaDate,
         date_ar: today,
         date_s: String(businessMidnightEpoch(today)),
@@ -1874,7 +2292,24 @@ export class AttendanceService {
         publisher_emp_id: publisherEmployee.id,
       },
     });
-    return { id: row.id, message: 'تمت تسجيل الساعات الإضافية بنجاح' };
+    try {
+      if (typeof (this.prisma as { $executeRaw?: unknown }).$executeRaw === 'function') {
+        await this.prisma.$executeRaw(Prisma.sql`
+          UPDATE tbl_emps_hours_edafi
+             SET requested_hours = ${requestedHours}, confirmed_minutes = ${proof.minutes}
+           WHERE id = ${row.id}`);
+      }
+    } catch (error) {
+      this.logger.warn(`extra hours ${row.id}: requested/confirmed not stored: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return {
+      id: row.id,
+      message: warning ? `تم التسجيل مع تنبيه: ${warning}` : 'تمت تسجيل الساعات الإضافية بنجاح',
+      requestedHours,
+      confirmedHours,
+      confirmedMinutes: proof.minutes,
+      ...(warning ? { warning } : {}),
+    };
   }
 
   async listExtraHours(q: ListEdafiDto, user?: JwtUser) {
@@ -1896,15 +2331,131 @@ export class AttendanceService {
       }),
       this.prisma.tbl_emps_hours_edafi.count({ where }),
     ]);
-    const data = rows.map((r) => ({
-      id: r.id,
-      empCode: r.emp_code_fk,
-      empName: r.emp_name,
-      numHours: r.num_hours,
-      edafaDate: r.edafa_date,
-      dateAr: r.date_ar,
-    }));
+    // requested_hours / confirmed_minutes are raw-SQL columns (null on rows saved before them).
+    const extra = new Map<number, { requested: number | null; confirmedMinutes: number | null }>();
+    if (rows.length && typeof (this.prisma as { $queryRaw?: unknown }).$queryRaw === 'function') {
+      try {
+        const raw = await this.prisma.$queryRaw<Array<{ id: number; requested_hours: number | null; confirmed_minutes: number | null }>>(
+          Prisma.sql`SELECT id, requested_hours, confirmed_minutes FROM tbl_emps_hours_edafi
+                      WHERE id IN (${Prisma.join(rows.map((r) => r.id))})`,
+        );
+        for (const item of Array.isArray(raw) ? raw : []) {
+          extra.set(Number(item.id), {
+            requested: item.requested_hours == null ? null : Number(item.requested_hours),
+            confirmedMinutes: item.confirmed_minutes == null ? null : Number(item.confirmed_minutes),
+          });
+        }
+      } catch (error) {
+        this.logger.warn(`extra hours requested/confirmed unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    const data = rows.map((r) => {
+      const info = extra.get(r.id);
+      const requestedHours = info?.requested ?? r.num_hours;
+      return {
+        id: r.id,
+        empCode: r.emp_code_fk,
+        empName: r.emp_name,
+        numHours: r.num_hours,
+        requestedHours,
+        confirmedMinutes: info?.confirmedMinutes ?? null,
+        warning: requestedHours > r.num_hours
+          ? `المسجل ${this.hoursLabel(requestedHours)} والبصمة أكدت ${this.hoursLabel(r.num_hours)}`
+          : undefined,
+        edafaDate: r.edafa_date,
+        dateAr: r.date_ar,
+      };
+    });
     return paginated(data, total, q.page, q.pageSize);
+  }
+
+  // -------------------------------------------------------------------------
+  // COMPENSATORY DAYS (hr_comp_day_credits, raw SQL) — earned by working on the weekly day off
+  // -------------------------------------------------------------------------
+
+  /**
+   * Compensatory-day balance. Credits are written on check-out; a credit counts as used once an
+   * approved leave type 19 ("بدل راحة") dated on/after the oldest credit exists (oldest first).
+   * Without empCode: one summary row per employee with credits (branch-scoped like the reports).
+   */
+  async compDays(q: { empCode?: string }, user?: JwtUser) {
+    const code = q.empCode && q.empCode !== 'all' ? parseInt(q.empCode, 10) || 0 : undefined;
+    let credits: Array<{ id: number; emp_code: number; work_date: string; minutes: number; status: string; used_leave_id: number | null }> = [];
+    try {
+      const raw = await this.prisma.$queryRaw<Array<Record<string, unknown>>>(code != null
+        ? Prisma.sql`SELECT id, emp_code, work_date, minutes, status, used_leave_id FROM hr_comp_day_credits
+                      WHERE emp_code = ${code} ORDER BY work_date ASC, id ASC`
+        : Prisma.sql`SELECT id, emp_code, work_date, minutes, status, used_leave_id FROM hr_comp_day_credits
+                      ORDER BY work_date ASC, id ASC LIMIT 5000`);
+      credits = (Array.isArray(raw) ? raw : []).map((r) => ({
+        id: Number(r.id),
+        emp_code: Number(r.emp_code),
+        work_date: String(r.work_date ?? '').slice(0, 10),
+        minutes: Number(r.minutes ?? 0),
+        status: String(r.status ?? 'earned'),
+        used_leave_id: r.used_leave_id == null ? null : Number(r.used_leave_id),
+      }));
+    } catch (error) {
+      this.logger.warn(`comp day credits unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    const codes = [...new Set(credits.map((c) => c.emp_code))];
+    const branchFilter = this.reportBranchFilter(user);
+    const employees = codes.length
+      ? await this.prisma.employees.findMany({
+        where: { emp_code: { in: codes }, ...(branchFilter !== undefined ? { branch_id_fk: branchFilter } : {}) },
+        select: { emp_code: true, employee: true },
+      })
+      : [];
+    const nameByCode = new Map(employees.map((e) => [e.emp_code ?? 0, e.employee ?? '']));
+    const visible = credits.filter((c) => nameByCode.has(c.emp_code));
+    const visibleCodes = [...new Set(visible.map((c) => c.emp_code))];
+    const firstDate = visible.reduce((min, c) => (c.work_date && c.work_date < min ? c.work_date : min), '9999-12-31');
+    const leaves = visibleCodes.length
+      ? await this.prisma.hr_all_agzat_orders.findMany({
+        where: {
+          emp_code_fk: { in: visibleCodes.map(BigInt) },
+          no3_agaza: 19,
+          suspend: { in: SUSPEND_APPROVED },
+        },
+        select: { id: true, emp_code_fk: true, agaza_date: true, agaza_from_date_m: true },
+        orderBy: { id: 'asc' },
+      })
+      : [];
+
+    const summaries = visibleCodes.map((empCode) => {
+      const own = visible.filter((c) => c.emp_code === empCode);
+      const oldest = own[0]?.work_date ?? firstDate;
+      const usedLeaves = leaves.filter((l) => {
+        if (Number(l.emp_code_fk) !== empCode) return false;
+        const date = normalizeLegacyInputDate(l.agaza_from_date_m || l.agaza_date || '');
+        return /^\d{4}-\d{2}-\d{2}$/.test(date) && date >= oldest;
+      });
+      // Explicitly marked credits count as used; the remaining type-19 leaves consume the oldest earned ones.
+      let spare = Math.max(0, usedLeaves.length - own.filter((c) => c.status === 'used').length);
+      const rows = own.map((c) => {
+        let status = c.status === 'used' ? 'used' : 'earned';
+        if (status === 'earned' && spare > 0) {
+          status = 'used';
+          spare -= 1;
+        }
+        return { id: c.id, workDate: c.work_date, minutes: c.minutes, status, statusLabel: status === 'used' ? 'اتاخد' : 'متاح' };
+      });
+      const used = rows.filter((r) => r.status === 'used').length;
+      return {
+        empCode,
+        empName: nameByCode.get(empCode) ?? '',
+        earned: rows.length,
+        used,
+        balance: rows.length - used,
+        credits: rows,
+      };
+    });
+
+    if (code != null) {
+      return summaries[0] ?? { empCode: code, empName: '', earned: 0, used: 0, balance: 0, credits: [] };
+    }
+    return { data: summaries.sort((a, b) => b.balance - a.balance), total: summaries.length };
   }
 
   async removeExtraHours(id: number) {

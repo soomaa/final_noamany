@@ -130,6 +130,12 @@ export class AttendanceController {
     return this.attendance.removeExtraHours(id);
   }
 
+  // -------- compensatory days (worked on the weekly day off) --------
+  @Get('comp-days')
+  compDays(@Query('empCode') empCode: string | undefined, @CurrentUser() user: JwtUser) {
+    return this.attendance.compDays({ empCode }, user);
+  }
+
   // -------- reports (date-range + employee + branch) --------
   @Get('reports/basma')
   basmaReport(@Query() query: AttendanceReportDto, @CurrentUser() user: JwtUser) {

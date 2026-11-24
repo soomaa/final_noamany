@@ -47,6 +47,8 @@ function prismaFixture(options?: {
       findFirst: jest.fn().mockResolvedValue(null),
       create: jest.fn().mockResolvedValue({ id: 800 }),
     },
+    // Extra hours are checked against the day's punches (none here ⇒ nothing confirmed).
+    tbl_hdoor_emps: { findMany: jest.fn().mockResolvedValue([]) },
   };
 }
 
