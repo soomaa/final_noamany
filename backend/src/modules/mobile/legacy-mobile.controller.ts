@@ -935,6 +935,13 @@ export class LegacyMobileController {
         data: null,
       });
     }
-    return this.legacy(operation);
+    // add_hours_edafi may save fewer hours than requested (only what the fingerprint confirms):
+    // surface that warning as the message the old app shows.
+    return this.legacy(operation).then((result) => {
+      const warning = (result.data as { warning?: unknown } | null)?.warning;
+      return typeof warning === "string" && warning
+        ? { ...result, message: `${result.message} — تنبيه: ${warning}` }
+        : result;
+    });
   }
 }
