@@ -321,6 +321,7 @@
       "/payroll/setup": "Payroll Setup",
       "/settings/pay-components": "Earnings & Deductions",
       "/payroll/salary-scale": "Salary Scale",
+      "/hr/payroll-settings": "Attendance & Payroll Rules",
       "/leaves": "Leaves",
       "/leaves/types": "Leave Types",
       "/leaves/balances": "Leave Balances",

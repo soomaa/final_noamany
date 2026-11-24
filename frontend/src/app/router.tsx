@@ -63,6 +63,7 @@ import {
   SalaryIncreasesPage,
   SalaryIncreasesReportPage,
   PayrollSetupPage,
+  PayrollSettingsPage,
   PayrollSlipPage,
   PenaltiesBylawPage,
   PenaltiesPage,
@@ -418,6 +419,7 @@ export function AppRouter() {
 
           <Route path="payroll/salary-scale" element={<Lazy><SalaryScalePage /></Lazy>} />
           <Route path="payroll/setup" element={<Lazy><PayrollSetupPage /></Lazy>} />
+          <Route path="hr/payroll-settings" element={<Lazy><PayrollSettingsPage /></Lazy>} />
           <Route path="payroll/runs" element={<Lazy><PayrollRunsPage /></Lazy>} />
           <Route path="payroll/increases" element={<Lazy><SalaryIncreasesPage /></Lazy>} />
           <Route path="payroll/increases/report" element={<Lazy><SalaryIncreasesReportPage /></Lazy>} />

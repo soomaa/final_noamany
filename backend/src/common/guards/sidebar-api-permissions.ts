@@ -407,6 +407,12 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
   "AttendanceController.importDeviceFile": [
     "attendance.import:create"
   ],
+  "HrPayrollSettingsController.get": [
+    "payroll.attendance_settings:view"
+  ],
+  "HrPayrollSettingsController.save": [
+    "payroll.attendance_settings:update"
+  ],
   "AttendanceExceptionsController.list": [
     "attendance.exceptions:view"
   ],

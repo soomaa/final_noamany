@@ -100,6 +100,7 @@ export const AttendanceExceptionsPage = lazyPage(() => import('@/pages/attendanc
 export const AttendanceAdjustmentsPage = lazyPage(() => import('@/pages/attendance/adjustments'), 'AttendanceAdjustmentsPage');
 export const AttendanceImportPage = lazyPage(() => import('@/pages/attendance/import-device-file'), 'AttendanceImportPage');
 export const PayrollSetupPage = lazyPage(() => import('@/pages/payroll/setup'), 'PayrollSetupPage');
+export const PayrollSettingsPage = lazyPage(() => import('@/pages/hr/payroll-settings'), 'PayrollSettingsPage');
 export const PayrollRunsPage = lazyPage(() => import('@/pages/payroll/runs'), 'PayrollRunsPage');
 export const SalaryIncreasesPage = lazyPage(() => import('@/pages/payroll/increases'), 'SalaryIncreasesPage');
 export const SalaryIncreasesReportPage = lazyPage(() => import('@/pages/payroll/increases-report'), 'SalaryIncreasesReportPage');
