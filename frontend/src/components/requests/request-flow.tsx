@@ -97,6 +97,45 @@ export function FlowStatusChip({ status, label, className }: { status?: FlowStat
   );
 }
 
+/** Plain status strings (requests without a flow, penalties…) → the same chip tones and words. */
+const PLAIN_STATUS: Record<string, FlowStatus | 'pending'> = {
+  approved: 'approved',
+  accept: 'approved',
+  accepted: 'approved',
+  rejected: 'rejected',
+  reject: 'rejected',
+  cancelled: 'cancelled',
+  canceled: 'cancelled',
+  returned: 'returned',
+};
+
+/**
+ * The one status chip for leaves, permissions, overtime, employee requests and penalties:
+ * the flow chip when the row has a flow status, otherwise the plain status mapped to the same colours
+ * (pending amber, approved green, rejected red, returned orange, cancelled grey).
+ */
+export function RequestStatusChip({
+  flowStatus,
+  flowStatusLabel,
+  status,
+  className,
+}: {
+  flowStatus?: FlowStatus | null;
+  flowStatusLabel?: string | null;
+  status?: string | null;
+  className?: string;
+}) {
+  const { ui } = useLocale();
+  if (flowStatus) return <FlowStatusChip status={flowStatus} label={flowStatusLabel} className={className} />;
+  const key = PLAIN_STATUS[status ?? ''] ?? 'pending';
+  if (key !== 'pending') return <FlowStatusChip status={key} className={className} />;
+  return (
+    <span className={cn('inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium', CHIP_TONE.pending_manager, className)}>
+      {status === 'investigating' ? ui('قيد التحقيق') : ui('قيد المراجعة')}
+    </span>
+  );
+}
+
 const ACTION_TONE: Record<string, string> = {
   submit: 'bg-primary',
   resubmit: 'bg-primary',

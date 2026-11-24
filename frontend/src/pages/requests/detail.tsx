@@ -9,7 +9,9 @@ import { DateText } from '@/components/common/formatters';
 import { PageHeader } from '@/components/common/page-header';
 import { RequestTimeline, type TimelineEvent } from '@/components/common/request-timeline';
 import { PrintView } from '@/components/common/print-view';
-import { StatusBadge } from '@/components/common/status-badge';
+import { RequestStatusChip } from '@/components/requests/request-flow';
+import { useBranches } from '@/hooks/use-branches';
+import { toArabicDigits } from '@/lib/utils';
 import { ErrorState, NotImplementedState } from '@/components/common/states';
 import { api, apiError } from '@/lib/api';
 import { confirm, confirmWithPreview } from '@/lib/confirm';
@@ -33,6 +35,30 @@ interface ExitDraft {
   message?: string;
 }
 
+/** Readable names for the request form fields (pages/requests/new.tsx). Ids without a name stay hidden. */
+const PAYLOAD_LABELS: Record<string, string> = {
+  date_from: 'من',
+  date_to: 'إلى',
+  permission_date: 'التاريخ',
+  time_from: 'من الساعة',
+  time_to: 'إلى الساعة',
+  amount: 'المبلغ',
+  installments: 'عدد الأقساط',
+  purpose: 'الغرض',
+  directed_to: 'موجّه إلى',
+  last_work_day: 'آخر يوم عمل',
+  target_branch_id: 'الفرع المطلوب',
+  new_job_title: 'المسمى الوظيفي الجديد',
+  new_salary: 'الراتب المقترح',
+  field_name: 'البيان المطلوب تعديله',
+  old_value: 'القيمة الحالية',
+  new_value: 'القيمة الجديدة',
+  overtime_date: 'تاريخ الإضافي',
+  hours: 'عدد الساعات',
+  reason: 'السبب',
+  notes: 'ملاحظات',
+};
+
 interface RequestDetail {
   id: number;
   type: RequestTypeKey;
@@ -49,6 +75,7 @@ export function RequestDetailPage() {
   const { t, ui } = useLocale();
   const { id } = useParams<{ id: string }>();
   const { data, isLoading, isError, error, refetch } = useResource<RequestDetail>('requests', id);
+  const { data: branches = [] } = useBranches();
   const [exitDraft, setExitDraft] = useState<ExitDraft | null>(null);
   // Stable objects: the dialog resets its form whenever these change.
   const exitEmployee = useMemo(
@@ -141,29 +168,40 @@ export function RequestDetailPage() {
   if (!data) return <NotImplementedState title={ui('الطلب غير موجود')} />;
 
   const typeMeta = getRequestType(t, data.type);
-  const statusKey = data.status === 'approved' ? 'approved' : data.status === 'rejected' ? 'rejected' : 'pending';
-  const timeline: TimelineEvent[] = data.timeline ?? [
-    { id: '1', status: 'submitted', label: ui('تم تقديم الطلب'), at: data.createdAt },
-    { id: '2', status: 'pending', label: ui('قيد المراجعة') },
-  ];
+  const typeLabel = typeMeta?.label ?? data.typeLabel ?? data.type;
+  // Only what the server recorded; nothing is invented when it has no history.
+  const timeline: TimelineEvent[] = (data.timeline ?? []).map((event) => ({ ...event, label: ui(event.label) }));
+  const payloadValue = (key: string, value: unknown): string => {
+    if (key === 'target_branch_id') return branches.find((b) => String(b.id) === String(value))?.name ?? String(value);
+    if (typeof value === 'object') return JSON.stringify(value);
+    return toArabicDigits(String(value));
+  };
+  const payloadRows = Object.entries(data.payload ?? {})
+    .filter(([key, value]) => PAYLOAD_LABELS[key] && value != null && value !== '')
+    .map(([key, value]) => ({ key, label: ui(PAYLOAD_LABELS[key]), value: payloadValue(key, value) }));
 
   const content = (
-    <div className="grid gap-6 lg:grid-cols-3">
+    <div className={timeline.length ? 'grid gap-6 lg:grid-cols-3' : 'space-y-4'}>
       <div className="space-y-4 lg:col-span-2">
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{typeMeta?.label ?? data.typeLabel ?? data.type}</CardTitle>
+            <CardTitle className="text-base">{typeLabel}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <dl className="grid gap-3 sm:grid-cols-2">
               <div><dt className="text-xs text-muted-foreground">{ui('الموظف')}</dt><dd className="font-medium">{data.employeeName ?? '—'}</dd></div>
               <div><dt className="text-xs text-muted-foreground">{ui('التاريخ')}</dt><dd><DateText value={data.createdAt} /></dd></div>
-              <div><dt className="text-xs text-muted-foreground">{ui('الحالة')}</dt><dd><StatusBadge status={statusKey} /></dd></div>
+              <div><dt className="text-xs text-muted-foreground">{ui('الحالة')}</dt><dd><RequestStatusChip status={data.status} /></dd></div>
             </dl>
-            {data.payload && (
-              <div className="rounded-lg border border-border bg-muted/30 p-4 text-sm">
-                <pre className="whitespace-pre-wrap font-sans">{JSON.stringify(data.payload, null, 2)}</pre>
-              </div>
+            {payloadRows.length > 0 && (
+              <dl className="grid gap-3 rounded-lg border border-border bg-muted/30 p-4 text-sm sm:grid-cols-2">
+                {payloadRows.map((row) => (
+                  <div key={row.key} className={row.key === 'reason' || row.key === 'notes' ? 'sm:col-span-2' : undefined}>
+                    <dt className="text-xs text-muted-foreground">{row.label}</dt>
+                    <dd className="whitespace-pre-wrap font-medium">{row.value}</dd>
+                  </div>
+                ))}
+              </dl>
             )}
           </CardContent>
         </Card>
@@ -171,26 +209,28 @@ export function RequestDetailPage() {
           <Card>
             <CardHeader><CardTitle className="text-base">{ui('تعريف مرتب — للطباعة')}</CardTitle></CardHeader>
             <CardContent className="space-y-2 text-sm">
-              <p>{ui('يشهد')} {data.employeeName} {ui('بأنه يعمل لدى الشركة...')}</p>
-              <Button variant="outline" onClick={() => window.print()}>{ui('طباعة التعريف')}</Button>
+              <p className="text-muted-foreground">{ui('اطبع الطلب المعتمد ببيانات الموظف والغرض والجهة الموجّه إليها.')}</p>
+              <Button variant="outline" className="no-print" onClick={() => window.print()}>{ui('طباعة التعريف')}</Button>
             </CardContent>
           </Card>
         )}
       </div>
-      <Card>
-        <CardHeader><CardTitle className="text-base">{ui('مسار الطلب')}</CardTitle></CardHeader>
-        <CardContent>
-          <RequestTimeline events={timeline} />
-        </CardContent>
-      </Card>
+      {timeline.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle className="text-base">{ui('مسار الطلب')}</CardTitle></CardHeader>
+          <CardContent>
+            <RequestTimeline events={timeline} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 
   return (
     <div>
       <PageHeader
-        title={`${ui('طلب')} #${id}`}
-        description={typeMeta?.label}
+        title={data.employeeName ? `${typeLabel} — ${data.employeeName}` : typeLabel}
+        description={`${ui('رقم الطلب')} ${toArabicDigits(id ?? '')}`}
         actions={
           <div className="flex flex-wrap gap-2 no-print">
             {data.status === 'pending' && (

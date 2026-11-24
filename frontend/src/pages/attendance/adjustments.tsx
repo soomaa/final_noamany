@@ -16,6 +16,8 @@ import { usePaginatedList } from '@/lib/api-hooks';
 import { fetchAllReportRows } from '@/lib/report-fetch';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
+import { minutesLabel } from '@/lib/minutes';
+import { confirm } from '@/lib/confirm';
 import { useLocale } from '@/store/locale';
 import type { EmployeeListItem } from '@/types/employees';
 import { SearchableSelect } from '@/components/common/searchable-select';
@@ -32,11 +34,6 @@ function WarningNote({ text }: { text?: string }) {
   return <span className="mt-0.5 flex items-start gap-1 text-xs text-amber-700 dark:text-amber-300"><AlertTriangle className="mt-0.5 size-3 shrink-0" />{text}</span>;
 }
 
-function minutesLabel(minutes: number) {
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return toArabicDigits(h ? `${h} س ${m ? `${m} د` : ''}`.trim() : `${m} د`);
-}
 interface ShiftOption { id: number; title?: string; hdoorFromTime?: string; ensrafToTime?: string; }
 interface TeamResponse { scope: 'all' | 'team'; recordsDirectly: boolean; employees: { id: number; emp_code: number | null; employee: string | null; edara_n?: string | null; qsm_n?: string | null }[] }
 interface OvertimePreview { message: string; confirmedMinutes: number; confirmedHours: number; hasPunch: boolean; openPunch: boolean; future: boolean; isOffDay: boolean; punches: { shiftTitle?: string | null; in?: string | null; out?: string | null }[] }
@@ -135,6 +132,8 @@ export function AttendanceAdjustmentsPage() {
     } catch (e) { toast.error(apiError(e)); } finally { setSaving(false); }
   };
   const remove = async (path: string, id: number, refresh: () => unknown) => {
+    const ok = await confirm({ title: ui('حذف السجل؟'), description: ui('السجل هيتشال ومش هيتحسب في الحضور والمرتب.'), confirmLabel: ui('حذف'), variant: 'destructive' });
+    if (!ok) return;
     try { await api.delete(`${path}/${id}`); toast.success(ui('تم حذف السجل')); refresh(); } catch (e) { toast.error(apiError(e)); }
   };
   const swapColumns: ColumnDef<SwapRow>[] = [

@@ -158,7 +158,7 @@ export function PayrollSlipPage() {
       ) : (
         <>
           <Card className="no-print">
-            <CardHeader><CardTitle className="text-base">{ui('الإضافات اليدوية كما في مسير الرواتب القديم')}</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">{ui('الإضافات اليدوية')}</CardTitle></CardHeader>
             <CardContent className="grid gap-4 md:grid-cols-4 md:items-end">
               <div className="space-y-2"><Label htmlFor="private-bonus">{ui('مكافأة البرايفت')}</Label><Input id="private-bonus" type="number" min="0" step="0.01" value={manual.privateBonus} onChange={(event) => setManual((current) => ({ ...current, privateBonus: event.target.value }))} /></div>
               <div className="space-y-2"><Label htmlFor="evaluation-value">{ui('التقييم')}</Label><Input id="evaluation-value" type="number" min="0" step="0.01" value={manual.taqeemValue} onChange={(event) => setManual((current) => ({ ...current, taqeemValue: event.target.value }))} /></div>

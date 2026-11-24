@@ -5,7 +5,7 @@ import { Prisma } from '@prisma/client';
  *
  * The bylaw requires an employee who leaves to give `requiredNoticeDays` (default 30) of notice.
  * Leaving with less (or none) is not a regular resignation: it is recorded as
- * "ترك العمل / إخلال طرف" (abandonment / breach) or a short-notice resignation.
+ * "ترك العمل بدون إخطار (إخلال بالعقد)" (abandonment / breach) or a short-notice resignation.
  */
 export const EXIT_TYPES = [
   'resignation',
@@ -21,7 +21,7 @@ export type ExitType = (typeof EXIT_TYPES)[number];
 export const EXIT_TYPE_LABELS: Record<ExitType, string> = {
   resignation: 'استقالة بإخطار',
   resignation_short_notice: 'استقالة بدون إخطار كافٍ',
-  abandonment: 'ترك العمل / إخلال طرف',
+  abandonment: 'ترك العمل بدون إخطار (إخلال بالعقد)',
   termination: 'إنهاء خدمة من الشركة',
   contract_end: 'انتهاء عقد',
   other: 'أخرى',

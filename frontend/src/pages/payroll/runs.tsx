@@ -99,6 +99,17 @@ interface SalaryExportRow extends Record<string, unknown> {
   sequence: number | string;
 }
 
+/** Run status (backend payroll-status.util) → the word shown on the list. */
+const RUN_STATUS_LABEL: Record<string, string> = {
+  draft: 'مسودة',
+  computed: 'تم الحساب',
+  reviewing: 'قيد المراجعة والاعتماد',
+  approved: 'معتمدة',
+  posted: 'تم إصدار الكشوف',
+  banked: 'تم التحويل للبنك',
+  completed: 'تم الصرف',
+};
+
 const EMPTY_MANUAL: ManualEarnings = { privateBonus: 0, evaluation: 0, targetValue: 0 };
 const CELL = 'whitespace-nowrap border border-border/70 px-2 py-2 text-center text-xs tabular-nums';
 const HEAD = `${CELL} h-auto bg-muted/70 font-bold text-foreground`;
@@ -265,7 +276,7 @@ export function PayrollRunsPage() {
     { accessorKey: 'id', header: ui('م'), cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1) },
     { accessorKey: 'title', header: ui('المسيرة'), cell: ({ row }) => <Link to={`/payroll/runs/${row.original.id}`} className="font-medium text-primary hover:underline">{row.original.title ?? `${ui('مسيرة')} ${toArabicDigits(row.original.id)}`}</Link> },
     { accessorKey: 'totalAmount', header: ui('الإجمالي'), cell: ({ getValue }) => <Money value={getValue() as number} /> },
-    { accessorKey: 'status', header: ui('الحالة'), cell: ({ getValue }) => { const status = getValue() as string; return <StatusBadge status={status === 'approved' || status === 'posted' || status === 'banked' || status === 'completed' ? 'approved' : 'pending'} label={ui(status || 'draft')} />; } },
+    { accessorKey: 'status', header: ui('الحالة'), cell: ({ getValue }) => { const status = getValue() as string; return <StatusBadge status={status === 'approved' || status === 'posted' || status === 'banked' || status === 'completed' ? 'approved' : 'pending'} label={ui(RUN_STATUS_LABEL[status || 'draft'] ?? status)} />; } },
     { accessorKey: 'createdAt', header: ui('تاريخ الإنشاء'), cell: ({ getValue }) => <DateText value={getValue() as string} /> },
     { id: 'actions', header: ui('الإجراءات'), cell: ({ row }) => <div className="flex gap-1"><Button variant="ghost" size="sm" asChild><Link to={`/payroll/runs/${row.original.id}`}><Eye className="size-4" />{ui('عرض')}</Link></Button><Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(row.original)}><Trash2 className="size-4 text-destructive" /></Button></div> },
   ], [params.page, params.pageSize, ui]);
@@ -283,7 +294,7 @@ export function PayrollRunsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title={ui('مسير الرواتب')} description={ui('حساب المرتبات بنفس فترة ومعادلات وترتيب شاشة النظام القديم.')} actions={<Button variant="brand" size="sm" onClick={() => setCreateOpen(true)}><Plus className="size-4" />{ui('مسيرة جديدة')}</Button>} />
+      <PageHeader title={ui('مسير الرواتب')} description={ui('حساب مرتبات الفترة لكل الموظفين، ومراجعتها واعتمادها وطباعتها.')} actions={<Button variant="brand" size="sm" onClick={() => setCreateOpen(true)}><Plus className="size-4" />{ui('مسيرة جديدة')}</Button>} />
 
       <Card className="no-print">
         <CardHeader><CardTitle className="text-base">{ui('تحديد فترة حساب المرتب')}</CardTitle></CardHeader>
@@ -374,7 +385,7 @@ export function PayrollRunsPage() {
         <DialogContent size="sm" aria-describedby={undefined}>
           <DialogHeader><DialogTitle>{ui('إنشاء مسيرة رواتب جديدة')}</DialogTitle></DialogHeader>
           <div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label htmlFor="run-month">{ui('الشهر')}</Label><Input id="run-month" type="number" min="1" max="12" value={runForm.month} onChange={(event) => setRunForm((current) => ({ ...current, month: event.target.value }))} /></div><div className="space-y-2"><Label htmlFor="run-year">{ui('السنة')}</Label><Input id="run-year" type="number" min="2000" value={runForm.year} onChange={(event) => setRunForm((current) => ({ ...current, year: event.target.value }))} /></div></div>
-          <p className="text-sm text-muted-foreground">{ui('سيتم احتساب الفترة من يوم 26 من الشهر السابق إلى يوم 25 من الشهر المختار، كما في النظام القديم.')}</p>
+          <p className="text-sm text-muted-foreground">{ui('سيتم احتساب الفترة من يوم 26 من الشهر السابق إلى يوم 25 من الشهر المختار.')}</p>
           <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)} disabled={creating}>{ui('إلغاء')}</Button><Button variant="brand" onClick={() => void createRun()} disabled={creating}>{creating ? ui('جارٍ إنشاء المسيرة…') : ui('إنشاء واحتساب')}</Button></DialogFooter>
         </DialogContent>
       </Dialog>

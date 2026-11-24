@@ -109,7 +109,7 @@ describe('ExitsService.create', () => {
         leave_emp: 1,
         end_service_date_m: '2026-11-24',
         end_date: '2026-11-24',
-        reason: 'ترك العمل / إخلال طرف — ساب الشغل فجأة',
+        reason: 'ترك العمل بدون إخطار (إخلال بالعقد) — ساب الشغل فجأة',
       },
     });
   });
@@ -122,7 +122,7 @@ describe('ExitsService.create', () => {
     );
     expect(res.noticeShortfallDays).toBe(26);
     expect(res.suggestedType).toBe('abandonment');
-    expect(res.warning).toContain('ترك العمل / إخلال طرف');
+    expect(res.warning).toContain('ترك العمل بدون إخطار (إخلال بالعقد)');
   });
 
   it('rejects a notice date after the last working day', async () => {

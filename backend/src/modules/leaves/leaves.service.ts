@@ -177,6 +177,9 @@ export class LeavesService {
       if (own) and.push({ emp_id_fk: { in: own } });
     }
 
+    const empIdFilter = Number(q.empId);
+    if (Number.isInteger(empIdFilter) && empIdFilter > 0) and.push({ emp_id_fk: empIdFilter });
+
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({

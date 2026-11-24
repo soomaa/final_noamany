@@ -1,12 +1,12 @@
 import { useMemo } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Clock, Inbox, Plus } from 'lucide-react';
+import { CalendarDays, ChevronDown, Clock, DoorOpen, Inbox, Plus, Timer, type LucideIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { DataTable } from '@/components/common/data-table';
 import { DateText } from '@/components/common/formatters';
 import { FilterBar } from '@/components/common/filter-bar';
 import { PageHeader } from '@/components/common/page-header';
-import { StatusBadge } from '@/components/common/status-badge';
+import { RequestStatusChip } from '@/components/requests/request-flow';
 import { NotImplementedState } from '@/components/common/states';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,10 +16,17 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { isNotImplemented, usePaginatedList } from '@/lib/api-hooks';
-import { getRequestTypes } from '@/lib/i18n-constants';
+import { getRequestTypes, type RequestTypeKey } from '@/lib/i18n-constants';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+
+/** The everyday requests get their own buttons; the rest sit under «طلب آخر». */
+const COMMON_TYPES: { key: RequestTypeKey; icon: LucideIcon }[] = [
+  { key: 'leave', icon: CalendarDays },
+  { key: 'permission', icon: DoorOpen },
+  { key: 'overtime', icon: Timer },
+];
 
 interface RequestRow {
   id: number;
@@ -40,6 +47,7 @@ export function RequestsPage() {
   );
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<RequestRow>('requests', params);
+  const filteredType = params.filters.type ? requestTypeMap[params.filters.type] : undefined;
 
   const columns: ColumnDef<RequestRow>[] = [
     {
@@ -74,11 +82,7 @@ export function RequestsPage() {
     {
       accessorKey: 'status',
       header: ui('الحالة'),
-      cell: ({ getValue }) => {
-        const s = getValue() as string | undefined;
-        const key = s === 'approved' ? 'approved' : s === 'rejected' ? 'rejected' : 'pending';
-        return <StatusBadge status={key} />;
-      },
+      cell: ({ getValue }) => <RequestStatusChip status={getValue() as string | undefined} />,
     },
     {
       id: 'view',
@@ -106,32 +110,41 @@ export function RequestsPage() {
         title={ui('طلبات الموظفين')}
         description={ui('إجازة · إذن · ساعات إضافية · سلفة · قرض · بدل · تعريف مرتب · استقالة · نقل · ترقية · تعديل بيانات')}
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
           <Button variant="outline" asChild>
             <Link to="/requests/inbox"><Inbox className="size-4" /> {ui('بانتظار الموافقة')}</Link>
           </Button>
           <Button variant="outline" asChild>
-            <Link to="/requests/overtime"><Clock className="size-4" /> {ui('الساعات الإضافية')}</Link>
+            <Link to="/requests/overtime"><Clock className="size-4" /> {ui('طلبات الساعات الإضافية')}</Link>
           </Button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="brand">
-                <Plus className="size-4" /> {ui('طلب جديد')}
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
-              {requestTypes.map((item) => (
-                <DropdownMenuItem key={item.key} asChild>
-                  <Link to={item.path}>{item.label}</Link>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
           </div>
         }
       />
+      {/* New request: the three everyday types up front, the rest under «طلب آخر». */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-medium text-muted-foreground">{ui('طلب جديد')}:</span>
+        {COMMON_TYPES.map(({ key, icon: Icon }) => requestTypeMap[key] && (
+          <Button key={key} variant="brand" size="sm" asChild>
+            <Link to={requestTypeMap[key].path}><Icon className="size-4" /> {requestTypeMap[key].label}</Link>
+          </Button>
+        ))}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm">
+              <Plus className="size-4" /> {ui('طلب آخر')} <ChevronDown className="size-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="max-h-80 overflow-y-auto">
+            {requestTypes.filter((item) => !COMMON_TYPES.some((c) => c.key === item.key)).map((item) => (
+              <DropdownMenuItem key={item.key} asChild>
+                <Link to={item.path}>{item.label}</Link>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
       <FilterBar
-        searchPlaceholder={ui('بحث في الطلبات…')}
+        hideSearch
         extra={
           <div className="flex items-center gap-1 text-sm text-muted-foreground">
             <Inbox className="size-4" />
@@ -150,8 +163,8 @@ export function RequestsPage() {
             label: ui('الحالة'),
             type: 'select',
             options: [
-              { value: 'pending', label: ui('قيد الانتظار') },
-              { value: 'approved', label: ui('معتمد') },
+              { value: 'pending', label: ui('قيد المراجعة') },
+              { value: 'approved', label: ui('موافق') },
               { value: 'rejected', label: ui('مرفوض') },
             ],
           },
@@ -170,11 +183,14 @@ export function RequestsPage() {
         onRetry={() => void refetch()}
         search={params.search}
         onSearchChange={(s) => setParams({ search: s, page: 1 })}
+        searchPlaceholder={ui('بحث في الطلبات…')}
         emptyTitle={ui('لا توجد طلبات')}
         emptyAction={
-          <Button asChild>
-            <Link to="/requests/new/leave">{ui('تقديم طلب إجازة')}</Link>
-          </Button>
+          filteredType ? (
+            <Button asChild>
+              <Link to={filteredType.path}>{filteredType.label}</Link>
+            </Button>
+          ) : undefined
         }
       />
     </div>

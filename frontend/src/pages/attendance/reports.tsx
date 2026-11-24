@@ -17,6 +17,7 @@ import { downloadExcel, type ExportColumn } from '@/lib/export';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { fetchAllReportRows } from '@/lib/report-fetch';
 import { listQueryToApiParams, useListQuery } from '@/lib/use-list-query';
+import { minutesLabel } from '@/lib/minutes';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import type { EmployeeListItem } from '@/types/employees';
@@ -300,7 +301,7 @@ export function AttendanceReportsPage() {
       { accessorKey: 'checkIn', header: ui('وقت الحضور'), cell: ({ row }) => punchText(row.original.checkIn, row.original.secondCheckIn) },
       { accessorKey: 'checkOutPhoto', header: ui('صورة الانصراف'), cell: ({ row }) => photo(row.original, row.index, ['out1', row.original.checkOutPhoto, 'صورة الانصراف'], ['out2', row.original.secondCheckOutPhoto, 'صورة الانصراف للوردية الثانية']) },
       { accessorKey: 'checkOut', header: ui('وقت الانصراف'), cell: ({ row }) => punchText(row.original.checkOut, row.original.secondCheckOut) },
-      { accessorKey: 'lateMin', header: ui('التأخير بالدقائق'), cell: ({ getValue }) => n(getValue()) },
+      { accessorKey: 'lateMin', header: ui('التأخير'), cell: ({ getValue }) => <span className="nums">{minutesLabel(getValue() as number | undefined)}</span> },
     ];
     if (kind === 'full-sheet') return [
       { id: 'sequence', header: '#', cell: ({ row }) => n(((params.page - 1) * params.pageSize) + row.index + 1) },
@@ -312,7 +313,7 @@ export function AttendanceReportsPage() {
       { accessorKey: 'checkIn', header: ui('وقت الحضور'), cell: ({ row }) => fullSheetContent(row.original, row.original.checkIn) },
       { accessorKey: 'checkOutPhoto', header: ui('صورة الانصراف'), cell: ({ row }) => fullSheetContent(row.original, row.original.checkOutPhoto, true, row.index, 'out1') },
       { accessorKey: 'checkOut', header: ui('وقت الانصراف'), cell: ({ row }) => fullSheetContent(row.original, row.original.checkOut) },
-      { accessorKey: 'lateMin', header: ui('التأخير'), cell: ({ row }) => row.original.status === 'present' ? n(row.original.lateMin) : <span>—</span> },
+      { accessorKey: 'lateMin', header: ui('التأخير'), cell: ({ row }) => row.original.status === 'present' ? <span className="nums">{minutesLabel(row.original.lateMin)}</span> : <span>—</span> },
       { accessorKey: 'workingSeconds', header: ui('ساعات العمل'), cell: ({ row }) => row.original.status === 'present' ? <span className="nums rounded bg-info/10 px-2 py-1 text-info">{toArabicDigits(durationText(row.original.workingSeconds))}</span> : <span>—</span> },
     ];
     if (kind === 'absence') return [
@@ -327,9 +328,9 @@ export function AttendanceReportsPage() {
       ...base,
       { accessorKey: 'department', header: ui('الإدارة') },
       { accessorKey: 'phone', header: ui('رقم الهاتف') },
-      { accessorKey: 'lateWithPermission', header: ui('دقائق التأخير بإذن'), cell: ({ getValue }) => n(getValue()) },
-      { accessorKey: 'lateWithoutPermission', header: ui('دقائق التأخير بدون إذن'), cell: ({ getValue }) => n(getValue()) },
-      { accessorKey: 'totalLate', header: ui('إجمالي التأخير'), cell: ({ getValue }) => n(getValue()) },
+      { accessorKey: 'lateWithPermission', header: ui('التأخير بإذن'), cell: ({ getValue }) => <span className="nums">{minutesLabel(getValue() as number | undefined)}</span> },
+      { accessorKey: 'lateWithoutPermission', header: ui('التأخير بدون إذن'), cell: ({ getValue }) => <span className="nums">{minutesLabel(getValue() as number | undefined)}</span> },
+      { accessorKey: 'totalLate', header: ui('إجمالي التأخير'), cell: ({ getValue }) => <span className="nums font-medium">{minutesLabel(getValue() as number | undefined)}</span> },
     ];
     if (kind === 'overtime') return [
       ...base,

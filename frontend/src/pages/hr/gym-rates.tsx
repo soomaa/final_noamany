@@ -188,7 +188,7 @@ export function GymRatesPage() {
     <>
       <ListPageShell
         title={ui('إعدادات نسب الجيم')}
-        description={ui('نفس إعدادات النظام القديم، وتُطبّق نسبة الموظف مباشرةً عند حساب مسير الرواتب')}
+        description={ui('نسب الموظفين من الجيم، وتُطبّق نسبة الموظف مباشرةً عند حساب مسير الرواتب')}
         isError={isError}
         error={error}
         notImplementedTitle={ui('إعدادات نسب الجيم — قيد الإعداد على الخادم')}
@@ -216,7 +216,7 @@ export function GymRatesPage() {
               <div className="grid gap-3 md:grid-cols-3">
                 {GYM_TYPES.map((type) => <div key={type.value} className="rounded-lg border bg-muted/20 p-3"><p className="mb-1 font-bold">{type.label}</p><p className="text-muted-foreground">{ui(GYM_FORMULAS[type.value])}</p></div>)}
               </div>
-              <p className="rounded-lg bg-primary/5 p-3 text-muted-foreground">{ui('الراتب يستخدم «نسبة الموظف» فقط لحساب الاستحقاق. «نسبة الجيم» محفوظة كتوزيع خاص بالجيم، والقيمتان مستقلتان كما في النظام القديم؛ لذلك يُسمح مثلًا بقيمة 0% للموظف و0% للجيم في التارجت.')}</p>
+              <p className="rounded-lg bg-primary/5 p-3 text-muted-foreground">{ui('الراتب يستخدم «نسبة الموظف» فقط لحساب الاستحقاق. «نسبة الجيم» محفوظة كتوزيع خاص بالجيم، والقيمتان مستقلتان؛ لذلك يُسمح مثلًا بقيمة 0% للموظف و0% للجيم في التارجت.')}</p>
             </CardContent>
           </Card>
           <DataTable

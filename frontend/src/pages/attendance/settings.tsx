@@ -94,13 +94,13 @@ function toInputTime(raw?: string): string {
   return hm ? `${hm[1].padStart(2, '0')}:${hm[2]}` : '';
 }
 
-const TIME_FIELDS: { key: keyof ShiftTimes; label: string }[] = [
-  { key: 'hdoorFromTime', label: uiStatic('بداية الحضور') },
-  { key: 'hdoorToTime', label: uiStatic('نهاية الحضور') },
-  { key: 'hdoorKhasmFrom', label: uiStatic('بداية الخصم (تأخير)') },
-  { key: 'ensrafFromTime', label: uiStatic('بداية الانصراف') },
-  { key: 'ensrafToTime', label: uiStatic('نهاية الانصراف') },
-  { key: 'ensrafKhasmFrom', label: uiStatic('احتساب الإضافي') },
+const TIME_FIELDS: { key: keyof ShiftTimes; label: string; help: string }[] = [
+  { key: 'hdoorFromTime', label: uiStatic('بداية الحضور'), help: uiStatic('أول وقت الموظف يقدر يبصم فيه حضور') },
+  { key: 'hdoorToTime', label: uiStatic('نهاية الحضور'), help: uiStatic('آخر وقت تتقبل فيه بصمة الحضور') },
+  { key: 'hdoorKhasmFrom', label: uiStatic('بداية الخصم (تأخير)'), help: uiStatic('بعد الوقت ده الحضور يتحسب تأخير') },
+  { key: 'ensrafFromTime', label: uiStatic('بداية الانصراف'), help: uiStatic('قبل الوقت ده مايقدرش يبصم انصراف إلا بإذن معتمد') },
+  { key: 'ensrafToTime', label: uiStatic('نهاية الانصراف'), help: uiStatic('آخر وقت تتقبل فيه بصمة الانصراف') },
+  { key: 'ensrafKhasmFrom', label: uiStatic('احتساب الإضافي'), help: uiStatic('ميعاد نهاية الشغل: قبله يتحسب انصراف مبكر، وبعده الشغل يتحسب إضافي') },
 ];
 
 export function AttendanceSettingsPage() {
@@ -305,8 +305,8 @@ export function AttendanceSettingsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={ui('إعدادات الدوام')}
-        description={ui('الورديات')}
+        title={ui('مواعيد الشفتات')}
+        description={ui('مواعيد كل وردية: الحضور، الانصراف، بداية التأخير، واحتساب الإضافي')}
         actions={<div className="flex flex-wrap gap-2">
           {!weeklyScheduleRollout?.enabled && <Button variant="outline" size="sm" onClick={() => void activateWeeklySchedule()} disabled={activatingWeeklySchedule}>
             <Power className="size-4" /> {activatingWeeklySchedule ? ui('جارٍ التفعيل…') : ui('تفعيل جدول الأسبوع')}
@@ -320,7 +320,7 @@ export function AttendanceSettingsPage() {
       <div className={`rounded-lg border px-4 py-3 text-sm ${weeklyScheduleRollout?.enabled ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200'}`}>
         {weeklyScheduleRollout?.enabled
           ? ui('جدول الدوام الأسبوعي مفعل: البصمة تعتمد جدول كل موظف، بينما التبديل والشيفت الإضافي يظلان استثناءات حسب التاريخ.')
-          : ui('جدول الدوام الأسبوعي غير مفعل بعد. أكمل جدول الأيام السبعة لكل موظف أولاً، ثم فعّله من الزر أعلاه.')}
+          : ui('جدول الدوام الأسبوعي غير مفعل بعد. أكمل جدول الأيام السبعة لكل موظف أولاً (قائمة الموظفين ← الإجراءات ← جدول الدوام الأسبوعي)، ثم فعّله من الزر أعلاه.')}
       </div>
 
       <FilterBar searchPlaceholder={ui('بحث في الورديات…')} />
@@ -362,6 +362,7 @@ export function AttendanceSettingsPage() {
                     <span className="text-destructive"> *</span>
                   </Label>
                   <Time12Input value={form[f.key]} onValueChange={(value) => setForm((prev) => ({ ...prev, [f.key]: value }))} />
+                  <p className="text-xs text-muted-foreground">{f.help}</p>
                 </div>
               ))}
             </div>

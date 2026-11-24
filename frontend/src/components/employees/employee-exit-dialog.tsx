@@ -28,7 +28,7 @@ export type ExitType = (typeof EXIT_TYPES)[number];
 export const EXIT_TYPE_LABELS: Record<ExitType, string> = {
   resignation: 'استقالة بإخطار',
   resignation_short_notice: 'استقالة بدون إخطار كافٍ',
-  abandonment: 'ترك العمل / إخلال طرف',
+  abandonment: 'ترك العمل بدون إخطار (إخلال بالعقد)',
   termination: 'إنهاء خدمة من الشركة',
   contract_end: 'انتهاء عقد',
   other: 'أخرى',
@@ -261,10 +261,10 @@ export function EmployeeExitDialog({ open, onOpenChange, employee, onSaved, defa
               <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
               <div className="space-y-2">
                 <p className="font-medium">
-                  {ui('الموظف ما أداش إخطار شهر — هيتسجل ترك عمل / إخلال طرف')}
+                  {ui('الموظف ما أداش إخطار شهر — هيتسجل ترك عمل بدون إخطار (إخلال بالعقد)')}
                 </p>
                 <Button size="sm" variant="outline" onClick={() => set({ exitType: 'abandonment' })}>
-                  {ui('تسجيلها ترك العمل / إخلال طرف')}
+                  {ui('سجّلها ترك عمل بدون إخطار')}
                 </Button>
               </div>
             </div>

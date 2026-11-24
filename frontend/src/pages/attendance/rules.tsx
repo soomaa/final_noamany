@@ -11,6 +11,22 @@ import { getAttendanceRules } from '@/lib/i18n-constants';
 import { useQuery } from '@tanstack/react-query';
 import { useLocale } from '@/store/locale';
 
+/** Only the values the attendance calculation actually reads, per rule. */
+const RULE_FIELDS: Record<string, { key: 'threshold' | 'graceMin' | 'multiplier'; label: string; unit: string }[]> = {
+  late: [{ key: 'graceMin', label: 'سماحية', unit: 'دقيقة' }],
+  early_leave: [{ key: 'graceMin', label: 'سماحية', unit: 'دقيقة' }],
+  overtime: [
+    { key: 'threshold', label: 'أقل مدة تتحسب إضافي', unit: 'دقيقة' },
+    { key: 'multiplier', label: 'المعامل', unit: '× الدقائق' },
+  ],
+};
+
+const RULE_HELP: Record<string, string> = {
+  late: 'التأخير لحد السماحية دي بيتسامح فيه، واللي بعدها بس اللي بيتحسب.',
+  early_leave: 'الانصراف المبكر لحد السماحية دي بيتسامح فيه، واللي بعدها بس اللي بيتحسب.',
+  overtime: 'الإضافي اللي أقل من المدة دي مش بيتحسب، واللي يتحسب بيتضرب في المعامل.',
+};
+
 interface RuleConfig {
   key: string;
   enabled: boolean;
@@ -46,7 +62,7 @@ export function AttendanceRulesPage() {
     try {
       const payload = attendanceRules.map((r) => getRule(r.key));
       await api.patch('/attendance/rules', { rules: payload });
-      toast.success(ui('تم حفظ قواعد الدوام'));
+      toast.success(ui('تم حفظ الإعدادات'));
       void refetch();
     } catch (e) {
       toast.error(apiError(e));
@@ -56,8 +72,8 @@ export function AttendanceRulesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={ui('قواعد الدوام')}
-        description={ui('التأخير · الانصراف المبكر · الغياب · الإضافي · الراحة الأسبوعية · العطلات · الساعات المرنة')}
+        title={ui('سماحية التأخير والإضافي')}
+        description={ui('دقائق السماح في التأخير والانصراف المبكر، وأقل مدة تتحسب إضافي. مواعيد الشفتات من «مواعيد الشفتات»، وقيم الخصم في المرتب من «إعدادات الحضور والمرتبات».')}
         actions={<Button onClick={() => void saveAll()}>{ui('حفظ الكل')}</Button>}
       />
       <div className="grid gap-4 md:grid-cols-2">
@@ -69,10 +85,19 @@ export function AttendanceRulesPage() {
                 <CardTitle className="text-base">{rule.label}</CardTitle>
                 <Switch checked={cfg.enabled} onCheckedChange={(v) => updateRule(rule.key, { enabled: v })} />
               </CardHeader>
-              <CardContent className="grid gap-3 sm:grid-cols-3">
-                <div><Label className="text-xs">{ui('الحد (د)')}</Label><Input className="mt-1 nums" value={cfg.threshold ?? ''} onChange={(e) => updateRule(rule.key, { threshold: e.target.value })} /></div>
-                <div><Label className="text-xs">{ui('سماحية')}</Label><Input className="mt-1 nums" value={cfg.graceMin ?? ''} onChange={(e) => updateRule(rule.key, { graceMin: e.target.value })} /></div>
-                <div><Label className="text-xs">{ui('المعامل')}</Label><Input className="mt-1 nums" value={cfg.multiplier ?? ''} onChange={(e) => updateRule(rule.key, { multiplier: e.target.value })} /></div>
+              <CardContent className="space-y-3">
+                <p className="text-xs text-muted-foreground">{ui(RULE_HELP[rule.key] ?? 'مفيش قيم لهذه القاعدة؛ التشغيل والإيقاف بس.')}</p>
+                {(RULE_FIELDS[rule.key] ?? []).length > 0 && <div className="grid gap-3 sm:grid-cols-2">
+                  {(RULE_FIELDS[rule.key] ?? []).map((field) => (
+                    <div key={field.key}>
+                      <Label className="text-xs">{ui(field.label)}</Label>
+                      <div className="mt-1 flex items-center gap-2">
+                        <Input className="nums" inputMode="decimal" disabled={!cfg.enabled} value={cfg[field.key] ?? ''} onChange={(e) => updateRule(rule.key, { [field.key]: e.target.value } as Partial<RuleConfig>)} />
+                        <span className="shrink-0 text-xs text-muted-foreground">{ui(field.unit)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>}
               </CardContent>
             </Card>
           );

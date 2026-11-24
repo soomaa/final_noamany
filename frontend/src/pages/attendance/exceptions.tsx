@@ -12,7 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { PENDING_SUMMARY_KEY, usePendingExceptions } from '@/components/layout/attendance-pending-banner';
 import { api, apiError } from '@/lib/api';
-import { toArabicDigits } from '@/lib/utils';
+import { toArabicDigits, toWesternDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 
 type CaseType = 'no_punch' | 'missing_checkin' | 'missing_checkout' | 'late' | 'early_leave';
@@ -122,6 +122,7 @@ export function AttendanceExceptionsPage() {
   /** '' = the server default (a men/women section manager opens on their own section). */
   const [gender, setGender] = useState<Gender | ''>('');
   const [typeFilter, setTypeFilter] = useState<Filter>('open');
+  const [search, setSearch] = useState('');
   const staleMode = typeFilter === 'stale';
   const pending = usePendingExceptions();
   const query = useQuery({
@@ -144,11 +145,15 @@ export function AttendanceExceptionsPage() {
   });
 
   const items = useMemo(() => query.data?.items ?? [], [query.data]);
-  const visible = useMemo(() => items.filter((item) => {
-    if (typeFilter === 'all' || typeFilter === 'stale') return true;
-    if (typeFilter === 'open') return !item.resolution;
-    return item.caseTypes.includes(typeFilter);
-  }), [items, typeFilter]);
+  const visible = useMemo(() => {
+    const term = toWesternDigits(search.trim()).toLowerCase();
+    return items.filter((item) => {
+      if (term && !`${item.employeeName ?? ''} ${item.empCode}`.toLowerCase().includes(term)) return false;
+      if (typeFilter === 'all' || typeFilter === 'stale') return true;
+      if (typeFilter === 'open') return !item.resolution;
+      return item.caseTypes.includes(typeFilter);
+    });
+  }, [items, typeFilter, search]);
 
   const [active, setActive] = useState<ExceptionItem | null>(null);
   const [form, setForm] = useState<FormState>(emptyForm());
@@ -215,7 +220,7 @@ export function AttendanceExceptionsPage() {
     ? 'مفيش حالات قديمة مفتوحة 👌'
     : !items.length
       ? (date === today ? 'مفيش حالات النهاردة 👌' : 'مفيش حالات في اليوم ده 👌')
-      : typeFilter === 'open' ? 'كل حالات اليوم اتحسمت 👌' : 'لا توجد حالات';
+      : search.trim() ? 'مفيش موظف بالاسم أو الكود ده' : typeFilter === 'open' ? 'كل حالات اليوم اتحسمت 👌' : 'لا توجد حالات';
   const time = (value: string | null) => value ? <span className="nums">{toArabicDigits(value)}</span> : <span className="text-muted-foreground">—</span>;
 
   return <div className="space-y-4">
@@ -262,6 +267,10 @@ export function AttendanceExceptionsPage() {
           {branchOptions.map((branch) => <option key={branch.id} value={String(branch.id)}>{branch.name ?? `#${branch.id}`}</option>)}
         </select>
       </div>}
+      <div className="w-full sm:w-56">
+        <Label htmlFor="exceptions-search">{ui('بحث عن موظف')}</Label>
+        <Input id="exceptions-search" className="mt-1.5" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={ui('الاسم أو الكود…')} />
+      </div>
       <div>
         <Label>{ui('القسم')}</Label>
         <div className="mt-1.5 flex h-10 overflow-hidden rounded-md border" role="radiogroup" aria-label={ui('القسم')}>
@@ -381,7 +390,7 @@ export function AttendanceExceptionsPage() {
           </div>
           <div>
             <Label>{ui('القرار')}</Label>
-            <div className="mt-1.5 grid grid-cols-5 gap-2" role="radiogroup">
+            <div className="mt-1.5 grid grid-cols-2 gap-2 sm:grid-cols-5" role="radiogroup">
               {DECISIONS.map((option) => (
                 <button
                   key={option.value}
@@ -419,7 +428,7 @@ export function AttendanceExceptionsPage() {
           </div>
         </div>}
         <p className="text-xs text-muted-foreground">{ui('اختصارات: Alt+1…5 لاختيار القرار، Ctrl+Enter للحفظ والانتقال للحالة التالية')}</p>
-        <DialogFooter className="gap-2">
+        <DialogFooter className="flex-wrap gap-2">
           <Button variant="outline" onClick={() => setActive(null)} disabled={saving}>{ui('إلغاء')}</Button>
           <Button variant="outline" onClick={() => void save(false)} disabled={saving}>{ui('حفظ')}</Button>
           <Button onClick={() => void save(true)} disabled={saving}>{ui('حفظ والتالي')}</Button>

@@ -400,39 +400,52 @@ export const NAV_SECTIONS: NavSection[] = [
   {
     id: 'hr',
     icon: Briefcase,
+    // Daily work first (attendance, cases, requests), then files, payroll, termination; settings last.
     groups: [
       {
-        id: 'administrative-affairs-settings',
-        icon: Settings,
+        id: 'attendance',
+        icon: Fingerprint,
         items: [
-          { to: '/org/departments' },
-          { to: '/org/job-titles' },
-          { to: '/attendance/settings' },
-          { to: '/attendance/rules' },
-          { to: '/leaves/types' },
-          { to: '/settings/pay-components' },
-          { to: '/hr/gym-rates' },
-          { to: '/hr/action-screen' },
-          { to: '/hr/warnings/templates' },
-        ],
-      },
-      {
-        id: 'employees',
-        icon: Users,
-        items: [
-          { to: '/employees/new' },
-          { to: '/employees' },
-          { to: '/employees/weekly-leaves' },
+          { to: '/attendance' },
+          { to: '/attendance/exceptions' },
+          { to: '/attendance/offline-review' },
+          { to: '/attendance/adjustments' },
+          { to: '/attendance/reports' },
+          { to: '/attendance/import' },
+          { to: '/attendance/devices' },
         ],
       },
       {
         id: 'leaves',
         icon: CalendarDays,
         items: [
+          { to: '/requests/inbox' },
+          { to: '/requests' },
           { to: '/leaves' },
-          { to: '/leaves/balances' },
           { to: '/permissions' },
+          { to: '/requests/overtime' },
           { to: '/missions' },
+          { to: '/leaves/balances' },
+        ],
+      },
+      {
+        id: 'employees',
+        icon: Users,
+        items: [
+          { to: '/employees' },
+          { to: '/employees/new' },
+        ],
+      },
+      {
+        id: 'payroll',
+        icon: Banknote,
+        items: [
+          { to: '/payroll/runs' },
+          { to: '/payroll/increases' },
+          { to: '/payroll/increases/report' },
+          { to: '/payroll/setup' },
+          { to: '/payroll/salary-scale' },
+          { to: '/hr/payroll-settings' },
         ],
       },
       {
@@ -449,40 +462,20 @@ export const NAV_SECTIONS: NavSection[] = [
         items: [
           { to: '/rewards' },
           { to: '/penalties' },
+          { to: '/penalties/bylaw' },
         ],
       },
       {
         id: 'affairs',
         icon: FileText,
         items: [
+          { to: '/hr/daily-reports' },
           { to: '/hr/circulars' },
           { to: '/hr/warnings' },
           { to: '/hr/messages' },
           { to: '/hr/activities' },
           { to: '/hr/legal-files' },
           { to: '/hr/mobile-content' },
-        ],
-      },
-      {
-        id: 'attendance',
-        icon: Fingerprint,
-        items: [
-          { to: '/attendance' },
-          { to: '/attendance/exceptions' },
-          { to: '/attendance/offline-review' },
-          { to: '/attendance/reports' },
-          { to: '/attendance/adjustments' },
-          { to: '/attendance/import' },
-        ],
-      },
-      {
-        id: 'payroll',
-        icon: Banknote,
-        items: [
-          { to: '/payroll/runs' },
-          { to: '/payroll/increases' },
-          { to: '/payroll/increases/report' },
-          { to: '/hr/payroll-settings' },
         ],
       },
       {
@@ -497,6 +490,21 @@ export const NAV_SECTIONS: NavSection[] = [
         id: 'reports',
         icon: BarChart3,
         items: [{ to: '/reports' }],
+      },
+      {
+        id: 'administrative-affairs-settings',
+        icon: Settings,
+        items: [
+          { to: '/attendance/settings' },
+          { to: '/attendance/rules' },
+          { to: '/leaves/types' },
+          { to: '/hr/action-screen' },
+          { to: '/org/departments' },
+          { to: '/org/job-titles' },
+          { to: '/settings/pay-components' },
+          { to: '/hr/gym-rates' },
+          { to: '/hr/warnings/templates' },
+        ],
       },
     ],
   },

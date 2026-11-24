@@ -1,5 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { Banknote, CalendarDays, Clock3, LogOut, MoreHorizontal, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Banknote, CalendarDays, Clock3, LogOut, MoreHorizontal, Pencil, Plus, Power, Trash2, UserRound } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -18,6 +18,7 @@ import { ListStatusTabs } from '@/components/common/list-status-tabs';
 import { PageHeader } from '@/components/common/page-header';
 import { StatusBadge } from '@/components/common/status-badge';
 import { NotImplementedState } from '@/components/common/states';
+import { useBranches } from '@/hooks/use-branches';
 import { api, apiError } from '@/lib/api';
 import { confirm } from '@/lib/confirm';
 import { isNotImplemented, usePaginatedList } from '@/lib/api-hooks';
@@ -39,15 +40,22 @@ export function EmployeesListPage() {
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<EmployeeListItem>('employees', params);
   const [exitFor, setExitFor] = useState<{ id: number; name: string } | null>(null);
+  const { data: branches = [] } = useBranches();
 
   const filters: FilterField[] = [
+    {
+      key: 'branch',
+      label: ui('الفرع'),
+      type: 'select',
+      options: branches.map((branch) => ({ value: String(branch.id), label: branch.name ?? `#${branch.id}` })),
+    },
     {
       key: 'emp_type',
       label: ui('النوع'),
       type: 'select',
       options: [
-        { value: '1', label: ui('رجالى') },
-        { value: '2', label: ui('حريمى') },
+        { value: '1', label: ui('رجالي') },
+        { value: '2', label: ui('حريمي') },
         { value: '3', label: ui('الكل') },
       ],
     },
@@ -63,9 +71,14 @@ export function EmployeesListPage() {
   const toggleStatus = async (row: EmployeeListItem) => {
     if (row.employee_type === 0) return;
     const toSuspended = row.employee_type === 1;
+    const name = row.employee ?? ui('الموظف');
     const ok = await confirm({
-      title: toSuspended ? ui('تغيير لموقوف؟') : ui('تغيير لنشط؟'),
-      variant: 'destructive',
+      title: toSuspended ? ui('إيقاف الموظف؟') : ui('تفعيل الموظف؟'),
+      description: toSuspended
+        ? `«${name}» ${ui('هيتحول لموقوف (غير نشط). تقدر ترجّعه نشط في أي وقت من نفس القائمة.')}`
+        : `«${name}» ${ui('هيرجع موظف نشط.')}`,
+      confirmLabel: toSuspended ? ui('إيقاف') : ui('تفعيل'),
+      variant: toSuspended ? 'destructive' : 'default',
     });
     if (!ok) return;
     try {
@@ -97,8 +110,16 @@ export function EmployeesListPage() {
         cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1),
       },
       { accessorKey: 'emp_code', header: ui('كود الموظف'), cell: ({ getValue }) => <span className="nums">{toArabicDigits(getValue() as number)}</span> },
-      { accessorKey: 'employee', header: ui('إسم الموظف') },
-      { accessorKey: 'edara_n', header: ui('الادارة'), cell: ({ getValue }) => getValue() ?? '—' },
+      {
+        accessorKey: 'employee',
+        header: ui('اسم الموظف'),
+        cell: ({ row }) => (
+          <Link to={`/employees/${row.original.id}`} className="font-medium text-primary hover:underline">
+            {row.original.employee ?? '—'}
+          </Link>
+        ),
+      },
+      { accessorKey: 'edara_n', header: ui('الإدارة'), cell: ({ getValue }) => getValue() ?? '—' },
       { accessorKey: 'phone', header: ui('رقم الجوال'), cell: ({ getValue }) => <span className="nums">{getValue() ? toArabicDigits(getValue() as string) : '—'}</span> },
       { accessorKey: 'card_num', header: ui('رقم الهوية'), cell: ({ getValue }) => <span className="nums">{getValue() ? toArabicDigits(getValue() as string) : '—'}</span> },
       {
@@ -117,11 +138,7 @@ export function EmployeesListPage() {
         cell: ({ row }) => {
           const t = row.original.employee_type;
           const status = t === 1 ? 'active' : t === 2 ? 'suspended' : 'unset';
-          return (
-            <button type="button" onClick={() => void toggleStatus(row.original)} disabled={t === 0} className="disabled:cursor-default">
-              <StatusBadge status={status} />
-            </button>
-          );
+          return <StatusBadge status={status} />;
         },
       },
       {
@@ -136,6 +153,11 @@ export function EmployeesListPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
               <DropdownMenuItem asChild>
+                <Link to={`/employees/${row.original.id}`}>
+                  <UserRound className="size-4" /> {ui('عرض الملف')}
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem asChild>
                 <Link to={`/employees/${row.original.id}/edit`}>
                   <Pencil className="size-4" /> {ui('تعديل')}
                 </Link>
@@ -147,15 +169,20 @@ export function EmployeesListPage() {
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
                 <Link to={`/employees/${row.original.id}/attendance`}>
-                  <Clock3 className="size-4" /> {ui('بيانات الدوام')}
+                  <Clock3 className="size-4" /> {ui('الوردية وجدول الدوام الأسبوعي')}
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuItem asChild>
-                <Link to={`/employees/${row.original.id}/weekly-leave`}>
+                <Link to={`/leaves?empId=${row.original.id}&empName=${encodeURIComponent(row.original.employee ?? '')}`}>
                   <CalendarDays className="size-4" /> {ui('إجازات الموظف')}
                 </Link>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
+              {row.original.employee_type !== 0 && (
+                <DropdownMenuItem onSelect={() => void toggleStatus(row.original)}>
+                  <Power className="size-4" /> {row.original.employee_type === 1 ? ui('إيقاف الموظف (غير نشط)') : ui('تفعيل الموظف')}
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem onSelect={() => setExitFor({ id: row.original.id, name: row.original.employee ?? '' })}>
                 <LogOut className="size-4" /> {ui('تسجيل انتهاء خدمة / ترك عمل')}
               </DropdownMenuItem>
@@ -167,7 +194,7 @@ export function EmployeesListPage() {
         ),
       },
     ],
-    [params.page, params.pageSize],
+    [params.page, params.pageSize, ui],
   );
 
   if (isError && isNotImplemented(error)) {
@@ -193,7 +220,7 @@ export function EmployeesListPage() {
         }
       />
       <ListStatusTabs tabs={EMPLOYEE_STATUS_TABS} />
-      <FilterBar fields={filters} searchPlaceholder={ui('بحث بالاسم، الكود، الجوال، الإدارة…')} />
+      <FilterBar fields={filters} hideSearch />
       <DataTable
         columns={columns}
         data={data?.data ?? []}
@@ -207,6 +234,7 @@ export function EmployeesListPage() {
         onRetry={() => void refetch()}
         search={params.search}
         onSearchChange={(s) => setParams({ search: s, page: 1 })}
+        searchPlaceholder={ui('بحث بالاسم، الكود، الجوال، الإدارة…')}
         emptyTitle={ui('لا يوجد موظفون')}
         emptyAction={
           <Button asChild>

@@ -5,11 +5,9 @@ import { toast } from 'sonner';
 import { Combobox } from '@/components/common/combobox';
 import { DataTable } from '@/components/common/data-table';
 import { DateText } from '@/components/common/formatters';
-import { FilterBar } from '@/components/common/filter-bar';
 import { ListStatusTabs } from '@/components/common/list-status-tabs';
 import { PageHeader } from '@/components/common/page-header';
 import { Time12Input } from '@/components/common/time-12-input';
-import { StatusBadge, type StatusKey } from '@/components/common/status-badge';
 import { NotImplementedState } from '@/components/common/states';
 import { Button } from '@/components/ui/button';
 import {
@@ -28,7 +26,8 @@ import { api, apiError } from '@/lib/api';
 import { confirm } from '@/lib/confirm';
 import { formatTime } from '@/lib/formatters';
 import { isNotImplemented, useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
-import { FlowStatusChip, RequestFlowDialog, type FlowStatus } from '@/components/requests/request-flow';
+import { RequestFlowDialog, RequestStatusChip, type FlowStatus } from '@/components/requests/request-flow';
+import { minutesLabel } from '@/lib/minutes';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
@@ -63,20 +62,14 @@ interface PermissionDetails extends PermissionRow {
   workflowStage?: string;
 }
 
+/** Same wording as the overtime requests page. */
 const MODE_TABS = [
-  { value: '', label: uiStatic('كل الطلبات') },
-  { value: 'sader', label: uiStatic('الصادرة') },
-  { value: 'wared', label: uiStatic('الواردة') },
-  { value: 'accept', label: uiStatic('المقبولة') },
-  { value: 'reject', label: uiStatic('المرفوضة') },
+  { value: '', label: uiStatic('كل طلبات الفرع') },
+  { value: 'sader', label: uiStatic('طلباتي') },
+  { value: 'wared', label: uiStatic('بانتظار اعتمادي') },
+  { value: 'accept', label: uiStatic('طلباتي المقبولة') },
+  { value: 'reject', label: uiStatic('طلباتي المرفوضة') },
 ];
-
-const STATUS_KEY: Record<string, StatusKey> = {
-  approved: 'approved',
-  rejected: 'rejected',
-  investigating: 'info',
-  pending: 'pending',
-};
 
 const NO3_OPTIONS = [
   { value: '1', label: uiStatic('استئذان شخصي') },
@@ -179,6 +172,16 @@ export function PermissionsPage() {
     (id: number) => api.post(`/permissions/${id}/reject`),
     { success: ui('تم رفض الإذن'), invalidate: ['permissions'] },
   );
+
+  const handleReject = async (row: PermissionRow) => {
+    const ok = await confirm({
+      title: ui('رفض الإذن؟'),
+      description: `${ui('هل تريد رفض إذن «')}${row.employeeName ?? ui('الموظف')}${ui('»؟')}`,
+      confirmLabel: ui('رفض'),
+      variant: 'destructive',
+    });
+    if (ok) rejectMutation.mutate(row.id);
+  };
 
   const deleteMutation = useMutationWithToast(
     (id: number) => api.delete(`/permissions/${id}`),
@@ -297,21 +300,14 @@ export function PermissionsPage() {
     { accessorKey: 'toTime', header: ui('إلى'), cell: ({ getValue }) => <span className="nums">{formatTime((getValue() as string) ?? '')}</span> },
     {
       accessorKey: 'minutes',
-      header: ui('المدة (د)'),
-      cell: ({ getValue }) => {
-        const v = getValue() as number | undefined;
-        return <span className="nums">{v != null ? toArabicDigits(v) : '—'}</span>;
-      },
+      header: ui('المدة'),
+      cell: ({ getValue }) => <span className="nums">{minutesLabel(getValue() as number | undefined)}</span>,
     },
     { accessorKey: 'currentTo', header: ui('محول إلى'), cell: ({ getValue }) => (getValue() as string) ?? '—' },
     {
       accessorKey: 'status',
       header: ui('الحالة'),
-      cell: ({ row, getValue }) => {
-        if (row.original.flowStatus) return <FlowStatusChip status={row.original.flowStatus} label={row.original.flowStatusLabel} />;
-        const s = getValue() as string | undefined;
-        return <StatusBadge status={STATUS_KEY[s ?? ''] ?? 'pending'} />;
-      },
+      cell: ({ row }) => <RequestStatusChip flowStatus={row.original.flowStatus} flowStatusLabel={row.original.flowStatusLabel} status={row.original.status} />,
     },
     {
       id: 'actions',
@@ -353,7 +349,7 @@ export function PermissionsPage() {
                   variant="outline"
                   size="sm"
                   disabled={rejectMutation.isPending}
-                  onClick={() => rejectMutation.mutate(row.original.id)}
+                  onClick={() => void handleReject(row.original)}
                 >
                   <X className="size-4 text-destructive" /> {ui('رفض')}
                 </Button>
@@ -387,7 +383,6 @@ export function PermissionsPage() {
           }
         />
         <ListStatusTabs tabs={MODE_TABS} paramKey="mode" />
-        <FilterBar searchPlaceholder={ui('بحث في الأذونات…')} />
         <DataTable
           columns={columns}
           data={data?.data ?? []}
@@ -401,6 +396,7 @@ export function PermissionsPage() {
           onRetry={() => void refetch()}
           search={params.search}
           onSearchChange={(s) => setParams({ search: s, page: 1 })}
+          searchPlaceholder={ui('بحث في الأذونات…')}
           emptyTitle={ui('لا توجد أذونات')}
         />
       </div>
@@ -511,11 +507,11 @@ export function PermissionsPage() {
               <div className="grid gap-3 rounded-xl border bg-muted/20 p-4 sm:grid-cols-3">
                 <div><span className="text-muted-foreground">{ui('الموظف')}:</span> {details.employeeName ?? '—'}</div>
                 <div><span className="text-muted-foreground">{ui('النوع')}:</span> {details.no3EznTitle ?? '—'}</div>
-                <div><span className="text-muted-foreground">{ui('الحالة')}:</span> <StatusBadge status={STATUS_KEY[details.status ?? ''] ?? 'pending'} /></div>
+                <div><span className="text-muted-foreground">{ui('الحالة')}:</span> <RequestStatusChip flowStatus={details.flowStatus} flowStatusLabel={details.flowStatusLabel} status={details.status} /></div>
                 <div><span className="text-muted-foreground">{ui('التاريخ')}:</span> <DateText value={details.date} /></div>
                 <div><span className="text-muted-foreground">{ui('من الساعة')}:</span> <span className="nums">{formatTime(details.fromTime ?? '')}</span></div>
                 <div><span className="text-muted-foreground">{ui('إلى الساعة')}:</span> <span className="nums">{formatTime(details.toTime ?? '')}</span></div>
-                <div><span className="text-muted-foreground">{ui('المدة')}:</span> <span className="nums">{toArabicDigits(details.minutes ?? '')} {ui('دقيقة')}</span></div>
+                <div><span className="text-muted-foreground">{ui('المدة')}:</span> <span className="nums">{minutesLabel(details.minutes)}</span></div>
                 <div><span className="text-muted-foreground">{ui('محول إلى')}:</span> {details.currentTo ?? '—'}</div>
               </div>
               <div className="rounded-xl border bg-muted/20 p-4"><p className="mb-1 font-semibold">{ui('السبب')}</p><p className="text-muted-foreground">{details.reason ?? '—'}</p></div>

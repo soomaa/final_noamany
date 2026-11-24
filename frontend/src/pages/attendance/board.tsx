@@ -26,6 +26,7 @@ import { api, apiError } from '@/lib/api';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits, toWesternDigits } from '@/lib/utils';
+import { minutesLabel } from '@/lib/minutes';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
 import { SearchableSelect } from '@/components/common/searchable-select';
@@ -102,6 +103,7 @@ export function AttendanceBoardPage() {
   const user = useAuth((state) => state.user);
   const { params, setParams } = useListQuery({ filters: { date: today() } });
   const { data, isLoading, isError, refetch, dataUpdatedAt } = usePaginatedList<AttendanceRow>('attendance', params);
+  const viewedDate = params.filters.date || today();
   const { data: branches = [] } = useBranches();
   const [previewIndex, setPreviewIndex] = useState<number | null>(null);
   const [mapTarget, setMapTarget] = useState<{ lat: number; lng: number; name?: string } | null>(null);
@@ -228,7 +230,10 @@ export function AttendanceBoardPage() {
       header: ui('وقت الانصراف'),
       cell: ({ row }) => <div className="flex min-h-[72px] flex-col items-center justify-center gap-12">{timeCell(row.original.checkOut, row.original.checkOutLat, row.original.checkOutLng, row.original.employeeName)}{row.original.secondCheckOut && timeCell(row.original.secondCheckOut, row.original.secondCheckOutLat, row.original.secondCheckOutLng, row.original.employeeName)}</div>,
     },
-    { accessorKey: 'lateMin', header: ui('التأخير (د)'), cell: ({ getValue }) => <span className="nums text-destructive underline">{toArabicDigits(String(Math.max(0, Number(getValue() ?? 0))))}</span> },
+    { accessorKey: 'lateMin', header: ui('التأخير'), cell: ({ getValue }) => {
+      const late = Math.max(0, Number(getValue() ?? 0));
+      return late > 0 ? <span className="nums font-medium text-destructive">{minutesLabel(late)}</span> : <span className="text-muted-foreground">—</span>;
+    } },
     {
       id: 'workingHours',
       header: ui('ساعات العمل'),
@@ -238,13 +243,16 @@ export function AttendanceBoardPage() {
 
   return <div className="space-y-4">
     <PageHeader
-      title={`${ui('متابعة البصمة اليوم')} ${toArabicDigits(params.filters.date ?? today())}`}
+      title={`${viewedDate === today() ? ui('متابعة البصمة اليوم') : ui('متابعة البصمة يوم')} ${toArabicDigits(viewedDate)}`}
       description={ui('عرض صور وأوقات الحضور والانصراف وساعات العمل اليومية')}
       actions={<Button onClick={() => setManualOpen(true)}><Plus className="size-4" />{ui('تسجيل يدوي')}</Button>}
     />
     <FilterBar
       searchPlaceholder={ui('بحث بالاسم أو كود الموظف…')}
-      fields={[{ key: 'branchId', label: ui('فلترة حسب الفرع'), type: 'select', options: branchOptions, placeholder: ui('عرض جميع الفروع') }]}
+      fields={[
+        { key: 'date', label: ui('اليوم'), type: 'date', defaultValue: today() },
+        { key: 'branchId', label: ui('فلترة حسب الفرع'), type: 'select', options: branchOptions, placeholder: ui('عرض جميع الفروع') },
+      ]}
     />
     <DataTable
       columns={columns}
@@ -257,7 +265,7 @@ export function AttendanceBoardPage() {
       isLoading={isLoading}
       isError={isError}
       onRetry={() => void refetch()}
-      emptyTitle={ui('لا يوجد حضور مسجل اليوم')}
+      emptyTitle={viewedDate === today() ? ui('لا يوجد حضور مسجل اليوم') : ui('لا يوجد حضور مسجل في اليوم ده')}
       enableExport
     />
 
@@ -303,8 +311,9 @@ export function AttendanceBoardPage() {
             />
           </div>
           <div><Label>{ui('نوع التسجيل')}</Label><SearchableSelect className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={manualForm.type} onChange={(event) => setManualForm((form) => ({ ...form, type: event.target.value as 'in' | 'out' }))}><option value="in">{ui('حضور')}</option><option value="out">{ui('انصراف')}</option></SearchableSelect></div>
-          <div><Label>{ui('وقت الحضور')}</Label><Time12Input className="mt-1.5" value={manualForm.checkIn} onValueChange={(value) => setManualForm((form) => ({ ...form, checkIn: value }))} /></div>
-          <div><Label>{ui('وقت الانصراف')}</Label><Time12Input className="mt-1.5" value={manualForm.checkOut} onValueChange={(value) => setManualForm((form) => ({ ...form, checkOut: value }))} /></div>
+          {manualForm.type === 'in'
+            ? <div><Label>{ui('وقت الحضور')}</Label><Time12Input className="mt-1.5" value={manualForm.checkIn} onValueChange={(value) => setManualForm((form) => ({ ...form, checkIn: value }))} /></div>
+            : <div><Label>{ui('وقت الانصراف')}</Label><Time12Input className="mt-1.5" value={manualForm.checkOut} onValueChange={(value) => setManualForm((form) => ({ ...form, checkOut: value }))} /></div>}
         </div>
         <DialogFooter><Button variant="outline" onClick={() => setManualOpen(false)}>{ui('إلغاء')}</Button><Button onClick={() => void submitManual()}><MapPin className="size-4" />{ui('حفظ')}</Button></DialogFooter>
       </DialogContent>

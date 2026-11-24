@@ -11,4 +11,8 @@ export class ListLeavesDto extends PaginationDto {
   @IsString()
   status?: string;
 
+  /** One employee's leaves (employees list → «إجازات الموظف»); still clamped to the caller's scope. */
+  @IsOptional()
+  @IsString()
+  empId?: string;
 }

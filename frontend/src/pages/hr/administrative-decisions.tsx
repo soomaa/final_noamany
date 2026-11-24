@@ -172,7 +172,7 @@ export function AdministrativeDecisionsPage() {
     <>
       <ListPageShell
         title={ui('القرارات الإدارية')}
-        description={ui('قرارات التعيين المؤقت والفترة التجريبية وفق النظام القديم')}
+        description={ui('قرارات التعيين المؤقت والفترة التجريبية')}
         searchPlaceholder={ui('بحث في القرارات الإدارية…')}
         isError={isError} error={error}
         actions={<Button variant="brand" size="sm" onClick={openCreate}><Plus className="size-4" /> {ui('قرار جديد')}</Button>}

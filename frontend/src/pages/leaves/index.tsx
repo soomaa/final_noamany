@@ -4,10 +4,8 @@ import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { DataTable } from '@/components/common/data-table';
 import { DateText } from '@/components/common/formatters';
-import { FilterBar } from '@/components/common/filter-bar';
 import { ListStatusTabs } from '@/components/common/list-status-tabs';
 import { PageHeader } from '@/components/common/page-header';
-import { StatusBadge } from '@/components/common/status-badge';
 import { NotImplementedState } from '@/components/common/states';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -19,7 +17,7 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
-import { FlowStatusChip, RequestFlowDialog, type FlowStatus } from '@/components/requests/request-flow';
+import { RequestFlowDialog, RequestStatusChip, type FlowStatus } from '@/components/requests/request-flow';
 
 interface LeaveRow {
   id: number;
@@ -44,12 +42,13 @@ interface LeaveRow {
   addressSinceAgaza?: string;
 }
 
+/** Same wording as the overtime requests page. */
 const LEAVE_STATUS_TABS = [
-  { value: '', label: uiStatic('كل الطلبات') },
-  { value: 'sader', label: uiStatic('الصادرة') },
-  { value: 'wared', label: uiStatic('الواردة') },
-  { value: 'accept', label: uiStatic('المقبولة') },
-  { value: 'reject', label: uiStatic('المرفوضة') },
+  { value: '', label: uiStatic('كل طلبات الفرع') },
+  { value: 'sader', label: uiStatic('طلباتي') },
+  { value: 'wared', label: uiStatic('بانتظار اعتمادي') },
+  { value: 'accept', label: uiStatic('طلباتي المقبولة') },
+  { value: 'reject', label: uiStatic('طلباتي المرفوضة') },
 ];
 
 export function LeavesPage() {
@@ -178,12 +177,7 @@ export function LeavesPage() {
     {
       accessorKey: 'status',
       header: ui('الحالة'),
-      cell: ({ row, getValue }) => {
-        if (row.original.flowStatus) return <FlowStatusChip status={row.original.flowStatus} label={row.original.flowStatusLabel} />;
-        const s = getValue() as string | undefined;
-        const key = s === 'approved' ? 'approved' : s === 'rejected' ? 'rejected' : 'pending';
-        return <StatusBadge status={key} />;
-      },
+      cell: ({ row }) => <RequestStatusChip flowStatus={row.original.flowStatus} flowStatusLabel={row.original.flowStatusLabel} status={row.original.status} />,
     },
     {
       accessorKey: 'currentTo',
@@ -263,22 +257,14 @@ export function LeavesPage() {
         }
       />
       <ListStatusTabs tabs={LEAVE_STATUS_TABS} paramKey="mode" />
-      <FilterBar
-        searchPlaceholder={ui('بحث في الإجازات…')}
-        fields={[
-          {
-            key: 'status',
-            label: ui('الحالة'),
-            type: 'select',
-            options: [
-              { value: 'pending', label: ui('قيد الانتظار') },
-              { value: 'incoming', label: ui('واردة') },
-              { value: 'approved', label: ui('معتمد') },
-              { value: 'rejected', label: ui('مرفوض') },
-            ],
-          },
-        ]}
-      />
+      {params.filters.empId && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm">
+          <span>{ui('إجازات الموظف')}: <span className="font-medium">{params.filters.empName || `#${toArabicDigits(params.filters.empId)}`}</span></span>
+          <Button variant="ghost" size="sm" onClick={() => setParams({ page: 1, filters: { empId: '', empName: '' } })}>
+            <X className="size-4" /> {ui('عرض كل الإجازات')}
+          </Button>
+        </div>
+      )}
       <DataTable
         columns={columns}
         data={data?.data ?? []}
@@ -292,6 +278,7 @@ export function LeavesPage() {
         onRetry={() => void refetch()}
         search={params.search}
         onSearchChange={(s) => setParams({ search: s, page: 1 })}
+        searchPlaceholder={ui('بحث في الإجازات…')}
         emptyTitle={ui('لا توجد طلبات إجازة')}
       />
 

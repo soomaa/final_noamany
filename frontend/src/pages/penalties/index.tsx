@@ -5,10 +5,9 @@ import { toast } from 'sonner';
 import { Combobox } from '@/components/common/combobox';
 import { DataTable } from '@/components/common/data-table';
 import { DateText, Money } from '@/components/common/formatters';
-import { FilterBar } from '@/components/common/filter-bar';
 import { ListStatusTabs } from '@/components/common/list-status-tabs';
 import { PageHeader } from '@/components/common/page-header';
-import { StatusBadge } from '@/components/common/status-badge';
+import { RequestStatusChip } from '@/components/requests/request-flow';
 import { NotImplementedState } from '@/components/common/states';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
@@ -143,6 +142,15 @@ export function PenaltiesPage() {
     })) remove.mutate(row.id);
   };
 
+  const handleReject = async (row: PenaltyRow) => {
+    if (await confirm({
+      title: ui('رفض الجزاء'),
+      description: `${ui('هل تريد رفض جزاء')} «${row.employeeName ?? ui('الموظف')}»؟`,
+      confirmLabel: ui('رفض'),
+      variant: 'destructive',
+    })) reject.mutate(row.id);
+  };
+
   const columns: ColumnDef<PenaltyRow>[] = [
     { id: 'sequence', header: ui('م'), cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1) },
     { accessorKey: 'date', header: ui('التاريخ'), cell: ({ getValue }) => <DateText value={getValue() as string | undefined} /> },
@@ -151,18 +159,18 @@ export function PenaltiesPage() {
     { accessorKey: 'gezaType', header: ui('نوع الجزاء'), cell: ({ getValue }) => Number(getValue()) === 1 ? ui('يوم') : ui('مبلغ') },
     { accessorKey: 'amount', header: ui('قيمة الجزاء'), cell: ({ row, getValue }) => row.original.gezaType === 1 ? `${toArabicDigits(getValue() as number)} ${ui('يوم')}` : <Money value={getValue() as number | undefined} /> },
     { accessorKey: 'title', header: ui('التفاصيل'), cell: ({ getValue }) => (getValue() as string) || '—' },
-    { accessorKey: 'status', header: ui('الحالة'), cell: ({ getValue }) => {
-      const status = getValue() as string | undefined;
-      return <StatusBadge status={status === 'approved' ? 'approved' : status === 'rejected' ? 'rejected' : 'pending'} />;
-    } },
+    { accessorKey: 'status', header: ui('الحالة'), cell: ({ getValue }) => <RequestStatusChip status={getValue() as string | undefined} /> },
     { id: 'actions', header: ui('الإجراءات'), cell: ({ row }) => {
       const penalty = row.original;
       const pending = penalty.status !== 'approved' && penalty.status !== 'rejected';
-      return <div className="flex flex-wrap gap-1">
-        <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(penalty)}><Pencil className="size-4" /></Button>
-        <Button variant="ghost" size="icon" aria-label={ui('حذف')} onClick={() => void handleDelete(penalty)}><Trash2 className="size-4 text-destructive" /></Button>
-        {pending && <Button variant="ghost" size="icon" aria-label={ui('اعتماد')} onClick={() => approve.mutate(penalty.id)}><Check className="size-4 text-emerald-500" /></Button>}
-        {pending && <Button variant="ghost" size="icon" aria-label={ui('رفض')} onClick={() => reject.mutate(penalty.id)}><X className="size-4 text-amber-500" /></Button>}
+      return <div className="flex flex-wrap items-center gap-1">
+        {pending && <>
+          <Button variant="outline" size="sm" disabled={approve.isPending} onClick={() => approve.mutate(penalty.id)}><Check className="size-4 text-success" /> {ui('اعتماد')}</Button>
+          <Button variant="outline" size="sm" disabled={reject.isPending} onClick={() => void handleReject(penalty)}><X className="size-4 text-destructive" /> {ui('رفض')}</Button>
+          <span className="mx-1 h-6 w-px bg-border" aria-hidden />
+        </>}
+        <Button variant="ghost" size="icon" aria-label={ui('تعديل')} title={ui('تعديل')} onClick={() => openEdit(penalty)}><Pencil className="size-4" /></Button>
+        <Button variant="ghost" size="icon" aria-label={ui('حذف')} title={ui('حذف')} onClick={() => void handleDelete(penalty)}><Trash2 className="size-4 text-destructive" /></Button>
       </div>;
     } },
   ];
@@ -178,7 +186,6 @@ export function PenaltiesPage() {
       actions={<Button variant="brand" size="sm" onClick={openCreate}><Plus className="size-4" /> {ui('طلب جزاء')}</Button>}
     />
     <ListStatusTabs tabs={statusTabs} />
-    <FilterBar searchPlaceholder={ui('بحث باسم الموظف أو التفاصيل…')} />
     <DataTable
       columns={columns}
       data={data?.data ?? []}
@@ -192,6 +199,7 @@ export function PenaltiesPage() {
       onRetry={() => void refetch()}
       search={params.search}
       onSearchChange={(search) => setParams({ search, page: 1 })}
+      searchPlaceholder={ui('بحث باسم الموظف أو التفاصيل…')}
       emptyTitle={ui('لا توجد جزاءات')}
     />
 

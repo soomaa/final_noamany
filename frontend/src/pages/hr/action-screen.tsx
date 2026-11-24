@@ -202,20 +202,20 @@ export function HrActionScreenPage() {
   return (
     <>
       <ListPageShell
-        title={ui('شاشة الإجراء')}
-        description={ui('إعدادات المسؤولين والمسميات الوظيفية للإجراءات')}
+        title={ui('مسؤولو اعتماد الطلبات')}
+        description={ui('مين الموظف اللي ماسك كل مسمى في خطوات اعتماد الطلبات (مدير الإدارة، الموارد البشرية، المدير العام…) وفي أي فترة')}
         searchPlaceholder={ui('بحث بالاسم أو المسمى…')}
         isError={isError}
         error={error}
-        notImplementedTitle={ui('شاشة الإجراء — قيد الإعداد على الخادم')}
+        notImplementedTitle={ui('مسؤولو اعتماد الطلبات — قيد الإعداد على الخادم')}
         actions={
           <Button variant="brand" size="sm" onClick={openCreate}>
-            <Plus className="size-4" /> {ui('إجراء جديد')}
+            <Plus className="size-4" /> {ui('تعيين مسؤول')}
           </Button>
         }
         stats={[
           {
-            title: ui('إجمالي الإجراءات'),
+            title: ui('عدد المسؤولين'),
             value: data?.total ?? 0,
             subtitle: ui('مسؤولون ومعيّنون نشطون'),
             icon: <Monitor className="size-5" />,
@@ -236,14 +236,14 @@ export function HrActionScreenPage() {
           onRetry={() => void refetch()}
           search={params.search}
           onSearchChange={(s) => setParams({ search: s, page: 1 })}
-          emptyTitle={ui('لا توجد إجراءات مسجّلة')}
+          emptyTitle={ui('لا يوجد مسؤولون معيّنون')}
         />
       </ListPageShell>
 
       <Dialog open={formOpen} onOpenChange={setFormOpen}>
         <DialogContent size="lg" aria-describedby={undefined}>
           <DialogHeader>
-            <DialogTitle>{editId ? ui('تعديل إجراء') : ui('إجراء جديد')}</DialogTitle>
+            <DialogTitle>{editId ? ui('تعديل المسؤول') : ui('تعيين مسؤول')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
