@@ -313,6 +313,7 @@
       "/attendance/rules": "Attendance Rules",
       "/attendance/reports": "Attendance Reports",
       "/attendance/exceptions": "Daily Attendance Cases",
+      "/attendance/offline-review": "Offline Punches Review",
       "/attendance/adjustments": "Shift Swaps & Overtime",
       "/attendance/import": "Import Attendance File",
       "/payroll/runs": "Payroll Run",

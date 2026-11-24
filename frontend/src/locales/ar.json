@@ -315,6 +315,7 @@
       "/attendance/rules": "قواعد الدوام",
       "/attendance/reports": "تقارير الحضور والانصراف",
       "/attendance/exceptions": "الحالات اليومية",
+      "/attendance/offline-review": "بصمات أوفلاين للمراجعة",
       "/attendance/adjustments": "تبديل الورديات والإضافي",
       "/attendance/import": "استيراد ملف الحضور",
       "/payroll/runs": "مسير الرواتب",
