@@ -1185,4 +1185,5 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261124-r6/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov24-r6-update-backup.RPS61s
 - المرجع للرفع اللي جاي: system.html 78606b70…، schema = payload 24-r6، الخلفية = ملفات 24-r6. أي رفعة من الفولدر الرئيسي من غير دمج
   الفرع ده هتقف في الفحص (البصمات اتغيرت) — لازم تتبني فوق claude/meeting-followups-20261124.
-- جاهز ومش مرفوع: release-tools/daily-update-20261124-r7 (صورة العضو ومرفقاته من الاستقبال لأي عضو في الفرع) — مستني موافقة.
+- 20261124-r7 اتثبت واتأكد (UPDATE VERIFIED): صورة العضو ومرفقاته من الاستقبال لأي عضو في الفرع (club-members.service.js بس).
+  backup: tmp/nov24-r7-update-backup.0HyARq — الرجوع: انسخ club-members.service.js* من الـbackup لـ dist/modules/club-members/ و touch tmp/restart.txt
