@@ -45,11 +45,11 @@ describe('manager scope (client sheet, 22 Nov)', () => {
     expect(() => assertManagerMayModify(user('محاسب'))).not.toThrow();
   });
 
-  it('job titles get the sheet as starter permissions, view/print/export only', () => {
+  it('job titles get the sheet as starter permissions, view/print/export only (viewPhone = seeing full customer numbers, still read-only)', () => {
     expect(isBranchManagerSheetTitle('مديرة فرع')).toBe(true);
     expect(isBranchManagerSheetTitle('مشرف إدارة حريمي')).toBe(true);
     expect(isBranchManagerSheetTitle('مدير عام')).toBe(false);
     expect(defaultPermissionCellsForJobTitle('مدير فرع')).toEqual(branchManagerCells());
-    expect(branchManagerCells().every((c) => ['view', 'print', 'export'].includes(c.actionKey))).toBe(true);
+    expect(branchManagerCells().every((c) => ['view', 'print', 'export', 'viewPhone'].includes(c.actionKey))).toBe(true);
   });
 });
