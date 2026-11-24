@@ -42,20 +42,43 @@ export class ClubInbodyServicesController {
 
   @Post()
   @RequiresPermission('club.fitness:create')
-  create(@Body() body: Record<string, unknown>) {
-    return this.service.createInbodyService(body);
+  create(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.createInbodyService(body, user);
   }
 
   @Put(':id')
   @RequiresPermission('club.fitness:update')
-  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>) {
-    return this.service.updateInbodyService(id, body);
+  update(@Param('id', ParseIntPipe) id: number, @Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.updateInbodyService(id, body, user);
   }
 
   @Delete(':id')
   @RequiresPermission('club.fitness:delete')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.service.removeInbodyService(id);
+  remove(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.removeInbodyService(id, user);
+  }
+}
+
+/** Per-branch InBody settings: sales policy + the branch's single price and packages. */
+@UseGuards(JwtAuthGuard)
+@Controller('club-inbody-settings')
+@RequiresPermission('club.fitness:view')
+export class ClubInbodySettingsController {
+  constructor(private readonly service: ClubWellnessService) {}
+
+  @Get(':branchId')
+  get(@Param('branchId', ParseIntPipe) branchId: number, @CurrentUser() user: JwtUser) {
+    return this.service.getInbodyBranchSettings(branchId, user);
+  }
+
+  @Put(':branchId')
+  @RequiresPermission('club.fitness:update')
+  update(
+    @Param('branchId', ParseIntPipe) branchId: number,
+    @Body() body: Record<string, unknown>,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.updateInbodyBranchSettings(branchId, body, user);
   }
 }
 
@@ -73,6 +96,19 @@ export class ClubInbodyMeasurementsController {
   @Get('next-file-number')
   nextFileNumber() {
     return this.service.nextInbodyFileNumber().then((nextFileNumber) => ({ nextFileNumber }));
+  }
+
+  /** Member's InBody balance (subscription + packages) and the branch's price list. */
+  @Get('member-benefits/by-code')
+  memberContext(@Query('memberCode') memberCode: string, @CurrentUser() user: JwtUser) {
+    return this.service.getInbodyMemberContext(memberCode, user);
+  }
+
+  /** Records a measurement: deducts from the balance, or charges the chosen price/package. */
+  @Post('record')
+  @RequiresPermission('club.fitness:create')
+  record(@Body() body: Record<string, unknown>, @CurrentUser() user: JwtUser) {
+    return this.service.recordInbodyMeasurement(body, user?.sub, user);
   }
 
   @Get(':id')

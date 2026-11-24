@@ -258,7 +258,6 @@ import {
   FitnessBarcodeCheckInPage,
   FitnessSpaAttendancePage,
   FitnessClassAttendancePage,
-  FitnessInbodyInvoicesPage,
   FitnessFacilitySettingsPage,
   ClubEventsPage,
   ClubEventWorkspacePage,
@@ -578,8 +577,8 @@ export function AppRouter() {
           <Route path="club/fitness/spa-attendance" element={<Navigate to="/club/members/barcode-management?tab=spa-attendance" replace />} />
           <Route path="club/fitness/classes-attendance" element={<Navigate to="/club/members/barcode-management?tab=class-attendance" replace />} />
           <Route path="club/fitness/spa-bookings" element={<Lazy><FitnessSpaBookingsPage /></Lazy>} />
-          <Route path="club/subscriptions/inbody-invoices" element={<Lazy><FitnessInbodyInvoicesPage /></Lazy>} />
-          <Route path="club/fitness/inbody-invoices" element={<Navigate to="/club/subscriptions/inbody-invoices" replace />} />
+          <Route path="club/subscriptions/inbody-invoices" element={<Navigate to="/club/members/measurements" replace />} />
+          <Route path="club/fitness/inbody-invoices" element={<Navigate to="/club/members/measurements" replace />} />
           <Route path="club/fitness/facility-settings" element={<Lazy><FitnessFacilitySettingsPage /></Lazy>} />
           <Route path="club/fitness/class-booking" element={<Navigate to="/club/subscriptions/special?section=scheduling" replace />} />
           <Route path="club/fitness/room-bookings" element={<Lazy><FitnessRoomBookingsPage /></Lazy>} />

@@ -338,7 +338,9 @@ export const RESOURCE_TREE: ResourceNode[] = [
         // SPA + InBody paid invoices — relocated here (they already count in revenue). Keys kept
         // under club.fitness.* so existing permissions/guards (club.fitness:*) keep working.
         page('club.fitness.spa_invoices', 'فواتير SPA', '/club/fitness/spa-invoices', LIST, 'SPA invoices'),
-        page('club.fitness.inbody_invoices', 'فواتير InBody', '/club/subscriptions/inbody-invoices', LIST, 'InBody invoices'),
+        // «فواتير InBody» page removed (client, 25 Nov): prices/packages live in «قياسات الأعضاء» ← الإعدادات.
+        // The key stays (no route) so roles and the reception/finance guards that use it keep working.
+        { key: 'club.fitness.inbody_invoices', nameAr: 'صلاحية فواتير InBody', nameEn: 'InBody invoices permission', type: 'page', actions: LIST },
         page('club.subscriptions.outstanding', 'المبالغ المتبقية', '/club/subscriptions/outstanding', APPROVAL, 'Outstanding'),
         page('club.subscriptions.treasury', 'يومية الخزينة', '/club/subscriptions/treasury', APPROVAL, 'Treasury'),
         page('club.subscriptions.unified_treasury', 'الخزينة الموحدة', '/club/unified-treasury', APPROVAL, 'Unified treasury'),

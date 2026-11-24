@@ -35,5 +35,4 @@ export { FitnessSpaInvoicesPage } from './facilities/spa-invoices';
 export { FitnessBarcodeCheckInPage } from './barcode-check-in';
 export { FitnessSpaAttendancePage } from './spa-attendance';
 export { FitnessClassAttendancePage } from './class-attendance';
-export { FitnessInbodyInvoicesPage } from './facilities/inbody-invoices';
 export { FitnessFacilitySettingsPage } from './facilities/settings';

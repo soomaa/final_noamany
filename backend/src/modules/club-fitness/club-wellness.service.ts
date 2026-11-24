@@ -20,6 +20,13 @@ import { BranchScopeService } from '../../common/branch-scope/branch-scope.servi
 import { clubOperationBranchIds } from '../../common/branch-groups/club-operation-scope';
 import { JwtUser } from '../../common/types/jwt-user';
 import { isReceptionEmployee } from '../../common/utils/reception-user.util';
+import { sortInbodyEntitlements, validateInbodyOffer } from './inbody-entitlements';
+
+function addCalendarDays(date: string, days: number): string {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
 
 @Injectable()
 export class ClubWellnessService {
@@ -284,6 +291,11 @@ export class ClubWellnessService {
       bmi: Prisma.Decimal | null;
       notes: string | null;
       report_url: string | null;
+      settlement_source?: string;
+      branch_id?: number | null;
+      subscription_id?: number | null;
+      entitlement_id?: number | null;
+      invoice_id?: number | null;
       created_at: Date;
       updated_at: Date;
     },
@@ -292,6 +304,11 @@ export class ClubWellnessService {
     return {
       id: row.id,
       memberId: row.member_id,
+      branchId: row.branch_id ?? null,
+      settlementSource: row.settlement_source ?? 'legacy',
+      subscriptionId: row.subscription_id ?? null,
+      entitlementId: row.entitlement_id ?? null,
+      invoiceId: row.invoice_id ?? null,
       ...attachMemberBrief(row.member_id, memberMap),
       measurementDate: row.measurement_date,
       weight: row.weight != null ? toNum(row.weight) : null,
@@ -663,6 +680,26 @@ export class ClubWellnessService {
           created_by: userId ?? null,
         },
       });
+
+      // A paid member invoice buys a measurement balance (1 for the single price, N for a package).
+      // Reception's «إضافة InBody» performs one now, so one is consumed unless `consumeNow: false`.
+      if (!covered && memberId != null && isMember) {
+        const branchId = Number(body.branchId);
+        await this.assertInbodySaleAllowed(tx, memberId, branchId);
+        const expiresAt = service.validity_days ? addCalendarDays(invoiceDate, service.validity_days) : null;
+        await tx.club_inbody_entitlements.create({
+          data: {
+            member_id: memberId,
+            branch_id: branchId,
+            service_id: service.id,
+            invoice_id: invoice.id,
+            total_count: Math.max(1, service.measurement_count),
+            used_count: body.consumeNow === false ? 0 : 1,
+            purchased_date: invoiceDate,
+            expires_at: expiresAt,
+          },
+        });
+      }
 
       if (status === 'paid') {
         await this.ledger.postPayment(
@@ -1346,17 +1383,42 @@ export class ClubWellnessService {
     return { success: true };
   }
 
-  // --- InBody services catalog ---
+
+  // --- InBody services catalog (single price + packages per branch) ---
+
+  private mapInbodyService(r: {
+    id: number;
+    name: string;
+    description: string | null;
+    price: Prisma.Decimal;
+    measurement_count: number;
+    validity_days: number | null;
+    branch_id: number | null;
+    is_active: boolean;
+  }) {
+    return {
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      price: toNum(r.price),
+      measurementCount: r.measurement_count,
+      validityDays: r.validity_days,
+      branchId: r.branch_id,
+      isActive: r.is_active,
+    };
+  }
 
   async listInbodyServicesCatalog() {
     const rows = await this.prisma.club_inbody_services.findMany({
       where: { is_active: true },
-      orderBy: { name: 'asc' },
+      orderBy: [{ measurement_count: 'asc' }, { price: 'asc' }, { name: 'asc' }],
     });
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
       price: toNum(r.price),
+      measurementCount: r.measurement_count,
+      validityDays: r.validity_days,
       branchId: r.branch_id,
     }));
   }
@@ -1374,69 +1436,66 @@ export class ClubWellnessService {
       }),
       this.prisma.club_inbody_services.count({ where }),
     ]);
-    return paginated(
-      rows.map((r) => ({
-        id: r.id,
-        name: r.name,
-        description: r.description,
-        price: toNum(r.price),
-        branchId: r.branch_id,
-        isActive: r.is_active,
-      })),
-      total,
-      q.page,
-      q.pageSize,
-    );
+    return paginated(rows.map((r) => this.mapInbodyService(r)), total, q.page, q.pageSize);
   }
 
   async findInbodyService(id: number) {
     const row = await this.prisma.club_inbody_services.findUnique({ where: { id } });
     if (!row) throw new NotFoundException('خدمة InBody غير موجودة');
-    return {
-      id: row.id,
-      name: row.name,
-      description: row.description,
-      price: toNum(row.price),
-      branchId: row.branch_id,
-      isActive: row.is_active,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    };
+    return { ...this.mapInbodyService(row), createdAt: row.created_at, updatedAt: row.updated_at };
   }
 
-  async createInbodyService(body: Record<string, unknown>) {
-    if (!body.name || body.price == null) {
-      throw new BadRequestException('اسم الخدمة والسعر مطلوبان');
+  /** Branch of a price/package must be inside the user's operating branches (null = all). */
+  private async assertInbodyBranchAccess(branchId: number | null, user?: JwtUser) {
+    if (!user) return;
+    const branches = await clubOperationBranchIds(this.branchScope, this.branchGroups, user);
+    if (branches === null) return;
+    if (branchId == null || !branches.includes(branchId)) {
+      throw new ForbiddenException('لا تملك صلاحية إعدادات InBody لهذا الفرع');
     }
-    const price = Number(body.price);
-    if (!Number.isFinite(price) || price < 0) throw new BadRequestException('السعر غير صحيح');
+  }
+
+  async createInbodyService(body: Record<string, unknown>, user?: JwtUser) {
+    const offer = validateInbodyOffer({ ...body, measurementCount: body.measurementCount ?? 1 });
+    const branchId = body.branchId != null && body.branchId !== '' ? Number(body.branchId) : null;
+    await this.assertInbodyBranchAccess(branchId, user);
     const row = await this.prisma.club_inbody_services.create({
       data: {
-        name: String(body.name).trim(),
+        name: offer.name,
         description: body.description ? String(body.description) : null,
-        price,
-        branch_id: body.branchId != null ? Number(body.branchId) : null,
+        price: offer.price,
+        measurement_count: offer.measurementCount,
+        validity_days: offer.validityDays,
+        branch_id: branchId,
         is_active: body.isActive !== false,
       },
     });
     return this.findInbodyService(row.id);
   }
 
-  async updateInbodyService(id: number, body: Record<string, unknown>) {
-    await this.findInbodyService(id);
-    if (body.price != null && (!Number.isFinite(Number(body.price)) || Number(body.price) < 0)) {
-      throw new BadRequestException('السعر غير صحيح');
-    }
+  async updateInbodyService(id: number, body: Record<string, unknown>, user?: JwtUser) {
+    const existing = await this.findInbodyService(id);
+    await this.assertInbodyBranchAccess(existing.branchId, user);
+    const offer = validateInbodyOffer({
+      name: body.name ?? existing.name,
+      price: body.price ?? existing.price,
+      measurementCount: body.measurementCount ?? existing.measurementCount,
+      validityDays: body.validityDays !== undefined ? body.validityDays : existing.validityDays,
+    });
+    const branchId = body.branchId !== undefined
+      ? (body.branchId != null && body.branchId !== '' ? Number(body.branchId) : null)
+      : existing.branchId;
+    if (branchId !== existing.branchId) await this.assertInbodyBranchAccess(branchId, user);
     await this.prisma.club_inbody_services.update({
       where: { id },
       data: {
-        ...(body.name != null ? { name: String(body.name).trim() } : {}),
+        name: offer.name,
+        price: offer.price,
+        measurement_count: offer.measurementCount,
+        validity_days: offer.validityDays,
+        branch_id: branchId,
         ...(body.description !== undefined
           ? { description: body.description ? String(body.description) : null }
-          : {}),
-        ...(body.price != null ? { price: Number(body.price) } : {}),
-        ...(body.branchId !== undefined
-          ? { branch_id: body.branchId != null ? Number(body.branchId) : null }
           : {}),
         ...(body.isActive !== undefined ? { is_active: Boolean(body.isActive) } : {}),
       },
@@ -1444,9 +1503,313 @@ export class ClubWellnessService {
     return this.findInbodyService(id);
   }
 
-  async removeInbodyService(id: number) {
-    await this.findInbodyService(id);
+  /** Stops the price/package for new sales; balances bought earlier keep working. */
+  async removeInbodyService(id: number, user?: JwtUser) {
+    const existing = await this.findInbodyService(id);
+    await this.assertInbodyBranchAccess(existing.branchId, user);
     await this.prisma.club_inbody_services.update({ where: { id }, data: { is_active: false } });
     return { success: true };
+  }
+
+  // --- InBody branch settings («قياسات الأعضاء» ← الإعدادات) ---
+
+  async getInbodyBranchSettings(branchId: number, user?: JwtUser) {
+    if (!Number.isSafeInteger(branchId) || branchId <= 0) throw new BadRequestException('الفرع مطلوب');
+    await this.assertInbodyBranchAccess(branchId, user);
+    const [settings, offers, globalOffers] = await Promise.all([
+      this.prisma.club_inbody_branch_settings.findUnique({ where: { branch_id: branchId } }),
+      this.prisma.club_inbody_services.findMany({
+        where: { branch_id: branchId },
+        orderBy: [{ is_active: 'desc' }, { measurement_count: 'asc' }, { price: 'asc' }],
+      }),
+      this.prisma.club_inbody_services.findMany({
+        where: { branch_id: null, is_active: true },
+        orderBy: [{ measurement_count: 'asc' }, { price: 'asc' }],
+      }),
+    ]);
+    return {
+      branchId,
+      // No row yet = the branch keeps Noamany's previous behaviour (selling is allowed).
+      allowWithoutActiveMembership: settings?.allow_without_active_membership ?? true,
+      offers: offers.map((offer) => this.mapInbodyService(offer)),
+      // Old «كل الفروع» prices: used by a branch until it sets its own price/packages.
+      globalOffers: globalOffers.map((offer) => this.mapInbodyService(offer)),
+    };
+  }
+
+  async updateInbodyBranchSettings(branchId: number, body: Record<string, unknown>, user?: JwtUser) {
+    if (!Number.isSafeInteger(branchId) || branchId <= 0) throw new BadRequestException('الفرع مطلوب');
+    await this.assertInbodyBranchAccess(branchId, user);
+    if (typeof body.allowWithoutActiveMembership !== 'boolean') {
+      throw new BadRequestException('قيمة السماح بالبيع بدون اشتراك غير صحيحة');
+    }
+    await this.prisma.club_inbody_branch_settings.upsert({
+      where: { branch_id: branchId },
+      create: { branch_id: branchId, allow_without_active_membership: body.allowWithoutActiveMembership },
+      update: { allow_without_active_membership: body.allowWithoutActiveMembership },
+    });
+    return this.getInbodyBranchSettings(branchId, user);
+  }
+
+  /** Throws when the branch forbids selling InBody to a member with no active gym subscription. */
+  private async assertInbodySaleAllowed(tx: Prisma.TransactionClient, memberId: number, branchId: number) {
+    const today = localDateString();
+    const activeMemberships = await tx.club_subscriptions.count({
+      where: {
+        member_id: memberId,
+        status: 'active',
+        subscription_start_date: { lte: today },
+        subscription_end_date: { gte: today },
+      },
+    });
+    if (activeMemberships > 0) return;
+    const settings = await tx.club_inbody_branch_settings.findUnique({ where: { branch_id: branchId } });
+    if (settings && !settings.allow_without_active_membership) {
+      throw new BadRequestException('بيع InBody بدون اشتراك جيم فعّال غير مسموح في هذا الفرع');
+    }
+  }
+
+  /** Active prices/packages of a branch; falls back to the global (branch-less) price list. */
+  private async inbodyOffersForBranch(db: Prisma.TransactionClient | PrismaService, branchId: number) {
+    const own = await db.club_inbody_services.findMany({
+      where: { branch_id: branchId, is_active: true },
+      orderBy: [{ measurement_count: 'asc' }, { price: 'asc' }],
+    });
+    if (own.length) return own;
+    return db.club_inbody_services.findMany({
+      where: { branch_id: null, is_active: true },
+      orderBy: [{ measurement_count: 'asc' }, { price: 'asc' }],
+    });
+  }
+
+  // --- Member InBody balance (subscription allowance + purchased packages) ---
+
+  async getInbodyMemberContext(memberCode: string, user?: JwtUser) {
+    if (!memberCode?.trim()) throw new BadRequestException('كود العضو مطلوب');
+    const member = await this.findMemberByCode(memberCode);
+    await this.assertInbodyMemberAccess(member.id, user);
+    const today = localDateString();
+    const [subscriptions, purchased, offers, settings] = await Promise.all([
+      this.activeBenefits(member.id),
+      this.prisma.club_inbody_entitlements.findMany({
+        where: {
+          member_id: member.id,
+          is_active: true,
+          OR: [{ expires_at: null }, { expires_at: { gte: today } }],
+        },
+      }),
+      this.inbodyOffersForBranch(this.prisma, member.branch_id),
+      this.prisma.club_inbody_branch_settings.findUnique({ where: { branch_id: member.branch_id } }),
+    ]);
+    const serviceNames = new Map(
+      (await this.prisma.club_inbody_services.findMany({
+        where: { id: { in: purchased.map((row) => row.service_id) } },
+        select: { id: true, name: true },
+      })).map((row) => [row.id, row.name]),
+    );
+    const balances = sortInbodyEntitlements([
+      ...subscriptions
+        .filter((row) => Number(row.type?.inbody_count ?? 0) > row.inbody_used)
+        .map((row) => ({
+          id: row.id,
+          source: 'subscription' as const,
+          label: `اشتراك ${row.subscription_number}`,
+          remaining: Math.max(0, Number(row.type?.inbody_count ?? 0) - row.inbody_used),
+          expiresAt: row.subscription_end_date as string | null,
+        })),
+      ...purchased
+        .filter((row) => row.total_count > row.used_count)
+        .map((row) => ({
+          id: row.id,
+          source: 'package' as const,
+          label: serviceNames.get(row.service_id) ?? 'باقة InBody',
+          remaining: Math.max(0, row.total_count - row.used_count),
+          expiresAt: row.expires_at,
+        })),
+    ]);
+    return {
+      member: { id: member.id, memberCode: member.member_code, name: member.name, branchId: member.branch_id },
+      totalRemaining: balances.reduce((sum, balance) => sum + balance.remaining, 0),
+      hasActiveMembership: subscriptions.length > 0,
+      allowWithoutActiveMembership: settings?.allow_without_active_membership ?? true,
+      balances,
+      offers: offers.map((offer) => this.mapInbodyService(offer)),
+    };
+  }
+
+  /** Consumes one measurement from the balance that expires first (subscription or package). */
+  private async consumeNearestInbodyBalance(tx: Prisma.TransactionClient, memberId: number) {
+    const today = localDateString();
+    await tx.$queryRaw`
+      SELECT id FROM club_subscriptions
+      WHERE member_id = ${memberId} AND status = 'active'
+        AND subscription_start_date <= ${today} AND subscription_end_date >= ${today}
+      FOR UPDATE
+    `;
+    await tx.$queryRaw`
+      SELECT id FROM club_inbody_entitlements
+      WHERE member_id = ${memberId} AND is_active = true
+        AND (expires_at IS NULL OR expires_at >= ${today})
+      FOR UPDATE
+    `;
+    const [subscriptions, purchased] = await Promise.all([
+      tx.club_subscriptions.findMany({
+        where: {
+          member_id: memberId,
+          status: 'active',
+          subscription_start_date: { lte: today },
+          subscription_end_date: { gte: today },
+        },
+        include: { type: true },
+      }),
+      tx.club_inbody_entitlements.findMany({
+        where: { member_id: memberId, is_active: true, OR: [{ expires_at: null }, { expires_at: { gte: today } }] },
+      }),
+    ]);
+    const candidates = sortInbodyEntitlements([
+      ...subscriptions
+        .filter((row) => Number(row.type?.inbody_count ?? 0) > row.inbody_used)
+        .map((row) => ({ id: row.id, source: 'subscription' as const, expiresAt: row.subscription_end_date as string | null, used: row.inbody_used })),
+      ...purchased
+        .filter((row) => row.total_count > row.used_count)
+        .map((row) => ({ id: row.id, source: 'package' as const, expiresAt: row.expires_at, used: row.used_count })),
+    ]);
+    const selected = candidates[0];
+    if (!selected) return null;
+    const claimed = selected.source === 'subscription'
+      ? await tx.club_subscriptions.updateMany({
+          where: { id: selected.id, inbody_used: selected.used },
+          data: { inbody_used: { increment: 1 } },
+        })
+      : await tx.club_inbody_entitlements.updateMany({
+          where: { id: selected.id, used_count: selected.used },
+          data: { used_count: { increment: 1 } },
+        });
+    if (claimed.count !== 1) throw new ConflictException('تم تغيير رصيد InBody أثناء العملية، أعد المحاولة');
+    return {
+      source: selected.source,
+      subscriptionId: selected.source === 'subscription' ? selected.id : null,
+      entitlementId: selected.source === 'package' ? selected.id : null,
+    };
+  }
+
+  /**
+   * Records a measurement the Gymora way: deducts one from the member's nearest-expiring balance
+   * (subscription allowance or a purchased package); with no balance — or `settle: 'paid'` — it
+   * sells the chosen price/package (invoice + GL + revenue) and consumes one from what was bought.
+   */
+  async recordInbodyMeasurement(body: Record<string, unknown>, userId?: number, user?: JwtUser) {
+    if (!body.memberId || !body.measurementDate) throw new BadRequestException('العضو وتاريخ القياس مطلوبان');
+    const memberId = Number(body.memberId);
+    const measurementDate = String(body.measurementDate);
+    const reportUrl = typeof body.reportUrl === 'string' && body.reportUrl.trim() ? body.reportUrl.trim() : null;
+    if (reportUrl && reportUrl.length > 500) throw new BadRequestException('مسار تقرير InBody طويل جدًا');
+    const payNow = body.settle === 'paid';
+    const member = await assertMemberExists(this.prisma, memberId);
+    await this.assertInbodyMemberAccess(memberId, user);
+    this.assertInbodyDateAccess(measurementDate, user);
+    await this.assertUniqueInbodyDay(memberId, measurementDate);
+    const memberRow = await this.prisma.club_members.findUnique({ where: { id: memberId }, select: { branch_id: true } });
+    const branchId = Number(body.branchId ?? memberRow?.branch_id);
+    if (!Number.isSafeInteger(branchId) || branchId <= 0) throw new BadRequestException('الفرع مطلوب');
+
+    return this.prisma.$transaction(async (tx) => {
+      let balance = payNow ? null : await this.consumeNearestInbodyBalance(tx, memberId);
+      let settlementSource: string = balance?.source ?? 'paid_single';
+      let invoiceId: number | null = null;
+      let invoiceNumber: string | null = null;
+      let chargedAmount = 0;
+      let serviceName: string | null = null;
+
+      if (!balance) {
+        if (body.offerId == null) throw new BadRequestException('اختر سعر القياس أو إحدى باقات InBody');
+        const offers = await this.inbodyOffersForBranch(tx, branchId);
+        const offer = offers.find((row) => row.id === Number(body.offerId));
+        if (!offer) throw new NotFoundException('سعر أو باقة InBody غير موجودة لهذا الفرع');
+        await this.assertInbodySaleAllowed(tx, memberId, branchId);
+        const paymentMethod = this.paymentMethod(body.paymentMethod);
+        invoiceNumber = await nextNumber(tx, 'club_inbody_invoices', 'invoice_number', `INB-${new Date().getFullYear()}`);
+        chargedAmount = toNum(offer.price);
+        serviceName = offer.name;
+        const invoice = await tx.club_inbody_invoices.create({
+          data: {
+            invoice_number: invoiceNumber,
+            is_member: true,
+            member_id: memberId,
+            customer_name: null,
+            service_id: offer.id,
+            branch_id: branchId,
+            unit_price: chargedAmount,
+            total_amount: chargedAmount,
+            invoice_date: measurementDate,
+            status: 'paid',
+            payment_method: paymentMethod,
+            covered_by_subscription: false,
+            created_by: userId ?? null,
+          },
+        });
+        invoiceId = invoice.id;
+        const entitlement = await tx.club_inbody_entitlements.create({
+          data: {
+            member_id: memberId,
+            branch_id: branchId,
+            service_id: offer.id,
+            invoice_id: invoice.id,
+            total_count: Math.max(1, offer.measurement_count),
+            used_count: 1,
+            purchased_date: measurementDate,
+            expires_at: offer.validity_days ? addCalendarDays(measurementDate, offer.validity_days) : null,
+          },
+        });
+        balance = { source: 'package', subscriptionId: null, entitlementId: entitlement.id };
+        settlementSource = offer.measurement_count > 1 ? 'package_purchase' : 'paid_single';
+        if (chargedAmount > 0) {
+          await this.ledger.postPayment(
+            {
+              invoiceId: invoice.id,
+              invoiceNumber: invoice.invoice_number,
+              memberId,
+              amount: chargedAmount,
+              branchId,
+              invoiceDate: measurementDate,
+              paymentMethod,
+              createdBy: userId,
+              description: `فاتورة InBody ${invoice.invoice_number}`,
+            },
+            tx,
+          );
+          await recordSystemRevenue(tx, {
+            sourceModule: 'inbody_invoice',
+            sourceRef: invoice.invoice_number,
+            date: measurementDate,
+            source: 'InBody',
+            subSource: offer.name,
+            amount: chargedAmount,
+            description: `تحصيل ${offer.name}`,
+            customerName: member.name,
+            invoiceNumber: invoice.invoice_number,
+            branchId,
+            createdBy: userId,
+            paymentMethod,
+          });
+        }
+      }
+
+      const measurement = await tx.club_inbody_measurements.create({
+        data: {
+          member_id: memberId,
+          branch_id: branchId,
+          measurement_date: measurementDate,
+          report_url: reportUrl,
+          notes: body.notes ? String(body.notes).trim() : null,
+          settlement_source: settlementSource,
+          subscription_id: balance?.subscriptionId ?? null,
+          entitlement_id: balance?.entitlementId ?? null,
+          invoice_id: invoiceId,
+          created_by: userId ?? null,
+        },
+      });
+      return { id: measurement.id, branchId, settlementSource, chargedAmount, invoiceNumber, serviceName };
+    });
   }
 }

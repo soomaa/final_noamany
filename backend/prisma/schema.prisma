@@ -6396,9 +6396,18 @@ model club_inbody_measurements {
   updated_at       DateTime @updatedAt
 
   @@index([member_id])
+  @@index([entitlement_id])
+  @@index([invoice_id])
   @@map("club_inbody_measurements")
   staff_name       String?  @db.VarChar(150)
   file_url         String?  @db.VarChar(255)
+  /// Where this measurement was settled: legacy | subscription | package | paid_single | package_purchase.
+  settlement_source String  @default("legacy") @db.VarChar(30)
+  branch_id         Int?
+  subscription_id   Int?
+  entitlement_id    Int?
+  invoice_id        Int?
+  created_by        Int?
 }
 
 model club_spa_services {
@@ -6520,13 +6529,49 @@ model club_inbody_services {
   name        String                 @db.VarChar(200)
   description String?                @db.Text
   price       Decimal                @db.Decimal(10, 2)
+  /// 1 = the branch's single-measurement price; > 1 = a package of measurements.
+  measurement_count Int              @default(1)
+  /// Package validity from the purchase date (null = never expires).
+  validity_days     Int?
   branch_id   Int?
   is_active   Boolean                @default(true)
   created_at  DateTime               @default(now())
   updated_at  DateTime               @updatedAt
   invoices    club_inbody_invoices[]
 
+  @@index([branch_id])
   @@map("club_inbody_services")
+}
+
+/// Per-branch InBody sales policy («قياسات الأعضاء» ← الإعدادات).
+model club_inbody_branch_settings {
+  id                              Int      @id @default(autoincrement())
+  branch_id                       Int      @unique
+  allow_without_active_membership Boolean  @default(true)
+  created_at                      DateTime @default(now())
+  updated_at                      DateTime @updatedAt
+
+  @@map("club_inbody_branch_settings")
+}
+
+/// Measurement balance bought with a paid InBody invoice (single price or package).
+model club_inbody_entitlements {
+  id             Int      @id @default(autoincrement())
+  member_id      Int
+  branch_id      Int
+  service_id     Int
+  invoice_id     Int      @unique
+  total_count    Int
+  used_count     Int      @default(0)
+  purchased_date String   @db.VarChar(10)
+  expires_at     String?  @db.VarChar(10)
+  is_active      Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  @@index([member_id, expires_at])
+  @@index([branch_id])
+  @@map("club_inbody_entitlements")
 }
 
 model club_facilities {

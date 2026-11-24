@@ -160,7 +160,6 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: CR.subscriptions.reports },
           { to: CR.subscriptions.receipts },
           { to: FIT.facilities.spaInvoices },
-          { to: CR.subscriptions.inbodyInvoices },
           { to: CR.subscriptions.outstanding },
           { to: CR.subscriptions.treasury },
           { to: CR.subscriptions.unifiedTreasury },
