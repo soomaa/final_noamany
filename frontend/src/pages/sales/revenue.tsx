@@ -11,6 +11,7 @@ import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface ShiftRevenue {
   shiftId: number;
@@ -94,7 +95,7 @@ export function SalesRevenuePage() {
       <div className="mb-4 flex flex-wrap gap-4">
         <div>
           <Label className="text-xs">{ui('الفرع')}</Label>
-          <select
+          <SearchableSelect
             className="mt-1 block rounded-md border bg-background px-3 py-2 text-sm"
             value={effectiveBranch}
             onChange={(e) => setBranchId(e.target.value)}
@@ -104,7 +105,7 @@ export function SalesRevenuePage() {
                 {b.name}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
         <div>
           <Label className="text-xs">{ui('التاريخ')}</Label>

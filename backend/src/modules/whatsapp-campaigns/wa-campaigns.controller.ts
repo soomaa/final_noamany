@@ -32,6 +32,8 @@ import {
   ListWaCampaignsDto,
   ListWaMessagesDto,
   UpsertWaTemplateDto,
+  WaAbsenceLookupDto,
+  WaAbsenceSettingsDto,
   WaAudienceDto,
   WaBirthdaySettingsDto,
   WaNextDto,
@@ -60,6 +62,10 @@ export class WaCampaignsController {
   updateBirthdays(@Body() dto: WaBirthdaySettingsDto, @CurrentUser() user: JwtUser) { return this.birthdays.updateSettings(dto, user); }
   @Post('birthdays/run') @HttpCode(200) @RequiresPermission('club.whatsapp:configure')
   runBirthdays(@CurrentUser() user: JwtUser) { return this.birthdays.runToday('manual', user.sub); }
+
+  @Get('absence-settings') absenceSettings() { return this.wa.absenceSettings(); }
+  @Patch('absence-settings') @RequiresPermission('club.whatsapp:configure')
+  updateAbsenceSettings(@Body() dto: WaAbsenceSettingsDto) { return this.wa.updateAbsenceSettings(dto); }
 
   @Get('templates') templates() { return this.wa.listTemplates(); }
   @Post('templates') @RequiresPermission('club.whatsapp:create')
@@ -108,6 +114,19 @@ export class WaCampaignsController {
   cancel(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) { return this.wa.setCampaignStatus(id, 'cancel', user); }
   @Post(':id/retry-failed') @RequiresPermission('club.whatsapp:update')
   retry(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) { return this.wa.retryFailed(id, user); }
+}
+
+/**
+ * «لم يحضر منذ مدة» on the attendance list: same permissions as reading that list, so reception
+ * gets the colours and the WhatsApp button without access to the WhatsApp campaigns page.
+ */
+@UseGuards(JwtAuthGuard)
+@Controller('wa-reminders')
+@RequiresPermission('club.members:view', 'club.members.attendance:view', 'club.reception:view')
+export class WaRemindersController {
+  constructor(private readonly wa: WaCampaignsService) {}
+
+  @Get('absence') absence(@Query() q: WaAbsenceLookupDto, @CurrentUser() user: JwtUser) { return this.wa.absenceLookup(q, user); }
 }
 
 /** `Authorization: Bearer pwa_…` → request.waDevice (paired, not revoked). */

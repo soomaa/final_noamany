@@ -9,6 +9,7 @@ import { ErrorState } from '@/components/common/states';
 import { useLocale } from '@/store/locale';
 import { AccountingPageShell } from './accounting-shell';
 import { ReportFilters } from './trial-balance';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 function monthStart() {
   const d = new Date();
@@ -68,7 +69,7 @@ export function AccountStatementPage() {
         <div className="flex flex-wrap items-end gap-4">
           <div className="grid min-w-[220px] gap-1">
             <label className="text-xs">{ui('الحساب')}</label>
-            <select
+            <SearchableSelect
               className="rounded-md border bg-background px-3 py-2 text-sm"
               value={accountId}
               onChange={(e) => setAccountId(e.target.value)}
@@ -79,7 +80,7 @@ export function AccountStatementPage() {
                   {a.code} — {a.name}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={includeChildren} onChange={(e) => setIncludeChildren(e.target.checked)} />

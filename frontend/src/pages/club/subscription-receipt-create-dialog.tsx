@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { api, apiError } from '@/lib/api';
 import { localToday } from '@/lib/formatters';
 import type { ClubMemberListItem } from '@/types/club';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface SubscriptionReceiptCreateDialogProps {
   open: boolean;
@@ -113,9 +114,9 @@ export function SubscriptionReceiptCreateDialog({ open, onOpenChange, member }: 
           <div className="grid gap-2"><Label>المبلغ المدفوع</Label><Input type="number" min="0.01" step="0.01" className="nums" value={amount} onChange={(event) => setAmount(event.target.value)} /></div>
           <div className="grid gap-2 sm:col-span-2">
             <Label>طريقة الدفع</Label>
-            <select className="flex h-11 w-full rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as ReceiptPaymentMethod)}>
+            <SearchableSelect className="flex h-11 w-full rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value as ReceiptPaymentMethod)}>
               {paymentMethods.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}
-            </select>
+            </SearchableSelect>
           </div>
         </div>
         <DialogFooter>

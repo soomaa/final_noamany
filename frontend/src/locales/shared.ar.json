@@ -92,6 +92,7 @@
     "inProgress": "قيد التنفيذ",
     "underReview": "قيد المراجعة",
     "suspended": "موقوف",
+    "blocked": "محظور",
     "expired": "منتهي",
     "paid": "مدفوع",
     "unpaid": "غير مدفوع",
@@ -244,6 +245,12 @@
     "submitted": "تم الإرسال",
     "uploaded": "تم الرفع",
     "synced": "تمت المزامنة"
+  },
+  "appUpdate": {
+    "title": "يتوفر تحديث جديد للنظام",
+    "body": "اضغط «تحديث» لتحميل أحدث نسخة.",
+    "later": "لاحقًا",
+    "update": "تحديث"
   },
   "payroll": {
     "steps": {

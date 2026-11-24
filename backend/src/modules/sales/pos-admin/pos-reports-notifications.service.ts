@@ -4,7 +4,7 @@ import { paginated } from '../../../common/dto/list-result';
 import { PrismaService } from '../../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../../common/branch-scope/branch-scope.service';
 import type { JwtUser } from '../../../common/types/jwt-user';
-import { SALE_WAREHOUSE_SETTING } from '../../inventory/inventory-location.service';
+import { SALE_WAREHOUSE_SETTING, STORE_WAREHOUSE_SETTING } from '../../inventory/inventory-location.service';
 import {
   PosListQueryDto, ScheduleReportDto, TestNotificationDto,
   UpsertPosNotificationRuleDto, UpsertPosReportTemplateDto,
@@ -328,7 +328,10 @@ export class PosSettingsService {
 
   async saveCategory(category: string, settings: Array<{ key: string; value: unknown; type?: string; description?: string }>, branchId?: number, userId?: number, user?: JwtUser) {
     branchId = this.resolveBranch(user, branchId);
-    if (category === SALE_WAREHOUSE_SETTING.category) await this.assertSaleWarehouse(settings, branchId);
+    if (category === SALE_WAREHOUSE_SETTING.category) {
+      await this.assertSaleWarehouse(settings, branchId);
+      await this.assertStoreWarehouse(settings, branchId);
+    }
     await this.prisma.sales_pos_settings.deleteMany({ where: { category, branch_id: branchId ?? null } });
     await this.prisma.sales_pos_settings.createMany({
       data: settings.map((s, i) => ({
@@ -355,6 +358,23 @@ export class PosSettingsService {
       select: { id: true },
     });
     if (!warehouse) throw new BadRequestException('مخزن البيع لازم يكون مخزن نشط تابع للفرع');
+  }
+
+  /**
+   * A branch's supply store (the warehouse its bar is fed from) must be an active warehouse other
+   * than the bar itself. It may belong to another branch: the Tanta store feeds طنطا up/down.
+   */
+  private async assertStoreWarehouse(settings: Array<{ key: string; value: unknown }>, branchId?: number) {
+    const value = settings.find((s) => s.key === STORE_WAREHOUSE_SETTING.key)?.value;
+    if (value == null || value === '') return;
+    if (branchId == null) throw new BadRequestException('اختر الفرع قبل تحديد مخزن التوريد');
+    const bar = settings.find((s) => s.key === SALE_WAREHOUSE_SETTING.key)?.value;
+    if (bar != null && Number(bar) === Number(value)) throw new BadRequestException('مخزن التوريد لازم يكون غير البار');
+    const warehouse = await this.prisma.inv_warehouses.findFirst({
+      where: { id: Number(value), status: 'active', is_deleted: false },
+      select: { id: true },
+    });
+    if (!warehouse) throw new BadRequestException('مخزن التوريد لازم يكون مخزن نشط');
   }
 
   async copyToBranch(category: string, fromBranchId: number, toBranchId: number, userId?: number, user?: JwtUser) {

@@ -24,6 +24,7 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useAuth } from '@/store/auth';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface PayrollRunRow {
   id: number;
@@ -287,7 +288,7 @@ export function PayrollRunsPage() {
         <CardContent className="grid gap-4 md:grid-cols-4 md:items-end">
           <div className="space-y-2"><Label htmlFor="salary-from">{ui('من تاريخ')}</Label><Input id="salary-from" type="date" value={filterForm.fromDate} onChange={(event) => setFilterForm((current) => ({ ...current, fromDate: event.target.value }))} /></div>
           <div className="space-y-2"><Label htmlFor="salary-to">{ui('إلى تاريخ')}</Label><Input id="salary-to" type="date" value={filterForm.toDate} onChange={(event) => setFilterForm((current) => ({ ...current, toDate: event.target.value }))} /></div>
-          <div className="space-y-2"><Label htmlFor="salary-branch">{ui('الفرع')}</Label><select id="salary-branch" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={filterForm.branchId} disabled={(user?.branch ?? 0) > 0} onChange={(event) => setFilterForm((current) => ({ ...current, branchId: event.target.value }))}><option value="all">{ui('الكل')}</option><option value="0">{ui('الإدارة')}</option>{branches.map((branch) => <option key={branch.id} value={String(branch.id)}>{branch.name}</option>)}</select></div>
+          <div className="space-y-2"><Label htmlFor="salary-branch">{ui('الفرع')}</Label><SearchableSelect id="salary-branch" className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={filterForm.branchId} disabled={(user?.branch ?? 0) > 0} onChange={(event) => setFilterForm((current) => ({ ...current, branchId: event.target.value }))}><option value="all">{ui('الكل')}</option><option value="0">{ui('الإدارة')}</option>{branches.map((branch) => <option key={branch.id} value={String(branch.id)}>{branch.name}</option>)}</SearchableSelect></div>
           <div className="flex flex-wrap gap-2"><Button variant="brand" onClick={calculate}><Calculator className="size-4" />{ui('حساب المرتبات')}</Button><Button variant="outline" onClick={() => void exportPreview()} disabled={!displayRows.length}><Download className="size-4" />{ui('تصدير Excel')}</Button><Button variant="outline" onClick={printSalaryTable} disabled={!displayRows.length}><Printer className="size-4" />{ui('طباعة')}</Button></div>
         </CardContent>
       </Card>

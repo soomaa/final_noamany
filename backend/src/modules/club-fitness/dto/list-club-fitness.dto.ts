@@ -1,4 +1,4 @@
-import { IsOptional, IsString } from 'class-validator';
+import { IsIn, IsOptional, IsString } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 export class ListClubFitnessDto extends PaginationDto {
@@ -21,4 +21,9 @@ export class ListClubFitnessDto extends PaginationDto {
   @IsOptional()
   @IsString()
   dateTo?: string;
+
+  /** رجالي/حريمي/الكل member-section filter (member-linked lists only). */
+  @IsOptional()
+  @IsIn(['all', 'male', 'female'])
+  gender?: string;
 }

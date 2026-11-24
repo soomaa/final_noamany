@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { formatTime } from '@/lib/formatters';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export interface DwamDay {
   day: number;
@@ -53,7 +54,7 @@ export function DwamScheduleGrid({ schedule, onChange, shiftType, onShiftTypeCha
       {onShiftTypeChange && !readOnly && (
         <div className="max-w-xs">
           <label className="mb-1.5 block text-sm font-medium">{ui('نوع الدوام')}</label>
-          <select
+          <SearchableSelect
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={shiftType ?? 'fixed'}
             onChange={(e) => onShiftTypeChange(e.target.value)}
@@ -62,7 +63,7 @@ export function DwamScheduleGrid({ schedule, onChange, shiftType, onShiftTypeCha
             <option value="flexible">{ui('ساعات مرنة')}</option>
             <option value="shift">{ui('شفتات')}</option>
             <option value="part_time">{ui('جزئي')}</option>
-          </select>
+          </SearchableSelect>
         </div>
       )}
       <div className="overflow-x-auto rounded-xl border border-border">

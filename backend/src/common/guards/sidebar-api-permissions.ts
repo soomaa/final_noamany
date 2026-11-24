@@ -27,6 +27,11 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
   "AdminInbodyController.create": [
     "club.members.measurements:create"
   ],
+  "ClubLockersController.inventorySnapshot": [
+    "club.lockers.inventory:view",
+    "club.lockers.inventory:create",
+    "club.lockers.inventory:update"
+  ],
   "ClubLockersController.inventoryReports": [
     "club.lockers.inventory:view",
     "club.lockers.inventory_reports:view"
@@ -496,6 +501,7 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
   "ClubSubscriptionTypesController.list": [
     "club.subscriptions:view",
     "club.subscriptions.list:view",
+    "club.subscriptions.expiring:view",
     "club.subscriptions.new:view",
     "club.subscriptions.new:create",
     "club.subscriptions.special:view",
@@ -899,7 +905,18 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
     "club.fitness.personal_sessions:update"
   ],
   "ClubCustomerSourcesController.list": [
-    "club.subscriptions.customer_sources:view"
+    "club.subscriptions.customer_sources:view",
+    "club.leads:view"
+  ],
+  "EmployeesController.salesReps": [
+    "club.members:view",
+    "club.members:create",
+    "club.leads:view",
+    "club.calls:view",
+    "club.whatsapp:view",
+    "club.sales.dashboard:view",
+    "club.sales.settings:view",
+    "club.sales.reports:view"
   ],
   "ClubCustomerSourcesController.create": [
     "club.subscriptions.customer_sources:create"

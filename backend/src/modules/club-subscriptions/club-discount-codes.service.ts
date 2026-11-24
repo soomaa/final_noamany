@@ -1,4 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { managerKind } from '../../common/utils/manager-scope.util';
+import { managerStaff } from '../../common/utils/manager-staff.util';
 import { Prisma } from '@prisma/client';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -34,7 +36,7 @@ export function grantPeriod(now = new Date()) {
  * Whose codes a user may see. Admins see everyone; a branch manager (level 3) sees the
  * employees of their branches; every other employee (captain, reception) sees only their own.
  */
-export type DiscountViewer = { kind: 'all' } | { kind: 'branches'; branchIds: number[] } | { kind: 'self'; employeeId: number | null };
+export type DiscountViewer = { kind: 'all' } | { kind: 'branches'; branchIds: number[] } | { kind: 'self'; employeeId: number | null } | { kind: 'manager'; user: JwtUser };
 
 export interface ResolvedClubDiscount {
   discountEnabled: boolean;
@@ -52,6 +54,9 @@ export class ClubDiscountCodesService {
 
   viewer(user?: JwtUser): DiscountViewer {
     if (!user || isSystemAdmin(user)) return { kind: 'all' };
+    // Branch manager / section supervisor (client sheet, 22 Nov): captains of their branch and section
+    // plus every reception employee of the branch.
+    if (managerKind(user)) return { kind: 'manager', user };
     if (user.level === 3) return { kind: 'branches', branchIds: this.branchScope.allowedBranchIds(user) ?? [] };
     return { kind: 'self', employeeId: user.emp_code ?? null };
   }
@@ -60,6 +65,10 @@ export class ClubDiscountCodesService {
   private async employeeFilter(viewer: DiscountViewer): Promise<number[] | undefined> {
     if (viewer.kind === 'all') return undefined;
     if (viewer.kind === 'self') return viewer.employeeId ? [viewer.employeeId] : [];
+    if (viewer.kind === 'manager') {
+      const staff = await managerStaff(this.prisma, viewer.user, this.branchScope.allowedBranchIds(viewer.user));
+      return (staff ?? []).map((row) => row.id);
+    }
     const rows = await this.prisma.employees.findMany({ where: { branch_id_fk: { in: viewer.branchIds } }, select: { id: true } });
     return rows.map((row) => row.id);
   }
@@ -69,12 +78,15 @@ export class ClubDiscountCodesService {
     if (ids && !ids.includes(employeeId)) throw new ForbiddenException('لا يمكنك عرض أكواد موظف آخر');
   }
 
-  /** A member is reachable only inside the user's branches and gender section. */
-  private memberScope(user?: JwtUser): Prisma.club_membersWhereInput {
+  /**
+   * A member is reachable only inside the user's branches and gender section. `requestedGender`
+   * is the رجالي/حريمي/الكل list filter (403 when a one-section employee asks for the other one).
+   */
+  private memberScope(user?: JwtUser, requestedGender?: string): Prisma.club_membersWhereInput {
     // No user = an internal call (e.g. from subscription create), which scopes on its own.
     if (!user) return {};
     const branches = this.branchScope.memberBranchIds(user);
-    const gender = this.branchScope.memberGenderFilter(user);
+    const gender = this.branchScope.resolveMemberGenderRequest(user, requestedGender);
     return {
       ...(branches === null ? {} : { branch_id: { in: branches } }),
       ...(gender ? { gender } : {}),
@@ -229,12 +241,12 @@ export class ClubDiscountCodesService {
     return { employeeId, deleted: deleted.count };
   }
 
-  async findMemberForDiscountGrant(term: string, user?: JwtUser) {
+  async findMemberForDiscountGrant(term: string, user?: JwtUser, gender?: string) {
     const input = term.trim();
     if (!input) throw new BadRequestException('كود العضو أو رقم الموبايل مطلوب');
     const digits = input.replace(/\D/g, '');
     const phoneSearch = /^\d{8,}$/.test(digits);
-    const scope = this.memberScope(user);
+    const scope = this.memberScope(user, gender);
     const match: Prisma.club_membersWhereInput = phoneSearch
         ? { OR: [
           { phone: { contains: digits } },
@@ -272,11 +284,13 @@ export class ClubDiscountCodesService {
     } });
   }
 
-  async memberGrants(memberId?: number, user?: JwtUser, options: { currentMonth?: boolean } = {}) {
+  async memberGrants(memberId?: number, user?: JwtUser, options: { currentMonth?: boolean; gender?: string } = {}) {
     // A member's own grants are visible to whoever may serve that member (e.g. reception applying
     // the code). Without a member, each employee sees only the grants they are allowed to see.
     if (memberId && user) await this.assertMemberInScope(user, memberId);
     const visible = memberId ? undefined : await this.employeeFilter(this.viewer(user));
+    // رجالي/حريمي/الكل on the all-grants list (a single member is already checked above).
+    const section = !memberId && user ? this.branchScope.resolveMemberGenderRequest(user, options.gender) : null;
     // "This month" is the allowance month the grant was issued in, the same month its count uses.
     const period = options.currentMonth ? grantPeriod() : null;
     const rows = await this.prisma.tbl_emps_members_dis_codes.findMany({
@@ -295,12 +309,14 @@ export class ClubDiscountCodesService {
     const [codes, employees, members] = await Promise.all([
       codeIds.length ? this.prisma.tbl_discount_codes.findMany({ where: { id: { in: codeIds } } }) : [],
       employeeIds.length ? this.prisma.employees.findMany({ where: { id: { in: employeeIds } }, select: { id: true, employee: true } }) : [],
-      memberIds.length ? this.prisma.club_members.findMany({ where: { id: { in: memberIds } }, select: { id: true, name: true, member_code: true } }) : [],
+      memberIds.length ? this.prisma.club_members.findMany({ where: { id: { in: memberIds }, ...(section ? { gender: section } : {}) }, select: { id: true, name: true, member_code: true } }) : [],
     ]);
     const codeById = new Map(codes.map((code) => [code.id, code] as const));
     const employeeById = new Map(employees.map((employee) => [employee.id, employee.employee] as const));
     const memberById = new Map(members.map((member) => [member.id, member] as const));
-    return rows.map((row) => ({
+    // Section-filtered: members of the other section were not loaded above; drop their grants.
+    const inSection = section ? rows.filter((row) => row.mem_id_fk != null && memberById.has(row.mem_id_fk)) : rows;
+    return inSection.map((row) => ({
       id: row.id,
       employeeId: row.emp_id_fk,
       employeeName: row.emp_id_fk ? employeeById.get(row.emp_id_fk) ?? null : null,
@@ -333,15 +349,15 @@ export class ClubDiscountCodesService {
     return { id, deleted: true };
   }
 
-  async memberGrantsByMemberCode(memberCode: string, user?: JwtUser) {
+  async memberGrantsByMemberCode(memberCode: string, user?: JwtUser, gender?: string) {
     const member = await this.prisma.club_members.findFirst({
-      where: { member_code: memberCode.trim(), ...this.memberScope(user) },
+      where: { member_code: memberCode.trim(), ...this.memberScope(user, gender) },
       select: { id: true },
     });
     return member ? this.memberGrants(member.id, user) : [];
   }
 
-  async usageReport(input: { fromDate: string; toDate: string; memberCode?: string }, user?: JwtUser) {
+  async usageReport(input: { fromDate: string; toDate: string; memberCode?: string; gender?: string }, user?: JwtUser) {
     const datePattern = /^\d{4}-\d{2}-\d{2}$/;
     if (!datePattern.test(input.fromDate) || !datePattern.test(input.toDate) || input.fromDate > input.toDate) {
       throw new BadRequestException('نطاق التاريخ غير صالح');
@@ -356,8 +372,9 @@ export class ClubDiscountCodesService {
     const memberIds = [...new Set(rows.map((row) => row.member_id).filter((id): id is number => id != null))];
     const codeIds = [...new Set(rows.map((row) => row.discount_code_id_fk).filter((id): id is number => id != null))];
     const subscriptionIds = [...new Set(rows.map((row) => row.sub_id_fk).filter((id): id is number => id != null))];
+    const memberScope = this.memberScope(user, input.gender);
     const [members, codes, subscriptions] = await Promise.all([
-      memberIds.length ? this.prisma.club_members.findMany({ where: { id: { in: memberIds }, ...this.memberScope(user) }, select: { id: true, name: true, phone: true } }) : [],
+      memberIds.length ? this.prisma.club_members.findMany({ where: { id: { in: memberIds }, ...memberScope }, select: { id: true, name: true, phone: true } }) : [],
       codeIds.length ? this.prisma.tbl_discount_codes.findMany({ where: { id: { in: codeIds } }, select: { id: true, title: true } }) : [],
       subscriptionIds.length ? this.prisma.club_subscriptions.findMany({ where: { id: { in: subscriptionIds } }, select: { id: true, subscription_type: true } }) : [],
     ]);
@@ -365,7 +382,7 @@ export class ClubDiscountCodesService {
     const codeById = new Map(codes.map((row) => [row.id, row.title] as const));
     const subscriptionById = new Map(subscriptions.map((row) => [row.id, row.subscription_type] as const));
     // Members outside the user's branches/section were not loaded above; drop their rows.
-    const scoped = !user || isSystemAdmin(user) ? rows : rows.filter((row) => row.member_id != null && memberById.has(row.member_id));
+    const scoped = !user || (isSystemAdmin(user) && !memberScope.gender) ? rows : rows.filter((row) => row.member_id != null && memberById.has(row.member_id));
     return scoped.map((row) => ({
       id: row.id,
       memberCode: row.member_code,

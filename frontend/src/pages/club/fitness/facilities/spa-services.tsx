@@ -17,6 +17,7 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClubSpaServiceRow } from '@/types/fitness';
 import { RowActions, SELECT_CLS } from '../shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function FitnessSpaServicesPage() {
   const ft = useFitnessT();
@@ -171,12 +172,12 @@ export function FitnessSpaServicesPage() {
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.branch')}</Label>
-              <select className={SELECT_CLS} value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}>
                 <option value="">—</option>
                 {branchOptions.map((b) => (
                   <option key={b.value} value={b.value}>{b.label}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
           </div>
           <DialogFooter>

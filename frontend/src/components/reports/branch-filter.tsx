@@ -3,6 +3,7 @@ import { useBranches } from '@/hooks/use-branches';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
 import { isSystemAdminUser } from '@/lib/user-scope';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface BranchFilterProps {
   value: string;
@@ -23,7 +24,7 @@ export function BranchFilter({ value, onChange }: BranchFilterProps) {
   return (
     <div className="grid gap-1.5">
       <Label className="text-xs text-muted-foreground">{ui('الفرع')}</Label>
-      <select
+      <SearchableSelect
         value={locked ? 'all' : value}
         disabled={locked}
         onChange={(e) => onChange(e.target.value)}
@@ -35,7 +36,7 @@ export function BranchFilter({ value, onChange }: BranchFilterProps) {
             {b.name}
           </option>
         ))}
-      </select>
+      </SearchableSelect>
     </div>
   );
 }

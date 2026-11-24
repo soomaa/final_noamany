@@ -18,6 +18,8 @@ import { localToday } from '@/lib/formatters';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { uiStatic } from '@/lib/ui-static';
 import { useAuth } from '@/store/auth';
+import { SearchableSelect } from '@/components/common/searchable-select';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 
 const METHOD_LABELS: Record<string, string> = {
   cash: uiStatic('نقدي'),
@@ -67,6 +69,7 @@ export function ClubTreasuryPage() {
     description: '',
   });
   const [periodMode, setPeriodMode] = useState<PeriodMode>('today');
+  const g = useMemberGenderFilter();
   const [dateFrom, setDateFrom] = useState(() => monthStart());
   const [dateTo, setDateTo] = useState(() => localToday());
   const canRecordExpense =
@@ -145,6 +148,7 @@ export function ClubTreasuryPage() {
       queryParams.dateTo ?? '',
       queryParams.date ?? '',
       queryParams.branchId ?? 'all',
+      g.value,
     ],
     queryFn: async () => {
       const { data: r } = await api.get<{
@@ -159,7 +163,7 @@ export function ClubTreasuryPage() {
         lockedUser: boolean;
         selectedUserId: number | null;
         entries: Array<{ source: string; customerName: string; amount: number; paymentMethod: string }>;
-      }>('/club-dashboard/treasury', { params: queryParams });
+      }>('/club-dashboard/treasury', { params: { ...queryParams, ...(g.param ? { gender: g.param } : {}) } });
       return r;
     },
   });
@@ -207,7 +211,7 @@ export function ClubTreasuryPage() {
         <div className="grid min-w-56 gap-2">
           <Label>{ct('common.branch')}</Label>
           {isSystemAdmin ? (
-            <select
+            <SearchableSelect
               className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
               value={branchId}
               onChange={(event) => setBranchId(event.target.value)}
@@ -218,7 +222,7 @@ export function ClubTreasuryPage() {
                   {branch.name ?? `#${branch.id}`}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           ) : (
             <div className="flex h-10 items-center gap-2 rounded-md border bg-muted/45 px-3 text-sm">
               <Building2 className="size-4 text-primary" />
@@ -227,6 +231,7 @@ export function ClubTreasuryPage() {
             </div>
           )}
         </div>
+        <MemberGenderSelect value={g.value} onChange={g.setValue} locked={g.locked} />
         <div className="grid gap-2">
           <Label>{ct('subscriptions.period')}</Label>
           <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/30 p-1">
@@ -368,7 +373,7 @@ export function ClubTreasuryPage() {
             </div>
             <div className="grid gap-2">
               <Label>نوع المصروف</Label>
-              <select
+              <SearchableSelect
                 className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
                 value={expenseForm.category}
                 onChange={(event) => setExpenseForm((form) => ({ ...form, category: event.target.value }))}
@@ -385,7 +390,7 @@ export function ClubTreasuryPage() {
                     <option value="أخرى">أخرى</option>
                   </>
                 ) : null}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="grid gap-2">
@@ -401,7 +406,7 @@ export function ClubTreasuryPage() {
               </div>
               <div className="grid gap-2">
                 <Label>طريقة الدفع</Label>
-                <select
+                <SearchableSelect
                   className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
                   value={expenseForm.paymentMethod}
                   onChange={(event) => setExpenseForm((form) => ({ ...form, paymentMethod: event.target.value }))}
@@ -410,7 +415,7 @@ export function ClubTreasuryPage() {
                   <option value="بطاقة">بطاقة</option>
                   <option value="تحويل بنكي">تحويل بنكي</option>
                   <option value="محفظة">محفظة</option>
-                </select>
+                </SearchableSelect>
               </div>
             </div>
             <div className="grid gap-2">

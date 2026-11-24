@@ -1,8 +1,9 @@
+import { LEAD_META_QUERY_KEY } from '@/lib/customer-sources';
 import { useMemo, useState } from 'react';
 import { Plus, Pencil, Trash2 } from 'lucide-react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button } from '@/components/ui/button';
+import { PermissionButton as Button } from '@/components/club/permission-button';
 import {
   Dialog,
   DialogContent,
@@ -21,6 +22,7 @@ import { api, apiError } from '@/lib/api';
 import { useMutationWithToast } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { toast } from 'sonner';
+import { usePermission } from '@/hooks/use-permission';
 
 interface CustomerSourceRow {
   id: number;
@@ -28,8 +30,16 @@ interface CustomerSourceRow {
   isActive: boolean;
 }
 
-export function ClubCustomerSourcesPage() {
+/**
+ * `embedded` renders it as the «مصادر المعرفة» tab of the potential-members screen: the same
+ * list, titled for where it is used, and every lead form's select refreshed on save.
+ */
+export function ClubCustomerSourcesPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { ui } = useLocale();
+  const { can } = usePermission();
+  const canCreate = can('club.subscriptions.customer_sources:create');
+  const canUpdate = can('club.subscriptions.customer_sources:update');
+  const canDelete = can('club.subscriptions.customer_sources:delete');
   const qc = useQueryClient();
   const { data: sources, isLoading, isError, refetch } = useQuery({
     queryKey: ['club-customer-sources', 'admin'],
@@ -49,7 +59,11 @@ export function ClubCustomerSourcesPage() {
 
   const deleteMutation = useMutationWithToast(
     (id: number) => api.delete(`/club-customer-sources/${id}`),
-    { success: ui('تم الحذف'), invalidate: ['club-customer-sources'] },
+    {
+      success: ui('تم الحذف'),
+      invalidate: ['club-customer-sources'],
+      onSuccess: () => void qc.invalidateQueries({ queryKey: LEAD_META_QUERY_KEY }),
+    },
   );
 
   const openCreate = () => {
@@ -67,6 +81,7 @@ export function ClubCustomerSourcesPage() {
   };
 
   const save = async () => {
+    if (editId ? !canUpdate : !canCreate) return;
     if (!name.trim()) {
       toast.error(ui('اسم المصدر مطلوب'));
       return;
@@ -79,6 +94,8 @@ export function ClubCustomerSourcesPage() {
       toast.success(ui('تم الحفظ'));
       setDialogOpen(false);
       void qc.invalidateQueries({ queryKey: ['club-customer-sources'] });
+      // Lead forms read the active list through /club-leads/meta.
+      void qc.invalidateQueries({ queryKey: LEAD_META_QUERY_KEY });
     } catch (e) {
       toast.error(apiError(e));
     } finally {
@@ -97,14 +114,15 @@ export function ClubCustomerSourcesPage() {
       {
         id: 'actions',
         header: ui('إجراءات'),
-        cell: ({ row }) => (
+        cell: ({ row }) => !canUpdate && !canDelete ? null : (
           <div className="flex gap-1">
-            <Button variant="ghost" size="icon" onClick={() => openEdit(row.original)}>
+            {canUpdate ? <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
               <Pencil className="h-4 w-4" />
-            </Button>
-            <Button
+            </Button> : null}
+            {canDelete ? <Button
               variant="ghost"
               size="icon"
+              aria-label={ui('حذف')}
               onClick={() => {
                 void (async () => {
                   const ok = await confirm({
@@ -112,30 +130,32 @@ export function ClubCustomerSourcesPage() {
                     description: ui('هل تريد حذف هذا المصدر؟'),
                     variant: 'destructive',
                   });
-                  if (ok) deleteMutation.mutate(row.original.id);
+                  if (ok && canDelete) deleteMutation.mutate(row.original.id);
                 })();
               }}
             >
               <Trash2 className="h-4 w-4 text-destructive" />
-            </Button>
+            </Button> : null}
           </div>
         ),
       },
     ],
-    [ui, deleteMutation],
+    [ui, deleteMutation, canUpdate, canDelete],
   );
 
   return (
     <ListPageShell>
       <PageHeader
-        title={ui('مصادر العملاء')}
-        description={ui('إدارة مصادر العملاء المستخدمة في الاشتراكات')}
-        actions={
+        title={embedded ? ui('مصادر المعرفة') : ui('مصادر العملاء')}
+        description={embedded
+          ? ui('الاختيارات التي تظهر في «مصدر المعرفة» عند إضافة عميل محتمل — أضف ما تحتاجه وعطّل غير المستخدم.')
+          : ui('إدارة مصادر العملاء المستخدمة في الاشتراكات')}
+        actions={canCreate ? (
           <Button onClick={openCreate}>
             <Plus className="h-4 w-4" />
             {ui('مصدر جديد')}
           </Button>
-        }
+        ) : undefined}
       />
       <DataTable
         columns={columns}
@@ -170,9 +190,9 @@ export function ClubCustomerSourcesPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>
               {ui('إلغاء')}
             </Button>
-            <Button onClick={() => void save()} disabled={saving}>
+            {(editId ? canUpdate : canCreate) ? <Button permissionAction={editId ? 'update' : 'create'} onClick={() => void save()} disabled={saving}>
               {saving ? ui('جاري الحفظ…') : ui('حفظ')}
-            </Button>
+            </Button> : null}
           </DialogFooter>
         </DialogContent>
       </Dialog>

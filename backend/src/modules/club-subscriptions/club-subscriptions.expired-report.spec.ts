@@ -20,6 +20,7 @@ describe('ClubSubscriptionsService.expiredReport', () => {
     const branchScope = {
       resolveListFilter: jest.fn().mockReturnValue(null),
       memberGenderFilter: jest.fn().mockReturnValue(null),
+      resolveMemberGenderRequest: jest.fn().mockReturnValue(null),
     };
     const service = new ClubSubscriptionsService(
       prisma as unknown as PrismaService,

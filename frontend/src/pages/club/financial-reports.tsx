@@ -22,10 +22,12 @@ import { useClubT } from '@/hooks/use-club-t';
 import { api } from '@/lib/api';
 import { useArrayResource } from '@/lib/api-hooks';
 import { BranchFilter, normalizeBranchParam } from '@/components/reports/branch-filter';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 import { localDateStr, localToday } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClubDashboardSummary } from '@/types/club';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const PIE_COLORS = ['#2563eb', '#16a34a', '#ea580c', '#9333ea'];
 
@@ -52,16 +54,17 @@ export function ClubFinancialReportsPage() {
   });
   const [endDate, setEndDate] = useState(() => localToday());
   const [branch, setBranch] = useState('all');
+  const g = useMemberGenderFilter();
   const [subscriptionType, setSubscriptionType] = useState('all');
 
   const { data: subTypes } = useArrayResource<{ id: number; name: string }>('club-subscription-types');
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ['club-financial-reports', startDate, endDate, branch],
+    queryKey: ['club-financial-reports', startDate, endDate, branch, g.value],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const { data: s } = await api.get<ClubDashboardSummary>('/club-dashboard/summary', {
-        params: { startDate, endDate, ...(branchId ? { branchId: String(branchId) } : {}) },
+        params: { startDate, endDate, ...(branchId ? { branchId: String(branchId) } : {}), ...(g.param ? { gender: g.param } : {}) },
       });
       return s;
     },
@@ -163,9 +166,10 @@ export function ClubFinancialReportsPage() {
           <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </div>
         <BranchFilter value={branch} onChange={setBranch} />
+        <MemberGenderSelect value={g.value} onChange={g.setValue} locked={g.locked} />
         <div className="grid gap-1.5">
           <Label className="text-xs text-muted-foreground">{ui('نوع الاشتراك')}</Label>
-          <select
+          <SearchableSelect
             value={subscriptionType}
             onChange={(e) => setSubscriptionType(e.target.value)}
             className="flex h-10 w-52 items-center rounded-md border border-input bg-background px-3 text-sm"
@@ -174,7 +178,7 @@ export function ClubFinancialReportsPage() {
             {(subTypes ?? []).map((t) => (
               <option key={t.id} value={String(t.id)}>{t.name}</option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
         <Button
           variant="brand"

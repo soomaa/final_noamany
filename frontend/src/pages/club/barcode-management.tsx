@@ -1,5 +1,6 @@
 import { Copy, CreditCard, IdCard, LayoutGrid, Printer, ScanBarcode, Search, Table2 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { normalizeScannedCode } from '@/components/club/club-member-search';
 import { Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/data-table';
@@ -28,6 +29,7 @@ import { CLUB_ROUTES } from '@/lib/club-routes';
 import { cn, toArabicDigits } from '@/lib/utils';
 import type { ClubMemberListItem } from '@/types/club';
 import { MemberAvatar, memberInitials } from '@/components/club/member-avatar';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 import type { ColumnDef } from '@tanstack/react-table';
 import { FitnessSpaAttendanceReportPanel } from './fitness/spa-attendance';
 import { FitnessClassAttendanceReportPanel } from './fitness/class-attendance';
@@ -198,6 +200,17 @@ function MembershipCardSkeleton() {
 export function ClubBarcodeManagementPage() {
   const ct = useClubT();
   const { params, setParams } = useListQuery();
+  const [searchDraft, setSearchDraft] = useState(params.search ?? '');
+  const commitSearch = (value: string) => {
+    const next = normalizeScannedCode(value);
+    if (next !== value.trim()) setSearchDraft(next); // only rewrite a scanned code, never a name being typed
+    if (next !== (params.search ?? '')) setParams({ search: next, page: 1 });
+  };
+  useEffect(() => {
+    const id = window.setTimeout(() => commitSearch(searchDraft), 350);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchDraft]);
   const [searchParams] = useSearchParams();
   const { pathname } = useLocation();
   const navigate = useNavigate();
@@ -216,7 +229,10 @@ export function ClubBarcodeManagementPage() {
     navigate({ pathname: '/club/members/barcode-management', search: `?${p.toString()}` }, { replace: true });
   };
 
-  const { data, isLoading, isError, refetch } = usePaginatedList<ClubMemberListItem>('club-members/print-cards', params, ['barcodes', 'membership', 'table', 'print-range'].includes(view));
+  // رجالي/حريمي/الكل (locked to the employee's own section).
+  const gender = useMemberGenderFilter();
+  const printCardParams = useMemo(() => ({ ...params, filters: { ...params.filters, gender: gender.value } }), [params, gender.value]);
+  const { data, isLoading, isError, refetch } = usePaginatedList<ClubMemberListItem>('club-members/print-cards', printCardParams, ['barcodes', 'membership', 'table', 'print-range'].includes(view));
   const { data: branches } = useBranches();
   const [printMember, setPrintMember] = useState<ClubMemberListItem | null>(null);
   const [codeFrom, setCodeFrom] = useState('');
@@ -253,7 +269,7 @@ export function ClubBarcodeManagementPage() {
     setIsPrintingRange(true);
     try {
       const { data: result } = await api.get<{ data: ClubMemberListItem[]; capped: boolean }>('/club-members/barcode-range', {
-        params: { codeFrom: codeFrom.trim(), codeTo: codeTo.trim() },
+        params: { codeFrom: codeFrom.trim(), codeTo: codeTo.trim(), gender: gender.param },
       });
       if (!result.data.length) {
         toast.error('لا يوجد أعضاء ضمن نطاق الأكواد المحدد');
@@ -348,13 +364,30 @@ export function ClubBarcodeManagementPage() {
           {['barcodes', 'membership', 'table'].includes(view) && <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
             <div className="relative flex-1 sm:min-w-[260px]">
               <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              {/* Typed locally and written to the URL after a pause: a scanner types the whole code in a
+                  few milliseconds, and updating the URL on every key kept only the last digit («0»). */}
               <Input
-                value={params.search}
-                onChange={(e) => setParams({ search: e.target.value, page: 1 })}
+                value={searchDraft}
+                onChange={(e) => setSearchDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    commitSearch(searchDraft);
+                  }
+                }}
                 placeholder={ct('members.barcodePlaceholder')}
                 className="ps-9"
               />
             </div>
+            <MemberGenderSelect
+              hideLabel
+              value={gender.value}
+              locked={gender.locked}
+              onChange={(value) => {
+                gender.setValue(value);
+                setParams({ page: 1 });
+              }}
+            />
             <Button type="button" variant="brand" disabled={!members.length} onClick={printAction}>
               <Printer className="size-4" />
               {printLabel}
@@ -363,9 +396,10 @@ export function ClubBarcodeManagementPage() {
         </div>
 
         <TabsContent value="print-range" className="mx-auto max-w-3xl space-y-4">
-          <section className="grid gap-3 rounded-xl border bg-card p-5 md:grid-cols-[1fr_1fr_auto] md:items-end">
+          <section className="grid gap-3 rounded-xl border bg-card p-5 md:grid-cols-[1fr_1fr_auto_auto] md:items-end">
             <div><label className="mb-1.5 block text-sm font-medium">من كود</label><Input autoFocus value={codeFrom} onChange={(e) => setCodeFrom(e.target.value)} placeholder="مثال: A000001" className="font-mono nums" /></div>
             <div><label className="mb-1.5 block text-sm font-medium">إلى كود</label><Input value={codeTo} onChange={(e) => setCodeTo(e.target.value)} placeholder="مثال: A000008" className="font-mono nums" /></div>
+            <MemberGenderSelect value={gender.value} onChange={gender.setValue} locked={gender.locked} />
             <Button type="button" variant="brand" onClick={() => void printBarcodeRange()} disabled={isPrintingRange}><Printer className="size-4" /> {isPrintingRange ? 'جارٍ التجهيز…' : 'طباعة النطاق'}</Button>
           </section>
           <p className="text-center text-sm text-muted-foreground">تُطبع الأكواد الواقعة بين كود البداية وكود النهاية فقط.</p>

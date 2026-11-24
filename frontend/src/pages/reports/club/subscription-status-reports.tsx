@@ -10,6 +10,7 @@ import { fetchAllReportRows } from '@/lib/report-fetch';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import type { ClubSubscriptionListItem } from '@/types/club';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 
 type StatusFilter = 'expired' | 'active' | 'expiring';
 
@@ -33,7 +34,8 @@ function useSubs(status: StatusFilter, branch: string, gender: string) {
 function StatusReport({ status, title, description }: { status: StatusFilter; title: string; description: string }) {
   const { ui } = useLocale();
   const [branch, setBranch] = useState('all');
-  const [gender, setGender] = useState('all');
+  const g = useMemberGenderFilter();
+  const gender = g.value;
   const { data, isLoading, isError, refetch } = useSubs(status, branch, gender);
   const rows = data?.data ?? [];
 
@@ -95,7 +97,7 @@ function StatusReport({ status, title, description }: { status: StatusFilter; ti
     <ReportShell
       title={title}
       description={description}
-      filters={<div className="flex gap-2"><BranchFilter value={branch} onChange={setBranch} /><select aria-label={ui('الفئة')} value={gender} onChange={(event) => setGender(event.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm"><option value="all">{ui('الكل')}</option><option value="male">{ui('رجالي')}</option><option value="female">{ui('حريمي')}</option></select></div>}
+      filters={<div className="flex gap-2"><BranchFilter value={branch} onChange={setBranch} /><MemberGenderSelect hideLabel value={g.value} onChange={g.setValue} locked={g.locked} /></div>}
       stats={<ClubStatCard label={ui('العدد')} value={rows.length} />}
       onExport={exportCsv}
     >

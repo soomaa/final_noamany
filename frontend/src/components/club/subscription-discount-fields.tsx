@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label';
 import { formatMoney } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import type { ClubDiscountCode } from '@/types/club';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export type SubscriptionDiscountMode = 'none' | 'code' | 'fixed' | 'percentage' | 'points';
 
@@ -96,7 +97,7 @@ export function SubscriptionDiscountFields({
       {mode === 'code' ? (
         <div className="grid gap-2">
           <Label htmlFor="subscription-discount-code">اختر كود الخصم</Label>
-          <select
+          <SearchableSelect
             id="subscription-discount-code"
             className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
             value={codeId}
@@ -109,7 +110,7 @@ export function SubscriptionDiscountFields({
                 {code.code} — {code.percentage}%
               </option>
             ))}
-          </select>
+          </SearchableSelect>
           {!activeCodes.length ? (
             <p className="text-xs text-muted-foreground">لا توجد أكواد خصم فعّالة.</p>
           ) : null}

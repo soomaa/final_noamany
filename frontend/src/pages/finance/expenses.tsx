@@ -37,6 +37,7 @@ import { useAuth } from '@/store/auth';
 import { usePermission } from '@/hooks/use-permission';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { FinancePageShell } from './finance-shell';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const GENDER_OPTIONS = [
   { value: '', label: 'الكل' },
@@ -453,7 +454,7 @@ export function FinanceExpensesPage() {
               </div>
               <div className="grid gap-1">
                 <Label>{ui('الفرع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.branchId}
                   onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}
@@ -464,13 +465,13 @@ export function FinanceExpensesPage() {
                       {b.name}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
                 <Label>{ui('الفئة')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.category}
                   onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
@@ -481,7 +482,7 @@ export function FinanceExpensesPage() {
                       {c.label}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-1">
                 <Label>{ui('الفئة الفرعية')}</Label>
@@ -502,7 +503,7 @@ export function FinanceExpensesPage() {
               </div>
               <div className="grid gap-1">
                 <Label>{ui('طريقة الدفع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.paymentMethod}
                   onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value }))}
@@ -512,11 +513,11 @@ export function FinanceExpensesPage() {
                       {m.label}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-1">
                 <Label>{ui('حالة الدفع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.paymentStatus}
                   onChange={(e) => setForm((f) => ({ ...f, paymentStatus: e.target.value }))}
@@ -526,7 +527,7 @@ export function FinanceExpensesPage() {
                       {s.label}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
             </div>
 
@@ -534,7 +535,7 @@ export function FinanceExpensesPage() {
             <div className="grid grid-cols-2 gap-3 items-end">
               <div className="grid gap-1">
                 <Label>{ui('نطاق الجنس')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.hasPercentage ? '' : form.genderScope}
                   disabled={form.hasPercentage}
@@ -547,7 +548,7 @@ export function FinanceExpensesPage() {
                       {ui(o.label)}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div className="flex items-center gap-2 pb-1">
                 <input

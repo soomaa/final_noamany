@@ -21,6 +21,7 @@ import { uiStatic } from '@/lib/ui-static';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type PayComponentCategory = 'allowance' | 'deduction';
 
@@ -243,7 +244,7 @@ export function PayComponentsPage() {
           <div className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="pay-component-category">{ui('نوع البند')}</Label>
-              <select
+              <SearchableSelect
                 id="pay-component-category"
                 className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                 value={form.category}
@@ -251,7 +252,7 @@ export function PayComponentsPage() {
               >
                 <option value="allowance">{ui('استحقاق راتب')}</option>
                 <option value="deduction">{ui('استقطاع من الراتب')}</option>
-              </select>
+              </SearchableSelect>
             </div>
             <div className="space-y-2">
               <Label htmlFor="pay-component-title">

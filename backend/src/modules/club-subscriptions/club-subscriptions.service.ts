@@ -2,9 +2,21 @@ import {
   BadRequestException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { ClubGender, Prisma } from '@prisma/client';
+import { ClubGender, Prisma, club_subscriptions } from '@prisma/client';
+import { freezeAllowance, assertFreezeFits } from './freeze-allowance';
+import { isScheduledFreeze, periodStatus, shiftRenewals } from './freeze-chain';
+
+/** A freeze may start this many days back (member away without visiting) … */
+const FREEZE_BACKDATE_DAYS = 30;
+/** … or be booked this many days ahead. */
+const FREEZE_AHEAD_DAYS = 90;
+const freezeLog = new Logger('ClubSubscriptionFreezes');
+/** Synced from the old system (LEG-S-…): the sync overwrites its freezes, so they are not edited here. */
+const isLegacySubscription = (sub: { subscription_number: string | null }) => (sub.subscription_number ?? '').startsWith('LEG-');
+import { resolveSalePromotion } from './package-offer';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { paginated } from '../../common/dto/list-result';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
@@ -18,6 +30,7 @@ import {
 import { JwtUser } from '../../common/types/jwt-user';
 import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import { isReceptionEmployee } from '../../common/utils/reception-user.util';
+import { assertManagerMayModify, clampManagerDays, managerKind } from '../../common/utils/manager-scope.util';
 import { assertClubOperationBranch, clubOperationBranchIds } from '../../common/branch-groups/club-operation-scope';
 import { assertDateOrder } from '../../common/validators';
 import { assertMemberExists, localDateString } from '../club-members/club-member.utils';
@@ -38,12 +51,14 @@ import {
   netValue,
   nextSeqFromMax,
   primaryClubPaymentMethod,
+  receiptGenderWhere,
   remainingAmount,
   roundMoney,
   resolveClubPayments,
   resolveSessionMatrixPrice,
   resolveSubscriptionEndDate,
   subscriptionEndDate,
+  subscriptionGenderWhere,
   deriveSessionAwareStatus,
   toClubPaymentMethod,
   toNum,
@@ -119,6 +134,8 @@ export class ClubSubscriptionsService {
       memberId: row.member_id,
       memberCode: (row.member as { member_code?: string } | undefined)?.member_code ?? null,
       memberPhone: (row.member as { phone?: string | null } | undefined)?.phone ?? null,
+      // Old subscriptions have no category of their own; the member's gender is the right default.
+      memberGender: (row.member as { gender?: string | null } | undefined)?.gender ?? null,
       customerName: row.customer_name,
       subscriptionTypeId: row.subscription_type_id,
       specialClassTypeId: row.special_class_type_id,
@@ -244,8 +261,9 @@ export class ClubSubscriptionsService {
   }
 
   /** Applies the authenticated employee's men/women section as a server-side audience. */
-  private subscriptionAudienceFilter(user?: JwtUser): Prisma.club_subscriptionsWhereInput | null {
-    const gender = this.branchScope.memberGenderFilter(user);
+  private subscriptionAudienceFilter(user?: JwtUser, requested?: string | null): Prisma.club_subscriptionsWhereInput | null {
+    // رجالي/حريمي/الكل: admins pick freely; one-section staff are locked (403 for the other section).
+    const gender = this.branchScope.resolveMemberGenderRequest(user, requested);
     return gender ? this.categoryFilter(gender) : null;
   }
 
@@ -303,6 +321,21 @@ export class ClubSubscriptionsService {
     // Keep this server-side so query-string filters cannot expose historical subscriptions.
     // A member's own subscriptions stay visible so the desk can renew or collect what is due.
     if (isReceptionEmployee(user) && q.memberId == null) and.push({ registration_date: localDateString() });
+    // Branch manager / section supervisor sheet (client, 22 Nov): the subscriptions list is today's;
+    // reports reach the current and the previous month (expired ones by end date); all active ones.
+    if (managerKind(user) && q.memberId == null && !transferSources && !refundSources) {
+      if (q.status === 'active') {
+        // «الاشتراكات النشطة جميعها»
+      } else if (q.status === 'expired' || q.expiredWithinDays || q.endDateFrom || q.endDateTo) {
+        const r = clampManagerDays(user, 'twoMonths', q.endDateFrom, q.endDateTo);
+        and.push({ subscription_end_date: { gte: r.from, lte: r.to } });
+      } else if (q.registrationDateFrom || q.registrationDateTo || q.startDateFrom || q.startDateTo) {
+        const r = clampManagerDays(user, 'twoMonths', q.registrationDateFrom ?? q.startDateFrom, q.registrationDateTo ?? q.startDateTo);
+        and.push({ registration_date: { gte: r.from, lte: r.to } });
+      } else {
+        and.push({ registration_date: localDateString() });
+      }
+    }
     if (refundSources) and.push({ member_id: { not: null }, paid_amount: { gt: 0 } });
 
     if (transferSources) {
@@ -340,9 +373,8 @@ export class ClubSubscriptionsService {
       : this.branchScope.resolveListFilter(user, q.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
     if (q.subscriptionType) and.push({ subscription_type: { contains: q.subscriptionType } });
-    const audience = this.subscriptionAudienceFilter(user);
+    const audience = this.subscriptionAudienceFilter(user, q.gender);
     if (audience) and.push(audience);
-    else if (q.gender === 'male' || q.gender === 'female') and.push(this.categoryFilter(q.gender as ClubGender));
     if (q.memberId) and.push({ member_id: Number(q.memberId) });
     if (q.memberName) and.push({ customer_name: { contains: q.memberName } });
     if (q.receiptNumber) and.push({ receipt_number: { contains: q.receiptNumber } });
@@ -367,13 +399,25 @@ export class ClubSubscriptionsService {
     if (q.registrationDateTo) and.push({ registration_date: { lte: q.registrationDateTo } });
     if (q.expiresWithinDays) {
       const days = Number(q.expiresWithinDays);
-      if (Number.isFinite(days) && days >= 0) {
+      if (Number.isInteger(days) && days >= 0 && days <= 3650) {
+        // Cairo calendar days: a UTC toISOString() target drifted a day after midnight UTC.
         const today = localDateString();
-        const target = new Date();
-        target.setDate(target.getDate() + days);
-        const targetIso = target.toISOString().slice(0, 10);
-        and.push({ subscription_end_date: { gte: today, lte: targetIso } });
+        and.push({ subscription_end_date: { gte: today, lte: addDays(today, days) } });
       }
+    }
+    if (q.expiredWithinDays) {
+      const days = Number(q.expiredWithinDays);
+      if (Number.isInteger(days) && days >= 1 && days <= 3650) {
+        const today = localDateString();
+        and.push({ subscription_end_date: { gte: addDays(today, -days), lt: today } });
+      }
+    }
+    if (q.notRenewed === 'true' || q.notRenewed === '1') {
+      // Only members who still have nothing current or upcoming — the ones worth a renewal call.
+      and.push({
+        member_id: { not: null },
+        member: { is: { subscriptions: { none: { subscription_end_date: { gte: localDateString() } } } } },
+      });
     }
 
     // Translate the derived-status filter into date predicates so it runs in SQL BEFORE
@@ -410,7 +454,11 @@ export class ClubSubscriptionsService {
             take: 1,
           },
         },
-        orderBy: { id: 'desc' },
+        orderBy: q.sort === 'endDateAsc'
+          ? [{ subscription_end_date: 'asc' }, { id: 'asc' }]
+          : q.sort === 'endDateDesc'
+            ? [{ subscription_end_date: 'desc' }, { id: 'desc' }]
+            : { id: 'desc' },
         skip: q.skip,
         take: q.take,
       }),
@@ -476,8 +524,9 @@ export class ClubSubscriptionsService {
    * user or everyone. The server owns this scope so changing query parameters in the browser
    * cannot reveal another cashier's activity.
    */
-  async dailyCashierReport(user: JwtUser, requestedUserId?: string) {
+  async dailyCashierReport(user: JwtUser, requestedUserId?: string, gender?: string) {
     const today = localDateString();
+    const memberGender = this.branchScope.resolveMemberGenderRequest(user, gender);
     const isSystemAdmin = await this.permissions.isSuperAdmin(user.sub);
     const parsedUserId = Number(requestedUserId);
     const selectedUserId =
@@ -496,11 +545,13 @@ export class ClubSubscriptionsService {
       transferred_credit_amount: 0,
       ...(selectedUserId != null ? { created_by: selectedUserId } : {}),
       ...(allowedBranchIds ? { branch_id: { in: allowedBranchIds } } : {}),
+      ...(memberGender ? { AND: [subscriptionGenderWhere(memberGender)] } : {}),
     };
     const receiptWhere: Prisma.club_receiptsWhereInput = {
       receipt_date: today,
       status: { in: ['مدفوعة', 'paid'] },
       ...(selectedUserId != null ? { created_by: selectedUserId } : {}),
+      ...(memberGender ? { AND: [receiptGenderWhere(memberGender)] } : {}),
       ...(allowedBranchIds
         ? {
             OR: [
@@ -582,7 +633,7 @@ export class ClubSubscriptionsService {
    * or renewal may be collected by a different user than the one who opened the subscription.
    */
   async userAnalytics(
-    q: { startDate?: string; endDate?: string; branch?: string },
+    q: { startDate?: string; endDate?: string; branch?: string; gender?: string },
     user?: JwtUser,
   ) {
     const today = localDateString();
@@ -591,19 +642,24 @@ export class ClubSubscriptionsService {
     assertDateOrder(startDate, endDate);
 
     const branchIds = this.branchScope.resolveListFilter(user, q.branch ?? null);
+    const memberGender = this.branchScope.resolveMemberGenderRequest(user, q.gender);
     const subscriptionWhere: Prisma.club_subscriptionsWhereInput = {
       created_by: { not: null },
       registration_date: { gte: startDate, lte: endDate },
       // Keep non-cash member-to-member transfers out of sales/user-performance metrics.
       transferred_credit_amount: 0,
       ...(branchIds ? { branch_id: { in: branchIds } } : {}),
+      ...(memberGender ? { AND: [subscriptionGenderWhere(memberGender)] } : {}),
     };
     const receiptWhere: Prisma.club_receiptsWhereInput = {
       created_by: { not: null },
       receipt_date: { gte: startDate, lte: endDate },
       status: { in: ['مدفوعة', 'paid'] },
       subscription: {
-        is: branchIds ? { branch_id: { in: branchIds } } : {},
+        is: {
+          ...(branchIds ? { branch_id: { in: branchIds } } : {}),
+          ...(memberGender ? { AND: [subscriptionGenderWhere(memberGender)] } : {}),
+        },
       },
     };
 
@@ -951,6 +1007,17 @@ export class ClubSubscriptionsService {
           matrix,
         });
       }
+      let offerExtraDays = 0;
+      if (data.usePromotion) {
+        // The offer is for the whole package, like MetaFit: a part of a sessions package is sold at its normal price.
+        if (type.is_linked_to_sessions && sessionsCount !== Number(type.sessions_count)) {
+          throw new BadRequestException('العرض الخاص متاح على الباقة كاملة فقط');
+        }
+        const offer = resolveSalePromotion(type, localDateString());
+        subscriptionValue = offer.price;
+        if (offer.sessionsCount != null) sessionsCount = offer.sessionsCount;
+        offerExtraDays = offer.extraDays;
+      }
       data = {
         ...data,
         customerName: data.customerName ?? member?.name,
@@ -959,7 +1026,7 @@ export class ClubSubscriptionsService {
         subscriptionStartDate: data.startDate,
         subscriptionEndDate: resolveSubscriptionEndDate(
           data.startDate,
-          type.days,
+          type.days + offerExtraDays,
           type.is_linked_to_sessions,
         ),
         isLinkedToSessions: type.is_linked_to_sessions,
@@ -1248,6 +1315,7 @@ export class ClubSubscriptionsService {
     this.assertBranchAccess(user, existing.branch_id);
     // Reception sheet: subscriptions can be added, never edited or deleted, from the desk.
     if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه تعديل أو حذف الاشتراكات');
+    assertManagerMayModify(user);
 
     if (dto.pointsToRedeem !== undefined) {
       throw new BadRequestException('لا يمكن تعديل النقاط المستبدلة بعد إنشاء الاشتراك');
@@ -1507,6 +1575,7 @@ export class ClubSubscriptionsService {
     this.assertBranchAccess(user, existing.branch_id);
     // Reception sheet: subscriptions can be added, never edited or deleted, from the desk.
     if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه تعديل أو حذف الاشتراكات');
+    assertManagerMayModify(user);
 
     // A subscription with financial history (receipts) or an active/completed refund must not be
     // hard-deleted — deleting would orphan GL entries and drop the audit trail. Direct to refund.
@@ -1689,7 +1758,7 @@ export class ClubSubscriptionsService {
       after: { paymentAmount, remainingAmount: toNum(updated.remaining_amount), receiptNumber },
     });
 
-    return { subscription: this.mapSub(updated), paymentAmount };
+    return { subscription: this.mapSub(updated), paymentAmount, receiptNumber };
   }
 
   async processWaiver(
@@ -1760,8 +1829,11 @@ export class ClubSubscriptionsService {
     dateTo?: string;
     branch?: string;
     search?: string;
+    gender?: string;
   }, user?: JwtUser) {
     const and: Prisma.club_subscription_waiversWhereInput[] = [];
+    const audience = this.subscriptionAudienceFilter(user, query?.gender);
+    if (audience) and.push({ subscription: { is: audience } });
     if (query?.dateFrom || query?.dateTo) {
       and.push({
         waiver_date: {
@@ -1892,6 +1964,8 @@ export class ClubSubscriptionsService {
           subscription_type_id: sub.subscription_type_id,
           special_class_type_id: sub.special_class_type_id,
           subscription_type: sub.subscription_type,
+          // a freeze on the original later moves this renewal with it (freeze-chain.ts)
+          renewed_from_subscription_id: sub.id,
           subscription_start_date: newStart,
           subscription_end_date: newEnd,
           subscription_value: sub.subscription_value,
@@ -2067,13 +2141,20 @@ export class ClubSubscriptionsService {
           (sub.sessions_count == null || (sub.sessions_used ?? 0) < sub.sessions_count)
         : sub.subscription_end_date >= today);
 
+    // A subscription never switches a member off: is_active=false is what the members page lists
+    // as blocked, so a member whose package starts later vanished from the list and search.
+    let reactivate = false;
+    if (active) {
+      const member = await this.prisma.club_members.findUnique({ where: { id: sub.member_id }, select: { is_active: true, is_blocked: true } });
+      reactivate = !!member && !member.is_active && !member.is_blocked;
+    }
     await this.prisma.club_members.update({
       where: { id: sub.member_id },
       data: {
         start_date: sub.subscription_start_date,
         // Don't stamp the legacy open-ended sentinel onto the member profile.
         ...(openEnded ? {} : { end_date: sub.subscription_end_date }),
-        is_active: active,
+        ...(reactivate ? { is_active: true } : {}),
         ...(membershipTypeId != null ? { membership_type_id: membershipTypeId } : {}),
       },
     });
@@ -2096,9 +2177,22 @@ export class ClubSubscriptionsService {
     if (sub.status === 'frozen') {
       throw new BadRequestException('الاشتراك مجمّد بالفعل');
     }
-    // Only a currently date-active subscription can be frozen.
-    if (deriveSubStatus(sub.subscription_start_date, sub.subscription_end_date) !== 'active') {
-      throw new BadRequestException('لا يمكن تجميد اشتراك غير نشط');
+    // A subscription synced from the old system is overwritten from there every 5 minutes (status
+    // and end date), so a freeze made here would be undone: while the old system is in use it is
+    // frozen there and the sync brings the freeze over.
+    if (isLegacySubscription(sub)) {
+      throw new BadRequestException('الاشتراك ده جاي من السيستم القديم؛ الإيقاف بيتعمل من هناك والمزامنة بتنقله هنا خلال 5 دقايق');
+    }
+    // Only a running subscription can be frozen: a session package with no sessions left counts as
+    // ended, like in the reception and entitlement (session-aware status).
+    if (deriveSessionAwareStatus({
+      startDate: sub.subscription_start_date,
+      endDate: sub.subscription_end_date,
+      isLinkedToSessions: sub.is_linked_to_sessions,
+      sessionsCount: sub.sessions_count,
+      sessionsUsed: sub.sessions_used,
+    }) !== 'active') {
+      throw new BadRequestException('لا يمكن تجميد اشتراك غير نشط (منتهي أو خلصت حصصه)');
     }
     const existingFreeze = await this.prisma.club_subscription_freezes.findFirst({
       where: { subscription_id: id, is_active: true },
@@ -2107,28 +2201,22 @@ export class ClubSubscriptionsService {
       throw new BadRequestException('يوجد تجميد نشط لهذا الاشتراك بالفعل');
     }
 
-    if (sub.subscription_type_id) {
-      const type = await this.prisma.club_subscription_types.findUnique({
-        where: { id: sub.subscription_type_id },
-      });
-      if (type && !type.is_linked_to_freeze) {
-        throw new BadRequestException('نوع الاشتراك لا يدعم التجميد');
-      }
-      // freeze_days on the package = max number of freeze times (not total freeze days).
-      if (type?.freeze_days != null) {
-        const usedCount = await this.prisma.club_subscription_freezes.count({
-          where: { subscription_id: id },
-        });
-        if (usedCount >= type.freeze_days) {
-          throw new BadRequestException(
-            `تم استنفاذ عدد مرات التجميد المسموح بها (${type.freeze_days})`,
-          );
-        }
-      }
-    }
-
     const today = localDateString();
     const startDate = freezeStartDate || today;
+    // A freeze may start up to 30 days back (the member stopped coming without telling) or be
+    // booked up to 90 days ahead; a booked one waits and the daily job starts it on its day.
+    if (startDate < addDays(today, -FREEZE_BACKDATE_DAYS)) {
+      throw new BadRequestException(`بداية الإيقاف ممكن ترجع لورا ${FREEZE_BACKDATE_DAYS} يوم بالكتير`);
+    }
+    if (startDate > addDays(today, FREEZE_AHEAD_DAYS)) {
+      throw new BadRequestException(`الإيقاف ممكن يتحجز قبلها بـ ${FREEZE_AHEAD_DAYS} يوم بالكتير`);
+    }
+    if (startDate < sub.subscription_start_date) {
+      throw new BadRequestException('بداية الإيقاف قبل بداية الاشتراك');
+    }
+    if (!isOpenEndedEndDate(sub.subscription_end_date) && startDate > sub.subscription_end_date) {
+      throw new BadRequestException('بداية الإيقاف بعد نهاية الاشتراك');
+    }
     const endDate = freezeEndDate || (
       days != null && Number.isFinite(Number(days)) && Number(days) > 0
         ? addDays(startDate, Math.floor(Number(days)))
@@ -2142,10 +2230,22 @@ export class ClubSubscriptionsService {
     if (plannedDays < 1) {
       throw new BadRequestException('مدة التجميد يجب أن تكون يومًا واحدًا على الأقل');
     }
-    const newEnd = isOpenEndedEndDate(sub.subscription_end_date)
-      ? sub.subscription_end_date
-      : addDays(sub.subscription_end_date, plannedDays);
+    if (startDate < today) {
+      // Backdated: only if the member really did not come on this subscription since then.
+      const visit = await this.prisma.club_attendance.findFirst({
+        where: { subscription_id: id, attendance_date: { gte: startDate } },
+        select: { attendance_date: true },
+      });
+      if (visit) throw new BadRequestException(`العضو سجّل حضور يوم ${visit.attendance_date}؛ بداية الإيقاف لازم تكون بعده`);
+    }
+    const scheduled = startDate > today;
     const row = await this.prisma.$transaction(async (tx) => {
+      // Two desks freezing the same subscription queue here, so the balance is checked once each.
+      await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${id} FOR UPDATE`;
+      const open = await tx.club_subscription_freezes.findMany({ where: { subscription_id: id, OR: [{ is_active: true }, { is_active: false, actual_days: null }] }, select: { id: true, is_active: true } });
+      if (open.some((f) => f.is_active)) throw new BadRequestException('يوجد تجميد نشط لهذا الاشتراك بالفعل');
+      if (open.length) throw new BadRequestException('فيه إيقاف محجوز للاشتراك ده؛ عدّله أو امسحه الأول');
+      assertFreezeFits(await freezeAllowance(tx, sub), plannedDays);
       await tx.club_subscription_freezes.create({
         data: {
           subscription_id: id,
@@ -2154,30 +2254,103 @@ export class ClubSubscriptionsService {
           planned_days: plannedDays,
           original_end_date: sub.subscription_end_date,
           reason: reason ?? null,
-          is_active: true,
+          // booked = not active and no actual days yet; the daily job starts it on its day
+          is_active: !scheduled,
           branch_id: sub.branch_id,
           created_by: userId ?? null,
         },
       });
-      return tx.club_subscriptions.update({
-        where: { id },
-        // The extension is posted immediately, so the end date is always correct even while
-        // the subscription is still stopped.
-        data: { status: 'frozen', subscription_end_date: newEnd },
-      });
+      if (scheduled) return sub;
+      return this.applyFreezeStart(tx, sub, plannedDays);
     });
 
     await this.audit.log({
       entityType: 'club_subscription',
       entityId: id,
-      action: 'freeze',
+      action: scheduled ? 'freeze_scheduled' : 'freeze',
       actorUserId: userId,
       branchId: sub.branch_id,
       before: { status: sub.status, subscriptionEndDate: sub.subscription_end_date },
-      after: { status: 'frozen', freezeStartDate: startDate, freezeEndDate: endDate, subscriptionEndDate: newEnd, plannedDays, reason },
+      after: { status: row.status, freezeStartDate: startDate, freezeEndDate: endDate, subscriptionEndDate: row.subscription_end_date, plannedDays, reason, scheduled },
     });
 
     return this.mapSub(row);
+  }
+
+  /**
+   * A freeze starts: the subscription is «frozen» and its end date moves by the freeze days at
+   * once (Noamany's rule), and the renewals waiting after it move by the same days.
+   */
+  private async applyFreezeStart(tx: Prisma.TransactionClient, sub: club_subscriptions, plannedDays: number) {
+    const newEnd = isOpenEndedEndDate(sub.subscription_end_date)
+      ? sub.subscription_end_date
+      : addDays(sub.subscription_end_date, plannedDays);
+    await shiftRenewals(tx, sub, sub.subscription_end_date, plannedDays);
+    return tx.club_subscriptions.update({
+      where: { id: sub.id },
+      data: { status: 'frozen', subscription_end_date: newEnd },
+    });
+  }
+
+  /** Starts the freezes booked for today or earlier (daily job, before releasing finished ones). */
+  async startDueFreezes() {
+    const today = localDateString();
+    const due = await this.prisma.club_subscription_freezes.findMany({
+      where: { is_active: false, actual_days: null, freeze_start_date: { lte: today } },
+      orderBy: { id: 'asc' },
+    });
+    let started = 0;
+    for (const freeze of due) {
+      try {
+        const row = await this.prisma.$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${freeze.subscription_id} FOR UPDATE`;
+          const sub = await tx.club_subscriptions.findUnique({ where: { id: freeze.subscription_id } });
+          if (!sub) return null;
+          const running = await tx.club_subscription_freezes.findFirst({ where: { subscription_id: sub.id, is_active: true }, select: { id: true } });
+          if (running || sub.status === 'frozen') {
+            // Cannot start (another freeze is running): drop the booking.
+            await tx.club_subscription_freezes.update({ where: { id: freeze.id }, data: { actual_days: 0, freeze_end_date: freeze.freeze_start_date } });
+            return null;
+          }
+          await tx.club_subscription_freezes.update({ where: { id: freeze.id }, data: { is_active: true, original_end_date: sub.subscription_end_date } });
+          return this.applyFreezeStart(tx, sub, freeze.planned_days);
+        });
+        if (row) {
+          started += 1;
+          if (row.member_id) await this.syncMemberProfileFromSubscription(row);
+        }
+      } catch (error) {
+        freezeLog.warn(`Booked freeze ${freeze.id} could not start: ${(error as Error).message}`);
+      }
+    }
+    return started;
+  }
+
+  /** The subscription's freeze balance and history, for the freeze dialog. */
+  async freezePreview(id: number, user?: JwtUser) {
+    const sub = await this.prisma.club_subscriptions.findUnique({ where: { id } });
+    if (!sub) throw new NotFoundException('الاشتراك غير موجود');
+    this.assertBranchAccess(user, sub.branch_id);
+    const allowance = await freezeAllowance(this.prisma, sub);
+    // Freezes of a subscription synced from the old system are kept there (the sync would undo an edit).
+    const legacy = isLegacySubscription(sub);
+    let spent = 0;
+    const history = allowance.history.map((row) => {
+      const days = allowance.daysOf(row);
+      spent += days;
+      return {
+        id: row.id, startDate: row.freeze_start_date, endDate: row.freeze_end_date, days,
+        status: row.is_active ? 'active' : row.actual_days == null ? 'scheduled' : 'ended', reason: row.reason,
+        editable: !legacy,
+        remainingDaysAfter: allowance.totalDays == null ? null : Math.max(0, allowance.totalDays - spent),
+      };
+    }).reverse();
+    return {
+      allowed: allowance.allowed,
+      totalTimes: allowance.totalTimes, usedTimes: allowance.usedTimes, remainingTimes: allowance.remainingTimes,
+      totalDays: allowance.totalDays, usedDays: allowance.usedDays, remainingDays: allowance.remainingDays,
+      history,
+    };
   }
 
   /** A freeze may be adjusted only while today's date is inside its configured period. */
@@ -2202,10 +2375,19 @@ export class ClubSubscriptionsService {
       ? sub.subscription_end_date
       : addDays(sub.subscription_end_date, delta);
     const row = await this.prisma.$transaction(async (tx) => {
+      if (delta > 0) {
+        await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${id} FOR UPDATE`;
+        // Without this freeze's own days, the longer freeze must still fit the days limit.
+        const allowance = await freezeAllowance(tx, sub, freeze.id);
+        if (allowance.remainingDays != null && newDays > allowance.remainingDays) {
+          throw new BadRequestException(`المتبقي من رصيد التجميد ${allowance.remainingDays} يوم فقط`);
+        }
+      }
       await tx.club_subscription_freezes.update({
         where: { id: freeze.id },
         data: { freeze_end_date: freezeEndDate, planned_days: newDays, ...(reason !== undefined ? { reason: reason || null } : {}) },
       });
+      await shiftRenewals(tx, sub, sub.subscription_end_date, delta);
       return tx.club_subscriptions.update({ where: { id }, data: { subscription_end_date: newEnd } });
     });
     await this.audit.log({ entityType: 'club_subscription', entityId: id, action: 'freeze_update', actorUserId: userId, branchId: sub.branch_id,
@@ -2214,12 +2396,14 @@ export class ClubSubscriptionsService {
     return this.mapSub(row);
   }
 
-  /** Releases date-based freezes after their final stopped day. Their end-date extension was
+  /** Releases date-based freezes on the day the member is back (freeze_end_date). Their end-date extension was
    * already applied at creation, so this only restores the normal subscription status. */
   async releaseFinishedFreezes() {
     const today = localDateString();
     const freezes = await this.prisma.club_subscription_freezes.findMany({
-      where: { is_active: true, freeze_end_date: { lt: today } },
+      // freeze_end_date = start + days = the day the member is back (the subscription was extended by
+      // exactly those days), so the freeze ends ON that day, not the day after (lost a day before).
+      where: { is_active: true, freeze_end_date: { lte: today } },
       include: { subscription: true },
     });
     for (const freeze of freezes) {
@@ -2277,6 +2461,7 @@ export class ClubSubscriptionsService {
         where: { id: freeze.id },
         data: { is_active: false, freeze_end_date: today, actual_days: actualDays },
       });
+      await shiftRenewals(tx, sub, sub.subscription_end_date, -unusedDays);
       return tx.club_subscriptions.update({
         where: { id },
         data: { subscription_end_date: newEnd, status: newStatus },
@@ -2294,6 +2479,103 @@ export class ClubSubscriptionsService {
     });
 
     return this.mapSub(row);
+  }
+
+  private async loadEditableFreeze(tx: Prisma.TransactionClient, id: number, freezeId: number, user?: JwtUser) {
+    await tx.$queryRaw`SELECT id FROM club_subscriptions WHERE id = ${id} FOR UPDATE`;
+    const sub = await tx.club_subscriptions.findUnique({ where: { id } });
+    if (!sub) throw new NotFoundException('الاشتراك غير موجود');
+    this.assertBranchAccess(user, sub.branch_id);
+    if (isLegacySubscription(sub)) {
+      throw new BadRequestException('الاشتراك ده جاي من السيستم القديم؛ إيقافاته بتتعدل من هناك والمزامنة بتنقلها');
+    }
+    const freeze = await tx.club_subscription_freezes.findFirst({ where: { id: freezeId, subscription_id: id } });
+    if (!freeze) throw new NotFoundException('الإيقاف غير موجود');
+    const others = await tx.club_subscription_freezes.count({
+      where: { subscription_id: id, id: { not: freezeId }, OR: [{ is_active: true }, { is_active: false, actual_days: null }] },
+    });
+    return { sub, freeze, othersOpen: others > 0 };
+  }
+
+  /**
+   * Change how many days a freeze lasts (client, 22 Nov). Booked: new planned days. Running: the
+   * subscription end and the waiting renewals move by the difference, and a freeze shortened to
+   * end today or earlier ends now. Ended: the end date moves by the difference (not past today).
+   */
+  async editFreezeDays(id: number, freezeId: number, days: number, userId?: number, user?: JwtUser) {
+    if (!Number.isInteger(days) || days < 1) throw new BadRequestException('أيام الإيقاف لازم تكون رقم صحيح أكبر من صفر');
+    const today = localDateString();
+    const result = await this.prisma.$transaction(async (tx) => {
+      const { sub, freeze, othersOpen } = await this.loadEditableFreeze(tx, id, freezeId, user);
+      const scheduled = isScheduledFreeze(freeze);
+      const current = Math.max(0, freeze.is_active || scheduled ? freeze.planned_days : freeze.actual_days ?? freeze.planned_days);
+      const delta = days - current;
+      const freezeEnd = addDays(freeze.freeze_start_date, days);
+      if (delta > 0) {
+        const allowance = await freezeAllowance(tx, sub, freeze.id);
+        if (allowance.remainingDays != null && days > allowance.remainingDays) {
+          throw new BadRequestException(`المتبقي من رصيد الإيقاف ${allowance.remainingDays} يوم بس`);
+        }
+      }
+      if (scheduled) {
+        await tx.club_subscription_freezes.update({ where: { id: freeze.id }, data: { planned_days: days, freeze_end_date: freezeEnd } });
+        return { sub, row: sub, delta, kind: 'scheduled' };
+      }
+      if (!freeze.is_active && othersOpen) {
+        throw new BadRequestException('فيه إيقاف جاري أو محجوز؛ استنى لما يخلص قبل ما تعدّل إيقاف قديم');
+      }
+      if (!freeze.is_active && freezeEnd > today) {
+        throw new BadRequestException('الإيقاف القديم مينفعش يخلص بعد النهارده؛ سجّل إيقاف جديد للأيام الجاية');
+      }
+      const newEnd = isOpenEndedEndDate(sub.subscription_end_date) ? sub.subscription_end_date : addDays(sub.subscription_end_date, delta);
+      await shiftRenewals(tx, sub, sub.subscription_end_date, delta);
+      const endsNow = freeze.is_active && freezeEnd <= today;
+      await tx.club_subscription_freezes.update({
+        where: { id: freeze.id },
+        data: freeze.is_active
+          ? { planned_days: days, freeze_end_date: freezeEnd, ...(endsNow ? { is_active: false, actual_days: days } : {}) }
+          : { planned_days: days, actual_days: days, freeze_end_date: freezeEnd },
+      });
+      const status = freeze.is_active && !endsNow ? 'frozen' : periodStatus(sub, newEnd);
+      const row = await tx.club_subscriptions.update({ where: { id }, data: { subscription_end_date: newEnd, status } });
+      return { sub, row, delta, kind: freeze.is_active ? 'active' : 'ended' };
+    });
+    if (result.row.member_id) await this.syncMemberProfileFromSubscription(result.row);
+    await this.audit.log({
+      entityType: 'club_subscription', entityId: id, action: 'freeze_edit_days', actorUserId: userId, branchId: result.sub.branch_id,
+      before: { subscriptionEndDate: result.sub.subscription_end_date }, after: { freezeId, days, delta: result.delta, kind: result.kind, subscriptionEndDate: result.row.subscription_end_date },
+    });
+    return this.mapSub(result.row);
+  }
+
+  /**
+   * Remove a freeze as if it never happened: a booked one is dropped; a running one ends and its
+   * days come off the end date; an ended one gives its days back. Waiting renewals move back too.
+   */
+  async deleteFreeze(id: number, freezeId: number, userId?: number, user?: JwtUser) {
+    const result = await this.prisma.$transaction(async (tx) => {
+      const { sub, freeze, othersOpen } = await this.loadEditableFreeze(tx, id, freezeId, user);
+      if (isScheduledFreeze(freeze)) {
+        await tx.club_subscription_freezes.delete({ where: { id: freeze.id } });
+        return { sub, row: sub, days: 0, kind: 'scheduled' };
+      }
+      if (!freeze.is_active && othersOpen) {
+        throw new BadRequestException('فيه إيقاف جاري أو محجوز؛ استنى لما يخلص قبل ما تمسح إيقاف قديم');
+      }
+      const days = Math.max(0, freeze.is_active ? freeze.planned_days : freeze.actual_days ?? freeze.planned_days);
+      const newEnd = isOpenEndedEndDate(sub.subscription_end_date) ? sub.subscription_end_date : addDays(sub.subscription_end_date, -days);
+      await shiftRenewals(tx, sub, sub.subscription_end_date, -days);
+      await tx.club_subscription_freezes.delete({ where: { id: freeze.id } });
+      const row = await tx.club_subscriptions.update({ where: { id }, data: { subscription_end_date: newEnd, status: periodStatus(sub, newEnd) } });
+      return { sub, row, days, kind: freeze.is_active ? 'active' : 'ended' };
+    });
+    if (result.row.member_id) await this.syncMemberProfileFromSubscription(result.row);
+    await this.audit.log({
+      entityType: 'club_subscription', entityId: id, action: 'freeze_delete', actorUserId: userId, branchId: result.sub.branch_id,
+      before: { status: result.sub.status, subscriptionEndDate: result.sub.subscription_end_date },
+      after: { freezeId, kind: result.kind, daysReturned: result.days, status: result.row.status, subscriptionEndDate: result.row.subscription_end_date },
+    });
+    return this.mapSub(result.row);
   }
 
   async transferMember(id: number, memberId: number, user?: JwtUser) {
@@ -2329,13 +2611,13 @@ export class ClubSubscriptionsService {
     return this.mapSub(row);
   }
 
-  async statistics(isSpecial?: string, user?: JwtUser, dateFrom?: string, dateTo?: string) {
+  async statistics(isSpecial?: string, user?: JwtUser, dateFrom?: string, dateTo?: string, gender?: string) {
     const and: Prisma.club_subscriptionsWhereInput[] = [
       this.visibleMemberSubscriptionFilter(),
     ];
     const scope = this.branchScope.resolveListFilter(user, null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
-    const audience = this.subscriptionAudienceFilter(user);
+    const audience = this.subscriptionAudienceFilter(user, gender);
     if (audience) and.push(audience);
     if (isSpecial === 'true' || isSpecial === '1') and.push(this.specialSubscriptionFilter());
     if (isSpecial === 'false' || isSpecial === '0') {
@@ -2404,6 +2686,7 @@ export class ClubSubscriptionsService {
     branch?: string;
     search?: string;
     dateField?: string;
+    gender?: string;
   }, user?: JwtUser) {
     const and: Prisma.club_subscriptionsWhereInput[] = [
       this.visibleMemberSubscriptionFilter(),
@@ -2412,7 +2695,7 @@ export class ClubSubscriptionsService {
     if (query.branch && query.branch !== 'all') and.push({ branch_id: Number(query.branch) });
     const scope = this.branchScope.resolveListFilter(user, query.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
-    const audience = this.subscriptionAudienceFilter(user);
+    const audience = this.subscriptionAudienceFilter(user, query.gender);
     if (audience) and.push(audience);
     // Reception sees only today's outstanding amounts.
     if (isReceptionEmployee(user)) and.push({ registration_date: localDateString() });
@@ -2459,7 +2742,7 @@ export class ClubSubscriptionsService {
     };
   }
 
-  async expiredReport(query: { branch?: string; search?: string; page?: string; pageSize?: string }, user?: JwtUser) {
+  async expiredReport(query: { branch?: string; search?: string; page?: string; pageSize?: string; gender?: string }, user?: JwtUser) {
     const and: Prisma.club_subscriptionsWhereInput[] = [
       // Do this in SQL rather than loading the complete subscription history and filtering it
       // in Node. The report otherwise competes with new-subscription transactions for DB capacity.
@@ -2468,7 +2751,7 @@ export class ClubSubscriptionsService {
     if (query.branch && query.branch !== 'all') and.push({ branch_id: Number(query.branch) });
     const scope = this.branchScope.resolveListFilter(user, query.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
-    const audience = this.subscriptionAudienceFilter(user);
+    const audience = this.subscriptionAudienceFilter(user, query.gender);
     if (audience) and.push(audience);
     if (query.search?.trim()) {
       const search = query.search.trim();

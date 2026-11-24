@@ -6,6 +6,8 @@ export interface AuthUser {
   branch: number;
   branch_name: string | null;
   man_women_type: number;
+  /** Men/women section the club screens are locked to (from /auth/me); null = both sections. */
+  member_gender?: 'male' | 'female' | null;
   name: string | null;
   image: string | null;
   job_title: string | null;
@@ -13,6 +15,10 @@ export interface AuthUser {
   trainer_id: number | null;
   /** Level 1 or an active RBAC super-admin role (system-wide authority). */
   is_super_admin?: boolean;
+  /** employees.id behind this login (from /auth/me) — what every sales dropdown is keyed by. */
+  employeeId?: number | null;
+  /** The login is a sales specialist (toggle or job title): sales screens lock attribution to them. */
+  isSalesRep?: boolean;
 }
 
 export interface MenuNode {

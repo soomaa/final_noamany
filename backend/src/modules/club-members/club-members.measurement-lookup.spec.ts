@@ -18,16 +18,20 @@ describe('measurement operation member lookup', () => {
       if (where.AND.some((filter: any) => filter.OR?.some((clause: any) => clause.phone?.equals))) return Promise.resolve([]);
       return Promise.resolve(partials);
     });
-    const service = new ClubMembersService({ club_members: { findMany, findFirst: jest.fn().mockResolvedValue(exact) } } as never,
+    const findFirst = jest.fn().mockResolvedValue(exact);
+    const service = new ClubMembersService({ club_members: { findMany, findFirst } } as never,
       {} as never, new BranchScopeService(), {} as never, {} as never, { siblingBranchIds: jest.fn().mockResolvedValue([3, 7]) });
     const controller = new ClubMembersController(service);
     const user = { sub: 10, level: 2, branch: operatorBranch, job_title: 'موظف استقبال', man_women_type: 3 } as never;
     const hits = await controller.measurementOperationLookup('b868', undefined, user);
-    expect(hits[0]).toMatchObject({ id: 42, memberCode: 'B868', branchId: memberBranch });
-    expect(hits).toHaveLength(20);
-    const branchFilter = findMany.mock.calls[0][0].where.AND.find((filter: any) => filter.branch_id);
+    // An exact code is resolved by one indexed equality lookup across the group; the broad search is skipped.
+    expect(hits).toEqual([expect.objectContaining({ id: 42, memberCode: 'B868', branchId: memberBranch })]);
+    expect(findMany).not.toHaveBeenCalled();
+    const exactQuery = findFirst.mock.calls[0][0].where.AND;
+    expect(exactQuery).toContainEqual({ member_code: { equals: 'B868' } }); // the controller upper-cases typed codes
+    const branchFilter = exactQuery.find((filter: any) => filter.branch_id);
     expect(new Set(branchFilter.branch_id.in)).toEqual(new Set([3, 7]));
-    expect(findMany.mock.calls[0][0].where.AND.some((filter: any) => filter.created_at)).toBe(false);
+    expect(exactQuery.some((filter: any) => filter.created_at)).toBe(false);
     await expect(controller.measurementOperationMember(42, user)).resolves.toMatchObject({ id: 42, branchId: memberBranch });
   });
 

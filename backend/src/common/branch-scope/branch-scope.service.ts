@@ -1,3 +1,4 @@
+import { managerKind, managerSection } from '../utils/manager-scope.util';
 import { ForbiddenException, Injectable } from "@nestjs/common";
 import { JwtUser } from "../types/jwt-user";
 import { isSystemAdmin } from '../utils/system-admin.util';
@@ -24,29 +25,57 @@ export class BranchScopeService {
    * constraint, not a UI default. System administrators keep their existing
    * unrestricted audience.
    */
-  memberGenderFilter(user: JwtUser | undefined | null): 'male' | 'female' | null {
+  /**
+   * The men/women section a staff member's screens OPEN on (employees.emp_type: 1/0 men, 2 women,
+   * 3 both, or an active section exception). Only a default: since 22 Nov the client wants a
+   * حريمي/رجالي employee to see their own section first but still choose «الكل», and every search
+   * (code, name, phone), member file and check-in to reach all members.
+   */
+  defaultMemberSection(user: JwtUser | undefined | null): 'male' | 'female' | null {
     if (!user || isSystemAdmin(user)) return null;
+    // مشرف إدارة حريمي / رجالي: the section is in the job title (client, 22 Nov).
+    if (managerKind(user) === 'section') return managerSection(user);
     if (user.member_sections?.length) {
       if (user.member_sections.includes('male') && user.member_sections.includes('female')) return null;
       return user.member_sections[0];
     }
-    // 0 is retained as men only for legacy claims. A value of 3 deliberately
-    // has no gender filter, while branch scoping still applies.
     if (user.man_women_type === 0 || user.man_women_type === 1) return 'male';
     if (user.man_women_type === 2) return 'female';
-    if (user.man_women_type === 3) return null;
-    throw new ForbiddenException('نطاق القسم غير مضبوط لهذا المستخدم');
+    return null;
   }
 
-  isMemberGenderAllowed(user: JwtUser | undefined | null, gender: string | null | undefined): boolean {
-    const required = this.memberGenderFilter(user);
-    return required === null || gender === required;
+  /**
+   * Hard men/women restriction on member data. None any more (client, 22 Nov): the section is a
+   * default filter chosen on screen, never a wall. Kept as the single switch every module calls.
+   */
+  memberGenderFilter(_user: JwtUser | undefined | null): 'male' | 'female' | null {
+    return null;
+  }
+
+  /**
+   * The men/women section a member LIST filters by: exactly what the screen asked for
+   * (`male` / `female`), or everyone (`all` / empty). The screen itself opens on the staff
+   * member's default section (defaultMemberSection) and lets them switch.
+   */
+  resolveMemberGenderRequest(
+    _user: JwtUser | undefined | null,
+    requested?: string | null,
+  ): 'male' | 'female' | null {
+    return requested === 'male' || requested === 'female' ? requested : null;
+  }
+
+  /** Any member may be served by any staff member (the section is only a screen default). */
+  isMemberGenderAllowed(_user: JwtUser | undefined | null, _gender: string | null | undefined): boolean {
+    return true;
   }
 
   /** `null` ⇒ unrestricted super-admin. `[]` ⇒ fail-closed/no branch access. */
   allowedBranchIds(user: JwtUser | undefined | null): number[] | null {
     if (!user) return [];
     if (isSystemAdmin(user)) return null; // super-admin sees everything
+    // مشرف إدارة حريمي / رجالي: one section across every branch, with the branch filter open
+    // (client permission sheet, 22 Nov).
+    if (managerKind(user) === 'section') return null;
     const base = Number(user.branch ?? 0);
     if (!Number.isInteger(base) || base <= 0) return [];
 

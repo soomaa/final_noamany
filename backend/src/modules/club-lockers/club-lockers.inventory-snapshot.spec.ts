@@ -18,7 +18,7 @@ describe('ClubLockersService inventory snapshot', () => {
       },
       { id: 12, locker_number: '11', is_available: true, subscriptions: [] },
     ]);
-    const branchScope = { isBranchAllowed: jest.fn().mockReturnValue(true) };
+    const branchScope = { isBranchAllowed: jest.fn().mockReturnValue(true), resolveMemberGenderRequest: jest.fn().mockReturnValue(null) };
     const service = new ClubLockersService({ club_lockers: { findMany } } as any, {} as any, branchScope as any, {} as any, {} as any);
 
     const result = await service.inventorySnapshot(3, user);
@@ -82,7 +82,7 @@ describe('ClubLockersService inventory snapshot', () => {
         { id: 2, locker_number: '2', is_available: true, subscriptions: [] },
       ]) } } as any,
       {} as any,
-      { isBranchAllowed: jest.fn().mockReturnValue(true) } as any,
+      { isBranchAllowed: jest.fn().mockReturnValue(true), resolveMemberGenderRequest: jest.fn().mockReturnValue(null) } as any,
       {} as any,
       {} as any,
     );

@@ -19,6 +19,7 @@ import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export interface CrudField {
   key: string;
@@ -171,7 +172,7 @@ export function SimpleCrudTab<T extends { id: number }>({
                     onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))}
                   />
                 ) : f.type === 'select' ? (
-                  <select
+                  <SearchableSelect
                     className="rounded-md border bg-background px-3 py-2 text-sm"
                     value={form[f.key] ?? ''}
                     disabled={f.disabled}
@@ -179,7 +180,7 @@ export function SimpleCrudTab<T extends { id: number }>({
                   >
                     <option value="">{ui('اختر')}</option>
                     {(f.options ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
+                  </SearchableSelect>
                 ) : (
                   <input
                     type={f.type === 'number' ? 'number' : 'text'}

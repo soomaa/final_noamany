@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { IsInt, IsOptional } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -56,14 +56,14 @@ export class ClubEventCheckinController {
   }
 
   @Get('event/:eventId')
-  async roster(@Param('eventId', ParseIntPipe) eventId: number, @CurrentUser() user: JwtUser) {
+  async roster(@Param('eventId', ParseIntPipe) eventId: number, @CurrentUser() user: JwtUser, @Query('gender') gender?: string) {
     await this.scope.assertEvent(user, eventId);
-    return this.service.roster(eventId);
+    return this.service.roster(eventId, this.scope.resolveMemberGender(user, gender));
   }
 
   @Get('event/:eventId/statistics')
-  async statistics(@Param('eventId', ParseIntPipe) eventId: number, @CurrentUser() user: JwtUser) {
+  async statistics(@Param('eventId', ParseIntPipe) eventId: number, @CurrentUser() user: JwtUser, @Query('gender') gender?: string) {
     await this.scope.assertEvent(user, eventId);
-    return this.service.statistics(eventId);
+    return this.service.statistics(eventId, this.scope.resolveMemberGender(user, gender));
   }
 }

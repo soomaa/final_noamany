@@ -71,14 +71,20 @@ describe('ClubLockersService locker subscription branch scope', () => {
     expect(del).not.toHaveBeenCalled();
   });
 
-  it('hides another section subscription from a women-only employee', async () => {
+  it('lets a women-only employee release a men section subscription in their branch', async () => {
+    const update = jest.fn();
+    const lockerUpdate = jest.fn();
     const service = makeService({
       club_locker_subscriptions: {
         findUnique: jest.fn().mockResolvedValue({ id: 40, main_branch_id: 3, gender: 'male', member_id: null, locker_id: 12 }),
-        update: jest.fn(),
+        findMany: jest.fn().mockResolvedValue([]),
+        update,
       },
+      club_lockers: { update: lockerUpdate },
     });
     await expect(service.releaseSubscription(40, { sub: 5, level: 2, branch: 3, man_women_type: 2 } as never))
-      .rejects.toBeInstanceOf(ForbiddenException);
+      .resolves.toEqual({ success: true });
+    expect(update).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 40 }, data: expect.objectContaining({ status: 'expired' }) }));
+    expect(lockerUpdate).toHaveBeenCalledWith({ where: { id: 12 }, data: { is_available: true } });
   });
 });

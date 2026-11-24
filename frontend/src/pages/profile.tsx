@@ -64,6 +64,29 @@ export function ProfilePage() {
     ['club.subscriptions:create', 'club.subscriptions.list:create', 'club.subscriptions.new:create'].some((key) => permissions.keys.includes(key))
   ));
 
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const nameValue = nameDraft ?? user?.name ?? '';
+  const nameChanged = nameDraft != null && nameDraft.trim() !== (user?.name ?? '').trim();
+  const saveName = useMutationWithToast(
+    (name: string) => api.patch('/auth/profile', { name }),
+    {
+      success: ui('تم حفظ الاسم'),
+      onSuccess: () => {
+        setNameDraft(null);
+        void bootstrap();
+      },
+    },
+  );
+  const submitName = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const name = nameValue.replace(/\s+/g, ' ').trim();
+    if (name.length < 2 || name.length > 100) {
+      toast.error(ui('يجب أن يكون الاسم من حرفين إلى 100 حرف'));
+      return;
+    }
+    saveName.mutate(name);
+  };
+
   const changePassword = useMutationWithToast(
     (values: FormValues) => api.post('/auth/change-password', values),
     { success: ui('تم تغيير كلمة المرور بنجاح'), onSuccess: () => reset() },
@@ -145,7 +168,15 @@ export function ProfilePage() {
           <Card>
             <CardHeader><CardTitle className="flex items-center gap-2 text-base"><UserRound className="size-5 text-primary" />{ui('بيانات الحساب')}</CardTitle></CardHeader>
             <CardContent className="space-y-3 text-sm">
-              <div className="flex items-center justify-between gap-4"><span className="text-muted-foreground">{ui('اسم المستخدم')}</span><span className="font-medium">{user?.name ?? '—'}</span></div>
+              <form onSubmit={submitName} className="space-y-2">
+                <label htmlFor="profile-name" className="text-muted-foreground">{ui('الاسم')}</label>
+                <div className="flex gap-2">
+                  <Input id="profile-name" maxLength={100} autoComplete="name" value={nameValue} onChange={(e) => setNameDraft(e.target.value)} />
+                  <Button type="submit" variant="brand" disabled={!nameChanged || saveName.isPending}>
+                    {saveName.isPending && <Loader2 className="size-4 animate-spin" />}{ui('حفظ')}
+                  </Button>
+                </div>
+              </form>
               <div className="flex items-center justify-between gap-4"><span className="text-muted-foreground">{ui('المسمى الوظيفي')}</span><span className="font-medium">{user?.job_title || ui('موظف')}</span></div>
               <div className="flex items-center justify-between gap-4"><span className="text-muted-foreground">{ui('الفرع')}</span><span className="font-medium">{user?.branch_name || ui('غير محدد')}</span></div>
             </CardContent>

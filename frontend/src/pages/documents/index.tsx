@@ -27,6 +27,7 @@ import { useListQuery } from '@/lib/use-list-query';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const selectCls = 'flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm';
 const DOC_TYPES = [
@@ -228,10 +229,10 @@ export function DocumentsPage() {
           <div className="grid gap-3 py-2">
             <div className="grid gap-1.5">
               <Label>{ui('الموظف')}</Label>
-              <select className={selectCls} value={form.empId} onChange={(e) => setForm((f) => ({ ...f, empId: e.target.value }))}>
+              <SearchableSelect className={selectCls} value={form.empId} onChange={(e) => setForm((f) => ({ ...f, empId: e.target.value }))}>
                 <option value="">{ui('اختر الموظف')}</option>
                 {employeeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1.5">
               <Label>{ui('عنوان المستند')}</Label>
@@ -239,10 +240,10 @@ export function DocumentsPage() {
             </div>
             <div className="grid gap-1.5">
               <Label>{ui('النوع')}</Label>
-              <select className={selectCls} value={form.docType} onChange={(e) => setForm((f) => ({ ...f, docType: e.target.value }))}>
+              <SearchableSelect className={selectCls} value={form.docType} onChange={(e) => setForm((f) => ({ ...f, docType: e.target.value }))}>
                 <option value="">—</option>
                 {DOC_TYPES.map((o) => <option key={o.value} value={o.value}>{ui(o.label)}</option>)}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1.5">
               <Label>{ui('تاريخ الانتهاء')}</Label>

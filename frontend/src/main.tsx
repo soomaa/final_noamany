@@ -7,6 +7,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
+import { UpdateBanner } from '@/components/common/update-banner';
 import { Toaster } from '@/components/ui/sonner';
 import { queryClient } from '@/lib/query';
 import { setUiStaticMap } from '@/lib/ui-static';
@@ -44,6 +45,7 @@ async function bootstrap() {
               <BrowserRouter future={{ v7_relativeSplatPath: true }}>
                 <App />
                 <Toaster />
+                <UpdateBanner />
               </BrowserRouter>
             </QueryClientProvider>
           </DirectionShell>

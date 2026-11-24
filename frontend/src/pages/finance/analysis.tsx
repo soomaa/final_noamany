@@ -13,6 +13,7 @@ import { toArabicDigits } from '@/lib/utils';
 import type { NamedEntity } from '@/types/inventory';
 import { useLocale } from '@/store/locale';
 import { FinancePageShell } from './finance-shell';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface MonthlyAnalysis {
   subscriptions: number;
@@ -136,9 +137,9 @@ export function FinanceAnalysisPage() {
       <div className="print:hidden flex flex-wrap items-end gap-4 rounded-xl border bg-card p-4">
         <div className="grid gap-1"><Label className="text-xs">{ui('من تاريخ')}</Label><Input className="nums" type="date" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} /></div>
         <div className="grid gap-1"><Label className="text-xs">{ui('إلى تاريخ')}</Label><Input className="nums" type="date" value={dateTo} onChange={(event) => setDateTo(event.target.value)} /></div>
-        <div className="grid gap-1"><Label className="text-xs">{ui('الفرع')}</Label><select className="rounded-md border bg-background px-3 py-2 text-sm" value={branchId} onChange={(event) => setBranchId(event.target.value)}><option value="all">{ui('كل الفروع')}</option>{(branches ?? []).map((branch) => <option key={branch.id} value={String(branch.id)}>{branch.name}</option>)}</select></div>
-        <div className="grid gap-1"><Label className="text-xs">{ui('فئة الكافيه')}</Label><select className="rounded-md border bg-background px-3 py-2 text-sm" value={cafeCategoryId} onChange={(event) => setCafeCategoryId(event.target.value)}><option value="all">{ui('كل الفئات')}</option>{(categories ?? []).map((category) => <option key={category.id} value={String(category.id)}>{category.nameAr}</option>)}</select></div>
-        <div className="grid gap-1"><Label className="text-xs">{ui('النوع')}</Label><select className="rounded-md border bg-background px-3 py-2 text-sm" value={gender} onChange={(event) => setGender(event.target.value)}><option value="all">{ui('الكل')}</option><option value="male">{ui('رجالي')}</option><option value="female">{ui('حريمي')}</option></select></div>
+        <div className="grid gap-1"><Label className="text-xs">{ui('الفرع')}</Label><SearchableSelect className="rounded-md border bg-background px-3 py-2 text-sm" value={branchId} onChange={(event) => setBranchId(event.target.value)}><option value="all">{ui('كل الفروع')}</option>{(branches ?? []).map((branch) => <option key={branch.id} value={String(branch.id)}>{branch.name}</option>)}</SearchableSelect></div>
+        <div className="grid gap-1"><Label className="text-xs">{ui('فئة الكافيه')}</Label><SearchableSelect className="rounded-md border bg-background px-3 py-2 text-sm" value={cafeCategoryId} onChange={(event) => setCafeCategoryId(event.target.value)}><option value="all">{ui('كل الفئات')}</option>{(categories ?? []).map((category) => <option key={category.id} value={String(category.id)}>{category.nameAr}</option>)}</SearchableSelect></div>
+        <div className="grid gap-1"><Label className="text-xs">{ui('النوع')}</Label><SearchableSelect className="rounded-md border bg-background px-3 py-2 text-sm" value={gender} onChange={(event) => setGender(event.target.value)}><option value="all">{ui('الكل')}</option><option value="male">{ui('رجالي')}</option><option value="female">{ui('حريمي')}</option></SearchableSelect></div>
         <Button variant="brand" onClick={() => void refetch()}>{ui('عرض التقرير')}</Button>
         <Button variant="outline" disabled={!data} onClick={exportCsv}><Download className="ms-1 h-4 w-4" />{ui('تصدير CSV')}</Button>
         <Button variant="outline" disabled={!data} onClick={() => window.print()}><Printer className="ms-1 h-4 w-4" />{ui('طباعة')}</Button>

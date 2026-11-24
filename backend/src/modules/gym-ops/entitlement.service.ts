@@ -220,7 +220,11 @@ export class EntitlementService {
           }) === 'active',
       );
 
-      activeSub = activeCandidates[0] ?? null;
+      // A frozen (or stored-expired) subscription must not hide another running one: freezing extends
+      // its end date, so it would sort first and deny entry although the member holds a usable plan.
+      // Only when nothing else is running is the frozen one evaluated (→ «الاشتراك مجمد»).
+      const usable = activeCandidates.filter((s) => s.status !== 'frozen' && s.status !== 'expired');
+      activeSub = usable[0] ?? activeCandidates.find((s) => s.status === 'frozen') ?? activeCandidates[0] ?? null;
     }
 
     if (requireActiveSubscription && !activeSub) {

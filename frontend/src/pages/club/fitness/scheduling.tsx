@@ -18,6 +18,7 @@ import { api, apiError } from '@/lib/api';
 import { formatTime, localDateStr, localToday } from '@/lib/formatters';
 import { cn, toArabicDigits, withAlpha } from '@/lib/utils';
 import type { ClubClassType, ClubHallRow, ClubTrainerRow } from '@/types/fitness';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type CalendarEvent = {
   sourceType: 'class' | 'event';
@@ -304,7 +305,7 @@ export function FitnessSchedulingPage({ embedded = false, onAddSpecialSubscripti
                 <div className="flex flex-wrap items-center gap-2">
                   <Button variant="brand" onClick={() => openCreate()}><CalendarPlus2 className="size-4" /> موعد جديد</Button>
                   <Button variant="outline" onClick={() => void addDefaultWeek()} disabled={saving} title="يضيف جداول المدربين الافتراضية للأسبوع المعروض فقط"><Sparkles className={cn('size-4', saving && 'animate-pulse')} /> إضافة الافتراضي</Button>
-                  <select className={`${SELECT_CLS} sm:w-40`} value={branchId} onChange={(e) => setBranchId(e.target.value)}><option value="all">كل الفروع</option>{(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
+                  <SearchableSelect className={`${SELECT_CLS} sm:w-40`} value={branchId} onChange={(e) => setBranchId(e.target.value)}><option value="all">كل الفروع</option>{(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</SearchableSelect>
                   <div className="flex rounded-xl border bg-muted/30 p-1"><Button variant={mode === 'week' ? 'secondary' : 'ghost'} size="sm" onClick={() => setMode('week')}>أسبوع</Button><Button variant={mode === 'month' ? 'secondary' : 'ghost'} size="sm" onClick={() => setMode('month')}>شهر</Button></div>
                   <div className="ms-auto flex items-center gap-1">
                     <Button variant="outline" size="icon" aria-label="الفترة السابقة" onClick={() => shift(-1)}><ChevronRight className="size-4" /></Button>
@@ -365,7 +366,7 @@ export function FitnessSchedulingPage({ embedded = false, onAddSpecialSubscripti
         <DialogContent size="lg" aria-describedby={undefined}>
           <DialogHeader><DialogTitle>إنشاء حصة</DialogTitle></DialogHeader>
           <div className="grid gap-4 py-2 sm:grid-cols-2">
-            <div className="space-y-2"><Label>نوع الحصة *</Label><select className={SELECT_CLS} value={form.classTypeId} onChange={(e) => { const type = classTypes?.find((item) => item.id === Number(e.target.value)); setForm((current) => ({ ...current, classTypeId: e.target.value, trainerId: type?.eligibleTrainerIds[0] ? String(type.eligibleTrainerIds[0]) : '', endTime: endTimeFromDuration(current.startTime, type?.defaultDurationMinutes ?? 60), price: String(type?.singleSessionPrice ?? 0) })); }}><option value="">اختر</option>{(classTypes ?? []).map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}</select></div>
+            <div className="space-y-2"><Label>نوع الحصة *</Label><SearchableSelect className={SELECT_CLS} value={form.classTypeId} onChange={(e) => { const type = classTypes?.find((item) => item.id === Number(e.target.value)); setForm((current) => ({ ...current, classTypeId: e.target.value, trainerId: type?.eligibleTrainerIds[0] ? String(type.eligibleTrainerIds[0]) : '', endTime: endTimeFromDuration(current.startTime, type?.defaultDurationMinutes ?? 60), price: String(type?.singleSessionPrice ?? 0) })); }}><option value="">اختر</option>{(classTypes ?? []).map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}</SearchableSelect></div>
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
                 <Label>الكابتن *</Label>
@@ -379,10 +380,10 @@ export function FitnessSchedulingPage({ embedded = false, onAddSpecialSubscripti
                   <UserPlus className="size-3.5" /> كابتن خارجي
                 </Button>
               </div>
-              <select className={SELECT_CLS} value={form.trainerId} onChange={(e) => setForm((f) => ({ ...f, trainerId: e.target.value }))}><option value="">اختر</option>{eligibleTrainers.map((trainer) => <option key={trainer.id} value={trainer.id}>{trainer.name}{trainer.employeeId == null ? ' — خارجي' : ''}</option>)}</select>
+              <SearchableSelect className={SELECT_CLS} value={form.trainerId} onChange={(e) => setForm((f) => ({ ...f, trainerId: e.target.value }))}><option value="">اختر</option>{eligibleTrainers.map((trainer) => <option key={trainer.id} value={trainer.id}>{trainer.name}{trainer.employeeId == null ? ' — خارجي' : ''}</option>)}</SearchableSelect>
             </div>
-            <div className="space-y-2"><Label>الفرع *</Label><select className={SELECT_CLS} value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value, hallId: '' }))}><option value="">اختر</option>{(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></div>
-            <div className="space-y-2"><Label>القاعة</Label><select className={SELECT_CLS} value={form.hallId} onChange={(e) => setForm((f) => ({ ...f, hallId: e.target.value }))}><option value="">بدون قاعة</option>{(halls ?? []).filter((hall) => !form.branchId || hall.branchId === Number(form.branchId)).map((hall) => <option key={hall.id} value={hall.id}>{hall.name}</option>)}</select></div>
+            <div className="space-y-2"><Label>الفرع *</Label><SearchableSelect className={SELECT_CLS} value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value, hallId: '' }))}><option value="">اختر</option>{(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</SearchableSelect></div>
+            <div className="space-y-2"><Label>القاعة</Label><SearchableSelect className={SELECT_CLS} value={form.hallId} onChange={(e) => setForm((f) => ({ ...f, hallId: e.target.value }))}><option value="">بدون قاعة</option>{(halls ?? []).filter((hall) => !form.branchId || hall.branchId === Number(form.branchId)).map((hall) => <option key={hall.id} value={hall.id}>{hall.name}</option>)}</SearchableSelect></div>
             <div className="space-y-2"><Label>التاريخ *</Label><Input type="date" className="nums" value={form.classDate} onChange={(e) => setForm((f) => ({ ...f, classDate: e.target.value }))} /></div>
             <div className="grid gap-2 sm:grid-cols-2"><div className="space-y-2"><Label>من</Label><Time12Input value={form.startTime} onValueChange={(value) => setForm((f) => ({ ...f, startTime: value }))} /></div><div className="space-y-2"><Label>إلى</Label><Time12Input value={form.endTime} onValueChange={(value) => setForm((f) => ({ ...f, endTime: value }))} /></div></div>
             <div className="space-y-2"><Label>عدد الأماكن</Label><Input type="number" min={1} className="nums" value={form.maxCapacity} onChange={(e) => setForm((f) => ({ ...f, maxCapacity: e.target.value }))} /></div>

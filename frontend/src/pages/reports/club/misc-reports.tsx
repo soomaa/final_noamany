@@ -12,6 +12,8 @@ import { api } from '@/lib/api';
 import { formatMoney, formatTimeFromDate } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 
 /* ============================================================================
  * تقرير حصص الاشتراكات — subscriptions linked to sessions
@@ -19,7 +21,8 @@ import { useLocale } from '@/store/locale';
 export function ClubSubscriptionSessionsReportPage() {
   const { ui } = useLocale();
   const [branch, setBranch] = useState('all');
-  const [gender, setGender] = useState('all');
+  const g = useMemberGenderFilter();
+  const gender = g.value;
   const [status, setStatus] = useState('active');
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['reports', 'club-sub-sessions', branch, gender, status],
@@ -84,8 +87,8 @@ export function ClubSubscriptionSessionsReportPage() {
       description={ui('الاشتراكات المرتبطة بعدد حصص: المسموح والمستخدم والمتبقي')}
       filters={<div className="flex flex-wrap gap-2">
         <BranchFilter value={branch} onChange={setBranch} />
-        <select aria-label={ui('الفئة')} value={gender} onChange={(event) => setGender(event.target.value)} className={selectCls}><option value="all">{ui('الكل')}</option><option value="male">{ui('رجالي')}</option><option value="female">{ui('حريمي')}</option></select>
-        <select aria-label={ui('الحالة')} value={status} onChange={(event) => setStatus(event.target.value)} className={selectCls}><option value="active">{ui('السارية حالياً')}</option><option value="all">{ui('كل الاشتراكات')}</option></select>
+        <MemberGenderSelect hideLabel value={g.value} onChange={g.setValue} locked={g.locked} />
+        <SearchableSelect aria-label={ui('الحالة')} value={status} onChange={(event) => setStatus(event.target.value)} className={selectCls}><option value="active">{ui('السارية حالياً')}</option><option value="all">{ui('كل الاشتراكات')}</option></SearchableSelect>
       </div>}
       stats={<div className="grid gap-3 sm:grid-cols-4"><ClubStatCard label={ui('العدد')} value={rows.length} /><ClubStatCard label={ui('عدد الحصص')} value={table.allowed} /><ClubStatCard label={ui('الحصص المستخدمة')} value={table.used} /><ClubStatCard label={ui('الحصص المتبقية')} value={table.remaining} /></div>}
       onExport={exportCsv}
@@ -116,6 +119,7 @@ export function ClubSalesStaffReportPage() {
   const [endDate, setEndDate] = useState(todayLocal);
   const [branch, setBranch] = useState('all');
   const [userId, setUserId] = useState('all');
+  const g = useMemberGenderFilter();
   const [search, setSearch] = useState('');
   const [summaryPage, setSummaryPage] = useState(1);
   const [detailPage, setDetailPage] = useState(1);
@@ -164,7 +168,7 @@ export function ClubSalesStaffReportPage() {
   };
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-sales-staff', startDate, endDate, branch],
+    queryKey: ['reports', 'club-sales-staff', startDate, endDate, branch, g.value],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const response = await api.get<UserAnalyticsResponse>('/club-subscriptions/user-analytics', {
@@ -172,6 +176,7 @@ export function ClubSalesStaffReportPage() {
           startDate,
           endDate,
           ...(branchId ? { branch: String(branchId) } : {}),
+          ...(g.param ? { gender: g.param } : {}),
         },
       });
       return response.data;
@@ -336,7 +341,7 @@ export function ClubSalesStaffReportPage() {
   const userFilter = (
     <div className="grid gap-1.5">
       <label className="text-xs text-muted-foreground">{ui('المستخدم')}</label>
-      <select
+      <SearchableSelect
         value={userId}
         onChange={(event) => setReportUser(event.target.value)}
         className="flex h-10 w-52 items-center rounded-md border border-input bg-background px-3 text-sm"
@@ -347,7 +352,7 @@ export function ClubSalesStaffReportPage() {
             {row.userName}
           </option>
         ))}
-      </select>
+      </SearchableSelect>
     </div>
   );
 
@@ -364,6 +369,7 @@ export function ClubSalesStaffReportPage() {
           extra={
             <>
               <BranchFilter value={branch} onChange={(value) => { setBranch(value); setSummaryPage(1); setDetailPage(1); }} />
+              <MemberGenderSelect value={g.value} onChange={(value) => { g.setValue(value); setSummaryPage(1); setDetailPage(1); }} locked={g.locked} />
               {userFilter}
             </>
           }
@@ -454,9 +460,10 @@ export function ClubAttendanceReportPage() {
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
   const [branch, setBranch] = useState('all');
+  const g = useMemberGenderFilter();
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-attendance', startDate, endDate, branch],
+    queryKey: ['reports', 'club-attendance', startDate, endDate, branch, g.value],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const data = await fetchAllReportRows<{
@@ -472,6 +479,7 @@ export function ClubAttendanceReportPage() {
         dateFrom: startDate,
         dateTo: endDate,
         ...(branchId ? { branch: String(branchId) } : {}),
+        ...(g.param ? { gender: g.param } : {}),
       });
       return { data, total: data.length };
     },
@@ -535,7 +543,12 @@ export function ClubAttendanceReportPage() {
           endDate={endDate}
           onStartChange={setStartDate}
           onEndChange={setEndDate}
-          extra={<BranchFilter value={branch} onChange={setBranch} />}
+          extra={
+            <>
+              <BranchFilter value={branch} onChange={setBranch} />
+              <MemberGenderSelect value={g.value} onChange={g.setValue} locked={g.locked} />
+            </>
+          }
         />
       }
       stats={<ClubStatCard label={ui('عدد السجلات')} value={rows.length} />}
@@ -649,7 +662,8 @@ export function ClubLockersReportPage() {
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
   const [branch, setBranch] = useState('all');
-  const [gender, setGender] = useState('all');
+  const g = useMemberGenderFilter();
+  const gender = g.value;
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['reports', 'club-lockers', startDate, endDate, branch, gender],
@@ -714,7 +728,7 @@ export function ClubLockersReportPage() {
           endDate={endDate}
           onStartChange={setStartDate}
           onEndChange={setEndDate}
-          extra={<div className="flex gap-2"><BranchFilter value={branch} onChange={setBranch} /><select className="h-10 rounded-md border bg-background px-3 text-sm" value={gender} onChange={(event) => setGender(event.target.value)}><option value="all">كل الفئات</option><option value="male">رجالي</option><option value="female">حريمي</option></select></div>}
+          extra={<div className="flex gap-2"><BranchFilter value={branch} onChange={setBranch} /><MemberGenderSelect hideLabel value={g.value} onChange={g.setValue} locked={g.locked} /></div>}
         />
       }
       stats={

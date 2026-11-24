@@ -145,8 +145,9 @@ export class ClubMembersController {
     @Query('codeFrom') codeFrom: string,
     @Query('codeTo') codeTo: string,
     @CurrentUser() user: JwtUser,
+    @Query('gender') gender?: string,
   ) {
-    return this.service.barcodeRange(codeFrom, codeTo, user);
+    return this.service.barcodeRange(codeFrom, codeTo, user, gender);
   }
 
   @Get('barcode-preview')

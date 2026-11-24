@@ -1,5 +1,7 @@
 import {
   ageOn,
+  bodyToFields,
+  fieldsToBody,
   birthdaySuffixes,
   classifyRecipients,
   displayPhone,
@@ -111,5 +113,24 @@ describe('WhatsApp campaign helpers', () => {
       { optedOut: new Set(), recentlyMessaged: new Set(), excludedMemberIds: new Set(), alreadyGreeted: new Set([1]) },
     );
     expect(rows.map((r) => r.skip)).toEqual(['already_greeted', null]);
+  });
+
+  it('keeps variables working inside a choice group', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 40; i += 1) seen.add(renderTemplate(varyTemplate('أسبوع فري {في {branch}|معانا}'), { branch: 'الجلاء' }));
+    expect([...seen].sort()).toEqual(['أسبوع فري في الجلاء', 'أسبوع فري معانا']);
+  });
+
+  it('turns fields into the stored body and old text back into fields', () => {
+    const body = fieldsToBody([
+      { label: 'التحية', options: ['أهلًا يا {first_name}', 'إزيك يا {first_name}', ''] },
+      { label: 'الختام', options: ['نورتنا | دايمًا'] },
+      { label: 'فاضي', options: [] },
+    ]);
+    expect(body).toBe('{أهلًا يا {first_name}|إزيك يا {first_name}}\nنورتنا / دايمًا');
+    expect(bodyToFields('{أهلًا|إزيك} يا {first_name}\nسطر تاني\n---\nمساء الخير يا {first_name}')).toEqual([
+      { label: 'السطر 1', options: ['أهلًا يا {first_name}', 'إزيك يا {first_name}', 'مساء الخير يا {first_name}'] },
+      { label: 'السطر 2', options: ['سطر تاني'] },
+    ]);
   });
 });

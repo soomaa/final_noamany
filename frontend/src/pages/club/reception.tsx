@@ -4,9 +4,16 @@ import {
   Ban,
   Building2,
   CheckCircle2,
+  Clock3,
+  Copy,
   CreditCard,
+  Eye,
+  EyeOff,
+  FileText,
   LogIn,
   LockKeyhole,
+  Pencil,
+  Phone,
   Plus,
   RefreshCw,
   Search,
@@ -15,6 +22,7 @@ import {
   Sun,
   Undo2,
   XCircle,
+  X as XIcon,
   Zap,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -23,8 +31,16 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Maximize2, Minimize2 } from 'lucide-react';
 import { MemberAvatar } from '@/components/club/member-avatar';
-import { ClubMemberSearchHits, preferredSearchHit, searchClubMembersUniversal } from '@/components/club/club-member-search';
+import { BlockedMemberBanner } from '@/components/club/blocked-member-flag';
+import { ClubMemberSearchHits, exactCodeHit, normalizeScannedCode, preferredSearchHit, searchClubMembersUniversal } from '@/components/club/club-member-search';
 import { ReceptionMemberProfile } from '@/components/club/reception-member-profile';
+import { ReceptionMemberAttachments, ReceptionMemberEditForm, ReceptionMemberPhotoEdit } from '@/components/club/reception-member-edit';
+import { ReceptionMemberWhatsApp } from '@/components/club/reception-member-whatsapp';
+import { WhatsAppIcon } from '@/components/club/whatsapp-icon';
+import { playEntrySound } from '@/lib/entry-sound';
+import { useSaveAndWhatsApp } from '@/hooks/use-whatsapp-templates';
+import { messageAmount } from '@/lib/whatsapp-message';
+import { ReceptionServiceAllowances } from '@/components/club/reception-service-allowances';
 import type { ClubPaymentMethod } from '@/components/club/club-payment-method-select';
 import {
   buildClubPaymentSplit,
@@ -56,6 +72,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { DialogFormSummary } from '@/components/common/dialog-form-layout';
+import { FreezeBalance, freezeDays } from '@/components/club/freeze-balance';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -66,7 +83,7 @@ import { api, apiError } from '@/lib/api';
 import { useArrayResource } from '@/lib/api-hooks';
 import { CLUB_ROUTES as CR } from '@/lib/club-routes';
 import { confirm, confirmWithPreview } from '@/lib/confirm';
-import { formatMoney, localToday } from '@/lib/formatters';
+import { formatDateTime, formatMoney, localToday } from '@/lib/formatters';
 import { subscriptionTypesForBranch } from '@/lib/club-subscription-branches';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
@@ -79,6 +96,7 @@ import type {
   EntitlementResult,
 } from '@/types/gym-ops';
 import type { ClubQuickServiceRow } from './reception-quick-services';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const GRACE_REASON_PRESETS = [
   'جلسة سماح بعد انتهاء الاشتراك',
@@ -95,6 +113,45 @@ function addDaysLocal(dateStr: string, days: number): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+
+/** Calendar days from today to a YYYY-MM-DD day (negative = in the past). */
+function daysUntil(day: string): number {
+  const d = Date.parse(`${day}T12:00:00`);
+  const now = new Date();
+  const today = Date.parse(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}T12:00:00`);
+  return Number.isNaN(d) ? 0 : Math.round((d - today) / 86_400_000);
+}
+
+/**
+ * «مجمّد منذ ١١ يوم · يرجع بعد ٤ أيام» (client, 22 Nov): how long the member has been stopped,
+ * not the start date, and when he is back.
+ */
+function frozenLabel(freeze: { startDate: string; plannedEndDate: string | null } | null | undefined): string {
+  if (!freeze) return 'مجمّد';
+  const since = -daysUntil(freeze.startDate);
+  const head = since <= 0 ? 'مجمّد من النهارده' : `مجمّد منذ ${toArabicDigits(since)} ${since === 1 ? 'يوم' : since <= 10 ? 'أيام' : 'يوم'}`;
+  const back = freeze.plannedEndDate ? daysUntil(freeze.plannedEndDate) : null;
+  return back != null && back > 0 ? `${head} · يرجع بعد ${toArabicDigits(back)} ${back === 1 ? 'يوم' : back <= 10 ? 'أيام' : 'يوم'}` : head;
+}
+
+/** «السبت ١ نوفمبر» (+ the year when it is not this year) for a YYYY-MM-DD day. */
+function formatDayLabel(day: string): string {
+  const d = new Date(`${day}T12:00:00`);
+  if (Number.isNaN(d.getTime())) return day;
+  const sameYear = d.getFullYear() === new Date().getFullYear();
+  return d.toLocaleDateString('ar-EG', { weekday: 'short', day: 'numeric', month: 'long', ...(sameYear ? {} : { year: 'numeric' }) });
+}
+
+/** Whole calendar days between a check-in time and today (0 = today). */
+function daysSince(iso: string): number {
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return 0;
+  const a = new Date(then.getFullYear(), then.getMonth(), then.getDate()).getTime();
+  const now = new Date();
+  const b = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  return Math.max(0, Math.round((b - a) / 86400000));
 }
 
 type RefundPreview = {
@@ -192,6 +249,7 @@ function EntitlementBanner({
 }
 
 
+
 function isExpiredLikeSubscription(s: ClubSubscriptionListItem) {
   const st = String(s.status ?? '').toLowerCase();
   if (st === 'expired') return true;
@@ -234,6 +292,8 @@ export function ClubReceptionPage() {
   const canBlockMember =
     can('club.members:update') ||
     can('club.reception:update');
+  // Photo and data edits from the member screen follow the members screen's own edit right.
+  const canEditMember = can('club.members:update');
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -270,12 +330,19 @@ export function ClubReceptionPage() {
   const [payMaxRemaining, setPayMaxRemaining] = useState(0);
   const [payAmount, setPayAmount] = useState('');
   const [payRows, setPayRows] = useState<ClubPaymentSplitRow[]>(singlePaymentRow());
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [editingMember, setEditingMember] = useState(false);
+  const entitlementRequestRef = useRef(0);
+  const selectedIdRef = useRef<number | null>(null);
+  const profileRef = useRef<HTMLDivElement | null>(null);
   const [freezeOpen, setFreezeOpen] = useState(false);
   const [editingFreeze, setEditingFreeze] = useState(false);
   const [freezeSubId, setFreezeSubId] = useState<number | null>(null);
   const [freezeForm, setFreezeForm] = useState({ startDate: localToday(), endDate: localToday(), reason: '' });
   const [renewOpen, setRenewOpen] = useState(false);
   const [renewSubId, setRenewSubId] = useState<number | null>(null);
+  // «حفظ وإرسال واتساب» on renewal, like the subscriptions screen.
+  const saveAndWhatsApp = useSaveAndWhatsApp();
   const [renewForm, setRenewForm] = useState({ paidAmount: '' });
   const [renewRows, setRenewRows] = useState<ClubPaymentSplitRow[]>(singlePaymentRow());
   const [refundOpen, setRefundOpen] = useState(false);
@@ -390,12 +457,15 @@ export function ClubReceptionPage() {
   /** Active / frozen first; expired (and exhausted sessions) sink to the bottom. */
   const sortedSubs = useMemo(() => {
     const list = [...(subs ?? [])];
+    // Running basic membership first, then running private / sessions / class plans under it, then
+    // frozen, upcoming and finally the expired ones (client, 22 Nov).
     const rank = (s: ClubSubscriptionListItem) => {
-      if (isExpiredLikeSubscription(s)) return 3;
+      if (isExpiredLikeSubscription(s)) return 4;
       const st = String(s.status ?? '').toLowerCase();
-      if (st === 'upcoming') return 2;
-      if (st === 'frozen') return 1;
-      return 0; // active
+      if (st === 'upcoming') return 3;
+      if (st === 'frozen') return 2;
+      if (s.isLinkedToSessions || s.isSpecial || s.specialClassTypeId != null || s.privatePackageId != null) return 1;
+      return 0; // active basic membership
     };
     list.sort((a, b) => {
       const diff = rank(a) - rank(b);
@@ -540,27 +610,37 @@ export function ClubReceptionPage() {
     enabled: paymentOpen && paySubId != null,
   });
 
-  const refreshEntitlement = async (memberId: number, branchId?: number) => {
+  const refreshEntitlement = async (memberId: number, branchId?: number): Promise<EntitlementResult | null> => {
+    // Scanning the next card while this reply is on its way: a late answer must not land on it.
+    const request = ++entitlementRequestRef.current;
     try {
       const { data } = await api.get<EntitlementResult>('/club/entitlement/validate', {
         params: { memberId, branchId: branchId ?? member?.branchId ?? undefined },
       });
+      if (request !== entitlementRequestRef.current) return null;
       setEntitlement(data);
+      return data;
     } catch {
-      setEntitlement(null);
+      if (request === entitlementRequestRef.current) setEntitlement(null);
+      return null;
     }
   };
 
   const selectMember = async (hit: ClubSearchHit) => {
+    selectedIdRef.current = hit.id;
     setSelectedId(hit.id);
+    setEditingMember(false);
     setQuery(hit.memberCode);
     setMemberOpen(true);
-    await refreshEntitlement(hit.id, hit.branchId);
+    return refreshEntitlement(hit.id, hit.branchId);
   };
 
   const closeMemberPanel = (open: boolean) => {
     setMemberOpen(open);
     if (!open) {
+        setProfileOpen(false);
+      setEditingMember(false);
+      selectedIdRef.current = null;
       setSelectedId(null);
       setEntitlement(null);
       setBlockOpen(false);
@@ -622,21 +702,76 @@ export function ClubReceptionPage() {
     }
   };
 
-  const runSearch = async () => {
-    const q = query.trim();
+  const runSearch = async (raw?: string) => {
+    // A scanner on the Arabic keyboard layout types «لآ18580» for B18580: read it back as the code.
+    const source = raw ?? query;
+    const q = normalizeScannedCode(source);
     if (q.length < 2) {
       toast.error(ct('members.enterCode'));
       return;
     }
+    if (q !== source.trim() || raw != null) setQuery(q);
     try {
       const data = await searchClubMembersUniversal(q, { withEntitlement: true, branchId: effectiveReceptionBranch || undefined });
       const hit = preferredSearchHit(data, q);
-      if (hit) await selectMember(hit);
-      else toast.error(ct('members.noMemberFound'));
+      if (hit) {
+        const scanned = exactCodeHit(data, q)?.id === hit.id;
+        const ent = await selectMember(hit);
+        // Display only (client voice note, 22 Nov): the check-in itself is done by the barcode
+        // check-in screen on its own device; this screen shows the member until the next scan.
+        // A card that cannot enter still sounds so reception notices.
+        if (scanned && ent && !ent.allowed) playEntrySound('rejected');
+      } else toast.error(ct('members.noMemberFound'));
     } catch (error) {
       toast.error(apiError(error));
     }
   };
+
+  // A card scanned while focus is not in a text box (member screen open, a button focused…) still
+  // reaches reception: a burst of keys a few ms apart ending in Enter (or a short pause) is a scan.
+  // It closes the current member and opens the scanned one. Typing in any input is left alone.
+  const runSearchRef = useRef(runSearch);
+  runSearchRef.current = runSearch;
+  const closePanelRef = useRef(closeMemberPanel);
+  closePanelRef.current = closeMemberPanel;
+  useEffect(() => {
+    let buffer = '';
+    let last = 0;
+    let timer: number | undefined;
+    const finish = () => {
+      const code = buffer;
+      buffer = '';
+      if (code.length < 4) return;
+      closePanelRef.current(false);
+      void runSearchRef.current(code);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null;
+      if (el && (el.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(el.tagName))) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      const now = Date.now();
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        if (buffer.length >= 4 && now - last < 300) {
+          e.preventDefault();
+          e.stopPropagation();
+          window.clearTimeout(timer);
+          finish();
+        } else buffer = '';
+        return;
+      }
+      if (e.key.length !== 1) return;
+      if (now - last > 120) buffer = ''; // a person typing, not a scanner
+      buffer += e.key;
+      last = now;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(finish, 260);
+    };
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      window.clearTimeout(timer);
+    };
+  }, []);
 
   const openGrace = (subscriptionId?: number | null) => {
     const subId =
@@ -732,6 +867,7 @@ export function ClubReceptionPage() {
       void qc.invalidateQueries({ queryKey: ['club-recent-checkins'] });
       void qc.invalidateQueries({ queryKey: ['club-attendance', 'statistics'] });
       void refetchSubs();
+      void refetchOverview();
     } catch (e) {
       const err = e as { response?: { data?: { entitlement?: EntitlementResult } } };
       const deniedEntitlement = err.response?.data?.entitlement;
@@ -847,7 +983,8 @@ export function ClubReceptionPage() {
     }
     setSaving(true);
     try {
-      await api.patch(`/club-subscriptions/${renewSubId}/renew`, body);
+      const { data: renewed } = await api.patch<{ subscription?: { id: number } }>(`/club-subscriptions/${renewSubId}/renew`, body);
+      saveAndWhatsApp.target(renewed?.subscription?.id ?? renewSubId, body.paidAmount ? { payment_amount: messageAmount(body.paidAmount) } : {});
       toast.success(ct('common.success'));
       setRenewOpen(false);
       void qc.invalidateQueries({ queryKey: ['me', 'workspace', 'widgets'] });
@@ -970,8 +1107,13 @@ export function ClubReceptionPage() {
   // expired and other subscriptions stay in the section below.
   const isCurrentSubscription = (s: ClubSubscriptionListItem) =>
     s.status === 'frozen' || (s.status === 'active' && !isExpiredLikeSubscription(s));
-  const activeSubs = sortedSubs.filter(isCurrentSubscription);
-  const otherSubs = sortedSubs.filter((s) => !isCurrentSubscription(s));
+
+  // Ended subscriptions reception chose to hide (X on the card), kept on this device.
+  // Ended subscriptions stay hidden until reception asks for them (reset for every member).
+  const [showExpired, setShowExpired] = useState(false);
+  useEffect(() => { setShowExpired(false); }, [member?.id]);
+  const expiredCount = sortedSubs.filter((sub) => isExpiredLikeSubscription(sub)).length;
+  const visibleSubs = showExpired ? sortedSubs : sortedSubs.filter((sub) => !isExpiredLikeSubscription(sub));
 
   const renderSubscriptionCard = (s: ClubSubscriptionListItem) => {
     const sessions = !!s.isLinkedToSessions;
@@ -989,49 +1131,42 @@ export function ClubReceptionPage() {
       <div
         key={s.id}
         className={cn(
-          'rounded-2xl border p-4 shadow-sm',
+          'relative rounded-2xl border p-4 shadow-sm',
+          // The whole card says the state at a glance (client, 22 Nov — like the old system):
+          // running = green, frozen = yellow, ended = red (ended ones stay hidden until asked for).
           expired
-            ? 'border-destructive/50 bg-gradient-to-br from-destructive/15 via-destructive/5 to-card ring-1 ring-destructive/30'
-            : 'bg-gradient-to-br from-card to-muted/20',
+            ? 'border-red-300 bg-red-50 dark:border-red-500/40 dark:bg-red-500/10'
+            : frozen
+              ? 'border-amber-300 bg-amber-50 dark:border-amber-500/40 dark:bg-amber-500/10'
+              : active
+                ? 'border-emerald-300 bg-emerald-50 dark:border-emerald-500/40 dark:bg-emerald-500/10'
+                : 'bg-gradient-to-br from-card to-muted/20',
         )}
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 space-y-2">
-            <p
-              className={cn(
-                'text-base font-semibold',
-                expired && 'text-destructive',
-              )}
-            >
+            <p className="text-base font-semibold">
               {s.subscriptionType ?? '—'}
             </p>
             <div className="flex flex-wrap items-center gap-2 text-sm">
+              {!expired ? (
+                <span className={cn('rounded-full px-2.5 py-1 font-semibold',
+                  s.privatePackageId != null || (s.isSpecial && !s.specialClassTypeId) ? 'bg-fuchsia-500/10 text-fuchsia-700 dark:text-fuchsia-200'
+                    : sessions || s.specialClassTypeId ? 'bg-sky-500/10 text-sky-700 dark:text-sky-200'
+                      : 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-200')}>
+                  {s.privatePackageId != null || (s.isSpecial && !s.specialClassTypeId) ? ui('برايفت') : sessions || s.specialClassTypeId ? ui('حصص') : ui('اشتراك أساسي')}
+                </span>
+              ) : null}
               {s.specialClassTypeId ? <span className="rounded-full bg-violet-500/10 px-2.5 py-1 text-violet-700 dark:text-violet-200">اشتراك خاص · حضور تلقائي حسب الجدول</span> : null}
               {sessions ? (
-                <span
-                  className={cn(
-                    'rounded-full px-2.5 py-1 nums',
-                    expired
-                      ? 'bg-destructive/15 text-destructive'
-                      : 'bg-primary/10 text-primary',
-                  )}
-                >
+                <span className={cn('rounded-full px-2.5 py-1 nums', expired ? 'bg-muted text-muted-foreground' : 'bg-primary/10 text-primary')}>
                   {ui('حصص')}: {toArabicDigits(remainingSessions)} {ui('متبقّية')}
                 </span>
-              ) : (
-                <>
-                  <span
-                    className={cn(
-                      'rounded-full px-2.5 py-1 nums',
-                      expired
-                        ? 'bg-destructive/15 text-destructive'
-                        : 'bg-primary/10 text-primary',
-                    )}
-                  >
-                    {ui('متبقّي')} {toArabicDigits(daysRemaining)} {ui('يوم')}
-                  </span>
-                </>
-              )}
+              ) : !expired ? (
+                <span className="rounded-full bg-primary/10 px-2.5 py-1 text-primary nums">
+                  {ui('متبقّي')} {toArabicDigits(daysRemaining)} {ui('يوم')}
+                </span>
+              ) : null}
               <StatusBadge
                 status={
                   frozen
@@ -1042,7 +1177,8 @@ export function ClubReceptionPage() {
                         ? 'expired'
                         : 'pending'
                 }
-                label={frozen ? ct('subscriptions.frozen') : undefined}
+                label={expired ? ui('منتهي') : frozen ? frozenLabel(activeFreeze) : undefined}
+                className={expired ? 'border-red-200 bg-red-100 text-red-800 dark:bg-red-500/15 dark:text-red-200' : frozen ? 'border-amber-300 bg-amber-100 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200' : undefined}
               />
               <span className="rounded-full bg-muted px-2.5 py-1 nums text-muted-foreground">
                 {ui('المبلغ المدفوع')}: {formatMoney(s.paidAmount)}
@@ -1062,18 +1198,16 @@ export function ClubReceptionPage() {
               className="ms-auto min-w-[11.5rem] gap-2 px-5 py-2.5 text-sm font-semibold shadow-md shadow-primary/20"
             >
               <LogIn className="size-4 shrink-0" />
-              {checkingSubId === s.id ? ct('common.saving') : ct('members.checkIn')}
-            </Button>
-          )}
-          {canCheckIn && expired && (
-            <Button
-              variant="outline"
-              disabled={saving}
-              onClick={() => openGrace(s.id)}
-              className="ms-auto min-w-[11.5rem] gap-2 border-destructive/40 px-5 py-2.5 text-sm font-semibold text-destructive hover:bg-destructive/10"
-            >
-              <LogIn className="size-4 shrink-0" />
-              {ui('جلسة سماح')}
+              {/* Say what the button does: the gym entry, or attending one session of this plan. */}
+              {checkingSubId === s.id
+                ? ct('common.saving')
+                : s.privatePackageId != null || (s.isSpecial && !s.specialClassTypeId)
+                  ? ui('تحضير حصة برايفت')
+                  : s.specialClassTypeId
+                    ? ui('تحضير الكلاس')
+                    : sessions
+                      ? ui('تحضير حصة')
+                      : ui('تسجيل دخول الجيم')}
             </Button>
           )}
         </div>
@@ -1085,7 +1219,7 @@ export function ClubReceptionPage() {
           </div>
           <div>
             <p className="text-xs text-muted-foreground">{ui('تاريخ الانتهاء')}</p>
-            <p className={cn('mt-1 text-lg font-bold nums', expired && 'text-destructive')}>{toArabicDigits(s.subscriptionEndDate)}</p>
+            <p className="mt-1 text-lg font-bold nums">{toArabicDigits(s.subscriptionEndDate)}</p>
           </div>
         </div>
 
@@ -1211,45 +1345,19 @@ export function ClubReceptionPage() {
             </Button>
           )}
         </div> : null}
+
+        {isCurrentSubscription(s) && selectedId != null ? (
+          <ReceptionServiceAllowances
+            part="invitation"
+            memberId={selectedId}
+            subscription={overview?.subscriptions.find((row) => row.id === s.id)}
+            canUse={canCheckIn && !member?.isBlocked}
+            onRecorded={() => void refetchSubs()}
+          />
+        ) : null}
       </div>
     );
   };
-
-  const activeSubscriptionsPanel = (
-    <section className="space-y-3" aria-label={ui('الاشتراكات النشطة')}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <CreditCard className="size-4 text-primary" />
-          <h3 className="font-semibold">{ui('الاشتراكات النشطة')}</h3>
-          <span className="text-sm nums text-muted-foreground">({toArabicDigits(activeSubs.length)})</span>
-        </div>
-        {canCreateSubscription ? (
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!member || member.isBlocked}
-            className="gap-2"
-            onClick={() => {
-              if (!member) return;
-              setMemberOpen(false);
-              navigate('/club/subscriptions/new', { state: { prefillMember: member } });
-            }}
-          >
-            <Plus className="size-4" />
-            {ct('subscriptions.addNewSubscription')}
-          </Button>
-        ) : null}
-      </div>
-      {entitlement ? <EntitlementBanner entitlement={entitlement} canGrace={canCheckIn && !member?.isBlocked} onGrace={() => openGrace()} /> : null}
-      {loadingSubs && activeSubs.length === 0 ? <p role="status" className="text-sm text-muted-foreground">{ui('جاري التحميل…')}</p> : null}
-      {!loadingSubs && activeSubs.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-destructive/40 bg-destructive/5 px-4 py-8 text-center text-sm text-destructive">
-          {ui('لا يوجد اشتراك نشط')}
-        </div>
-      ) : null}
-      <div className="grid gap-3">{activeSubs.map(renderSubscriptionCard)}</div>
-    </section>
-  );
 
   const hits = searchResult?.hits ?? [];
   const showHits = !memberOpen && query.trim().length >= 2 && hits.length > 0;
@@ -1298,7 +1406,7 @@ export function ClubReceptionPage() {
           <div className="w-full sm:max-w-sm">
             <Label className="mb-1.5 block text-xs text-muted-foreground">{ui('الفرع المعروض')}</Label>
             {isSystemAdmin ? (
-              <select
+              <SearchableSelect
                 className={cn(selectCls, 'h-11 rounded-xl border-primary/25 bg-background font-medium')}
                 value={receptionBranch}
                 onChange={(event) => setReceptionBranch(event.target.value)}
@@ -1309,7 +1417,7 @@ export function ClubReceptionPage() {
                     {branch.name?.trim() || `${ui('فرع رقم')} ${branch.id}`}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             ) : (
               <div className="flex h-11 items-center gap-2 rounded-xl border border-primary/20 bg-muted/45 px-3 text-sm font-semibold">
                 <Building2 className="size-4 text-primary" />
@@ -1381,98 +1489,359 @@ export function ClubReceptionPage() {
 
       </div>
 
-      {memberOpen && selectedId != null ? (
-        <section id="reception-member-profile" className="space-y-4 rounded-2xl border bg-card p-4 shadow-sm sm:p-6" aria-label={ui('بروفايل العضو')}>
-          <div className="flex items-center justify-between gap-3">
-            <h2 className="text-xl font-bold">{ui('بروفايل العضو')}</h2>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled={loadingMember || loadingSubs} onClick={() => { void refetchSubs(); if (selectedId) void refreshEntitlement(selectedId); }}><RefreshCw className={cn('size-4', loadingMember && 'animate-spin')} />{ui('تحديث')}</Button>
-              <Button variant="outline" size="sm" onClick={() => closeMemberPanel(false)}>{ui('إغلاق البروفايل')}</Button>
-            </div>
-          </div>
-          {member ? <ReceptionMemberProfile member={member} overview={overview} branches={branches} section="profile" activeSubscriptions={activeSubscriptionsPanel} /> : null}
-          {loadingOverview ? <p role="status" className="text-sm text-muted-foreground">{ui('جاري تحميل سجلات العضو…')}</p> : null}
-          {overviewError ? <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 p-3 text-sm text-destructive"><span>{ui('تعذر تحميل بروفايل العضو')}: {apiError(profileError)}</span><Button size="sm" variant="outline" onClick={() => void refetchOverview()}>{ui('إعادة المحاولة')}</Button></div> : null}
-
-          <details className="space-y-3 rounded-2xl border p-4">
-            <summary className="cursor-pointer font-bold">{ui('باقي الاشتراكات والعمليات')}</summary>
-            <div
-              className={cn(
-                'flex items-center gap-2 rounded-xl px-3 py-2',
-                hasExpiredSubscriptionAlert
-                  ? 'border border-destructive/40 bg-destructive/10 text-destructive'
-                  : '',
-              )}
-            >
-              <CreditCard
-                className={cn('size-4', hasExpiredSubscriptionAlert ? 'text-destructive' : 'text-primary')}
-              />
-              <h3
-                className={cn(
-                  'font-semibold',
-                  hasExpiredSubscriptionAlert && 'text-destructive',
-                )}
-              >
-                {ct('subscriptions.tabSubs')}
-              </h3>
-              <span
-                className={cn(
-                  'text-sm nums',
-                  hasExpiredSubscriptionAlert ? 'text-destructive/80' : 'text-muted-foreground',
-                )}
-              >
-                ({toArabicDigits(otherSubs.length)})
-              </span>
-              {hasExpiredSubscriptionAlert && (
-                <span className="ms-auto inline-flex items-center gap-1 text-xs font-bold">
-                  <AlertTriangle className="size-3.5" />
-                  {ui('اشتراك منتهي')}
-                </span>
-              )}
-            </div>
-
-            {otherSubs.length === 0 && !loadingSubs && (
-              <div className="rounded-2xl border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
-                {ui('لا توجد اشتراكات أخرى')}
+      {/* Member screen: one dialog with the photo beside every subscription and its actions
+          (check-in, InBody / SPA, freeze, renew, transfer, refund), so reception never needs
+          the separate check-in page. */}
+      <Dialog open={memberOpen && selectedId != null} onOpenChange={(open) => { if (!open) closeMemberPanel(false); }}>
+        <DialogContent
+          size="xl"
+          className="max-h-[94vh] gap-4 overflow-y-auto sm:max-w-[min(92vw,85rem)]"
+          aria-describedby={undefined}
+        >
+          <div className="grid min-w-0 grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] lg:gap-x-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+            {/* A large photo filling the card, pinned to the top of the visible area beside the
+                subscriptions: centred on the whole column it slid out of view when a member had
+                many old subscriptions (client, 21 Nov 2026). */}
+            <aside className="w-full min-w-0 self-start overflow-hidden rounded-2xl border bg-card pt-4 lg:sticky lg:top-0 lg:z-10 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:pt-0">
+              {/* A tall photo filling the whole column (client video, 22 Nov: the 4:3 box left a portrait
+                  photo as a thin strip in the middle). */}
+              <div className="relative mx-auto w-48 overflow-hidden rounded-lg bg-muted/20 sm:w-56 lg:w-full lg:rounded-none">
+                <MemberAvatar
+                  name={member?.name}
+                  profilePicture={member?.profilePicture}
+                  size="portrait"
+                  className="aspect-[4/5] rounded-none object-cover object-top text-4xl ring-0 lg:text-7xl"
+                />
+                {/* Change the photo from the photo itself (client, 24 Nov). */}
+                {member && canEditMember ? (
+                  <ReceptionMemberPhotoEdit
+                    key={member.id}
+                    memberId={member.id}
+                    className="absolute end-2 top-2"
+                    onSaved={() => { void refetchMember(); void qc.invalidateQueries({ queryKey: ['club-members'] }); }}
+                  />
+                ) : null}
               </div>
-            )}
-
-            <div className="grid gap-3">
-              {otherSubs.map(renderSubscriptionCard)}
-            </div>
-
-            {canSellQuick && memberQuickServices.length > 0 ? (
-              <div className="mt-4 space-y-2 border-t border-border/60 pt-4">
-                <div className="flex items-center gap-2">
-                  <Zap className="size-4 text-primary" />
-                  <h3 className="font-semibold">{ui('خدمات سريعة')}</h3>
-                  <span className="text-xs text-muted-foreground">{ui('تُسجَّل على العضو')}</span>
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  {memberQuickServices.map((service) => (
+              <div className="space-y-2 px-4 pb-4 pt-3 text-center">
+                <DialogTitle className="break-words text-xl leading-tight sm:text-2xl">
+                  {member?.name ?? ui('جاري التحميل…')}
+                </DialogTitle>
+                <p className="flex items-center justify-center gap-1 text-lg font-medium">
+                  <bdi dir="ltr" className="nums select-all break-all">{member?.memberCode ?? '—'}</bdi>
+                  {member?.memberCode ? (
                     <Button
-                      key={service.id}
-                      variant="outline"
-                      size="sm"
-                      disabled={saving || !selectedId}
-                      onClick={() => openQuickSell(service, selectedId)}
-                      className="gap-2"
+                      variant="ghost"
+                      size="icon"
+                      className="size-8"
+                      aria-label={ui('نسخ كود العضو')}
+                      title={ui('نسخ كود العضو')}
+                      onClick={() => {
+                        void navigator.clipboard?.writeText(member.memberCode).then(
+                          () => toast.success(ui('تم نسخ كود العضو')),
+                          () => toast.error(ui('تعذر النسخ')),
+                        );
+                      }}
                     >
-                      {service.name}
-                      <span className="nums text-primary">{formatMoney(service.price)}</span>
+                      <Copy className="size-4" />
                     </Button>
-                  ))}
-                </div>
+                  ) : null}
+                </p>
+                {member?.phone ? (
+                  <p className="flex items-center justify-center gap-1.5 text-lg">
+                    <Phone className="size-4 text-muted-foreground" aria-hidden="true" />
+                    <bdi dir="ltr" className="nums">{toArabicDigits(member.phone)}</bdi>
+                    <ReceptionMemberWhatsApp
+                      key={member.id}
+                      member={member}
+                      subscriptionBranch={effectiveReceptionBranch || undefined}
+                      overviewSubscriptions={overview?.subscriptions}
+                    />
+                  </p>
+                ) : null}
+                {member ? (
+                  <StatusBadge status={member.isBlocked ? 'blocked' : member.isActive ? 'active' : 'suspended'} label={member.isBlocked ? ui('محظور') : undefined} />
+                ) : null}
+                {member?.isBlocked && member.blockReason ? (
+                  <p className="rounded-xl bg-destructive/10 p-2 text-sm text-destructive">{ui('سبب الحظر')}: {member.blockReason}</p>
+                ) : null}
+                {member ? (
+                  <Button
+                    variant={profileOpen ? 'secondary' : 'outline'}
+                    className="mt-1 w-full gap-2"
+                    aria-expanded={profileOpen}
+                    onClick={() => {
+                      const next = !profileOpen;
+                      setProfileOpen(next);
+                      if (next) window.setTimeout(() => profileRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 60);
+                    }}
+                  >
+                    <FileText className="size-4" />
+                    {profileOpen ? ui('إخفاء بيانات العضو') : ui('عرض بيانات العضو وسجلاته')}
+                  </Button>
+                ) : null}
               </div>
-            ) : null}
+              {/* Under the photo (client, 22 Nov): when the member last came, an active freeze and the
+                  locker subscriptions; the subscriptions themselves stay on the other side. */}
+              {member ? (
+                <div className="space-y-2 border-t px-4 py-3 text-start text-sm">
+                  <div className="flex items-start gap-2 rounded-xl bg-muted/40 px-3 py-2">
+                    <Clock3 className="mt-0.5 size-4 shrink-0 text-primary" />
+                    {member.lastCheckIn ? (
+                      <div className="min-w-0">
+                        {(() => {
+                          // A scan checks the member in at once, so «last entry» is nearly always today;
+                          // reception wants the visit before that too (client, 22 Nov: "آخر مرة ضرب الباركود").
+                          const cameToday = daysSince(member.lastCheckIn) <= 0;
+                          const before = cameToday ? member.previousCheckIn ?? null : member.lastCheckIn;
+                          const days = before ? daysSince(before) : null;
+                          return (
+                            <>
+                              {cameToday ? <p className="font-semibold">{ui('حضر النهارده')}</p> : null}
+                              <p className={cn('font-semibold', cameToday && 'mt-0.5 text-sm')}>
+                                {days == null
+                                  ? ui('أول زيارة له')
+                                  : `${ui('آخر مرة ضرب الباركود')}: ${days <= 1 ? ui('امبارح') : `${ui('من')} ${toArabicDigits(days)} ${ui('يوم')}`}`}
+                              </p>
+                              {before ? <p className="nums text-xs text-muted-foreground">{formatDateTime(before)}</p> : null}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    ) : (
+                      <p className="text-muted-foreground">{ui('لا يوجد حضور مسجل')}</p>
+                    )}
+                  </div>
+                  {/* SPA / InBody of the running subscriptions, with their buttons, then the lockers, then a freeze
+                      (client, 22 + 24 Nov: subscriptions on one side, services on the other). */}
+                  {selectedId != null ? sortedSubs.filter(isCurrentSubscription).map((s) => (
+                    <ReceptionServiceAllowances
+                      key={`svc-${s.id}`}
+                      part="services"
+                      memberId={selectedId}
+                      subscription={overview?.subscriptions.find((row) => row.id === s.id)}
+                      canUse={canCheckIn && !member?.isBlocked}
+                      onRecorded={() => { void refetchSubs(); void refetchOverview(); }}
+                    />
+                  )) : null}
+                  {(() => {
+                    const lockers = (overview?.lockerSubscriptions ?? []).filter((l) => l.status === 'active' || l.status === 'upcoming' || l.status === 'frozen');
+                    if (!lockers.length) return null;
+                    return (
+                      <div className="space-y-1.5 rounded-xl border px-3 py-2">
+                        <p className="flex items-center gap-1.5 font-semibold"><LockKeyhole className="size-4 text-primary" />{ui('اشتراكات اللوكر')}</p>
+                        {lockers.map((l) => (
+                          <div key={l.id} className="flex flex-wrap items-center justify-between gap-1 text-xs">
+                            <span>{ui('لوكر')} <b className="nums">{toArabicDigits(l.lockerNumber ?? '—')}</b>{l.subscriptionTypeName ? ` · ${l.subscriptionTypeName}` : ''}</span>
+                            <span className="nums text-muted-foreground">{ui('حتى')} {toArabicDigits(l.endDate)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })()}
+                  {(() => {
+                    // Only a freeze that is running (back day still ahead) or booked for later shows;
+                    // an ended one is gone (client, 22 Nov).
+                    const today = localToday();
+                    const freeze = overview?.freezes.find((f) => f.isActive && (!f.endDate || f.endDate > today))
+                      ?? overview?.freezes.find((f) => !f.isActive && f.actualDays == null && f.startDate > today);
+                    if (!freeze) return null;
+                    const booked = !freeze.isActive;
+                    const days = freeze.actualDays ?? freeze.plannedDays;
+                    const left = booked ? daysUntil(freeze.startDate) : freeze.endDate ? daysUntil(freeze.endDate) : null;
+                    const reason = freeze.reason && /[\p{L}]{2,}/u.test(freeze.reason) ? freeze.reason : null;
+                    return (
+                      <div className="overflow-hidden rounded-xl border border-amber-400/50 bg-amber-50 dark:bg-amber-500/10">
+                        <div className="flex items-center gap-2 bg-amber-100 dark:bg-amber-500/20 px-3 py-2">
+                          <Snowflake className="size-4 shrink-0 text-amber-600" />
+                          <b className="text-amber-900 dark:text-amber-200">{booked ? ui('إيقاف محجوز') : ui('الاشتراك موقوف')}</b>
+                          <span className="nums ms-auto rounded-full bg-amber-500 px-2 py-0.5 text-xs font-semibold text-white">{toArabicDigits(days)} {ui('يوم')}</span>
+                        </div>
+                        <div className="space-y-2 px-3 py-2.5">
+                          <p className="truncate text-xs text-muted-foreground">{freeze.subscriptionType || ui('اشتراك')}</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <div className="rounded-lg bg-background px-2.5 py-1.5">
+                              <p className="text-[11px] text-muted-foreground">{ui('من')}</p>
+                              <p className="nums text-sm font-semibold">{formatDayLabel(freeze.startDate)}</p>
+                            </div>
+                            <div className="rounded-lg bg-background px-2.5 py-1.5">
+                              <p className="text-[11px] text-muted-foreground">{ui('يرجع يوم')}</p>
+                              <p className="nums text-sm font-semibold">{freeze.endDate ? formatDayLabel(freeze.endDate) : '—'}</p>
+                            </div>
+                          </div>
+                          {left != null && left > 0 ? (
+                            <p className="nums text-xs font-medium text-amber-800 dark:text-amber-300">
+                              {booked ? `${ui('يبدأ بعد')} ${toArabicDigits(left)} ${ui('يوم')}` : `${ui('باقي')} ${toArabicDigits(left)} ${ui('يوم على رجوعه')}`}
+                            </p>
+                          ) : null}
+                          {reason ? <p className="text-xs text-muted-foreground">{ui('السبب')}: {reason}</p> : null}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {(() => {
+                    // Sessions left on running plans and money still owed (InBody / SPA have their own block below).
+                    const running = (overview?.subscriptions ?? []).filter((s) => s.status === 'active' || s.status === 'frozen');
+                    const sessionsLeft = running.reduce((n, s) => n + (s.isLinkedToSessions ? Math.max(0, (s.sessionsCount ?? 0) - (s.sessionsUsed ?? 0)) : 0), 0);
+                    const owed = running.reduce((n, s) => n + (s.remainingAmount ?? 0), 0);
+                    if (sessionsLeft <= 0 && owed <= 0) return null;
+                    return (
+                      <div className="space-y-1.5 rounded-xl border px-3 py-2">
+                        {sessionsLeft > 0 ? (
+                          <span className="inline-block rounded-full bg-primary/10 px-2.5 py-0.5 text-xs text-primary">{ui('حصص')}: <b className="nums">{toArabicDigits(sessionsLeft)}</b> {ui('متبقّية')}</span>
+                        ) : null}
+                        {owed > 0 ? <p className="text-xs font-semibold text-amber-700 dark:text-amber-300">{ui('مبلغ متبقي على الاشتراكات')}: <span className="nums">{formatMoney(owed)}</span></p> : null}
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : null}
+            </aside>
 
-            {canBlockMember ? (
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
-                {canBlockMember ? (
-                  member?.isBlocked ? (
+            <DialogHeader className="min-w-0 space-y-3 text-start lg:col-start-1 lg:row-start-1">
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label={ui('تحديث')}
+                  title={ui('تحديث')}
+                  disabled={loadingMember || loadingSubs}
+                  onClick={() => {
+                    void refetchSubs();
+                    if (selectedId) void refreshEntitlement(selectedId);
+                  }}
+                >
+                  <RefreshCw className={cn('size-4', (loadingMember || loadingSubs) && 'animate-spin')} />
+                </Button>
+              </div>
+              {member?.isBlocked ? <BlockedMemberBanner reason={member.blockReason} className="text-base" /> : null}
+              {entitlement ? (
+                <EntitlementBanner entitlement={entitlement} canGrace={false} onGrace={() => openGrace()} />
+              ) : null}
+            </DialogHeader>
+
+            <div className="min-w-0 space-y-3 lg:col-start-1 lg:row-start-2">
+              {loadingOverview ? <p role="status" className="text-sm text-muted-foreground">{ui('جاري تحميل سجلات العضو…')}</p> : null}
+              {overviewError ? (
+                <div role="alert" className="flex flex-wrap items-center gap-3 rounded-xl border border-destructive/30 p-3 text-sm text-destructive">
+                  <span>{ui('تعذر تحميل بروفايل العضو')}: {apiError(profileError)}</span>
+                  <Button size="sm" variant="outline" onClick={() => void refetchOverview()}>{ui('إعادة المحاولة')}</Button>
+                </div>
+              ) : null}
+
+              <div
+                className="flex flex-wrap items-center gap-2 rounded-xl px-1 py-2"
+              >
+                <CreditCard className="size-4 text-primary" />
+                <h3 className="font-semibold">{ct('subscriptions.tabSubs')}</h3>
+                <span className="nums text-sm text-muted-foreground">({toArabicDigits(sortedSubs.length - expiredCount)})</span>
+                {/* Ended subscriptions are hidden by default; one clear switch shows them (client, 22 Nov). */}
+                {expiredCount > 0 ? (
+                  <Button
+                    variant={showExpired ? 'secondary' : 'outline'}
+                    size="sm"
+                    className="mx-auto h-9 gap-2 rounded-full px-4"
+                    aria-pressed={showExpired}
+                    onClick={() => setShowExpired((value) => !value)}
+                  >
+                    {showExpired ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    {showExpired ? ui('إخفاء الاشتراكات المنتهية') : ui('إظهار الاشتراكات المنتهية')}
+                    <span className="nums rounded-full bg-muted px-2 py-0.5 text-xs">{toArabicDigits(expiredCount)}</span>
+                  </Button>
+                ) : null}
+                {canCreateSubscription && member ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="ms-auto gap-2"
+                    disabled={member.isBlocked}
+                    onClick={() => {
+                      setMemberOpen(false);
+                      navigate('/club/subscriptions/new', { state: { prefillMember: member } });
+                    }}
+                  >
+                    <Plus className="size-4" />
+                    {ct('subscriptions.addNewSubscription')}
+                  </Button>
+                ) : null}
+              </div>
+
+              {loadingSubs && sortedSubs.length === 0 ? <p role="status" className="text-sm text-muted-foreground">{ui('جاري التحميل…')}</p> : null}
+              {!loadingSubs && sortedSubs.length === 0 ? (
+                <div className="rounded-2xl border border-dashed bg-muted/20 px-4 py-10 text-center text-sm text-muted-foreground">
+                  {ui('لا توجد اشتراكات')}
+                </div>
+              ) : null}
+              {!loadingSubs && sortedSubs.length > 0 && visibleSubs.length === 0 ? (
+                <div className="rounded-2xl border border-dashed bg-muted/20 px-4 py-6 text-center text-sm text-muted-foreground">
+                  {ui('لا يوجد اشتراك جاري — الاشتراكات المنتهية مخفية')}
+                </div>
+              ) : null}
+              <div className="grid gap-3">{visibleSubs.map(renderSubscriptionCard)}</div>
+
+              {canSellQuick && memberQuickServices.length > 0 ? (
+                <div className="space-y-2 border-t border-border/60 pt-4">
+                  <div className="flex items-center gap-2">
+                    <Zap className="size-4 text-primary" />
+                    <h3 className="font-semibold">{ui('خدمات سريعة')}</h3>
+                    <span className="text-xs text-muted-foreground">{ui('تُسجَّل على العضو')}</span>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {memberQuickServices.map((service) => (
+                      <Button
+                        key={service.id}
+                        variant="outline"
+                        size="sm"
+                        disabled={saving || !selectedId}
+                        onClick={() => openQuickSell(service, selectedId)}
+                        className="gap-2"
+                      >
+                        {service.name}
+                        <span className="nums text-primary">{formatMoney(service.price)}</span>
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {/* «عرض بيانات العضو وسجلاته» under the name opens every detail and record here, below
+                  the subscriptions, on the same screen (client, 22 Nov). */}
+              {member && profileOpen ? (
+                <div ref={profileRef} className="scroll-mt-4 space-y-4 border-t border-border/60 pt-4">
+                  <div className="flex items-center gap-2">
+                    <FileText className="size-4 text-primary" />
+                    <h3 className="font-semibold">{ui('بيانات العضو وسجلاته')}</h3>
+                    {canEditMember && !editingMember ? (
+                      <Button size="sm" variant="outline" className="ms-auto gap-1.5" onClick={() => setEditingMember(true)}>
+                        <Pencil className="size-4" />
+                        {ui('تعديل البيانات')}
+                      </Button>
+                    ) : null}
+                  </div>
+                  {canEditMember && editingMember ? (
+                    <ReceptionMemberEditForm
+                      key={member.id}
+                      member={member}
+                      onCancel={() => setEditingMember(false)}
+                      onSaved={() => {
+                        setEditingMember(false);
+                        void refetchMember();
+                        void qc.invalidateQueries({ queryKey: ['club-members'] });
+                      }}
+                    />
+                  ) : (
+                    <ReceptionMemberProfile member={member} overview={overview} branches={branches} section="details" />
+                  )}
+                  <ReceptionMemberAttachments key={`att-${member.id}`} memberId={member.id} canEdit={canEditMember} />
+                  <ReceptionMemberProfile member={member} overview={overview} branches={branches} section="records" />
+                </div>
+              ) : null}
+
+              {canBlockMember && member ? (
+                <div className="flex justify-end border-t border-border/60 pt-4">
+                  {member.isBlocked ? (
                     <Button
                       variant="outline"
-                      disabled={!member || blockSaving}
+                      disabled={blockSaving}
                       className="min-w-[11rem] gap-2 border-emerald-600/40 text-emerald-700 hover:bg-emerald-500/10 hover:text-emerald-800"
                       onClick={() => void unblockMember()}
                     >
@@ -1482,7 +1851,7 @@ export function ClubReceptionPage() {
                   ) : (
                     <Button
                       variant="destructive"
-                      disabled={!member || blockSaving}
+                      disabled={blockSaving}
                       className="min-w-[11rem] gap-2"
                       onClick={() => {
                         setBlockReason('');
@@ -1492,14 +1861,13 @@ export function ClubReceptionPage() {
                       <Ban className="size-4" />
                       {ui('حظر العضو')}
                     </Button>
-                  )
-                ) : <span />}
-
-              </div>
-            ) : null}
-          </details>
-        </section>
-      ) : null}
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {(canSellQuick || canManageQuick) && (quickServices.length > 0 || canManageQuick) ? (
         <div className="relative overflow-hidden rounded-3xl border bg-card p-5 shadow-sm md:p-6">
@@ -1561,6 +1929,12 @@ export function ClubReceptionPage() {
         branchId={effectiveReceptionBranch || undefined}
         branches={branches}
         showBranch={isSystemAdmin}
+        onOpenMember={(code) => {
+          // Same as scanning the card: opens the member (an already checked-in visit is only reported).
+          closeMemberPanel(false);
+          void runSearch(code);
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        }}
       />
 
 
@@ -1779,9 +2153,18 @@ export function ClubReceptionPage() {
           </DialogHeader>
           <div className="grid gap-3">
             <p className="text-sm text-muted-foreground">{ct('subscriptions.freezePreserveHint')}</p>
+            <FreezeBalance subscriptionId={freezeOpen ? freezeSubId : null} requestedDays={editingFreeze ? undefined : freezeDays(freezeForm.startDate, freezeForm.endDate)} onChanged={() => { void refetchSubs(); void refetchOverview(); if (selectedId) void refreshEntitlement(selectedId); }} />
             <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-2"><Label>بداية الإيقاف</Label><Input type="date" className="nums" disabled={editingFreeze} value={freezeForm.startDate} onChange={(e) => setFreezeForm((f) => ({ ...f, startDate: e.target.value }))} /></div>
-              <div className="grid gap-2"><Label>نهاية الإيقاف</Label><Input type="date" className="nums" min={freezeForm.startDate} value={freezeForm.endDate} onChange={(e) => setFreezeForm((f) => ({ ...f, endDate: e.target.value }))} /></div>
+              {/* Start date + number of days; the end date follows and is read-only (client, 22 Nov). */}
+              <div className="grid gap-2"><Label>بداية الإيقاف</Label><Input type="date" className="nums" disabled={editingFreeze} min={addDaysLocal(localToday(), -30)} max={addDaysLocal(localToday(), 90)} value={freezeForm.startDate} onChange={(e) => setFreezeForm((f) => {
+                const days = freezeDays(f.startDate, f.endDate) ?? 0;
+                return { ...f, startDate: e.target.value, endDate: e.target.value ? addDaysLocal(e.target.value, days) : f.endDate };
+              })} /></div>
+              <div className="grid gap-2"><Label>عدد أيام الإيقاف</Label><Input type="number" inputMode="numeric" min={1} step={1} className="nums" autoFocus placeholder="مثال: 5" value={freezeDays(freezeForm.startDate, freezeForm.endDate) ?? ''} onChange={(e) => {
+                const days = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                setFreezeForm((f) => ({ ...f, endDate: addDaysLocal(f.startDate, days) }));
+              }} /></div>
+              <div className="col-span-2 grid gap-2"><Label>نهاية الإيقاف — بيرجع يدخل من اليوم ده</Label><Input type="date" className="nums bg-muted" readOnly tabIndex={-1} value={freezeForm.endDate} /></div>
             </div>
             <div className="grid gap-2">
               <Label>{ct('subscriptions.freezeReason')}</Label>
@@ -1850,6 +2233,15 @@ export function ClubReceptionPage() {
             <Button variant="brand" onClick={() => void submitRenew()} disabled={saving}>
               {saving ? ct('common.saving') : ct('subscriptions.renew')}
             </Button>
+            <Button
+              variant="outline"
+              className="border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300"
+              onClick={() => void saveAndWhatsApp.run('renewal', submitRenew, member?.phone ?? null)}
+              disabled={saving}
+            >
+              <WhatsAppIcon className="size-4" />
+              حفظ وإرسال واتساب
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1902,7 +2294,7 @@ export function ClubReceptionPage() {
             <div className="grid gap-2 sm:grid-cols-2">
               <div className="grid gap-2">
                 <Label>{ct('subscriptions.refundReason')}</Label>
-                <select
+                <SearchableSelect
                   className={selectCls}
                   value={refundReason}
                   onChange={(e) => setRefundReason(e.target.value)}
@@ -1911,7 +2303,7 @@ export function ClubReceptionPage() {
                   <option value="تراجع">{ct('subscriptions.reasonCancel')}</option>
                   <option value="مغادرة">{ct('subscriptions.reasonLeave')}</option>
                   <option value="أخرى">{ct('subscriptions.reasonOther')}</option>
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-2">
                 <Label>{ct('subscriptions.refundNotes')}</Label>

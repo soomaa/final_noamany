@@ -101,6 +101,7 @@ export interface WarehouseOption {
   nameAr: string;
   branchId: number;
   type?: 'main' | 'sub';
+  status?: 'active' | 'inactive';
 }
 
 export interface ProcurementSettings {

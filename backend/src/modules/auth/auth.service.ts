@@ -54,8 +54,11 @@ export class AuthService {
 
   async login(username: string, password: string): Promise<LoginResult> {
     const normalizedUsername = username.trim();
+    // The active account wins when an old disabled login still carries the same username
+    // (an account re-created after the old one was stopped), so the new one can sign in.
     const user = await this.prisma.users.findFirst({
       where: { username: normalizedUsername },
+      orderBy: [{ approved: 'desc' }, { user_id: 'desc' }],
     });
     if (user && user.approved === 1) {
       const staffResult = await this.loginStaff(user, password);
@@ -152,6 +155,18 @@ export class AuthService {
   }
 
   /** Update the authenticated staff member's avatar; no caller-supplied user id is accepted. */
+  /** The signed-in user's own display name; the username stays as it is. Returns the fresh claims. */
+  async updateProfileName(userId: number, name: string): Promise<JwtUser> {
+    const normalized = (name ?? '').replace(/\s+/g, ' ').trim();
+    if (normalized.length < 2 || normalized.length > 100) {
+      throw new BadRequestException('يجب أن يكون الاسم من حرفين إلى 100 حرف');
+    }
+    const user = await this.prisma.users.findUnique({ where: { user_id: userId }, select: { approved: true } });
+    if (!user || user.approved !== 1) throw new UnauthorizedException('انتهت الجلسة');
+    await this.prisma.users.update({ where: { user_id: userId }, data: { name: normalized } });
+    return this.buildJwtUser(userId);
+  }
+
   async updateProfileImage(userId: number, image: string): Promise<{ image: string }> {
     const user = await this.prisma.users.findUnique({
       where: { user_id: userId },

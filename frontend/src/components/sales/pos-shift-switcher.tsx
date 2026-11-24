@@ -35,6 +35,7 @@ import { toArabicDigits } from "@/lib/utils";
 import { isDryRunResponse } from "@/lib/validators";
 import { useAuth } from "@/store/auth";
 import { useLocale } from "@/store/locale";
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface Shift {
   id: number;
@@ -543,7 +544,7 @@ export function PosShiftSwitcher() {
             </div>
             <div className="grid gap-2">
               <Label>{ui("الوردية")}</Label>
-              <select
+              <SearchableSelect
                 className="h-11 rounded-xl border bg-background px-3 text-sm"
                 value={startShiftId}
                 onChange={(event) => setStartShiftId(event.target.value)}
@@ -553,7 +554,7 @@ export function PosShiftSwitcher() {
                     {shift.shiftName} · {formatTime(shift.startTime)}–{formatTime(shift.endTime)}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ui("رصيد افتتاح الدرج")}</Label>
@@ -833,7 +834,7 @@ export function PosShiftSwitcher() {
               </div>
               <div>
                 <Label className="font-bold">{ui("الوردية القادمة")}</Label>
-                <select
+                <SearchableSelect
                   className="mt-1.5 h-12 w-full rounded-xl border bg-background px-3 text-sm font-semibold shadow-sm disabled:cursor-not-allowed disabled:opacity-60"
                   value={targetShiftId}
                   disabled={!nextShiftOptions.length}
@@ -858,7 +859,7 @@ export function PosShiftSwitcher() {
                       {formatTime(shift.endTime)}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
                 {!nextShiftOptions.length ? (
                   <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-300">
                     {ui("أضف أو فعّل وردية أخرى من شاشة إدارة الورديات أولًا.")}

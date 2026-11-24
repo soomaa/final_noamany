@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ban, Cake, CalendarClock, Check, Copy, Eye, FileText, Laptop, MessageCircle, Pause, Play, Plus, RotateCcw, Search, Send, Smile, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Ban, Cake, CalendarClock, Check, Copy, Eye, FileText, Laptop, MessageCircle, Pause, Play, Plus, RotateCcw, Search, Send, Shuffle, Smile, Trash2, UserX, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { PermissionButton as Button } from '@/components/club/permission-button';
@@ -34,7 +34,9 @@ type Source = 'expired' | 'expiring' | 'members' | 'birthdays';
 type Counts = { total: number; queued: number; sending: number; sent: number; failed: number; uncertain: number; cancelled: number };
 interface Campaign { id: number; name: string; branchId: number; source: string; status: CampaignStatus; createdAt: string; startedAt: string | null; finishedAt: string | null; counts: Counts }
 interface Message { id: number; memberId: number | null; name: string; phone: string; body: string; status: MessageStatus; reason: string | null; sentAt: string | null }
-interface Template { id: number; name: string; body: string; isActive: boolean; isBirthday?: boolean; addOptOutLine?: boolean }
+interface TemplateField { label: string; options: string[] }
+interface Template { id: number; name: string; body: string; isActive: boolean; isBirthday?: boolean; isAbsence?: boolean; addOptOutLine?: boolean; fields?: TemplateField[] }
+interface AbsenceSettings { yellowDays: number; redDays: number; templateId: number | null }
 interface BirthdayInfo { enabled: boolean; time: string; activeOnly: boolean; template: { id: number; name: string; body: string; addOptOutLine: boolean } | null; pairedBranchIds: number[]; today: string; ranToday: number[]; todaysCampaigns: { id: number; branchId: number; name: string; status: CampaignStatus }[] }
 interface Device { id: string; branchId: number; label: string; paired: boolean; pairedAt: string | null; lastSeenAt: string | null; pairCodeActive: boolean }
 interface OptOut { phone: string; key: string; reason: string | null; createdAt: string }
@@ -60,7 +62,29 @@ const VARIABLES: { key: string; label: string }[] = [
   { key: 'branch', label: 'الفرع' },
   { key: 'code', label: 'كود العضو' },
   { key: 'age', label: 'السن' },
+  { key: 'last_visit', label: 'آخر حضور' },
 ];
+
+// ── template fields (mirrors the server: wa-campaigns.utils.ts) ───────────────
+
+const CHOICE_GROUP = /\{((?:[^{}\n]|\{\w+\})*\|(?:[^{}\n]|\{\w+\})*)\}/g;
+const cleanOption = (text: string) => text.replace(/[\r\n]+/g, ' ').replace(/\|/g, '/').trim();
+/** Fields → stored body: one line per field, `{a|b}` when it has several wordings. */
+function fieldsToBody(fields: TemplateField[]): string {
+  return fields
+    .map((f) => [...new Set(f.options.map(cleanOption).filter(Boolean))])
+    .filter((o) => o.length)
+    .map((o) => (o.length > 1 ? `{${o.join('|')}}` : o[0]))
+    .join('\n');
+}
+const SAMPLE_VARS: Record<string, string> = { first_name: 'أحمد', name: 'أحمد محمد', end_date: '24/11/2026', days: '7', package: 'اشتراك شهر', branch: 'الجلاء', code: 'B1234', age: '28', last_visit: '10/11/2026' };
+/** One random wording with sample values, the way a member would receive it. */
+function sampleMessage(body: string): string {
+  const versions = body.replace(/\r\n?/g, '\n').split(/\n[ \t]*-{3,}[ \t]*(?:\n|$)/).map((v) => v.trim()).filter(Boolean);
+  const pick = <T,>(items: T[]) => items[Math.floor(Math.random() * items.length)];
+  const text = (versions.length ? pick(versions) : body).replace(CHOICE_GROUP, (_m, inner: string) => pick(inner.split('|')).trim());
+  return text.replace(/\{(\w+)\}/g, (m, key: string) => SAMPLE_VARS[key] ?? m);
+}
 
 /** The emoji people actually use in gym / club messages, grouped like WhatsApp's picker. */
 const EMOJI_GROUPS: { title: string; items: string[] }[] = [
@@ -73,12 +97,12 @@ const EMOJI_GROUPS: { title: string; items: string[] }[] = [
   { title: 'رموز', items: ['✅', '☑️', '❌', '⚠️', '📅', '🗓️', '⏰', '📍', '📞', '📲', '💬', '👉', '➡️', '⬅️', '🔝', '🆗'] },
 ];
 
-function EmojiPicker({ onPick }: { onPick: (emoji: string) => void }) {
+function EmojiPicker({ onPick, inline = false }: { onPick: (emoji: string) => void; inline?: boolean }) {
   const { ui } = useLocale();
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button type="button" size="icon" variant="ghost" className="absolute bottom-2 end-2 h-8 w-8 rounded-full text-muted-foreground hover:text-foreground" aria-label={ui('إضافة إيموجي')} title={ui('إضافة إيموجي')}>
+        <Button type="button" size="icon" variant="ghost" permissionAction={null} onMouseDown={(e) => e.preventDefault()} className={inline ? 'h-7 w-7 rounded-full text-muted-foreground hover:text-foreground' : 'absolute bottom-2 end-2 h-8 w-8 rounded-full text-muted-foreground hover:text-foreground'} aria-label={ui('إضافة إيموجي')} title={ui('إضافة إيموجي')}>
           <Smile className="h-5 w-5" />
         </Button>
       </PopoverTrigger>
@@ -337,6 +361,86 @@ function OptOutLineToggle({ checked, onChange }: { checked: boolean; onChange: (
   );
 }
 
+/**
+ * The template as fields: each line of the message is one field (التحية، الرسالة، الختام…), and a
+ * field can have several wordings — every member gets one of them, so messages don't look copied.
+ */
+function FieldsEditor({ fields, onChange }: { fields: TemplateField[]; onChange: (f: TemplateField[]) => void }) {
+  const { ui } = useLocale();
+  const [focus, setFocus] = useState<{ field: number; option: number; el: HTMLInputElement } | null>(null);
+  const [seed, setSeed] = useState(0);
+  const body = fieldsToBody(fields);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const sample = useMemo(() => (body ? sampleMessage(body) : ''), [body, seed]);
+  const update = (i: number, field: TemplateField) => onChange(fields.map((f, k) => (k === i ? field : f)));
+  const move = (i: number, by: number) => {
+    const next = [...fields];
+    const [item] = next.splice(i, 1);
+    next.splice(i + by, 0, item);
+    onChange(next);
+  };
+  const insert = (token: string) => {
+    if (!focus) return void toast.info(ui('اضغط جوه الخانة اللي عايز تضيف فيها الأول'));
+    const field = fields[focus.field];
+    const value = field.options[focus.option] ?? '';
+    const start = focus.el.selectionStart ?? value.length;
+    const end = focus.el.selectionEnd ?? value.length;
+    update(focus.field, { ...field, options: field.options.map((o, k) => (k === focus.option ? value.slice(0, start) + token + value.slice(end) : o)) });
+    requestAnimationFrame(() => { focus.el.focus(); focus.el.setSelectionRange(start + token.length, start + token.length); });
+  };
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-muted/50 p-2">
+        <span className="text-xs text-muted-foreground">{ui('أضف في الخانة اللي واقف فيها')}:</span>
+        {VARIABLES.map((v) => <Button key={v.key} type="button" size="sm" variant="outline" className="h-7 text-xs" permissionAction={null} onMouseDown={(e) => e.preventDefault()} onClick={() => insert(`{${v.key}}`)}>+ {ui(v.label)}</Button>)}
+        <EmojiPicker inline onPick={insert} />
+      </div>
+      {fields.map((field, i) => (
+        <div key={i} className="rounded-xl border bg-card p-3">
+          <div className="mb-2 flex items-center gap-2">
+            <span className="grid size-6 shrink-0 place-items-center rounded-full bg-primary/10 text-xs font-bold text-primary">{i + 1}</span>
+            <Input className="h-8 max-w-48 font-semibold" value={field.label} maxLength={60} placeholder={ui('اسم السطر (مثلاً: التحية)')} onChange={(e) => update(i, { ...field, label: e.target.value })} />
+            <div className="ms-auto flex gap-0.5">
+              <Button type="button" size="icon" variant="ghost" className="size-7" permissionAction={null} disabled={i === 0} aria-label={ui('لفوق')} onClick={() => move(i, -1)}><ArrowUp className="size-4" /></Button>
+              <Button type="button" size="icon" variant="ghost" className="size-7" permissionAction={null} disabled={i === fields.length - 1} aria-label={ui('لتحت')} onClick={() => move(i, 1)}><ArrowDown className="size-4" /></Button>
+              <Button type="button" size="icon" variant="ghost" className="size-7" permissionAction={null} disabled={fields.length < 2} aria-label={ui('مسح السطر')} onClick={() => onChange(fields.filter((_, k) => k !== i))}><Trash2 className="size-4 text-destructive" /></Button>
+            </div>
+          </div>
+          <div className="grid gap-1.5">
+            {field.options.map((option, k) => (
+              <div key={k} className="flex items-center gap-1.5">
+                <span className="w-14 shrink-0 text-[11px] text-muted-foreground">{k === 0 ? ui('الصيغة') : ui('أو')}</span>
+                <Input
+                  value={option}
+                  maxLength={500}
+                  placeholder={k === 0 ? ui('اكتب السطر هنا') : ui('صيغة تانية لنفس السطر')}
+                  onFocus={(e) => setFocus({ field: i, option: k, el: e.currentTarget })}
+                  onChange={(e) => update(i, { ...field, options: field.options.map((o, j) => (j === k ? e.target.value : o)) })}
+                />
+                <Button type="button" size="icon" variant="ghost" className="size-8 shrink-0" permissionAction={null} disabled={field.options.length < 2} aria-label={ui('مسح الصيغة')} onClick={() => update(i, { ...field, options: field.options.filter((_, j) => j !== k) })}><X className="size-4" /></Button>
+              </div>
+            ))}
+            {field.options.length < 8 && <Button type="button" size="sm" variant="ghost" className="h-7 justify-self-start text-xs" permissionAction={null} onClick={() => update(i, { ...field, options: [...field.options, ''] })}><Plus className="size-3.5" />{ui('صيغة تانية للسطر ده')}</Button>}
+          </div>
+        </div>
+      ))}
+      {fields.length < 12 && <Button type="button" variant="outline" permissionAction={null} onClick={() => onChange([...fields, { label: '', options: [''] }])}><Plus className="size-4" />{ui('سطر جديد')}</Button>}
+      {body && (
+        <div className="grid gap-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-muted-foreground">{ui('شكل الرسالة (مثال)')}</span>
+            <Button type="button" size="sm" variant="ghost" className="h-7 text-xs" permissionAction={null} onClick={() => setSeed((n) => n + 1)}><Shuffle className="size-3.5" />{ui('مثال تاني')}</Button>
+          </div>
+          <div className="whitespace-pre-wrap rounded-lg rounded-tl-none bg-[#d9fdd3] p-3 text-sm text-[#111b21] shadow-sm">{sample}</div>
+          <p className="text-[11px] text-muted-foreground">{ui('كل عضو بتوصله صيغة واحدة من كل سطر بشكل عشوائي، فالرسايل ماتبقاش نسخة واحدة.')}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const fieldsValid = (fields: TemplateField[]) => fields.some((f) => f.options.some((o) => o.trim()));
+
 // ── birthdays ───────────────────────────────────────────────────────────────
 
 /** Daily birthday greetings: on/off, time, «only current subscribers», the greeting text, and «send today's now». */
@@ -346,8 +450,10 @@ function BirthdayCard() {
   const qc = useQueryClient();
   const { data: branches } = useBranches();
   const [busy, setBusy] = useState<'save' | 'run' | null>(null);
-  const [editing, setEditing] = useState<string | null>(null);
+  const [editing, setEditing] = useState<TemplateField[] | null>(null);
   const [optOutLine, setOptOutLine] = useState(true);
+  const { data: templates } = useTemplates();
+  const birthdayTemplate = templates?.find((t) => t.isBirthday);
   const { data } = useQuery({ queryKey: ['wa-campaigns', 'birthdays'], queryFn: async () => (await api.get<BirthdayInfo>('/wa-campaigns/birthdays')).data });
   if (!data) return null;
   const canConfigure = can('club.whatsapp:configure');
@@ -364,10 +470,11 @@ function BirthdayCard() {
     }
   };
   const saveText = async () => {
-    if (!data.template || !editing?.trim()) return;
+    if (!data.template || !editing || !fieldsValid(editing)) return;
+    const fields = editing.map((f) => ({ label: f.label.trim(), options: f.options.map((o) => o.trim()).filter(Boolean) })).filter((f) => f.options.length);
     setBusy('save');
     try {
-      await api.patch(`/wa-campaigns/templates/${data.template.id}`, { name: data.template.name, body: editing, isActive: true, addOptOutLine: optOutLine });
+      await api.patch(`/wa-campaigns/templates/${data.template.id}`, { name: data.template.name, body: fieldsToBody(fields), fields, isActive: true, addOptOutLine: optOutLine });
       toast.success(ui('تم حفظ نص التهنئة'));
       setEditing(null);
       void qc.invalidateQueries({ queryKey: ['wa-campaigns'] });
@@ -412,7 +519,7 @@ function BirthdayCard() {
           <Input type="time" dir="ltr" className="h-9 w-32" key={data.time} defaultValue={data.time} disabled={!canConfigure || busy !== null} onBlur={(e) => { if (/^\d{2}:\d{2}$/.test(e.target.value) && e.target.value !== data.time) void save({ time: e.target.value }); }} />
         </label>
         <label className="flex items-center gap-2"><Checkbox checked={data.activeOnly} disabled={!canConfigure || busy !== null} onCheckedChange={(v) => void save({ activeOnly: v === true })} />{ui('المشتركين حاليًا بس')}</label>
-        {canConfigure && data.template && <Button size="sm" variant="outline" permissionAction="configure" onClick={() => { setEditing(data.template!.body); setOptOutLine(data.template!.addOptOutLine); }}>{ui('تعديل نص التهنئة')}</Button>}
+        {canConfigure && data.template && <Button size="sm" variant="outline" permissionAction="configure" onClick={() => { setEditing(birthdayTemplate?.fields?.length ? birthdayTemplate.fields : [{ label: '', options: [data.template!.body] }]); setOptOutLine(data.template!.addOptOutLine); }}>{ui('تعديل نص التهنئة')}</Button>}
         {canConfigure && <Button size="sm" permissionAction="configure" disabled={busy !== null || !data.pairedBranchIds.length} onClick={() => void runNow()}><Send className="h-4 w-4" />{busy === 'run' ? ui('جاري التجهيز…') : ui('ابعت تهنئة النهارده دلوقتي')}</Button>}
       </div>
       <div className="mt-2 space-y-1 text-xs">
@@ -423,22 +530,22 @@ function BirthdayCard() {
       </div>
       {data.template && (
         <details className="mt-2 text-xs">
-          <summary className="cursor-pointer text-muted-foreground">{ui('نص التهنئة')} — {data.template.name}</summary>
-          <p className="mt-1 whitespace-pre-wrap rounded-lg bg-card p-3 text-sm">{data.template.body}</p>
+          <summary className="cursor-pointer text-muted-foreground">{ui('مثال للتهنئة')} — {data.template.name}</summary>
+          <p className="mt-1 whitespace-pre-wrap rounded-lg rounded-tl-none bg-[#d9fdd3] p-3 text-sm text-[#111b21]">{sampleMessage(data.template.body)}</p>
         </details>
       )}
       {editing !== null && (
         <Dialog open onOpenChange={(o) => !o && setEditing(null)}>
-          <DialogContent size="md">
+          <DialogContent size="lg" className="max-h-[92vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>{ui('نص تهنئة عيد الميلاد')}</DialogTitle>
-              <DialogDescription>{ui('استخدم {first_name} للاسم و{branch} للفرع و{age} للسن. اكتب أكتر من صيغة وافصل بينهم بسطر ---')}</DialogDescription>
+              <DialogDescription>{ui('كل سطر في خانة، ولكل سطر ممكن تكتب أكتر من صيغة — كل عضو بتوصله صيغة منهم.')}</DialogDescription>
             </DialogHeader>
-            <BodyEditor value={editing} onChange={setEditing} optOutLine={optOutLine} />
+            <FieldsEditor fields={editing} onChange={setEditing} />
             <OptOutLineToggle checked={optOutLine} onChange={setOptOutLine} />
             <DialogFooter>
               <Button variant="outline" permissionAction={null} onClick={() => setEditing(null)}>{ui('إلغاء')}</Button>
-              <Button permissionAction="configure" disabled={busy !== null || !editing.trim()} onClick={() => void saveText()}>{busy === 'save' ? ui('جاري الحفظ…') : ui('حفظ')}</Button>
+              <Button permissionAction="configure" disabled={busy !== null || !fieldsValid(editing)} onClick={() => void saveText()}>{busy === 'save' ? ui('جاري الحفظ…') : ui('حفظ')}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
@@ -456,7 +563,7 @@ const hasLink = (body: string) => /https?:\/\/|www\.|\b[a-z0-9-]+\.(?:com|net|or
 function BodyEditor({ value, onChange, optOutLine = true }: { value: string; onChange: (v: string) => void; optOutLine?: boolean }) {
   const { ui } = useLocale();
   const versions = versionCount(value);
-  const choices = (value.match(/\{[^{}\n]*\|[^{}\n]*\}/g) ?? []).length;
+  const choices = (value.match(CHOICE_GROUP) ?? []).length;
   const [el, setEl] = useState<HTMLTextAreaElement | null>(null);
   const insert = (key: string) => insertText(`{${key}}`);
   const insertText = (token: string) => {
@@ -496,7 +603,7 @@ function NewCampaignDialog({ onClose }: { onClose: () => void }) {
   const user = useAuth((s) => s.user);
   const { data: branches } = useBranches();
   const { data: control } = useControl();
-  const { data: templates } = useQuery({ queryKey: ['wa-campaigns', 'templates'], queryFn: async () => (await api.get<Template[]>('/wa-campaigns/templates')).data });
+  const { data: templates } = useTemplates();
   const today = todayIso();
   const [name, setName] = useState(`${ui('تذكير تجديد')} ${today}`);
   const [branchId, setBranchId] = useState<number>(user?.branch || 0);
@@ -634,7 +741,15 @@ function NewCampaignDialog({ onClose }: { onClose: () => void }) {
                 {(templates ?? []).filter((t) => t.isActive).map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
               </select>
             </div>
-            <div className="grid gap-2"><Label>{ui('نص الرسالة')}</Label><BodyEditor value={body} onChange={setBody} optOutLine={templates?.find((t) => t.id === templateId)?.addOptOutLine ?? true} /></div>
+            {templateId ? (
+              <div className="grid gap-2">
+                <Label>{ui('شكل الرسالة (مثال)')}</Label>
+                <div className="whitespace-pre-wrap rounded-lg rounded-tl-none bg-[#d9fdd3] p-3 text-sm text-[#111b21] shadow-sm">{sampleMessage(body)}</div>
+                <p className="text-xs text-muted-foreground">{ui('النص من القالب — لتعديله افتح تاب «القوالب». المعاينة بتوريك الرسايل الحقيقية بأسماء الأعضاء.')}</p>
+              </div>
+            ) : (
+              <div className="grid gap-2"><Label>{ui('نص الرسالة')}</Label><BodyEditor value={body} onChange={setBody} /></div>
+            )}
           </div>
         </div>
 
@@ -765,12 +880,13 @@ function TemplatesTab() {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Partial<Template> | null>(null);
   const [saving, setSaving] = useState(false);
-  const { data, isLoading, isError, refetch } = useQuery({ queryKey: ['wa-campaigns', 'templates'], queryFn: async () => (await api.get<Template[]>('/wa-campaigns/templates')).data });
+  const { data, isLoading, isError, refetch } = useTemplates();
   const save = async () => {
-    if (!editing?.name?.trim() || !editing.body?.trim()) return void toast.error(ui('الاسم والنص مطلوبان'));
+    const fields = (editing?.fields ?? []).map((f) => ({ label: f.label.trim(), options: f.options.map((o) => o.trim()).filter(Boolean) })).filter((f) => f.options.length);
+    if (!editing?.name?.trim() || !fields.length) return void toast.error(ui('اسم القالب وسطر واحد على الأقل مطلوبين'));
     setSaving(true);
     try {
-      const body = { name: editing.name.trim(), body: editing.body, isActive: editing.isActive ?? true, addOptOutLine: editing.addOptOutLine ?? true };
+      const body = { name: editing.name.trim(), body: fieldsToBody(fields), fields, isActive: editing.isActive ?? true, addOptOutLine: editing.addOptOutLine ?? true };
       if (editing.id) await api.patch(`/wa-campaigns/templates/${editing.id}`, body);
       else await api.post('/wa-campaigns/templates', body);
       toast.success(ui('تم الحفظ'));
@@ -791,42 +907,110 @@ function TemplatesTab() {
       toast.error(apiError(e));
     }
   };
+  const newTemplate = { name: '', isActive: true, fields: [{ label: 'التحية', options: ['أهلًا يا {first_name} 👋'] }, { label: 'الرسالة', options: [''] }, { label: 'الختام', options: [''] }] };
   return (
     <div className="space-y-3">
-      {can('club.whatsapp:create') && <Button variant="outline" onClick={() => setEditing({ name: '', body: DEFAULT_BODY, isActive: true })}><Plus className="h-4 w-4" />{ui('قالب جديد')}</Button>}
+      <AbsenceCard templates={data ?? []} />
+      {can('club.whatsapp:create') && <Button variant="outline" onClick={() => setEditing(newTemplate)}><Plus className="h-4 w-4" />{ui('قالب جديد')}</Button>}
       {isLoading ? <p className="text-sm text-muted-foreground">{ui('جاري التحميل…')}</p> : isError ? <ErrorState onRetry={() => void refetch()} /> : !data?.length ? <EmptyState title={ui('لا توجد قوالب')} description={ui('احفظ نص الرسالة المتكرر كقالب لاستخدامه في كل حملة')} /> : (
         <div className="grid gap-3 md:grid-cols-2">
           {data.map((t) => (
             <div key={t.id} className="rounded-xl border bg-card p-4">
               <div className="flex items-start justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2"><h3 className="font-semibold">{t.name}</h3>{t.isBirthday && <Badge variant="success" className="gap-1"><Cake className="h-3 w-3" />{ui('قالب أعياد الميلاد')}</Badge>}{t.addOptOutLine === false && <Badge variant="outline">{ui('من غير سطر الإيقاف')}</Badge>}{!t.isActive && <Badge variant="outline">{ui('غير نشط')}</Badge>}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold">{t.name}</h3>
+                  {t.isBirthday && <Badge variant="success" className="gap-1"><Cake className="h-3 w-3" />{ui('قالب أعياد الميلاد')}</Badge>}
+                  {t.isAbsence && <Badge variant="warning" className="gap-1"><UserX className="h-3 w-3" />{ui('لم يحضر منذ مدة')}</Badge>}
+                  {t.addOptOutLine === false && <Badge variant="outline">{ui('من غير سطر الإيقاف')}</Badge>}
+                  {!t.isActive && <Badge variant="outline">{ui('غير نشط')}</Badge>}
+                </div>
                 <div className="flex gap-1">
-                  {can('club.whatsapp:update') && <Button size="sm" variant="ghost" onClick={() => setEditing(t)}>{ui('تعديل')}</Button>}
-                  {can('club.whatsapp:delete') && !t.isBirthday && <Button size="icon" variant="ghost" aria-label={ui('حذف')} onClick={() => void remove(t)}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
+                  {can('club.whatsapp:update') && <Button size="sm" variant="ghost" onClick={() => setEditing({ ...t, fields: t.fields?.length ? t.fields : [{ label: '', options: [''] }] })}>{ui('تعديل')}</Button>}
+                  {can('club.whatsapp:delete') && !t.isBirthday && !t.isAbsence && <Button size="icon" variant="ghost" aria-label={ui('حذف')} onClick={() => void remove(t)}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
                 </div>
               </div>
-              <p className="mt-2 whitespace-pre-wrap text-sm text-muted-foreground">{t.body}</p>
+              <div className="mt-2 grid gap-1 text-sm">
+                {(t.fields ?? []).map((f, i) => (
+                  <p key={i} className="text-muted-foreground"><b className="text-foreground">{f.label || `${ui('السطر')} ${i + 1}`}:</b> {f.options[0]}{f.options.length > 1 && <span className="text-xs"> ({ui('و')} {f.options.length - 1} {ui('صيغ تانية')})</span>}</p>
+                ))}
+              </div>
             </div>
           ))}
         </div>
       )}
       {editing && (
         <Dialog open onOpenChange={(o) => !o && setEditing(null)}>
-          <DialogContent size="md">
+          <DialogContent size="lg" className="max-h-[92vh] overflow-y-auto">
             <DialogHeader><DialogTitle>{editing.id ? ui('تعديل القالب') : ui('قالب جديد')}</DialogTitle></DialogHeader>
             <div className="grid gap-4">
               <div className="grid gap-2"><Label>{ui('اسم القالب')}</Label><Input value={editing.name ?? ''} onChange={(e) => setEditing({ ...editing, name: e.target.value })} maxLength={120} /></div>
-              <div className="grid gap-2"><Label>{ui('نص الرسالة')}</Label><BodyEditor value={editing.body ?? ''} onChange={(body) => setEditing({ ...editing, body })} optOutLine={editing.addOptOutLine ?? true} /></div>
+              <FieldsEditor fields={editing.fields ?? []} onChange={(fields) => setEditing({ ...editing, fields })} />
               <label className="flex items-center gap-2 text-sm"><Checkbox checked={editing.isActive ?? true} onCheckedChange={(v) => setEditing({ ...editing, isActive: v === true })} />{ui('نشط')}</label>
               <OptOutLineToggle checked={editing.addOptOutLine ?? true} onChange={(v) => setEditing({ ...editing, addOptOutLine: v })} />
             </div>
             <DialogFooter>
-              <Button variant="outline" onClick={() => setEditing(null)}>{ui('إلغاء')}</Button>
-              <Button disabled={saving} onClick={() => void save()}>{saving ? ui('جاري الحفظ…') : ui('حفظ')}</Button>
+              <Button variant="outline" permissionAction={null} onClick={() => setEditing(null)}>{ui('إلغاء')}</Button>
+              <Button disabled={saving || !fieldsValid(editing.fields ?? [])} onClick={() => void save()}>{saving ? ui('جاري الحفظ…') : ui('حفظ')}</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
       )}
+    </div>
+  );
+}
+
+function useTemplates() {
+  return useQuery({ queryKey: ['wa-campaigns', 'templates'], queryFn: async () => (await api.get<Template[]>('/wa-campaigns/templates')).data });
+}
+
+/** «لم يحضر منذ مدة»: when a row in today's attendance turns yellow / red, and which template its WhatsApp button opens. */
+function AbsenceCard({ templates }: { templates: Template[] }) {
+  const { ui } = useLocale();
+  const { can } = usePermission();
+  const qc = useQueryClient();
+  const { data } = useQuery({ queryKey: ['wa-campaigns', 'absence-settings'], queryFn: async () => (await api.get<AbsenceSettings>('/wa-campaigns/absence-settings')).data });
+  const [busy, setBusy] = useState(false);
+  if (!data) return null;
+  const canConfigure = can('club.whatsapp:configure');
+  const save = async (patch: Partial<AbsenceSettings>) => {
+    setBusy(true);
+    try {
+      qc.setQueryData(['wa-campaigns', 'absence-settings'], (await api.patch<AbsenceSettings>('/wa-campaigns/absence-settings', patch)).data);
+      void qc.invalidateQueries({ queryKey: ['wa-campaigns', 'templates'] });
+      void qc.invalidateQueries({ queryKey: ['wa-reminders'] });
+      toast.success(ui('تم الحفظ'));
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const days = (key: 'yellowDays' | 'redDays', value: string) => {
+    const n = Math.round(Number(value));
+    if (n >= 1 && n <= 365 && n !== data[key]) void save({ [key]: n });
+  };
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4 dark:border-amber-900/50 dark:bg-amber-950/10">
+      <div className="flex items-start gap-3">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/40"><UserX className="h-5 w-5" /></div>
+        <div className="min-w-0">
+          <h3 className="font-semibold">{ui('لم يحضر منذ مدة — سجل حضور اليوم في الاستقبال')}</h3>
+          <p className="text-xs text-muted-foreground">{ui('العضو اللي بيحضر بعد غياب بيتلوّن في جدول الحضور، وجنبه زرار واتساب بيفتح المحادثة بالرسالة جاهزة (بيتبعت يدوي من موبايل الاستقبال).')}</p>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+        <label className="flex items-center gap-2"><span className="size-3 rounded-sm bg-amber-300" />{ui('أصفر من')}
+          <Input type="number" dir="ltr" min={1} max={365} className="h-9 w-20" key={`y${data.yellowDays}`} defaultValue={data.yellowDays} disabled={!canConfigure || busy} onBlur={(e) => days('yellowDays', e.target.value)} />{ui('يوم غياب')}
+        </label>
+        <label className="flex items-center gap-2"><span className="size-3 rounded-sm bg-red-300" />{ui('أحمر من')}
+          <Input type="number" dir="ltr" min={1} max={365} className="h-9 w-20" key={`r${data.redDays}`} defaultValue={data.redDays} disabled={!canConfigure || busy} onBlur={(e) => days('redDays', e.target.value)} />{ui('يوم أو أكتر')}
+        </label>
+        <label className="flex items-center gap-2">{ui('القالب')}
+          <select className="h-9 rounded-md border border-input bg-background px-3 text-sm" value={data.templateId ?? ''} disabled={!canConfigure || busy} onChange={(e) => void save({ templateId: Number(e.target.value) })}>
+            {templates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+        </label>
+      </div>
     </div>
   );
 }

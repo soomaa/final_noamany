@@ -57,6 +57,7 @@ import { formatDigits, toArabicDigits } from "@/lib/utils";
 import { useLocale } from "@/store/locale";
 import { GymSalesPageShell } from "../gym-sales/shell";
 import { indexColumn } from "../inventory/simple-crud-tab";
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface ShiftRow {
   id: number;
@@ -538,7 +539,7 @@ export function SalesShiftsPage() {
           </TabsList>
           <div className="flex items-center gap-2">
             <Label>{ui("الفرع")}</Label>
-            <select
+            <SearchableSelect
               className="rounded-md border bg-background px-3 py-2 text-sm"
               value={effectiveBranch}
               onChange={(e) => setBranchFilter(e.target.value)}
@@ -548,7 +549,7 @@ export function SalesShiftsPage() {
                   {branch.name}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
         </div>
 
@@ -805,7 +806,7 @@ export function SalesShiftsPage() {
               </div>
               <div>
                 <Label className="text-xs">{ui("الوردية")}</Label>
-                <select
+                <SearchableSelect
                   className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm"
                   value={reportFilters.shiftId}
                   onChange={(event) =>
@@ -821,11 +822,11 @@ export function SalesShiftsPage() {
                       {shift.shiftName}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div>
                 <Label className="text-xs">{ui("المسؤول")}</Label>
-                <select
+                <SearchableSelect
                   className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm"
                   value={reportFilters.userId}
                   onChange={(event) =>
@@ -841,11 +842,11 @@ export function SalesShiftsPage() {
                       {candidate.name || candidate.username}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div>
                 <Label className="text-xs">{ui("الحالة")}</Label>
-                <select
+                <SearchableSelect
                   className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm"
                   value={reportFilters.status}
                   onChange={(event) =>
@@ -859,11 +860,11 @@ export function SalesShiftsPage() {
                   <option value="open">{ui("مفتوحة")}</option>
                   <option value="closed">{ui("مغلقة")}</option>
                   <option value="auto_closed">{ui("مغلقة تلقائياً")}</option>
-                </select>
+                </SearchableSelect>
               </div>
               <div>
                 <Label className="text-xs">{ui("فرق الجرد")}</Label>
-                <select
+                <SearchableSelect
                   className="mt-1 h-10 w-full rounded-md border bg-background px-3 text-sm"
                   value={reportFilters.difference}
                   onChange={(event) =>
@@ -877,7 +878,7 @@ export function SalesShiftsPage() {
                   <option value="balanced">{ui("متطابق")}</option>
                   <option value="shortage">{ui("عجز")}</option>
                   <option value="surplus">{ui("زيادة")}</option>
-                </select>
+                </SearchableSelect>
               </div>
             </div>
           </section>
@@ -1147,7 +1148,7 @@ export function SalesShiftsPage() {
           <div className="grid gap-3 py-2">
             <div className="grid gap-1">
               <Label>{ui("الوردية")}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={startShiftId}
                 onChange={(e) => setStartShiftId(e.target.value)}
@@ -1159,7 +1160,7 @@ export function SalesShiftsPage() {
                     {formatTime(s.endTime)}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1">
               <Label>{ui("رصيد الافتتاح")}</Label>

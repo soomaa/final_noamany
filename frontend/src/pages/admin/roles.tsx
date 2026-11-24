@@ -20,6 +20,7 @@ import { confirm } from '@/lib/confirm';
 import { diffDraft, draftFromCells } from '@/lib/rbac-resolve';
 import type { TriState } from '@/types/rbac';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function RolesPage() {
   const { ui } = useLocale();
@@ -84,7 +85,7 @@ export function RolesPage() {
       {/* Role selector + actions */}
       <Card>
         <CardContent className="flex flex-wrap items-center gap-2 p-3">
-          <select
+          <SearchableSelect
             value={roleId ?? ''}
             onChange={(e) => setRoleId(Number(e.target.value))}
             className="h-9 min-w-56 rounded-md border border-input bg-card px-3 text-sm"
@@ -94,7 +95,7 @@ export function RolesPage() {
                 {r.nameAr} ({formatNumber(r.users)})
               </option>
             ))}
-          </select>
+          </SearchableSelect>
           <div className="flex flex-wrap items-center gap-1.5">
             <Button size="sm" variant="outline" asChild>
               <Link to="/org/job-titles">{ui('إدارة المسميات الوظيفية')}</Link>

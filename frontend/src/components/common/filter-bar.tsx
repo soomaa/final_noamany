@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -13,6 +13,10 @@ export interface FilterField {
   type: 'text' | 'select' | 'date';
   options?: { value: string; label: string }[];
   placeholder?: string;
+  /** Shown and not changeable, e.g. the رجالي/حريمي section a one-section employee is locked to. */
+  lockedValue?: string;
+  /** Applied once when the page opens without this filter in the URL (e.g. مديرة فرع → حريمي). */
+  defaultValue?: string;
 }
 
 interface FilterBarProps {
@@ -34,6 +38,18 @@ export function FilterBar({ fields = [], searchPlaceholder, className, extra, pr
   const [searchInput, setSearchInput] = useState(search);
 
   useEffect(() => setSearchInput(search), [search]);
+
+  // Opening defaults: set once per visit, so choosing «الكل» afterwards sticks.
+  const defaultsApplied = useRef(false);
+  useEffect(() => {
+    if (defaultsApplied.current) return;
+    defaultsApplied.current = true;
+    const missing = fields.filter((f) => f.defaultValue && f.lockedValue == null && !searchParams.get(f.key));
+    if (!missing.length) return;
+    const next = new URLSearchParams(searchParams);
+    for (const f of missing) next.set(f.key, f.defaultValue!);
+    setSearchParams(next, { replace: true });
+  }, [fields, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (searchInput === search) return;
@@ -96,7 +112,11 @@ export function FilterBar({ fields = [], searchPlaceholder, className, extra, pr
           <div key={field.key} className="min-w-[160px]">
             <Label className="mb-1.5 block text-xs text-muted-foreground">{field.label}</Label>
             {field.type === 'select' ? (
-              <Select value={searchParams.get(field.key) ?? ''} onValueChange={(v) => setFilter(field.key, v === 'all' ? '' : v)}>
+              <Select
+                value={field.lockedValue ?? searchParams.get(field.key) ?? ''}
+                disabled={field.lockedValue != null}
+                onValueChange={(v) => setFilter(field.key, v === 'all' ? '' : v)}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder={field.placeholder ?? field.label} />
                 </SelectTrigger>

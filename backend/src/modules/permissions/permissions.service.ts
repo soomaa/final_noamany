@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { paginated } from "../../common/dto/list-result";
@@ -29,6 +30,9 @@ import {
   STAGE_DATE_FIELD,
   nextRecipientMosama,
 } from "./approval-chain.util";
+import { ownOnlyEmployeeIds } from "../../common/hr-scope/own-hr-records";
+import { PermissionEngineService } from "../rbac/engine/permission-engine.service";
+import type { JwtUser } from "../../common/types/jwt-user";
 
 /**
  * Legacy ezn caps. The legacy `ezn_setting()` reads hr_egraat_sysat (title='ozonat')
@@ -43,7 +47,11 @@ const DEFAULT_NUMS_IN_ONE_TIME = 120;
 
 @Injectable()
 export class PermissionsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    // Optional so the unit specs can still construct the service with Prisma only.
+    @Optional() private readonly engine?: PermissionEngineService,
+  ) {}
 
   /** Parse a HH:mm / h:i A time string into minutes-since-midnight (mirrors strtotime/60). */
   private timeToMinutes(raw: string): number {
@@ -67,10 +75,16 @@ export class PermissionsService {
     return Math.round(diff * 100) / 100;
   }
 
-  async list(q: ListPermissionsDto, userId?: number) {
+  async list(q: ListPermissionsDto, actor?: number | JwtUser) {
+    const userId = typeof actor === "number" ? actor : actor?.sub;
     const and: Prisma.hr_all_ozonat_ordersWhereInput[] = [
       { OR: [{ cancel: { not: "yes" } }, { cancel: null }] },
     ];
+    // Captain / reception accounts: only their own permits (the inbox tab is already personal).
+    if (typeof actor === "object" && q.mode !== "wared") {
+      const own = await ownOnlyEmployeeIds(this.prisma, this.engine, actor, "leaves.permissions");
+      if (own) and.push({ emp_id_fk: { in: own } });
+    }
 
     // legacy tabs (get_datatables_ozonat)
     switch (q.mode) {

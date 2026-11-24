@@ -40,7 +40,7 @@ export class UnifiedTreasuryService {
 
   /** Aggregate cash sources for a day, range, or all time. */
   async daily(
-    params: { date?: string; branchId?: number; startDate?: string; endDate?: string; dateFrom?: string; dateTo?: string },
+    params: { date?: string; branchId?: number; startDate?: string; endDate?: string; dateFrom?: string; dateTo?: string; gender?: string },
     user?: JwtUser,
   ) {
     const {
@@ -71,6 +71,9 @@ export class UnifiedTreasuryService {
             dateFrom: dateFrom ?? undefined,
             dateTo: dateTo ?? undefined,
             branchId: params.branchId != null ? String(params.branchId) : undefined,
+            // رجالي/حريمي applies to the club member money only; POS sales, revenues and
+            // expenses have no member section and stay unfiltered.
+            gender: params.gender,
           },
           user,
         ),
@@ -173,6 +176,9 @@ export class UnifiedTreasuryService {
           dateFrom: dateFrom ?? undefined,
           dateTo: dateTo ?? undefined,
           branchId: params.branchId != null ? String(params.branchId) : undefined,
+          // رجالي/حريمي applies to the club member money only; POS sales, revenues and
+          // expenses have no member section and stay unfiltered.
+          gender: params.gender,
         },
         user,
       ),

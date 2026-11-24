@@ -141,3 +141,51 @@ describe('reception service attendance', () => {
     expect(prisma.club_attendance.create).not.toHaveBeenCalled();
   });
 });
+
+describe('reception InBody result with the deduction', () => {
+  const measurement = { weight: 80, heightCm: 180, bodyFat: 22.5, muscleMass: 35, notes: ' after session ', reportUrl: 'inbody/r1.pdf' };
+
+  function withMeasurements() {
+    const ctx = fixture();
+    const data = ctx.prisma as any;
+    data.club_inbody_measurements = {
+      findFirst: jest.fn().mockResolvedValue(null),
+      create: jest.fn(async ({ data: row }) => ({ id: 5, ...row })),
+    };
+    return { ...ctx, measurements: data.club_inbody_measurements };
+  }
+
+  it('deducts one InBody session and saves the result and report in the same transaction', async () => {
+    const { service, prisma, measurements } = withMeasurements();
+    await service.checkInService({ memberId: 10, subscriptionId: 20, attendanceType: 'inbody', measurement }, user);
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.club_subscriptions.update).toHaveBeenCalledWith({ where: { id: 20 }, data: { inbody_used: { increment: 1 } } });
+    expect(measurements.create).toHaveBeenCalledWith({ data: expect.objectContaining({
+      member_id: 10, weight: 80, height_cm: 180, body_fat: 22.5, muscle_mass: 35,
+      bmi: 24.69, notes: 'after session', report_url: 'inbody/r1.pdf',
+    }) });
+  });
+
+  it('refuses a second result on the same day before deducting', async () => {
+    const { service, prisma, measurements } = withMeasurements();
+    measurements.findFirst.mockResolvedValue({ id: 3 });
+    await expect(service.checkInService({ memberId: 10, subscriptionId: 20, attendanceType: 'inbody', measurement }, user))
+      .rejects.toThrow('يوجد قياس InBody');
+    expect(prisma.club_subscriptions.update).not.toHaveBeenCalled();
+    expect(measurements.create).not.toHaveBeenCalled();
+  });
+
+  it('does not save a result when nothing is left to deduct', async () => {
+    const { service, sub, measurements } = withMeasurements();
+    sub.inbody_used = 4;
+    await expect(service.checkInService({ memberId: 10, subscriptionId: 20, attendanceType: 'inbody', measurement }, user))
+      .rejects.toThrow('لا يوجد رصيد');
+    expect(measurements.create).not.toHaveBeenCalled();
+  });
+
+  it('deducts without a result when none is sent', async () => {
+    const { service, measurements } = withMeasurements();
+    await service.checkInService({ memberId: 10, subscriptionId: 20, attendanceType: 'inbody' }, user);
+    expect(measurements.create).not.toHaveBeenCalled();
+  });
+});

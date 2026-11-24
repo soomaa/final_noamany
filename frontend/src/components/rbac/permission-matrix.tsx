@@ -34,6 +34,7 @@ import { orderRbacCatalogForSidebar } from '@/lib/rbac-nav-order';
 import type { Effect, RbacCatalog, RbacNode, TriState } from '@/types/rbac';
 import { TriStateCell } from './tri-state-cell';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const MODULE_ICONS: Record<string, LucideIcon> = {
   Briefcase,
@@ -261,7 +262,7 @@ export function PermissionMatrix({ catalog, mode, draft, onChange, baseline, edi
 
         {/* Module switcher (mobile) */}
         <div className="border-b border-border p-2 md:hidden">
-          <select
+          <SearchableSelect
             value={activeKey}
             onChange={(e) => setActiveKey(e.target.value)}
             className="h-10 w-full rounded-md border border-input bg-card px-3 text-sm"
@@ -272,7 +273,7 @@ export function PermissionMatrix({ catalog, mode, draft, onChange, baseline, edi
                 {moduleHasGrant(m) ? ' •' : ''}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
 
         {/* Matrix */}

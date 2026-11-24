@@ -64,11 +64,11 @@ export class ClubPointsController {
 
   @Get('reports/earned-members')
   earnedMembersReport(@Query() query: PointsDateRangeQueryDto, @CurrentUser() user: JwtUser) {
-    return this.service.earnedMembersReport(query.fromDate, query.toDate, user);
+    return this.service.earnedMembersReport(query.fromDate, query.toDate, user, query.gender);
   }
 
   @Get('reports/active-members')
-  activeMembersReport(@CurrentUser() user: JwtUser) {
-    return this.service.activeMembersReport(user);
+  activeMembersReport(@CurrentUser() user: JwtUser, @Query('gender') gender?: string) {
+    return this.service.activeMembersReport(user, gender);
   }
 }

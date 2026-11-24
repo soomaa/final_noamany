@@ -182,7 +182,7 @@
     "typeDeleted": "Type deleted",
     "checkedOut": "Checked out",
     "address": "Address",
-    "appAccountHint": "An app account will be created using the member's phone number as both username and password.",
+    "appAccountHint": "An app account will be created: the username is the member's phone number and the password is the one you type (or the phone number if left blank).",
     "appPassword": "Password",
     "appUsername": "Username",
     "autoCreateUser": "Auto-create app account",

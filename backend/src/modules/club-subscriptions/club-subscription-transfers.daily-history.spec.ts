@@ -7,7 +7,7 @@ describe('employee transfer history', () => {
   const prisma = { club_member_subscription_transfers: { findMany: jest.fn().mockResolvedValue([]) }, club_subscription_transfers: { findMany: jest.fn().mockResolvedValue([]) } };
   const groups = { siblingBranchIds: jest.fn().mockResolvedValue([3, 7]) };
   const service = new ClubSubscriptionTransfersService(prisma as never, {} as never, {} as never, {} as never, new BranchScopeService(), groups);
-  const employee = { level: 2, branch: 3 } as JwtUser;
+  const employee = { level: 2, branch: 3, man_women_type: 3 } as JwtUser;
 
   it('restricts member-transfer history to today within the allowed group', async () => {
     await service.listMemberTransfers(employee);

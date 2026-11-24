@@ -15,6 +15,7 @@ import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
 import type { WorkoutTemplateRow } from '@/types/fitness';
 import { RowActions, jsonArrayToLines, linesToJsonArray, useFitnessResourceList, SELECT_CLS } from './shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function FitnessTemplatesPage() {
   const ft = useFitnessT();
@@ -154,7 +155,7 @@ export function FitnessTemplatesPage() {
             </div>
             <div className="grid gap-2">
               <Label>{ft('templates.exercises')}</Label>
-              <select
+              <SearchableSelect
                 className={SELECT_CLS}
                 value=""
                 onChange={(e) => {
@@ -167,7 +168,7 @@ export function FitnessTemplatesPage() {
                 {(exercises ?? []).map((ex) => (
                   <option key={ex.id} value={ex.id}>{ex.name}{ex.muscleGroup ? ` (${ex.muscleGroup})` : ''}</option>
                 ))}
-              </select>
+              </SearchableSelect>
               <ul className="space-y-1 text-sm">
                 {form.selectedExerciseIds.map((id) => {
                   const ex = (exercises ?? []).find((e) => e.id === id);

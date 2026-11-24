@@ -14,6 +14,8 @@ interface AttendanceStatisticsParams {
   branch?: string;
   startDate?: string;
   endDate?: string;
+  /** رجالي/حريمي section; omit for both. */
+  gender?: string;
 }
 
 export function useClubAttendanceStatistics(

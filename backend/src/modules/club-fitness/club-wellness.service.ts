@@ -308,10 +308,13 @@ export class ClubWellnessService {
 
   // --- InBody measurements ---
 
-  private async inbodyMemberScope(user?: JwtUser): Promise<Prisma.club_membersWhereInput> {
-    if (!user) return {};
+  /** `gender` defaults to the user's own section; list endpoints pass the resolved رجالي/حريمي/الكل choice. */
+  private async inbodyMemberScope(
+    user?: JwtUser,
+    gender: 'male' | 'female' | null = this.branchScope.memberGenderFilter(user),
+  ): Promise<Prisma.club_membersWhereInput> {
+    if (!user) return gender ? { gender } : {};
     const branches = await clubOperationBranchIds(this.branchScope, this.branchGroups, user);
-    const gender = this.branchScope.memberGenderFilter(user);
     return { is_deleted: false, ...(branches === null ? {} : { branch_id: { in: branches } }), ...(gender ? { gender } : {}) };
   }
 
@@ -328,10 +331,14 @@ export class ClubWellnessService {
     return ids === null ? undefined : { in: ids };
   }
 
-  /** Member ids a gender-restricted user may see; null when no gender restriction applies. */
-  private async genderScopedMemberIds(user?: JwtUser): Promise<number[] | null> {
-    if (!user || this.branchScope.memberGenderFilter(user) === null) return null;
-    const members = await this.prisma.club_members.findMany({ where: await this.inbodyMemberScope(user), select: { id: true } });
+  /**
+   * Member ids for the رجالي/حريمي/الكل filter (`requested` = the list's `gender` param); null when no
+   * section filter applies. One-section staff are locked to their section (403 for the other one).
+   */
+  private async genderScopedMemberIds(user?: JwtUser, requested?: string): Promise<number[] | null> {
+    const gender = this.branchScope.resolveMemberGenderRequest(user, requested);
+    if (gender === null) return null;
+    const members = await this.prisma.club_members.findMany({ where: await this.inbodyMemberScope(user, gender), select: { id: true } });
     return members.map((member) => member.id);
   }
 
@@ -353,7 +360,8 @@ export class ClubWellnessService {
 
   async listInbodyMeasurements(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_inbody_measurementsWhereInput = {};
-    const scopedIds = user ? (await this.prisma.club_members.findMany({ where: await this.inbodyMemberScope(user), select: { id: true } })).map(member => member.id) : null;
+    const gender = this.branchScope.resolveMemberGenderRequest(user, q.gender);
+    const scopedIds = user || gender ? (await this.prisma.club_members.findMany({ where: await this.inbodyMemberScope(user, gender), select: { id: true } })).map(member => member.id) : null;
     if (scopedIds) where.member_id = { in: scopedIds };
     if (q.memberId) where.member_id = scopedIds === null || scopedIds.includes(Number(q.memberId)) ? Number(q.memberId) : { in: [] };
     if (q.dateFrom || q.dateTo) {
@@ -404,7 +412,7 @@ export class ClubWellnessService {
     if (q.memberId) where.member_id = Number(q.memberId);
     const branch = this.wellnessBranchFilter(q, user);
     if (branch !== undefined) where.branch_id = branch;
-    const scopedMemberIds = await this.genderScopedMemberIds(user);
+    const scopedMemberIds = await this.genderScopedMemberIds(user, q.gender);
     if (scopedMemberIds) where.AND = [{ member_id: { in: scopedMemberIds } }];
     if (q.dateFrom || q.dateTo) {
       where.attendance_date = {
@@ -564,7 +572,7 @@ export class ClubWellnessService {
     if (q.memberId) where.member_id = Number(q.memberId);
     const branch = this.wellnessBranchFilter(q, user);
     if (branch !== undefined) where.branch_id = branch;
-    const scopedMemberIds = await this.genderScopedMemberIds(user);
+    const scopedMemberIds = await this.genderScopedMemberIds(user, q.gender);
     if (scopedMemberIds) where.AND = [{ OR: [{ member_id: null }, { member_id: { in: scopedMemberIds } }] }];
 
     const [rows, total] = await Promise.all([
@@ -925,7 +933,7 @@ export class ClubWellnessService {
     if (q.memberId) where.member_id = Number(q.memberId);
     const branch = this.wellnessBranchFilter(q, user);
     if (branch !== undefined) where.branch_id = branch;
-    const scopedMemberIds = await this.genderScopedMemberIds(user);
+    const scopedMemberIds = await this.genderScopedMemberIds(user, q.gender);
     if (scopedMemberIds) where.AND = [{ OR: [{ member_id: null }, { member_id: { in: scopedMemberIds } }] }];
 
     const [rows, total] = await Promise.all([
@@ -1145,7 +1153,7 @@ export class ClubWellnessService {
     if (q.memberId) where.member_id = Number(q.memberId);
     const branch = this.wellnessBranchFilter(q, user);
     if (branch !== undefined) where.branch_id = branch;
-    const scopedMemberIds = await this.genderScopedMemberIds(user);
+    const scopedMemberIds = await this.genderScopedMemberIds(user, q.gender);
     if (scopedMemberIds) where.AND = [{ member_id: { in: scopedMemberIds } }];
 
     const [rows, total] = await Promise.all([

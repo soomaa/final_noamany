@@ -4,7 +4,7 @@ describe('ClubReceiptsCrudService receipt period filters', () => {
   it('passes member, branch, and inclusive receipt-date filters to the receipt query', async () => {
     const findMany = jest.fn().mockResolvedValue([]);
     const prisma = { club_receipts: { findMany, count: jest.fn().mockResolvedValue(0) } };
-    const branchScope = { allowedBranchIds: jest.fn().mockReturnValue(null) };
+    const branchScope = { allowedBranchIds: jest.fn().mockReturnValue(null), resolveMemberGenderRequest: jest.fn().mockReturnValue(null) };
     const service = new ClubReceiptsCrudService(prisma as never, {} as never, {} as never, branchScope as never);
 
     await service.list({

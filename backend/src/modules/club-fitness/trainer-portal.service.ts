@@ -23,6 +23,19 @@ export class TrainerPortalService {
     return { dateFrom, dateTo };
   }
 
+  /**
+   * The portal shows one calendar month only (client, 20 Nov 2026): from the 1st to the last day of
+   * the month of `dateFrom` (the current month when missing or malformed), whatever range was asked.
+   */
+  private monthRange(dateFrom?: string): { dateFrom: string; dateTo: string } {
+    const valid = dateFrom && /^\d{4}-\d{2}-\d{2}$/.test(dateFrom) ? dateFrom : null;
+    const anchor = valid ?? new Intl.DateTimeFormat('en-CA', { timeZone: 'Africa/Cairo' }).format(new Date());
+    const [year, month] = anchor.split('-').map(Number);
+    const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    const ym = `${year}-${String(month).padStart(2, '0')}`;
+    return { dateFrom: `${ym}-01`, dateTo: `${ym}-${String(lastDay).padStart(2, '0')}` };
+  }
+
   private datesInRange(dateFrom: string, dateTo: string) {
     const dates: Array<{ value: string; weekday: number }> = [];
     const cursor = new Date(`${dateFrom}T12:00:00Z`);
@@ -161,8 +174,9 @@ export class TrainerPortalService {
     );
   }
 
-  async dashboard(user: JwtUser, query?: { dateFrom?: string; dateTo?: string }) {
+  async dashboard(user: JwtUser, requested?: { dateFrom?: string; dateTo?: string }) {
     const trainer = await this.ownTrainer(user);
+    const query = this.monthRange(requested?.dateFrom);
     const classes = await this.prisma.club_classes.findMany({
       where: {
         trainer_id: trainer.id,

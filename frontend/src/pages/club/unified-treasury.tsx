@@ -12,6 +12,8 @@ import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { SearchableSelect } from '@/components/common/searchable-select';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 
 interface TreasuryData {
   date: string | null;
@@ -56,12 +58,14 @@ export function UnifiedTreasuryPage() {
   const { data: branches } = useBranches();
   const [branchId, setBranchId] = useState('');
   const [periodMode, setPeriodMode] = useState<PeriodMode>('today');
+  const g = useMemberGenderFilter();
   const [dateFrom, setDateFrom] = useState(() => monthStart());
   const [dateTo, setDateTo] = useState(() => localToday());
   const printRef = useRef<HTMLDivElement>(null);
 
   const queryParams = useMemo(() => {
     const base: Record<string, string> = branchId ? { branchId } : {};
+    if (g.param) base.gender = g.param;
     if (periodMode === 'today') {
       const d = localToday();
       return { ...base, date: d, dateFrom: d, dateTo: d };
@@ -73,7 +77,7 @@ export function UnifiedTreasuryPage() {
       return { ...base, date: d, dateFrom: d, dateTo: d };
     }
     return { ...base, dateFrom: from, dateTo: to };
-  }, [periodMode, dateFrom, dateTo, branchId]);
+  }, [periodMode, dateFrom, dateTo, branchId, g.param]);
 
   const { data, isLoading, isFetching } = useQuery({
     queryKey: [
@@ -84,6 +88,7 @@ export function UnifiedTreasuryPage() {
       queryParams.dateTo ?? '',
       queryParams.date ?? '',
       queryParams.branchId ?? '',
+      g.value,
     ],
     queryFn: async () => {
       const { data: r } = await api.get<TreasuryData>('/treasury/daily', {
@@ -153,6 +158,7 @@ export function UnifiedTreasuryPage() {
       if (dateTo) qs.set('dateTo', dateTo);
     }
     if (branchId) qs.set('branchId', branchId);
+    if (g.param) qs.set('gender', g.param);
     qs.set('format', 'xlsx');
     await downloadFromApi(
       `/api/treasury/daily/export?${qs.toString()}`,
@@ -193,7 +199,7 @@ export function UnifiedTreasuryPage() {
       <div className="flex flex-wrap items-end gap-4">
         <div>
           <Label className="text-xs">{ui('الفرع')}</Label>
-          <select
+          <SearchableSelect
             className="mt-1 block rounded-md border bg-background px-3 py-2 text-sm"
             value={branchId}
             onChange={(e) => setBranchId(e.target.value)}
@@ -202,8 +208,9 @@ export function UnifiedTreasuryPage() {
             {(branches ?? []).map((b) => (
               <option key={b.id} value={b.id}>{b.name}</option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
+        <MemberGenderSelect value={g.value} onChange={g.setValue} locked={g.locked} />
         <div>
           <Label className="text-xs">{ui('الفترة')}</Label>
           <div className="mt-1 flex flex-wrap gap-1 rounded-lg border bg-muted/30 p-1">

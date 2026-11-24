@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+import { assertManagerMayModify, managerKind, managerPeriodBounds } from '../../common/utils/manager-scope.util';
 import {
   InventoryTxnType,
   InventoryTxnStatus,
@@ -260,6 +261,11 @@ export class QuickSalesService {
     if (q.partnerId != null) and.push({ partner_id: q.partnerId });
     if (q.billingCycle) and.push({ billing_cycle: q.billingCycle });
     if (q.billingStatus) and.push({ billing_status: q.billingStatus });
+    // Branch manager / section supervisor: invoices of the current and the previous month (client sheet, 22 Nov).
+    if (managerKind(user)) {
+      const b = managerPeriodBounds('twoMonths');
+      and.push({ sale_date: { gte: b.from, lte: b.to } });
+    }
     if (q.dateFrom || q.dateTo) {
       and.push({
         sale_date: {
@@ -1903,6 +1909,7 @@ export class QuickSalesService {
     dryRun = false,
     user?: JwtUser,
   ) {
+    assertManagerMayModify(user);
     if (!dto.notes?.trim() || dto.notes.trim().length < 3) {
       throw new BadRequestException(
         "سبب الإلغاء أو الاسترداد مطلوب ويجب أن يكون واضحًا",

@@ -1716,6 +1716,8 @@ model employees {
   mosma_wazefy_code       Int? // -> department_jobs (job title code)
   mosma_wazefy_tarteb     Int?        @db.TinyInt
   mosma_wazefy_n          String?     @db.VarChar(50)
+  /// «يعمل كأخصائي مبيعات»: adds the additional_sales role on top of the job-title role.
+  is_sales                Boolean     @default(false)
   mosma_wazefy_eqama_n    String?     @db.VarChar(100)
   test_num_month          Int?
   end_test_date_m         String?     @db.VarChar(30) // date-string Gregorian
@@ -4873,52 +4875,92 @@ model club_member_documents {
 }
 
 model club_leads {
-  id                  Int                    @id @default(autoincrement())
-  full_name           String                 @db.VarChar(200)
-  phone               String                 @db.VarChar(50)
-  source              String                 @db.VarChar(40)
-  status              String                 @default("new") @db.VarChar(20)
-  assigned_to_id      Int?
-  converted_member_id Int?
-  notes               String?                @db.Text
-  last_contacted_at   DateTime?
-  next_follow_up_at   DateTime?
-  next_call_at        DateTime?
-  branch_id           Int
-  created_by          Int?
-  created_at          DateTime               @default(now())
-  updated_at          DateTime               @updatedAt
-  follow_ups          club_lead_follow_ups[]
+  id                   Int                    @id @default(autoincrement())
+  /// FIT90 field names on top of EMS's original columns. `@map` keeps the physical column
+  /// (`full_name`, `assigned_to_id`) so `prisma db push` never drops and re-adds them —
+  /// a plain rename there would wipe every lead's name on the server.
+  name                 String                 @map("full_name") @db.VarChar(200)
+  phone                String?                @db.VarChar(50)
+  email                String?                @db.VarChar(120)
+  gender               String?                @db.VarChar(10)
+  /// EMS's fixed source key (walk_in, facebook_campaign, renewal…) — the business rules key on it.
+  source               String                 @default("walk_in") @db.VarChar(40)
+  /// FIT90's admin-managed source (club_customer_sources.id), shown by the sales workspace.
+  source_id            Int?
+  facebook_profile_url String?                @db.VarChar(500)
+  interested_program   String?                @db.VarChar(80)
+  subscription_type_id Int?
+  status               String                 @default("new") @db.VarChar(20)
+  assigned_to          Int?                   @map("assigned_to_id")
+  assignment_mode      String?                @db.VarChar(20)
+  /// Handover trail: when the lead last became someone's, who moved it, and when the
+  /// receiving rep first opened it (clears the "handed to you" badge).
+  assigned_at          DateTime?
+  assigned_by          Int?
+  assignment_seen_at   DateTime?
+  converted_member_id  Int?
+  invitation_id        Int?
+  notes                String?                @db.Text
+  /// Date-only follow-up the admin list and `club_reminders` read; the portal's
+  /// time-of-day scheduling lives in `next_follow_up_at` / `next_call_at`.
+  follow_up_at         String?                @db.VarChar(20)
+  last_contacted_at    DateTime?
+  next_follow_up_at    DateTime?
+  next_call_at         DateTime?
+  branch_id            Int?
+  is_deleted           Boolean                @default(false)
+  created_by           Int?
+  created_at           DateTime               @default(now())
+  updated_at           DateTime               @updatedAt
+  comments             club_lead_comments[]
+  follow_ups           club_lead_follow_ups[]
 
-  @@index([assigned_to_id, branch_id])
-  @@index([converted_member_id])
   @@index([status])
+  @@index([assigned_to])
+  @@index([assigned_to, assigned_at])
+  @@index([branch_id])
+  @@index([branch_id, status])
+  @@index([phone])
+  @@index([source])
+  @@index([converted_member_id])
+  @@index([created_at])
   @@map("club_leads")
-  name         String   @db.VarChar(200)
-  email        String?  @db.VarChar(120)
-  gender       String?  @db.VarChar(10)
-  source_id    Int?
-  follow_up_at String?  @db.VarChar(20)
-  assigned_to  Int?
-  is_deleted   Boolean  @default(false)
 }
 
 model club_lead_follow_ups {
   id                Int        @id @default(autoincrement())
   lead_id           Int
   note              String     @db.Text
-  status            String?    @db.VarChar(20)
+  status            String?    @db.VarChar(30)
   activity_type     String     @default("note") @db.VarChar(20)
   answered          Boolean?
   interests         String?    @db.Text
   next_follow_up_at DateTime?
   next_call_at      DateTime?
   created_by        Int?
+  /// Snapshot of the author's name so the log survives staff changes.
+  author_name       String?    @db.VarChar(200)
   created_at        DateTime   @default(now())
   lead              club_leads @relation(fields: [lead_id], references: [id], onDelete: Cascade)
 
   @@index([lead_id])
+  @@index([activity_type])
+  @@index([created_at])
   @@map("club_lead_follow_ups")
+}
+
+model club_lead_comments {
+  id          Int        @id @default(autoincrement())
+  lead_id     Int
+  body        String     @db.Text
+  created_by  Int?
+  /// Snapshot of the author's name so the log survives staff changes.
+  author_name String?    @db.VarChar(200)
+  created_at  DateTime   @default(now())
+  lead        club_leads @relation(fields: [lead_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@index([lead_id])
+  @@map("club_lead_comments")
 }
 
 /// Member attendance / check-in. Old: MemberAttendances.
@@ -4981,8 +5023,19 @@ model club_subscription_types {
   is_linked_to_freeze          Boolean                                 @default(false)
   /// Max number of times this package may be frozen (historical column name: freeze_days).
   freeze_days                  Int?
+  /// Total days this package may stay frozen across all its freezes (NULL = unlimited). The old
+  /// system's «عدد أيام الوقف»; freeze_days above caps how many times.
+  freeze_total_days            Int?
   includes_spa                 Boolean                                 @default(false)
   spa_count                    Int?
+  /// Special offer («عرض خاص»): `discount` sells for promo_price; `bonus` adds promo_bonus extra
+  /// days (time packages) or visits (session packages), optionally at promo_price too.
+  promo_enabled                Boolean                                 @default(false)
+  promo_kind                   String                                  @default("discount") @db.VarChar(20)
+  promo_price                  Decimal?                                @db.Decimal(10, 2)
+  promo_bonus                  Int?
+  /// Last day the offer can be sold (Cairo date, inclusive). NULL = until switched off.
+  promo_ends_on                String?                                 @db.VarChar(10)
   is_active                    Boolean                                 @default(true)
   created_at                   DateTime                                @default(now())
   updated_at                   DateTime                                @updatedAt
@@ -9658,7 +9711,7 @@ model club_branch_visits {
 }
 
 model club_calls {
-  id          Int      @id
+  id          Int      @id @default(autoincrement())
   member_id   Int?
   member_name String?  @db.VarChar(200)
   phone       String?  @db.VarChar(30)
@@ -9671,10 +9724,11 @@ model club_calls {
   branch_id   Int?
   is_deleted  Boolean  @default(false)
   created_at  DateTime @default(now())
-  updated_at  DateTime
+  updated_at  DateTime @updatedAt
 
   @@index([call_date])
   @@index([member_id])
+  @@map("club_calls")
 }
 
 model club_class_rooms {
@@ -10768,4 +10822,217 @@ enum zz_backup_20260812_real_hr_employees_rokhsa_mihani {
 enum zz_backup_20260812_real_hr_employees_shahadt_jaish {
   yes
   no
+}
+
+// ── Sales management & WhatsApp campaigns (ported from MetaFit) ──
+
+model club_sales_rep_settings {
+  use_default_settings    Boolean                       @default(false)
+  id                      Int                           @id @default(autoincrement())
+  employee_id             Int                           @unique
+  /// Still employed, but excluded from new-customer distribution when false.
+  is_active               Boolean                       @default(true)
+  monthly_target          Decimal                       @default(0) @db.Decimal(12, 2)
+  commission_mode         String                        @default("flat") @db.VarChar(20)
+  flat_commission_percent Decimal                       @default(0) @db.Decimal(6, 3)
+  target_period_mode      String                        @default("monthly") @db.VarChar(20)
+  target_start_date       String?                       @db.VarChar(10)
+  target_end_date         String?                       @db.VarChar(10)
+  target_days             Int?
+  updated_at              DateTime                      @updatedAt
+  tiers                   club_sales_commission_tiers[]
+
+  @@map("club_sales_rep_settings")
+}
+
+/// Operational branches a sales specialist may serve in addition to their HR primary branch.
+model club_sales_rep_branches {
+  employee_id Int
+  branch_id   Int
+  created_at  DateTime @default(now())
+
+  @@id([employee_id, branch_id])
+  @@index([branch_id])
+  @@map("club_sales_rep_branches")
+}
+
+model club_sales_commission_tiers {
+  id                  Int                     @id @default(autoincrement())
+  settings_id         Int
+  min_achievement_pct Decimal                 @db.Decimal(6, 2)
+  max_achievement_pct Decimal?                @db.Decimal(6, 2)
+  commission_percent  Decimal                 @db.Decimal(6, 3)
+  label               String?                 @db.VarChar(80)
+  settings            club_sales_rep_settings @relation(fields: [settings_id], references: [id], onDelete: Cascade)
+
+  @@index([settings_id])
+  @@map("club_sales_commission_tiers")
+}
+
+model club_sales_commission_entries {
+  id                 Int      @id @default(autoincrement())
+  receipt_id         Int?     @unique
+  source_kind        String   @db.VarChar(20)
+  source_id          Int
+  employee_id        Int
+  subscription_id    Int
+  base_amount        Decimal  @db.Decimal(14, 2)
+  commission_amount  Decimal  @db.Decimal(14, 2)
+  commission_percent Decimal  @db.Decimal(8, 3)
+  payroll_item_id    Int
+  created_at         DateTime @default(now())
+
+  @@unique([source_kind, source_id, employee_id])
+  @@index([subscription_id])
+  @@index([payroll_item_id])
+}
+
+model club_sales_defaults {
+  id         Int      @id @default(1)
+  settings   Json
+  updated_at DateTime @updatedAt
+}
+
+model club_sales_round_robin_state {
+  id               Int      @id @default(1)
+  last_employee_id Int?
+  updated_at       DateTime @updatedAt
+
+  @@map("club_sales_round_robin_state")
+}
+
+model wa_campaigns {
+  id          Int       @id @default(autoincrement())
+  name        String    @db.VarChar(160)
+  branch_id   Int
+  source      String    @db.VarChar(20) // expired | expiring | members
+  filters     Json
+  template_id Int?
+  body        String    @db.Text // template snapshot at creation
+  status      String    @default("ready") @db.VarChar(16) // ready | running | paused | done | cancelled
+  created_by  Int?
+  created_at  DateTime  @default(now())
+  started_at  DateTime?
+  finished_at DateTime?
+  messages    wa_messages[]
+  @@index([branch_id, status])
+}
+
+model wa_devices {
+  id              String    @id @db.VarChar(36)
+  branch_id       Int
+  label           String    @db.VarChar(120)
+  token_hash      String?   @unique @db.VarChar(64)
+  pair_code_hash  String?   @db.VarChar(64)
+  pair_expires_at DateTime?
+  paired_at       DateTime?
+  revoked_at      DateTime?
+  last_seen_at    DateTime?
+  created_by      Int?
+  created_at      DateTime  @default(now())
+  @@index([branch_id])
+  @@index([pair_code_hash])
+}
+
+model wa_messages {
+  id              Int       @id @default(autoincrement())
+  campaign_id     Int
+  branch_id       Int
+  member_id       Int?
+  subscription_id Int?
+  member_name     String    @db.VarChar(200)
+  phone           String    @db.VarChar(20) // international digits, e.g. 2010xxxxxxxx
+  body            String    @db.Text
+  status          String    @default("queued") @db.VarChar(16) // queued | sending | sent | failed | uncertain | skipped | cancelled
+  reason          String?   @db.VarChar(80)
+  device_id       String?   @db.VarChar(36)
+  permit_id       String?   @db.VarChar(36)
+  claimed_at      DateTime?
+  sent_at         DateTime?
+  created_at      DateTime  @default(now())
+  campaign        wa_campaigns @relation(fields: [campaign_id], references: [id], onDelete: Cascade)
+  @@index([campaign_id, status])
+  @@index([branch_id, status])
+  @@index([subscription_id, status])
+  @@index([phone])
+}
+
+model wa_opt_outs {
+  phone      String   @id @db.VarChar(20)
+  reason     String?  @db.VarChar(200)
+  created_by Int?
+  created_at DateTime @default(now())
+}
+
+/// WhatsApp Web campaigns (Chrome extension sender). Staff build a queue here; a paired
+/// extension claims one message at a time and every send needs a Gymora control permit.
+model wa_templates {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(120)
+  body       String   @db.Text
+  is_active  Boolean  @default(true)
+  created_by Int?
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+}
+
+// WhatsApp sending allowance (MetaFit keeps these in its platform DB; Noamany is one gym).
+
+/// WhatsApp-Web sending licence. One row = one WhatsApp number: either a gym on this SaaS
+/// (tenant_id set; its server asks in-process) or an external system such as PHAROS (API key,
+/// asks over HTTP). A permit is required before every message, so limits and the kill switch
+/// live here and can't be bypassed from the browser extension.
+model wa_clients {
+  id              Int       @id @default(autoincrement())
+  name            String    @db.VarChar(160)
+  tenant_id       Int?      @unique
+  key_hash        String?   @unique @db.VarChar(64) // sha256(api key); the key is shown once
+  key_prefix      String?   @db.VarChar(16)
+  enabled         Boolean   @default(true)
+  daily_limit     Int       @default(200)
+  monthly_limit   Int       @default(4000)
+  // 10–20 s between messages, and a 2–5 minute break every 40 (see wa-control.policy.ts).
+  min_delay_sec   Int       @default(10)
+  max_delay_sec   Int       @default(20)
+  pause_every     Int       @default(40) // 0 = no long pause
+  pause_sec       Int       @default(300) // the longest break; each break is 40–100% of it
+  send_from       String    @default("09:00") @db.VarChar(5)
+  send_to         String    @default("22:00") @db.VarChar(5)
+  timezone        String    @default("Africa/Cairo") @db.VarChar(40)
+  notes           String?   @db.Text
+  // One sender at a time per number: whoever holds the lock until it expires or is released.
+  lock_holder     String?   @db.VarChar(80)
+  lock_label      String?   @db.VarChar(160)
+  lock_expires_at DateTime?
+  next_allowed_at DateTime?
+  last_seen_at    DateTime?
+  created_at      DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  permits         wa_permits[]
+}
+
+/// One row per message the client was allowed to send. granted|sent|uncertain count toward the
+/// limits; failed (never left the phone) does not.
+model wa_permits {
+  id           String    @id @db.VarChar(36)
+  client_id    Int
+  day          String    @db.VarChar(10) // client-local YYYY-MM-DD
+  month        String    @db.VarChar(7)
+  status       String    @default("granted") @db.VarChar(16)
+  reason       String?   @db.VarChar(80)
+  sender_label String?   @db.VarChar(160)
+  phone_tail   String?   @db.VarChar(4)
+  ref          String?   @db.VarChar(80)
+  created_at   DateTime  @default(now())
+  reported_at  DateTime?
+  client       wa_clients @relation(fields: [client_id], references: [id], onDelete: Cascade)
+  @@index([client_id, day, status])
+  @@index([client_id, month, status])
+}
+
+/// WhatsApp Web DOM selectors handed to every extension, so a WhatsApp UI change is fixed here.
+model wa_control_settings {
+  id         Int      @id @default(1)
+  selectors  Json?
+  updated_at DateTime @updatedAt
 }

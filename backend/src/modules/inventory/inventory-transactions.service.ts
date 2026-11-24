@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { assertManagerMayModify, managerKind, managerPeriodBounds } from '../../common/utils/manager-scope.util';
 import { InventoryTxnStatus, InventoryTxnType, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
 import { isDryRun, previewResponse, PreviewRow } from '../../common/preview';
@@ -96,6 +97,11 @@ export class InventoryTransactionsService {
     if (q.cafeCategoryId) and.push({ cafe_category_id: Number(q.cafeCategoryId) });
     const scopedBranches = this.branchScope.resolveListFilter(user, q.branchId ?? null);
     if (scopedBranches) and.push({ branch_id: { in: scopedBranches } });
+    // Branch manager / section supervisor: «مسحوبات الإدارة» of the current and the previous month (client sheet, 22 Nov).
+    if (managerKind(user)) {
+      const b = managerPeriodBounds('twoMonths');
+      and.push({ txn_date: { gte: new Date(`${b.from}T00:00:00`), lte: new Date(`${b.to}T23:59:59.999`) } });
+    }
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({ OR: [{ reference: { contains: s } }, { notes: { contains: s } }, {recipient_name:{contains:s}}, {reason:{contains:s}}] });
@@ -260,6 +266,7 @@ export class InventoryTransactionsService {
   }
 
   async update(id: number, dto: Partial<UpsertInventoryTransactionDto>, user: JwtUser) {
+    assertManagerMayModify(user);
     const existing = await this.prisma.inv_transactions.findFirst({
       where: { id, ...notDeletedFilter() },
     });
@@ -320,6 +327,7 @@ export class InventoryTransactionsService {
   }
 
   async remove(id: number, user: JwtUser) {
+    assertManagerMayModify(user);
     const existing = await this.prisma.inv_transactions.findFirst({
       where: { id, ...notDeletedFilter() },
     });
@@ -480,6 +488,11 @@ export class InventoryTransactionsService {
    * Approved transfers between warehouses, presented as "issue orders to branches": the receiving
    * branch is the target warehouse's branch. Visible when either side is inside the user's scope.
    */
+  /** Each branch's bar and the store that feeds it, for the صرف للبار form. */
+  barRoutes() {
+    return this.location.barRoutes();
+  }
+
   async branchIssues(
     q: { targetBranchId?: string; dateFrom?: string; dateTo?: string; search?: string; page?: number; pageSize?: number },
     user: JwtUser,

@@ -11,6 +11,11 @@ interface DateRangeFilterProps {
   extra?: React.ReactNode;
   /** Show quick preset buttons (اليوم / آخر ٧ / …). */
   showPresets?: boolean;
+  /**
+   * The server keeps the period inside the current month (e.g. the target report for captains and
+   * reception): the date pickers only offer this month's days.
+   */
+  monthOnly?: boolean;
 }
 
 export function DateRangeFilter({
@@ -20,8 +25,30 @@ export function DateRangeFilter({
   onEndChange,
   extra,
   showPresets = true,
+  monthOnly = false,
 }: DateRangeFilterProps) {
   const { ui, locale } = useLocale();
+  if (monthOnly) {
+    // Days inside the current month only (client video, 23 Nov: «من يوم ٤ لحد يوم ٦»); the server
+    // clamps to the same month.
+    const [year, month] = todayLocal().split('-').map(Number);
+    const first = `${year}-${String(month).padStart(2, '0')}-01`;
+    const last = `${year}-${String(month).padStart(2, '0')}-${String(new Date(year, month, 0).getDate()).padStart(2, '0')}`;
+    const clamp = (v: string) => (!v ? v : v < first ? first : v > last ? last : v);
+    return (
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="grid gap-1.5">
+          <Label className="text-xs text-muted-foreground">{ui('من')} <span className="text-[11px]">({ui('الشهر الحالي')})</span></Label>
+          <Input type="date" min={first} max={last} value={clamp(startDate)} onChange={(e) => onStartChange(clamp(e.target.value) || first)} className="w-40" />
+        </div>
+        <div className="grid gap-1.5">
+          <Label className="text-xs text-muted-foreground">{ui('إلى')}</Label>
+          <Input type="date" min={first} max={last} value={clamp(endDate)} onChange={(e) => onEndChange(clamp(e.target.value) || last)} className="w-40" />
+        </div>
+        {extra}
+      </div>
+    );
+  }
   return (
     <div className="flex flex-col gap-2">
       {showPresets && (

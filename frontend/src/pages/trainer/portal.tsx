@@ -68,13 +68,11 @@ const money = (value: number) => `${formatMoneyNumber(value)} ج.م`;
 export function TrainerPortalPage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
-  const [dateFrom, setDateFrom] = useState(() => {
-    const today = new Date();
-    return localDateStr(new Date(today.getFullYear(), today.getMonth(), 1));
-  });
-  const [dateTo, setDateTo] = useState(() => {
-    return localDateStr(new Date());
-  });
+  // One calendar month only (client, 20 Nov 2026): from the 1st to the last day of the chosen month.
+  const [month, setMonth] = useState(() => localDateStr(new Date()).slice(0, 7));
+  const [year, monthNumber] = month.split('-').map(Number);
+  const dateFrom = `${month}-01`;
+  const dateTo = localDateStr(new Date(year, monthNumber, 0));
   const [calendarDateFrom, setCalendarDateFrom] = useState(() => {
     const today = new Date();
     return localDateStr(new Date(today.getFullYear(), today.getMonth(), 1));
@@ -135,12 +133,9 @@ export function TrainerPortalPage() {
               {data?.trainer.specialization ? <p className="mt-1 text-sm text-muted-foreground">{data.trainer.specialization}</p> : null}
             </div>
             <div className="grid gap-2">
-              <Label>من</Label>
-              <Input type="date" className="nums" value={dateFrom} onChange={(event) => setDateFrom(event.target.value)} />
-            </div>
-            <div className="grid gap-2">
-              <Label>إلى</Label>
-              <Input type="date" className="nums" value={dateTo} onChange={(event) => setDateTo(event.target.value)} />
+              <Label htmlFor="portal-month">الشهر</Label>
+              <Input id="portal-month" type="month" className="nums" value={month} onChange={(event) => setMonth(event.target.value || localDateStr(new Date()).slice(0, 7))} />
+              <p className="nums text-xs text-muted-foreground">من {toArabicDigits(dateFrom)} إلى {toArabicDigits(dateTo)}</p>
             </div>
             <Button variant="brand" onClick={() => void refetch()}>تحديث</Button>
           </div>

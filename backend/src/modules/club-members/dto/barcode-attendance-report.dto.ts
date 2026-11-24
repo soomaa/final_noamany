@@ -13,6 +13,10 @@ export class BarcodeAttendanceReportDto extends PaginationDto {
   branch?: string;
 
   @IsOptional()
+  @IsIn(['all', 'male', 'female'])
+  gender?: 'all' | 'male' | 'female';
+
+  @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/)
   dateFrom?: string;
 

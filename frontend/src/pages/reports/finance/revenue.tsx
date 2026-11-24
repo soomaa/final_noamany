@@ -10,6 +10,7 @@ import { api } from '@/lib/api';
 import { useArrayResource } from '@/lib/api-hooks';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const selectCls = 'flex h-10 rounded-md border border-input bg-background px-3 text-sm';
 
@@ -124,7 +125,7 @@ export function FinanceRevenueReportPage() {
           extra={
             <>
               <BranchFilter value={branch} onChange={setBranch} />
-              <select
+              <SearchableSelect
                 className={selectCls}
                 value={subscriptionType}
                 onChange={(e) => setSubscriptionType(e.target.value)}
@@ -134,7 +135,7 @@ export function FinanceRevenueReportPage() {
                 {(subTypes ?? []).map((t) => (
                   <option key={t.id} value={String(t.id)}>{t.name}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </>
           }
         />

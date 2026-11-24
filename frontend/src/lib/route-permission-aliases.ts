@@ -13,6 +13,11 @@ export const ROUTE_PERMISSION_ALIASES: Record<string, readonly string[]> = {
   ],
   // Roles list (delete unused roles) is part of the roles & permissions page.
   '/admin/role-list': ['/admin/roles'],
+  // Staff setup (section + job title per employee) is part of the roles & permissions page too.
+  '/admin/staff-setup': ['/admin/roles'],
+  // The sales overview link opens /club/sales-reports (ported from MetaFit).
+  [CR.sales.dashboard]: [CR.sales.team],
+  [CR.sales.settings]: [CR.sales.team],
 };
 
 /** The routes whose View grants access to `pathname`, when it is a combined page. */

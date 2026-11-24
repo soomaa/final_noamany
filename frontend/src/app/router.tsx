@@ -111,7 +111,7 @@ import {
   LegalFilesPage,
   HrMobileContentPage,
   AppUsersPage,
-  UsersManagePage,
+  UsersPage,
   PushBroadcastPage,
   AutomationPage,
   GymPoliciesPage,
@@ -146,6 +146,8 @@ import {
   ClubBranchGroupsPage,
   ClubCustomerSourcesPage,
   ClubSubscriptionsExpiredPage,
+  ClubSubscriptionsExpiringPage,
+  ClubWhatsAppTemplatesPage,
   ClubSubscriptionsOutstandingPage,
   ClubTreasuryPage,
   UnifiedTreasuryPage,
@@ -280,8 +282,13 @@ import {
   AdminLayout,
   RolesPage,
   RoleListPage,
+  StaffSetupPage,
   UserExceptionsPage,
   AuditPage,
+  ClubSalesReportsPage,
+  MosLeadsPage,
+  MosCallsPage,
+  ClubWhatsappPage,
 } from '@/app/lazy-pages';
 
 function Lazy({ children }: { children: ReactNode }) {
@@ -519,6 +526,8 @@ export function AppRouter() {
           <Route path="club/subscriptions/receipts" element={<Lazy><ClubSubscriptionsReceiptsPage /></Lazy>} />
           <Route path="club/subscriptions/financial-reports" element={<Lazy><ClubFinancialReportsPage /></Lazy>} />
           <Route path="club/subscriptions/expired" element={<Lazy><ClubSubscriptionsExpiredPage /></Lazy>} />
+          <Route path="club/subscriptions/expiring" element={<Lazy><ClubSubscriptionsExpiringPage /></Lazy>} />
+          <Route path="club/subscriptions/whatsapp-templates" element={<Lazy><ClubWhatsAppTemplatesPage /></Lazy>} />
           <Route path="club/subscriptions/outstanding" element={<Lazy><ClubSubscriptionsOutstandingPage /></Lazy>} />
           <Route path="club/subscriptions/member-financial" element={<Lazy><ClubMemberFinancialPage /></Lazy>} />
           <Route path="club/subscriptions/treasury" element={<Lazy><ClubTreasuryPage /></Lazy>} />
@@ -527,6 +536,14 @@ export function AppRouter() {
           <Route path="club/points/*" element={<Lazy><ClubPointsDiscountsManagementPage /></Lazy>} />
           <Route path="club/discount-codes/*" element={<Lazy><ClubPointsDiscountsManagementPage /></Lazy>} />
           <Route path="club/subscriptions/customer-sources" element={<Lazy><ClubCustomerSourcesPage /></Lazy>} />
+          {/* «إدارة المبيعات والعملاء المحتملين» (ported from MetaFit) */}
+          <Route path="club/leads" element={<Navigate to="/mos/potential-members" replace />} />
+          <Route path="mos/potential-members" element={<Lazy><MosLeadsPage /></Lazy>} />
+          <Route path="mos/calls" element={<Lazy><MosCallsPage /></Lazy>} />
+          <Route path="club/whatsapp" element={<Lazy><ClubWhatsappPage /></Lazy>} />
+          <Route path="club/sales-dashboard" element={<Navigate to="/club/sales-reports?tab=overview" replace />} />
+          <Route path="club/sales-settings" element={<Navigate to="/club/sales-reports?tab=settings" replace />} />
+          <Route path="club/sales-reports" element={<Lazy><ClubSalesReportsPage /></Lazy>} />
           <Route path="club/subscriptions/user-analytics" element={<Navigate to="/club/subscriptions/reports" replace />} />
           <Route path="club/subscriptions/settings" element={<Navigate to="/club/packages/settings?tab=subscriptions" replace />} />
           <Route path="club/subscriptions/member-form" element={<Lazy><ClubMemberFormPage /></Lazy>} />
@@ -666,14 +683,15 @@ export function AppRouter() {
           <Route path="app/community" element={<Lazy><AppCommunityPage /></Lazy>} />
           <Route path="app/ads" element={<Lazy><AppAdsPage /></Lazy>} />
 
-          <Route path="users" element={<Lazy><UsersManagePage /></Lazy>} />
-          <Route path="users/manage" element={<Lazy><UsersManagePage /></Lazy>} />
+          <Route path="users" element={<Lazy><UsersPage /></Lazy>} />
+          <Route path="users/manage" element={<Lazy><UsersPage /></Lazy>} />
           <Route path="users/:id/permissions" element={<LegacyUserPermsRedirect />} />
 
           <Route path="admin" element={<Lazy><AdminLayout /></Lazy>}>
             <Route index element={<Navigate to="/admin/roles" replace />} />
             <Route path="roles" element={<Lazy><RolesPage /></Lazy>} />
             <Route path="role-list" element={<Lazy><RoleListPage /></Lazy>} />
+            <Route path="staff-setup" element={<Lazy><StaffSetupPage /></Lazy>} />
             <Route path="exceptions" element={<Lazy><UserExceptionsPage /></Lazy>} />
             <Route path="audit" element={<Lazy><AuditPage /></Lazy>} />
           </Route>

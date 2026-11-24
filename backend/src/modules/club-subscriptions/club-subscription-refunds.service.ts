@@ -8,12 +8,13 @@ import { BranchScopeService } from '../../common/branch-scope/branch-scope.servi
 import { JwtUser } from '../../common/types/jwt-user';
 import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import { isReceptionEmployee } from '../../common/utils/reception-user.util';
+import { assertManagerMayModify, managerKind } from '../../common/utils/manager-scope.util';
 import { localDateString, parseDateOnly } from '../club-members/club-member.utils';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
 import { EXPENSE_APPROVED, mapPaymentMethodToArabic, nextFinDocNumber, REVENUE_PAID, REFUND_EXPENSE_CATEGORY } from '../finance/finance.utils';
 import { ClubSubscriptionAccountingService } from './club-subscription-accounting.service';
 import { ClubReceiptsService } from './club-receipts.service';
-import { daysBetween, deriveSessionAwareStatus, netValue, roundMoney, toNum } from './club-subscription.utils';
+import { daysBetween, deriveSessionAwareStatus, netValue, roundMoney, subscriptionGenderWhere, toNum } from './club-subscription.utils';
 import { UpdateClubSubscriptionRefundDto } from './dto/update-club-subscription-refund.dto';
 
 /** Expense category refunds are booked under (also seeded in fin_expense_categories, is_system). */
@@ -76,10 +77,17 @@ export class ClubSubscriptionRefundsService {
     return branch;
   }
 
-  async list(user?: JwtUser) {
+  /** رجالي/حريمي/الكل: the refunded subscription's section (one-section staff are locked to theirs). */
+  private genderWhere(user: JwtUser | undefined, gender?: string): Prisma.club_subscription_refundsWhereInput {
+    const memberGender = this.branchScope.resolveMemberGenderRequest(user, gender);
+    return memberGender ? { subscription: { is: subscriptionGenderWhere(memberGender) } } : {};
+  }
+
+  async list(user?: JwtUser, gender?: string) {
     const rows = await this.prisma.club_subscription_refunds.findMany({
       // Refund history stays visible to reception for past dates (the daily-only rule was withdrawn).
-      where: { ...await this.branchWhere(user), status: { not: 'cancelled' } },
+      // Branch manager / section supervisor: «مرتجع الاشتراكات ويظهر خلال اليوم فقط» (client sheet, 22 Nov).
+      where: { ...await this.branchWhere(user), ...this.genderWhere(user, gender), status: { not: 'cancelled' }, ...(managerKind(user) ? { refund_date: localDateString() } : {}) },
       include: {
         member: { select: { member_code: true, gender: true } },
         subscription: { select: { subscription_number: true, gender: true, paid_amount: true } },
@@ -473,6 +481,7 @@ export class ClubSubscriptionRefundsService {
     user?: JwtUser,
   ) {
     if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه حذف أو تعديل المرتجعات');
+    assertManagerMayModify(user);
     const existing = await this.prisma.club_subscription_refunds.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('الاسترداد غير موجود');
     await this.assertBranchAccess(user, existing.branch_id);
@@ -555,6 +564,7 @@ export class ClubSubscriptionRefundsService {
 
   async edit(id: number, body: UpdateClubSubscriptionRefundDto, user: JwtUser) {
     if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه حذف أو تعديل المرتجعات');
+    assertManagerMayModify(user);
     const amount = roundMoney(Number(body.refundAmount));
     if (!Number.isFinite(amount) || amount <= 0) throw new BadRequestException('مبلغ الاسترداد غير صالح');
     const validDate = (value: string) => {
@@ -665,6 +675,7 @@ export class ClubSubscriptionRefundsService {
 
   async remove(id: number, user: JwtUser) {
     if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه حذف أو تعديل المرتجعات');
+    assertManagerMayModify(user);
     return this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM club_subscription_refunds WHERE id = ${id} FOR UPDATE`;
       const refund = await tx.club_subscription_refunds.findUnique({ where: { id } });
@@ -704,8 +715,10 @@ export class ClubSubscriptionRefundsService {
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10000, timeout: 15000 });
   }
 
-  async statistics(user?: JwtUser) {
-    const rows = await this.prisma.club_subscription_refunds.findMany({ where: await this.branchWhere(user) });
+  async statistics(user?: JwtUser, gender?: string) {
+    const rows = await this.prisma.club_subscription_refunds.findMany({
+      where: { ...await this.branchWhere(user), ...this.genderWhere(user, gender) },
+    });
     const completed = rows.filter((r) => r.status === 'completed');
     const totalRefundAmount = completed.reduce((s, r) => s + toNum(r.refund_amount), 0);
     return {

@@ -16,6 +16,7 @@ import { useBranches } from '@/hooks/use-branches';
 import { useAuth } from '@/store/auth';
 import { PosInvoiceTemplatesEditor } from '@/components/sales/pos-invoice-templates-editor';
 import { WarehouseSelect } from '@/components/inventory/warehouse-select';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type Tab = 'devices' | 'payments' | 'invoices' | 'reports' | 'notifications' | 'settings' | 'shifts';
 
@@ -120,7 +121,7 @@ export function PosAdminPage() {
             <CardContent>
               <div className="mb-4 grid gap-2 sm:grid-cols-[1fr_180px_auto]">
                 <Input placeholder={ui('اسم طريقة الدفع')} value={newName} onChange={(e) => setNewName(e.target.value)} />
-                <select className="rounded-md border bg-background px-3 py-2 text-sm" value={newPaymentBase} onChange={(event) => setNewPaymentBase(event.target.value as typeof newPaymentBase)}><option value="cash">{ui('نقدي')}</option><option value="card">{ui('بطاقة/شبكة')}</option><option value="wallet">{ui('محفظة')}</option><option value="transfer">{ui('تحويل')}</option></select>
+                <SearchableSelect className="rounded-md border bg-background px-3 py-2 text-sm" value={newPaymentBase} onChange={(event) => setNewPaymentBase(event.target.value as typeof newPaymentBase)}><option value="cash">{ui('نقدي')}</option><option value="card">{ui('بطاقة/شبكة')}</option><option value="wallet">{ui('محفظة')}</option><option value="transfer">{ui('تحويل')}</option></SearchableSelect>
                 <Button onClick={() => newName && createPayment.mutate(newName)} disabled={createPayment.isPending}>{ui('إضافة')}</Button>
               </div>
               <p className="mb-4 text-xs text-muted-foreground">{ui('اختيار النوع المحاسبي مطلوب حتى يظهر الاسم المخصص في نقطة البيع ويُرحّل في التقرير بالطريقة الصحيحة.')}</p>
@@ -172,9 +173,13 @@ function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
     enabled: !!effectiveBranchId,
   });
   const [saleWarehouseId, setSaleWarehouseId] = useState('');
+  // The store a صرف order to this branch's bar comes out of (may be another branch's store).
+  const [storeWarehouseId, setStoreWarehouseId] = useState('');
   useEffect(() => {
     const value = stockSettings?.find((s) => s.key === 'sale_warehouse_id')?.value;
     setSaleWarehouseId(value ? String(value) : '');
+    const store = stockSettings?.find((s) => s.key === 'store_warehouse_id')?.value;
+    setStoreWarehouseId(store ? String(store) : '');
   }, [stockSettings]);
 
   const [enableTax, setEnableTax] = useState(true);
@@ -209,7 +214,10 @@ function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
         await api.post('/pos-settings/stock', {
           category: 'stock',
           branchId: Number(effectiveBranchId),
-          settings: saleWarehouseId ? [{ key: 'sale_warehouse_id', value: Number(saleWarehouseId), type: 'number' }] : [],
+          settings: [
+            ...(saleWarehouseId ? [{ key: 'sale_warehouse_id', value: Number(saleWarehouseId), type: 'number' }] : []),
+            ...(storeWarehouseId ? [{ key: 'store_warehouse_id', value: Number(storeWarehouseId), type: 'number' }] : []),
+          ],
         });
       }
       const next: PosSettingRow[] = [
@@ -250,7 +258,7 @@ function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
       <CardContent className="space-y-4">
         <div className="grid gap-2 sm:max-w-sm">
           <Label>{ui('الفرع الذي تطبق عليه الإعدادات')}</Label>
-          {user?.branch ? <Input value={user.branch_name || `${ui('فرع رقم')} ${user.branch}`} readOnly disabled /> : <select className="rounded-md border bg-background px-3 py-2" value={selectedBranchId} onChange={(event) => setSelectedBranchId(event.target.value)}><option value="">{ui('اختر الفرع')}</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>}
+          {user?.branch ? <Input value={user.branch_name || `${ui('فرع رقم')} ${user.branch}`} readOnly disabled /> : <SearchableSelect className="rounded-md border bg-background px-3 py-2" value={selectedBranchId} onChange={(event) => setSelectedBranchId(event.target.value)}><option value="">{ui('اختر الفرع')}</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</SearchableSelect>}
         </div>
         {effectiveBranchId && (
           <div className="grid gap-1.5 rounded-lg border p-3 sm:max-w-md">
@@ -262,6 +270,13 @@ function GeneralPosSettings({ ui }: { ui: (s: string) => string }) {
               emptyLabel="غير محدد (أول مخزن في الفرع)"
             />
             <p className="text-xs text-muted-foreground">{ui('بيع الكافيه والمسحوبات بتخصم منه لما الكاشير مايختارش مخزن، وهو الافتراضي في المشتريات والجرد.')}</p>
+            <WarehouseSelect
+              value={storeWarehouseId}
+              onChange={setStoreWarehouseId}
+              label="مخزن التوريد (اللي بيصرف للبار)"
+              emptyLabel="غير محدد"
+            />
+            <p className="text-xs text-muted-foreground">{ui('أمر الصرف للبار بيطلع من المخزن ده للبار تلقائيًا. ممكن يكون مخزن فرع تاني (مخزن طنطا بيصرف لطنطا up وطنطا down).')}</p>
           </div>
         )}
         <p className="text-sm text-muted-foreground">

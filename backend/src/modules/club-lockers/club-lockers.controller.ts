@@ -26,8 +26,8 @@ export class ClubLockersController {
   constructor(private readonly service: ClubLockersService) {}
 
   @Get('statistics')
-  statistics(@CurrentUser() user: JwtUser) {
-    return this.service.lockerStatistics(user);
+  statistics(@CurrentUser() user: JwtUser, @Query('gender') gender?: string) {
+    return this.service.lockerStatistics(user, gender);
   }
 
   @Get()
@@ -42,8 +42,8 @@ export class ClubLockersController {
   }
 
   @Get('inventory-snapshot')
-  inventorySnapshot(@Query('branchId') branchId: string, @CurrentUser() user: JwtUser) {
-    return this.service.inventorySnapshot(Number(branchId), user);
+  inventorySnapshot(@Query('branchId') branchId: string, @CurrentUser() user: JwtUser, @Query('gender') gender?: string) {
+    return this.service.inventorySnapshot(Number(branchId), user, gender);
   }
 
   @Get('inventory-reports')
@@ -52,8 +52,9 @@ export class ClubLockersController {
     @Query('fromDate') fromDate: string | undefined,
     @Query('toDate') toDate: string | undefined,
     @CurrentUser() user: JwtUser,
+    @Query('gender') gender?: string,
   ) {
-    return this.service.listInventoryReports(branchId, user, fromDate, toDate);
+    return this.service.listInventoryReports(branchId, user, fromDate, toDate, gender);
   }
 
   @Post('inventory-reports')

@@ -43,7 +43,7 @@ export class ClubSubscriptionsController {
   ) {}
 
   @Get()
-  @RequiresPermission('club.subscriptions:view', 'club.subscriptions.list:view', 'club.reception:view', 'club.subscriptions.member_transfer:view')
+  @RequiresPermission('club.subscriptions:view', 'club.subscriptions.list:view', 'club.reception:view', 'club.subscriptions.member_transfer:view', 'club.subscriptions.expiring:view')
   list(@Query() query: ListClubSubscriptionsDto, @CurrentUser() user: JwtUser) {
     return this.service.list(query, user);
   }
@@ -54,8 +54,9 @@ export class ClubSubscriptionsController {
     @Query('isSpecial') isSpecial?: string,
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
+    @Query('gender') gender?: string,
   ) {
-    return this.service.statistics(isSpecial, user, dateFrom, dateTo);
+    return this.service.statistics(isSpecial, user, dateFrom, dateTo, gender);
   }
 
   @Get('member-transfer-sources')
@@ -94,8 +95,9 @@ export class ClubSubscriptionsController {
     @Query('search') search?: string,
     @Query('dateField') dateField?: string,
     @CurrentUser() user?: JwtUser,
+    @Query('gender') gender?: string,
   ) {
-    return this.service.outstandingReport({ dateFrom, dateTo, branch, search, dateField }, user);
+    return this.service.outstandingReport({ dateFrom, dateTo, branch, search, dateField, gender }, user);
   }
 
   @Get('expired-report')
@@ -105,8 +107,9 @@ export class ClubSubscriptionsController {
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
     @CurrentUser() user?: JwtUser,
+    @Query('gender') gender?: string,
   ) {
-    return this.service.expiredReport({ branch, search, page, pageSize }, user);
+    return this.service.expiredReport({ branch, search, page, pageSize, gender }, user);
   }
 
   @Get('waivers-report')
@@ -116,8 +119,9 @@ export class ClubSubscriptionsController {
     @Query('branch') branch?: string,
     @Query('search') search?: string,
     @CurrentUser() user?: JwtUser,
+    @Query('gender') gender?: string,
   ) {
-    return this.service.waiverReport({ dateFrom, dateTo, branch, search }, user);
+    return this.service.waiverReport({ dateFrom, dateTo, branch, search, gender }, user);
   }
 
   @Get('user-analytics')
@@ -127,8 +131,9 @@ export class ClubSubscriptionsController {
     @Query('endDate') endDate: string | undefined,
     @Query('branch') branch: string | undefined,
     @CurrentUser() user: JwtUser,
+    @Query('gender') gender?: string,
   ) {
-    return this.service.userAnalytics({ startDate, endDate, branch }, user);
+    return this.service.userAnalytics({ startDate, endDate, branch, gender }, user);
   }
 
   @Get('daily-cashier')
@@ -136,8 +141,9 @@ export class ClubSubscriptionsController {
   dailyCashier(
     @CurrentUser() user: JwtUser,
     @Query('userId') userId?: string,
+    @Query('gender') gender?: string,
   ) {
-    return this.service.dailyCashierReport(user, userId);
+    return this.service.dailyCashierReport(user, userId, gender);
   }
 
   @Get('reports/summary')
@@ -147,6 +153,24 @@ export class ClubSubscriptionsController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.reports.summary(query, user);
+  }
+
+  @Get('reports/period-export')
+  @RequiresPermission('club.subscriptions.reports:view', 'club.subscriptions.user_analytics:view', 'club.subscriptions:view')
+  reportPeriodExport(
+    @Query() query: SubscriptionReportQuery,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.reports.periodExport(query, user);
+  }
+
+  @Get('reports/subscription-types/export')
+  @RequiresPermission('club.subscriptions.reports:view', 'club.subscriptions.user_analytics:view', 'club.subscriptions:view')
+  reportSubscriptionTypesExport(
+    @Query() query: SubscriptionReportQuery,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.reports.subscriptionTypesExport(query, user);
   }
 
   @Get('reports/details')
@@ -276,6 +300,17 @@ export class ClubSubscriptionsController {
     });
   }
 
+  /** Freeze balance (times and days left) and history for the freeze dialog. */
+  @Get(':id/freeze-preview')
+  @RequiresPermission(
+    'club.subscriptions:view',
+    'club.subscriptions.list:view',
+    'club.reception:view',
+  )
+  freezePreview(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: JwtUser) {
+    return this.service.freezePreview(id, user);
+  }
+
   @Post(':id/freeze')
   @RequiresPermission(
     'club.subscriptions:update',
@@ -310,6 +345,37 @@ export class ClubSubscriptionsController {
     @CurrentUser() user: JwtUser,
   ) {
     return this.service.updateFreeze(id, body.freezeEndDate, body.reason, user.sub, user);
+  }
+
+  /** Change how many days a freeze (booked, running or ended) lasts. */
+  @Patch(':id/freezes/:freezeId')
+  @RequiresPermission(
+    'club.subscriptions:update',
+    'club.subscriptions.list:update',
+    'club.reception:update',
+  )
+  editFreezeDays(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('freezeId', ParseIntPipe) freezeId: number,
+    @Body() body: { days?: number | string },
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.editFreezeDays(id, freezeId, Number(body?.days), user.sub, user);
+  }
+
+  /** Remove a freeze as if it never happened (its days come back). */
+  @Delete(':id/freezes/:freezeId')
+  @RequiresPermission(
+    'club.subscriptions:update',
+    'club.subscriptions.list:update',
+    'club.reception:update',
+  )
+  deleteFreeze(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('freezeId', ParseIntPipe) freezeId: number,
+    @CurrentUser() user: JwtUser,
+  ) {
+    return this.service.deleteFreeze(id, freezeId, user.sub, user);
   }
 
   @Post(':id/unfreeze')

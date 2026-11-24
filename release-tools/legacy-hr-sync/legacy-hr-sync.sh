@@ -176,6 +176,20 @@ added=$(q "INSERT INTO \`$NEW\`.employees ($emp_cols_noid)
     AND NOT EXISTS (SELECT 1 FROM \`$NEW\`.employees n WHERE n.emp_code = o.emp_code);
   SELECT ROW_COUNT();")
 add employees_newid "$added"
+# The old system stores '' in yes/no columns it never filled; Prisma cannot read '' back, which breaks
+# the employee screens. Same repair as 20261119-employees-empty-enum-repair.sql, every run (only '' rows).
+fixed=$(q "UPDATE \`$NEW\`.employees SET
+    birth_img = NULLIF(birth_img, ''), generate_qrcode = NULLIF(generate_qrcode, ''),
+    military_service = NULLIF(military_service, ''), motawen = NULLIF(motawen, ''),
+    person_img = NULLIF(person_img, ''), phesh_genai = NULLIF(phesh_genai, ''),
+    qualification_img = NULLIF(qualification_img, ''), rokhsa_mihani = NULLIF(rokhsa_mihani, ''),
+    show_in_mosayer = NULLIF(show_in_mosayer, ''), show_in_tamen = NULLIF(show_in_tamen, ''),
+    tasken_type = NULLIF(tasken_type, ''),
+    remove_basma = IF(remove_basma = '', 'no', remove_basma), shahadt_jaish = IF(shahadt_jaish = '', 'no', shahadt_jaish)
+  WHERE '' IN (birth_img, generate_qrcode, military_service, motawen, person_img, phesh_genai, qualification_img,
+               rokhsa_mihani, show_in_mosayer, show_in_tamen, tasken_type, remove_basma, shahadt_jaish);
+  SELECT ROW_COUNT();")
+add employee_blank_fix "$fixed"
 # Branch moves in the old system follow to the same person (same code and first name; branch
 # accounts that reuse an employee code in the new system are left alone).
 moved=$(q "UPDATE \`$NEW\`.employees n JOIN \`$OLD\`.employees o
@@ -184,16 +198,58 @@ moved=$(q "UPDATE \`$NEW\`.employees n JOIN \`$OLD\`.employees o
   SELECT ROW_COUNT();")
 add employee_branches "$moved"
 
+# New employees whose job title came as text only get the job-title code (exact job name, or the
+# aliases ريسيبشن / hk / بار), so a role can be resolved for them. Only empty codes are filled.
+# Aliases are looked up by the job's NAME: the 19 Nov roles update replaced job ids 70 (ريسيبشن) and
+# 72 (بار) with new ones, and a fixed id would point new staff at a job (and role) that no longer exists.
+jobid() { printf '(SELECT MIN(j2.id) FROM `%s`.department_jobs j2 WHERE TRIM(j2.name) = '"'"'%s'"'"')' "$NEW" "$1"; }
+jobmap="COALESCE(
+  (SELECT j.id FROM \`$NEW\`.department_jobs j WHERE TRIM(j.name) = TRIM(n.mosma_wazefy_n) ORDER BY j.id LIMIT 1),
+  CASE TRIM(n.mosma_wazefy_n)
+    WHEN 'ريسيبشن' THEN $(jobid 'ريسبشن') WHEN 'ريسبشن' THEN $(jobid 'ريسبشن') WHEN 'موظف ريسيبشن' THEN $(jobid 'ريسبشن')
+    WHEN 'hk' THEN $(jobid 'عامل خدمات')
+    WHEN 'بار' THEN $(jobid 'بار') WHEN 'موظف بار' THEN $(jobid 'بار')
+  END)"
+coded=$(q "UPDATE \`$NEW\`.employees n SET n.mosma_wazefy_code = $jobmap
+  WHERE (n.mosma_wazefy_code IS NULL OR n.mosma_wazefy_code = 0) AND $jobmap IS NOT NULL;
+  SELECT ROW_COUNT();")
+add job_codes "$coded"
+
 # Accounts created later in the old system (no clash: the new system's own accounts are 1,000,000+).
-# No RBAC role is given, so they have no permissions in the new system until HR grants them.
 user_cols=$(common_cols users)
 user_sel=$(printf '%s' "$user_cols" | sed 's/`\([^`]*\)`/o.`\1`/g')
 user_sel="${user_sel//o.\`emp_code\`/$(emp_id o.emp_code) AS \`emp_code\`}"
-added=$(q "INSERT INTO \`$NEW\`.users ($user_cols) SELECT $user_sel FROM \`$OLD\`.users o
-  WHERE o.user_id < $NATIVE_FROM AND o.user_id > 402
+new_user_filter="o.user_id < $NATIVE_FROM AND o.user_id > 402
     AND NOT EXISTS (SELECT 1 FROM \`$NEW\`.users n WHERE n.user_id = o.user_id)
-    AND NOT EXISTS (SELECT 1 FROM \`$NEW\`.users n WHERE n.username = o.username);
+    AND NOT EXISTS (SELECT 1 FROM \`$NEW\`.users n WHERE n.username = o.username)"
+new_users=$(q "SELECT IFNULL(GROUP_CONCAT(o.user_id), '') FROM \`$OLD\`.users o WHERE $new_user_filter")
+added=$(q "INSERT INTO \`$NEW\`.users ($user_cols) SELECT $user_sel FROM \`$OLD\`.users o
+  WHERE $new_user_filter;
   SELECT ROW_COUNT();")
 add users "$added"
+
+# The old system creates staff accounts disabled (approved = 0) and the new system needs a role, so a
+# just-copied account came in unusable (Nada, 5 Nov: "رقم الهاتف غير صحيح", sidebar with HR only).
+# For accounts copied in THIS run only (an administrator's later changes are never undone): enable the
+# account when its employee is active in both systems and it carries that employee's name, and add the
+# employee's job-title role next to whatever it has.
+if [ -n "$new_users" ]; then
+  usable="u.user_id IN ($new_users) AND TRIM(u.name) = TRIM(e.employee)
+    AND IFNULL(e.employee_type, 1) = 1 AND IFNULL(e.leave_emp, 0) <> 1
+    AND NOT EXISTS (SELECT 1 FROM \`$OLD\`.employees o WHERE o.emp_code = e.emp_code AND (o.employee_type = 2 OR o.leave_emp = 1))"
+  enabled=$(q "UPDATE \`$NEW\`.users u JOIN \`$NEW\`.employees e ON e.id = u.emp_code SET u.approved = 1
+    WHERE $usable AND u.approved = 0;
+    SELECT ROW_COUNT();")
+  add users_enabled "$enabled"
+  roled=$(q "INSERT IGNORE INTO \`$NEW\`.rbac_user_roles (user_id, role_id, created_at)
+    SELECT u.user_id, r.id, NOW(3) FROM \`$NEW\`.users u JOIN \`$NEW\`.employees e ON e.id = u.emp_code
+    JOIN \`$NEW\`.rbac_roles r ON r.key = CONCAT('job_title_', e.mosma_wazefy_code)
+    WHERE $usable AND e.mosma_wazefy_code > 0;
+    SELECT ROW_COUNT();")
+  q "UPDATE \`$NEW\`.users u JOIN \`$NEW\`.employees e ON e.id = u.emp_code
+    JOIN \`$NEW\`.rbac_roles r ON r.key = CONCAT('job_title_', e.mosma_wazefy_code)
+    SET u.role_id_fk = r.id WHERE $usable AND e.mosma_wazefy_code > 0" >/dev/null
+  add users_roles "$roled"
+fi
 
 log "OK$summary"

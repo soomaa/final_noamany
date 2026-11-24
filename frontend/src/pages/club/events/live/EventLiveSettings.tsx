@@ -28,6 +28,7 @@ import { EventLiveBackLink } from './EventLiveBackLink';
 import { EventLiveNavMenu } from './EventLiveNavMenu';
 import { useLocale } from '@/store/locale';
 import { uiStatic } from '@/lib/ui-static';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 /** Inline editor for the titles list — chips with delete + add row. */
 const TitlesManager = ({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) => {
@@ -868,7 +869,7 @@ const EventLiveSettings = () => {
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-xs font-bold">{ui("الخط")}</Label>
-                      <select
+                      <SearchableSelect
                         value={form.display_welcome_font || "Cairo"}
                         onChange={(e) => update("display_welcome_font", e.target.value)}
                         className="h-9 w-full rounded-md border border-border bg-card px-2 text-sm font-bold"
@@ -876,7 +877,7 @@ const EventLiveSettings = () => {
                         {["Cairo","Tajawal","Almarai","Reem Kufi","Aref Ruqaa","Amiri","Mirza","Lateef","Scheherazade New","Rakkas","Lalezar","Lemonada"].map((f) => (
                           <option key={f} value={f} style={{ fontFamily: `"${f}", serif` }}>{f}</option>
                         ))}
-                      </select>
+                      </SearchableSelect>
                     </div>
                   </div>
                 </div>
@@ -922,7 +923,7 @@ const EventLiveSettings = () => {
                     </div>
                     <div className="space-y-1.5">
                       <Label className="text-xs font-bold">{ui("الخط")}</Label>
-                      <select
+                      <SearchableSelect
                         value={form.display_thanks_font || "Cairo"}
                         onChange={(e) => update("display_thanks_font", e.target.value)}
                         className="h-9 w-full rounded-md border border-border bg-card px-2 text-sm font-bold"
@@ -930,7 +931,7 @@ const EventLiveSettings = () => {
                         {["Cairo","Tajawal","Almarai","Reem Kufi","Aref Ruqaa","Amiri","Mirza","Lateef","Scheherazade New"].map((f) => (
                           <option key={f} value={f} style={{ fontFamily: `"${f}", serif` }}>{f}</option>
                         ))}
-                      </select>
+                      </SearchableSelect>
                     </div>
                   </div>
                 </div>

@@ -3,6 +3,8 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { managerKind, managerPeriodBounds } from '../../common/utils/manager-scope.util';
+import { cairoDayRange } from '../../common/utils/cairo-day-range.util';
 import { ConfigService } from '@nestjs/config';
 import { AmInvitationStatus, AmNewsType, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
@@ -163,7 +165,12 @@ export class AppManagementService {
 
   async listInvitationsByStatus(status: AmInvitationStatus, user?: JwtUser) {
     const rows = await this.prisma.am_invitations.findMany({
-      where: { status, ...this.invitationBranchWhere(user) },
+      // Branch manager / section supervisor: «خلال الشهر فقط» (client sheet, 22 Nov).
+      where: {
+        status,
+        ...this.invitationBranchWhere(user),
+        ...(managerKind(user) ? { created_at: { gte: cairoDayRange(new Date(`${managerPeriodBounds('month').from}T12:00:00Z`)).gte } } : {}),
+      },
       orderBy: { created_at: 'desc' },
     });
     return Promise.all(rows.map((r) => this.mapInvitation(r)));

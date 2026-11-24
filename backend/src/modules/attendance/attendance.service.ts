@@ -8,6 +8,7 @@ import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { isSystemAdmin } from '../../common/utils/system-admin.util';
+import { clampManagerDays, managerKind, managerSection } from '../../common/utils/manager-scope.util';
 import {
   businessNowMinutes,
   businessMidnightEpoch,
@@ -282,6 +283,44 @@ export class AttendanceService {
     return branches ? { in: branches } : undefined;
   }
 
+  /**
+   * Branch manager / section supervisor (client sheet, 22 Nov): attendance of the staff of their
+   * branch and section (men / women; «both» staff count for either) plus every reception employee,
+   * for the current and the previous month.
+   */
+  private clampManagerReport(q: AttendanceReportDto, user?: JwtUser) {
+    const r = clampManagerDays(user, 'twoMonths', q.dateFrom?.slice(0, 10) ?? todayIso(), q.dateTo?.slice(0, 10) ?? todayIso());
+    if (r.clamped) { q.dateFrom = r.from; q.dateTo = r.to; }
+  }
+
+  private async managerStaffCodes(user?: JwtUser): Promise<number[] | null> {
+    if (!managerKind(user)) return null;
+    const section = managerSection(user);
+    const jobs = await this.prisma.department_jobs.findMany({ select: { id: true, name: true } });
+    const receptionJobIds = jobs.filter((j) => /(استقبال|ريسيبشن|ريسبشن|reception)/i.test(j.name)).map((j) => j.id);
+    const branches = this.scope.allowedBranchIds(user);
+    const types = section === 'female' ? [2, 3] : section === 'male' ? [0, 1, 3] : null;
+    const rows = await this.prisma.employees.findMany({
+      where: {
+        ...(branches ? { branch_id_fk: { in: branches } } : {}),
+        OR: [
+          types ? { emp_type: { in: types } } : {},
+          ...(receptionJobIds.length ? [{ mosma_wazefy_code: { in: receptionJobIds } }] : []),
+        ],
+      },
+      select: { emp_code: true },
+    });
+    return rows.map((r) => r.emp_code).filter((c): c is number => c != null);
+  }
+
+  private async applyManagerStaff(user: JwtUser | undefined, where: Record<string, unknown>, key: string) {
+    const codes = await this.managerStaffCodes(user);
+    if (!codes) return;
+    const current = where[key];
+    if (typeof current === 'number') where[key] = codes.includes(current) ? current : -1;
+    else where[key] = { in: codes.length ? codes : [-1] };
+  }
+
   // -------------------------------------------------------------------------
   // BOARD
   // -------------------------------------------------------------------------
@@ -289,11 +328,12 @@ export class AttendanceService {
     q: PaginationDto & { date?: string; source?: string; status?: string; branchId?: string },
     user?: JwtUser,
   ) {
-    const date = q.date?.slice(0, 10) ?? todayIso();
+    const date = clampManagerDays(user, 'twoMonths', q.date?.slice(0, 10) ?? todayIso(), q.date?.slice(0, 10) ?? todayIso()).from ?? todayIso();
     const matches = legacyDateMatchValues(date);
     const where: Prisma.tbl_hdoor_empsWhereInput = { action_date_s: { in: matches } };
     const branchFilter = this.reportBranchFilter(user, q.branchId);
     if (branchFilter !== undefined) where.branch_id_fk = branchFilter;
+    await this.applyManagerStaff(user, where as Record<string, unknown>, 'member_code');
 
     const rows = await this.prisma.tbl_hdoor_emps.findMany({
       where,
@@ -1880,6 +1920,7 @@ export class AttendanceService {
 
   /** R1 — Basma report (Hdoor_m::get_hdoor_actions): in/out per emp/branch over a range. */
   async basmaReport(q: AttendanceReportDto, user?: JwtUser) {
+    this.clampManagerReport(q, user);
     const where: Prisma.tbl_hdoor_empsWhereInput = {};
     if (q.dateFrom && q.dateTo) {
       where.action_date = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
@@ -1889,6 +1930,7 @@ export class AttendanceService {
     if (q.empCode && q.empCode !== 'all') where.member_code = parseInt(q.empCode, 10) || 0;
     const branchFilter = this.reportBranchFilter(user, q.branchId);
     if (branchFilter !== undefined) where.branch_id_fk = branchFilter;
+    await this.applyManagerStaff(user, where as Record<string, unknown>, 'member_code');
     if (q.search?.trim()) {
       const search = q.search.trim();
       const code = Number(search);
@@ -1959,6 +2001,7 @@ export class AttendanceService {
    * regular leave; a day with no punch or leave is absence.
    */
   async fullAttendanceSheet(q: AttendanceReportDto, user?: JwtUser) {
+    this.clampManagerReport(q, user);
     const from = (q.dateFrom || todayIso()).slice(0, 10);
     const to = (q.dateTo || from).slice(0, 10);
     const start = new Date(`${from}T12:00:00`);
@@ -1976,6 +2019,7 @@ export class AttendanceService {
     if (q.empCode && q.empCode !== 'all') employeeWhere.emp_code = parseInt(q.empCode, 10) || 0;
     const branchFilter = this.reportBranchFilter(user, q.branchId);
     if (branchFilter !== undefined) employeeWhere.branch_id_fk = branchFilter;
+    await this.applyManagerStaff(user, employeeWhere as Record<string, unknown>, 'emp_code');
     if (q.search?.trim()) {
       const search = q.search.trim();
       const code = Number(search);
@@ -2166,10 +2210,12 @@ export class AttendanceService {
    * whose ezn_date_ar equals the punch action_date.
    */
   async lateReport(q: AttendanceReportDto, user?: JwtUser) {
+    this.clampManagerReport(q, user);
     const empWhere: Prisma.employeesWhereInput = {};
     if (q.empCode && q.empCode !== 'all') empWhere.emp_code = parseInt(q.empCode, 10) || 0;
     const branchFilter = this.reportBranchFilter(user, q.branchId);
     if (branchFilter !== undefined) empWhere.branch_id_fk = branchFilter;
+    await this.applyManagerStaff(user, empWhere as Record<string, unknown>, 'emp_code');
     if (q.search?.trim()) {
       const search = q.search.trim();
       const code = Number(search);
@@ -2271,6 +2317,7 @@ export class AttendanceService {
 
   /** R4 — Extra-hours report from tbl_emps_hours_edafi (Hdoor_m::get_hours_edafi_data). */
   async overtimeReport(q: AttendanceReportDto, user?: JwtUser) {
+    this.clampManagerReport(q, user);
     const where: Prisma.tbl_emps_hours_edafiWhereInput = {};
     if (q.dateFrom && q.dateTo) {
       where.edafa_date = { gte: q.dateFrom.slice(0, 10), lte: q.dateTo.slice(0, 10) };
@@ -2280,6 +2327,7 @@ export class AttendanceService {
     if (q.empCode && q.empCode !== 'all') where.emp_code_fk = parseInt(q.empCode, 10) || 0;
     const branchFilter = this.reportBranchFilter(user, q.branchId);
     if (branchFilter !== undefined) where.branch_id_fk = branchFilter;
+    await this.applyManagerStaff(user, where as Record<string, unknown>, 'emp_code_fk');
 
     const [rows, total] = await Promise.all([
       this.prisma.tbl_emps_hours_edafi.findMany({
@@ -2322,6 +2370,7 @@ export class AttendanceService {
    * without a main attendance row is unexcused absence.
    */
   async absenceReport(q: AttendanceReportDto, user?: JwtUser) {
+    this.clampManagerReport(q, user);
     const from = (q.dateFrom || todayIso()).slice(0, 10);
     const to = (q.dateTo || from).slice(0, 10);
     if (to < from) throw new BadRequestException('تاريخ النهاية يجب أن يساوي أو يلي تاريخ البداية');
@@ -2330,6 +2379,7 @@ export class AttendanceService {
     if (q.empCode && q.empCode !== 'all') empWhere.emp_code = parseInt(q.empCode, 10) || 0;
     const branchFilter = this.reportBranchFilter(user, q.branchId);
     if (branchFilter !== undefined) empWhere.branch_id_fk = branchFilter;
+    await this.applyManagerStaff(user, empWhere as Record<string, unknown>, 'emp_code');
     if (q.search?.trim()) {
       const search = q.search.trim();
       const code = Number(search);

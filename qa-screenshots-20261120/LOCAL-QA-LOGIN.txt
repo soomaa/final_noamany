@@ -1,0 +1,7 @@
+Local QA login (local DB noamany_overnight_test only, not the server)
+username: qa_screens
+password: luJB8B4Gg6c0
+username: qa_reception (reception-like role: view/create leaves + permits, target report)
+password: gJ_fSjXzHVXc
+username: qa_trainer (linked to local trainer 1048)
+password: ELVOQ_m0kF0z

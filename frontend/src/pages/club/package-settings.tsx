@@ -1,4 +1,4 @@
-import { Bell, Building2, Calendar, CheckCircle2, ChevronDown, Eye, Hash, Package, Pencil, Plus, Save, Snowflake, Sparkles, Trash2, Users, Wallet, XCircle } from 'lucide-react';
+import { Bell, Building2, Calendar, CheckCircle2, ChevronDown, Eye, Hash, Package, Pencil, Plus, Save, Snowflake, Sparkles, Tag, Trash2, Users, Wallet, XCircle } from 'lucide-react';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
@@ -24,6 +24,7 @@ import { confirm } from '@/lib/confirm';
 import { toArabicDigits } from '@/lib/utils';
 import { useAuth } from '@/store/auth';
 import type { ClubSubscriptionType } from '@/types/club';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type SubTypeForm = {
   name: string;
@@ -44,6 +45,12 @@ type SubTypeForm = {
   offerValidity: string;
   isLinkedToFreeze: boolean;
   freezeDays: string;
+  freezeTotalDays: string;
+  promoEnabled: boolean;
+  promoKind: 'discount' | 'bonus';
+  promoPrice: string;
+  promoBonus: string;
+  promoEndsOn: string;
   includesSpa: boolean;
   spaCount: string;
   isActive: boolean;
@@ -53,7 +60,8 @@ const emptyForm = (branchIds: number[] = []): SubTypeForm => ({
   name: '', kind: 'package', applyToAllBranches: true, branchIds, price: '', days: '', sessionsCount: '', isPartOfTarget: false,
   invitationsCount: '0', inbodyCount: '0', isForStudents: false, showInApp: false,
   notifyCustomers: false, notifyOnExpiry: false, walletPoints: '0', offerValidity: '',
-  isLinkedToFreeze: false, freezeDays: '0', includesSpa: false, spaCount: '0',
+  isLinkedToFreeze: false, freezeDays: '', freezeTotalDays: '', includesSpa: false, spaCount: '0',
+  promoEnabled: false, promoKind: 'discount', promoPrice: '', promoBonus: '', promoEndsOn: '',
   isActive: true,
 });
 
@@ -78,7 +86,13 @@ function toForm(type: ClubSubscriptionType, allBranchIds: number[]): SubTypeForm
     walletPoints: String(type.walletPoints ?? 0),
     offerValidity: type.offerValidity ?? '',
     isLinkedToFreeze: !!type.isLinkedToFreeze,
-    freezeDays: String(type.freezeDays ?? 0),
+    freezeDays: type.freezeDays != null ? String(type.freezeDays) : '',
+    freezeTotalDays: type.freezeTotalDays != null ? String(type.freezeTotalDays) : '',
+    promoEnabled: !!type.promoEnabled,
+    promoKind: type.promoKind ?? 'discount',
+    promoPrice: type.promoPrice != null ? String(type.promoPrice) : '',
+    promoBonus: type.promoBonus != null ? String(type.promoBonus) : '',
+    promoEndsOn: type.promoEndsOn ?? '',
     includesSpa: !!type.includesSpa,
     spaCount: String(type.spaCount ?? 0),
     isActive: type.isActive !== false,
@@ -225,7 +239,13 @@ function PackageDetailsDialog({
                 <DetailRow icon={Sparkles} label="جلسات السبا" value={`${toArabicDigits(type.spaCount ?? 0)} زيارة`} highlight />
               )}
               {type.isLinkedToFreeze && (
-                <DetailRow icon={Snowflake} label="أيام الوقف" value={`${toArabicDigits(type.freezeDays ?? 0)} يوم`} highlight />
+                <DetailRow icon={Snowflake} label="إجمالي أيام التجميد" value={type.freezeTotalDays != null ? `${toArabicDigits(type.freezeTotalDays)} يوم` : 'بدون حد'} highlight />
+              )}
+              {type.isLinkedToFreeze && (
+                <DetailRow icon={Snowflake} label="عدد مرات التجميد" value={type.freezeDays != null ? `${toArabicDigits(type.freezeDays)} مرة` : 'بدون حد'} highlight />
+              )}
+              {type.promoEnabled && (
+                <DetailRow icon={Tag} label="العرض الخاص" value={`${type.promoPrice != null ? `${toArabicDigits(type.promoPrice)} ج` : ''}${type.promoLabel ? ` ${type.promoLabel}` : ''}${type.promoEndsOn ? ` · حتى ${formatOfferDate(type.promoEndsOn)}` : ''}${type.promoLive ? '' : ' (منتهي)'}`} highlight />
               )}
             </div>
 
@@ -343,7 +363,14 @@ export function ClubPackageSettingsPage() {
         classTypeIds: [],
         allowMultipleDailyEntries: true,
         isLinkedToFreeze: form.isLinkedToFreeze,
-        freezeDays: form.isLinkedToFreeze ? Number(form.freezeDays) || null : null,
+        // Blank = unlimited. Times and total days are separate limits, as in MetaFit.
+        freezeDays: form.isLinkedToFreeze && form.freezeDays.trim() ? Number(form.freezeDays) : null,
+        freezeTotalDays: form.isLinkedToFreeze && form.freezeTotalDays.trim() ? Number(form.freezeTotalDays) : null,
+        promoEnabled: form.promoEnabled,
+        promoKind: form.promoKind,
+        promoPrice: form.promoEnabled ? form.promoPrice.trim() : null,
+        promoBonus: form.promoEnabled && form.promoKind === 'bonus' ? Number(form.promoBonus) : null,
+        promoEndsOn: form.promoEnabled ? form.promoEndsOn || null : null,
         includesSpa: form.includesSpa,
         spaCount: form.includesSpa ? Number(form.spaCount) || null : null,
         isActive: form.isActive,
@@ -380,14 +407,14 @@ export function ClubPackageSettingsPage() {
           <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">الفرع</Label>
           <div className="relative">
             <Building2 className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <select
+            <SearchableSelect
               className="h-11 w-full appearance-none rounded-xl border border-input bg-background pe-9 ps-9 text-sm font-medium shadow-sm transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               value={filterBranchId}
               onChange={(e) => setFilterBranchId(e.target.value)}
             >
               <option value="all">كل الفروع</option>
               {(branches ?? []).map((b) => <option key={b.id} value={String(b.id)}>{b.name}</option>)}
-            </select>
+            </SearchableSelect>
             <ChevronDown className="pointer-events-none absolute end-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           </div>
         </div>
@@ -397,7 +424,7 @@ export function ClubPackageSettingsPage() {
           <Label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">الحالة</Label>
           <div className="relative">
             <CheckCircle2 className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <select
+            <SearchableSelect
               className="h-11 w-full appearance-none rounded-xl border border-input bg-background pe-9 ps-9 text-sm font-medium shadow-sm transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary"
               value={filterStatus}
               onChange={(e) => setFilterStatus(e.target.value as 'all' | 'active' | 'inactive')}
@@ -405,7 +432,7 @@ export function ClubPackageSettingsPage() {
               <option value="all">الكل</option>
               <option value="active">نشط</option>
               <option value="inactive">غير نشط</option>
-            </select>
+            </SearchableSelect>
             <ChevronDown className="pointer-events-none absolute end-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           </div>
         </div>
@@ -492,10 +519,10 @@ export function ClubPackageSettingsPage() {
           <DialogFormSection title={ct('packages.sectionBasic')} icon={Package}>
             <DialogFormGrid columns={2}>
               <FormField label="نوع الباقة" required>
-                <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={form.kind} onChange={(event) => patchForm({ kind: event.target.value as SubTypeForm['kind'], sessionsCount: event.target.value === 'sessions' ? form.sessionsCount : '' })}>
+                <SearchableSelect className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={form.kind} onChange={(event) => patchForm({ kind: event.target.value as SubTypeForm['kind'], sessionsCount: event.target.value === 'sessions' ? form.sessionsCount : '' })}>
                   <option value="package">اشتراك</option>
                   <option value="sessions">حصص</option>
-                </select>
+                </SearchableSelect>
               </FormField>
               <FormField label={ct('packages.subscriptionName')} required><Input value={form.name} onChange={(event) => patchForm({ name: event.target.value })} /></FormField>
               <FormField label={ct('packages.subscriptionValueEgp')} required><Input type="number" min={0} step="0.01" className="nums" value={form.price} onChange={(event) => patchForm({ price: event.target.value })} /></FormField>
@@ -535,9 +562,35 @@ export function ClubPackageSettingsPage() {
               <DialogFormToggle label={ct('packages.includesSpa')} checked={form.includesSpa} onCheckedChange={(value) => patchForm({ includesSpa: value })} />
             </div>
             <DialogFormGrid columns={2} className="mt-3">
-              {form.isLinkedToFreeze ? <FormField label={ct('packages.freezeDays')}><Input type="number" min={1} className="nums" value={form.freezeDays} onChange={(event) => patchForm({ freezeDays: event.target.value })} /></FormField> : null}
+              {form.isLinkedToFreeze ? <FormField label="إجمالي أيام التجميد"><Input type="number" min={1} className="nums" placeholder="فارغ = بدون حد" value={form.freezeTotalDays} onChange={(event) => patchForm({ freezeTotalDays: event.target.value })} /></FormField> : null}
+              {form.isLinkedToFreeze ? <FormField label="عدد مرات التجميد"><Input type="number" min={1} className="nums" placeholder="فارغ = بدون حد" value={form.freezeDays} onChange={(event) => patchForm({ freezeDays: event.target.value })} /></FormField> : null}
               {form.includesSpa ? <FormField label={ct('packages.spaCount')}><Input type="number" min={1} className="nums" value={form.spaCount} onChange={(event) => patchForm({ spaCount: event.target.value })} /></FormField> : null}
             </DialogFormGrid>
+          </DialogFormSection>
+
+          <DialogFormSection title="العرض الخاص" icon={Tag}>
+            <DialogFormToggle label="الباقة عليها عرض خاص" checked={form.promoEnabled} onCheckedChange={(value) => patchForm({ promoEnabled: value })} />
+            {form.promoEnabled ? (
+              <DialogFormGrid columns={2} className="mt-3">
+                <FormField label="نوع العرض" required>
+                  <SearchableSelect className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={form.promoKind} onChange={(event) => patchForm({ promoKind: event.target.value as SubTypeForm['promoKind'] })}>
+                    <option value="discount">خصم على السعر</option>
+                    <option value="bonus">{form.kind === 'sessions' ? 'زيارات إضافية' : 'أيام إضافية'}</option>
+                  </SearchableSelect>
+                </FormField>
+                {form.promoKind === 'bonus' ? (
+                  <FormField label={form.kind === 'sessions' ? 'عدد الزيارات الإضافية' : 'عدد الأيام الإضافية'} required>
+                    <Input type="number" min={1} className="nums" value={form.promoBonus} onChange={(event) => patchForm({ promoBonus: event.target.value })} />
+                  </FormField>
+                ) : null}
+                <FormField label={form.promoKind === 'bonus' ? 'سعر العرض (فارغ = سعر الباقة)' : 'سعر العرض'} required={form.promoKind === 'discount'}>
+                  <Input type="number" min={0} step="0.01" className="nums" value={form.promoPrice} onChange={(event) => patchForm({ promoPrice: event.target.value })} />
+                </FormField>
+                <FormField label="آخر يوم في العرض">
+                  <Input type="date" className="nums" value={form.promoEndsOn} onChange={(event) => patchForm({ promoEndsOn: event.target.value })} />
+                </FormField>
+              </DialogFormGrid>
+            ) : null}
           </DialogFormSection>
 
           <DialogFormSection title="الحالة">

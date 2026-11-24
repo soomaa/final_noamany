@@ -7,6 +7,7 @@ import { Combobox } from '@/components/common/combobox';
 import { DataTable, type PaginatedResponse } from '@/components/common/data-table';
 import { FilterBar, type FilterField } from '@/components/common/filter-bar';
 import { WarehouseSelect } from '@/components/inventory/warehouse-select';
+import { useCafeLocations } from '@/lib/cafe-locations';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -27,6 +28,7 @@ import type { NamedEntity, ProductListItem } from '@/types/inventory';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const PO_STATUS_LABELS: Record<string, string> = {
   draft: 'مسودة',
@@ -68,6 +70,10 @@ export function ProcurementPurchaseOrdersPage() {
   const queryClient = useQueryClient();
   const { params, setParams } = useListQuery();
   const { data: branches } = useBranches();
+  // The client buys for 3 branches (طنطا، البر الشرقي، الجلاء) into their 3 stores only.
+  const cafe = useCafeLocations();
+  const poBranches = cafe.ready ? (branches ?? []).filter((b) => cafe.mainBranchIds.includes(b.id)) : (branches ?? []);
+  const storesOf = (id: string) => cafe.stores.filter((s) => String(s.branchId) === id);
   const { data, isLoading, isError, refetch } = usePaginatedList<PurchaseOrderRow>('purchase-orders', params);
 
   const { data: suppliers } = useQuery({
@@ -155,7 +161,7 @@ export function ProcurementPurchaseOrdersPage() {
       key: 'branchId',
       label: ui('الفرع'),
       type: 'select',
-      options: (branches ?? []).map((b) => ({ value: String(b.id), label: b.name ?? '—' })),
+      options: poBranches.map((b) => ({ value: String(b.id), label: b.name ?? '—' })),
     },
   ];
 
@@ -184,8 +190,10 @@ export function ProcurementPurchaseOrdersPage() {
     setSupplierId('');
     setSupplierInvoiceNumber('');
     setPaymentMethod('cash');
-    setBranchId(String(branches?.[0]?.id ?? ''));
-    setWarehouseId('');
+    const firstBranch = String(poBranches[0]?.id ?? '');
+    const firstStores = storesOf(firstBranch);
+    setBranchId(firstBranch);
+    setWarehouseId(cafe.ready && firstStores.length === 1 ? String(firstStores[0].id) : '');
     setCategoryId('');
     setLines([emptyLine()]);
     setDiscount('0');
@@ -396,6 +404,10 @@ export function ProcurementPurchaseOrdersPage() {
       toast.error(ui('اختر المورد والفرع والتصنيف وأضف صنفًا واحدًا على الأقل'));
       return;
     }
+    if (cafe.ready && !warehouseId) {
+      toast.error(ui('اختر المخزن'));
+      return;
+    }
     if (validLines.some((l) => l.lineTotal === '' || Number(l.lineTotal) < 0)) {
       toast.error(ui('أدخل تكلفة الشراء الكلية لكل صنف'));
       return;
@@ -539,7 +551,7 @@ export function ProcurementPurchaseOrdersPage() {
               </div>
               <div className="grid gap-1">
                 <Label htmlFor="po-payment-method">{ui('طريقة الدفع')}</Label>
-                <select
+                <SearchableSelect
                   id="po-payment-method"
                   className={selectClass}
                   value={paymentMethod}
@@ -552,27 +564,41 @@ export function ProcurementPurchaseOrdersPage() {
                 >
                   <option value="cash">{ui('نقدي')}</option>
                   <option value="credit">{ui('آجل')}</option>
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-1">
                 <Label htmlFor="po-branch">{ui('الفرع')}</Label>
-                <select
+                <SearchableSelect
+                  searchable
                   id="po-branch"
                   className={selectClass}
                   value={branchId}
                   onChange={(e) => {
                     setBranchId(e.target.value);
-                    setWarehouseId('');
+                    // The branch's store is picked for you (each of the 3 branches has one).
+                    const stores = storesOf(e.target.value);
+                    setWarehouseId(cafe.ready && stores.length === 1 ? String(stores[0].id) : '');
                   }}
                 >
                   <option value="">{ui('إختر')}</option>
-                  {(branches ?? []).map((b) => (
+                  {poBranches.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
+              {cafe.ready ? (
+                <div className="grid gap-1">
+                  <Label htmlFor="po-store">{ui('المخازن')}</Label>
+                  <SearchableSelect searchable id="po-store" aria-label={ui('المخازن')} className={selectClass} value={warehouseId} disabled={!branchId} onChange={(e) => setWarehouseId(e.target.value)}>
+                    <option value="">{ui('إختر')}</option>
+                    {(branchId ? storesOf(branchId) : cafe.stores).map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </SearchableSelect>
+                </div>
+              ) : (
               <WarehouseSelect
                 branchId={branchId}
                 value={warehouseId}
@@ -580,9 +606,10 @@ export function ProcurementPurchaseOrdersPage() {
                 label="المخازن"
                 disabled={!branchId}
               />
+              )}
               <div className="grid gap-1">
                 <Label htmlFor="po-category">{ui('النوع - التصنيف')}</Label>
-                <select
+                <SearchableSelect
                   id="po-category"
                   className={selectClass}
                   value={categoryId}
@@ -597,7 +624,7 @@ export function ProcurementPurchaseOrdersPage() {
                       {c.nameAr}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
             </div>
 

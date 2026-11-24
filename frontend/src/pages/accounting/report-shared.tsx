@@ -10,6 +10,7 @@ import { formatMoney, localDateStr } from '@/lib/formatters';
 import { uiStatic } from '@/lib/ui-static';
 import { useLocale } from '@/store/locale';
 import type { AccountingSettings } from '@/types/accounting';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 /** One line of a financial statement, as every report endpoint returns it. */
 export interface StatementItem {
@@ -112,7 +113,7 @@ export function ReportFilters({
         </div>
         <div className="grid gap-1">
           <Label className="text-xs">{uiStatic('الفرع')}</Label>
-          <select
+          <SearchableSelect
             className="rounded-md border bg-background px-3 py-2 text-sm"
             value={branchId}
             onChange={(e) => onBranch(e.target.value)}
@@ -123,7 +124,7 @@ export function ReportFilters({
                 {b.name}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
         <Button variant="brand" onClick={onSearch}>
           {uiStatic('بحث')}

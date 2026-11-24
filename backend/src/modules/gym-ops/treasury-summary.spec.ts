@@ -47,6 +47,7 @@ describe('large treasury periods', () => {
     };
     const branchScope = {
       resolveListFilter: jest.fn().mockReturnValue([2]),
+      resolveMemberGenderRequest: jest.fn().mockReturnValue(null),
     };
     const permissions = { isSuperAdmin: jest.fn().mockResolvedValue(false) };
     const service = new ClubDashboardService(
@@ -136,5 +137,29 @@ describe('large treasury periods', () => {
     expect(prisma.sales_quick_sales.findMany).not.toHaveBeenCalled();
     expect(prisma.fin_revenues.findMany).not.toHaveBeenCalled();
     expect(prisma.fin_expenses.findMany).not.toHaveBeenCalled();
+  });
+
+  it('forwards the رجالي/حريمي filter to the club money only', async () => {
+    const prisma = {
+      sales_quick_sales: { groupBy: jest.fn().mockResolvedValue([]) },
+      fin_revenues: { groupBy: jest.fn().mockResolvedValue([]) },
+      fin_expenses: { aggregate: jest.fn().mockResolvedValue({ _sum: { total_amount: 0 } }) },
+    };
+    const clubDashboard = {
+      treasury: jest.fn().mockResolvedValue({ byMethodSummary: {}, bySource: {} }),
+    };
+    const branchScope = { resolveListFilter: jest.fn().mockReturnValue(null) };
+    const service = new UnifiedTreasuryService(
+      prisma as unknown as PrismaService,
+      clubDashboard as unknown as ClubDashboardService,
+      {} as ExportService,
+      branchScope as unknown as BranchScopeService,
+    );
+    const user = { sub: 1, level: 1 } as never;
+
+    await service.daily({ gender: 'female' }, user);
+
+    expect(clubDashboard.treasury).toHaveBeenCalledWith(expect.objectContaining({ gender: 'female' }), user);
+    expect(prisma.sales_quick_sales.groupBy.mock.calls[0][0].where).not.toHaveProperty('gender');
   });
 });

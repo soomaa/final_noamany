@@ -15,6 +15,7 @@ import { GymSalesPageShell } from '@/pages/gym-sales/shell';
 import { useBranches } from '@/hooks/use-branches';
 import { useAuth } from '@/store/auth';
 import { formatMoneyNumber } from '@/lib/formatters';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface ProductMetric { productId: number; name: string; quantity: number; revenue: number; cost: number; profit: number }
 interface CafeReport {
@@ -123,8 +124,8 @@ export function CafeReportsPage() {
             ))}
           </div>
           {preset === 'custom' && <><Input className="w-40" type="date" value={from} onChange={(event) => setFrom(event.target.value)} /><Input className="w-40" type="date" value={to} onChange={(event) => setTo(event.target.value)} /></>}
-          <select className="h-9 min-w-40 rounded-md border bg-background px-3 text-sm" value={effectiveBranchId} onChange={(event) => setBranchId(event.target.value)} disabled={branches.length <= 1}>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
-          <select aria-label={ui('فئة التقرير')} className="h-9 rounded-md border bg-background px-3" value={categoryId} onChange={(e)=>setCategoryId(e.target.value)}><option value="">{ui('كل الفئات')}</option>{reportCategories.map((c)=><option key={c.id} value={c.id}>{c.nameAr}</option>)}</select>
+          <SearchableSelect className="h-9 min-w-40 rounded-md border bg-background px-3 text-sm" value={effectiveBranchId} onChange={(event) => setBranchId(event.target.value)} disabled={branches.length <= 1}>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</SearchableSelect>
+          <SearchableSelect aria-label={ui('فئة التقرير')} className="h-9 rounded-md border bg-background px-3" value={categoryId} onChange={(e)=>setCategoryId(e.target.value)}><option value="">{ui('كل الفئات')}</option>{reportCategories.map((c)=><option key={c.id} value={c.id}>{c.nameAr}</option>)}</SearchableSelect>
           <Badge variant="secondary" className="ms-auto">{toArabicDigits(from)} — {toArabicDigits(to)}</Badge>
         </CardContent>
       </Card>

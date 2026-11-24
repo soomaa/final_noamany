@@ -6,6 +6,7 @@ import { JwtUser } from '../../common/types/jwt-user';
 import { ClubAttendanceService } from './club-attendance.service';
 import { CheckInDto, CheckOutDto, ServiceCheckInDto } from './dto/check-in.dto';
 import { ListClubAttendanceDto } from './dto/list-club-attendance.dto';
+import { SubscriptionUtilizationDto } from './dto/subscription-utilization.dto';
 import { BarcodeScanTimesDto } from './dto/barcode-scan-times.dto';
 import { BarcodeAttendanceReportDto } from './dto/barcode-attendance-report.dto';
 
@@ -60,13 +61,19 @@ export class ClubAttendanceController {
     @Query('startDate') startDate?: string,
     @Query('endDate') endDate?: string,
     @CurrentUser() user?: JwtUser,
+    @Query('gender') gender?: string,
   ) {
-    return this.service.statistics({ branch, startDate, endDate }, user);
+    return this.service.statistics({ branch, startDate, endDate, gender }, user);
   }
 
   @Get('daily-summary')
   dailySummary(@Query() query: ListClubAttendanceDto, @CurrentUser() user?: JwtUser) {
     return this.service.dailySummary(query, user);
+  }
+
+  @Get('subscription-utilization')
+  subscriptionUtilization(@Query() query: SubscriptionUtilizationDto, @CurrentUser() user?: JwtUser) {
+    return this.service.subscriptionUtilization(query, user);
   }
 
   @Get('barcode-scan-times')

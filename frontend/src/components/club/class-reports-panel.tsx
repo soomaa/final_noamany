@@ -10,6 +10,7 @@ import { api } from '@/lib/api';
 import { useArrayResource } from '@/lib/api-hooks';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClassManagementReports, ClubClassType, ClubTrainerRow } from '@/types/fitness';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const WEEKDAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
 const money = (value: number) => new Intl.NumberFormat('ar-EG', { maximumFractionDigits: 2 }).format(value);
@@ -73,25 +74,25 @@ export function ClassReportsPanel() {
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="grid gap-1.5">
               <Label>المدرب</Label>
-              <select className={selectCls} value={trainerId} onChange={(e) => setTrainerId(e.target.value)}>
+              <SearchableSelect className={selectCls} value={trainerId} onChange={(e) => setTrainerId(e.target.value)}>
                 <option value="all">كل المدربين</option>
                 {trainerOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1.5">
               <Label>نوع الحصة</Label>
-              <select className={selectCls} value={classTypeId} onChange={(e) => setClassTypeId(e.target.value)}>
+              <SearchableSelect className={selectCls} value={classTypeId} onChange={(e) => setClassTypeId(e.target.value)}>
                 <option value="all">كل الحصص</option>
                 {classTypeOptions.map((opt) => (
                   <option key={opt.value} value={opt.value}>
                     {opt.label}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
           </div>
         </CardContent>

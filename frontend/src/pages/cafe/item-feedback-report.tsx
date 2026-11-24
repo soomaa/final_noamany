@@ -13,6 +13,7 @@ import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '@/pages/gym-sales/shell';
 import { useBranches } from '@/hooks/use-branches';
 import { useAuth } from '@/store/auth';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface FeedbackComment {
   comment: string;
@@ -134,7 +135,7 @@ export function CafeItemFeedbackReportPage() {
             <Input className="w-40" type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
             <Input className="w-40" type="date" value={to} min={from} onChange={(event) => setTo(event.target.value)} />
           </>}
-          <select className="h-9 min-w-40 rounded-md border bg-background px-3 text-sm" value={effectiveBranchId} onChange={(event) => setBranchId(event.target.value)} disabled={branches.length <= 1}>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>
+          <SearchableSelect className="h-9 min-w-40 rounded-md border bg-background px-3 text-sm" value={effectiveBranchId} onChange={(event) => setBranchId(event.target.value)} disabled={branches.length <= 1}>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</SearchableSelect>
           <Badge variant="secondary" className="ms-auto nums">{toArabicDigits(from)} — {toArabicDigits(to)}</Badge>
         </CardContent>
       </Card>

@@ -10,6 +10,7 @@ import { cafeUnitLabel } from '@/lib/cafe-units';
 import { localToday } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface DailyStockRow {
   productId: number;
@@ -71,15 +72,15 @@ export function DailyStockOverview() {
           <p className="mt-1 text-sm text-muted-foreground">{ui('رصيد بداية اليوم، ما دخل وخرج اليوم، ورصيد الإغلاق والحالي لكل خامة ومنتج جاهز')}</p>
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <select className="rounded-lg border bg-background px-3 py-2" value={branchId} onChange={(event) => setBranchId(event.target.value)}>
+          <SearchableSelect className="rounded-lg border bg-background px-3 py-2" value={branchId} onChange={(event) => setBranchId(event.target.value)}>
             <option value="all">{ui('كل الفروع')}</option>
             {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-          </select>
-          <select className="rounded-lg border bg-background px-3 py-2" value={kind} onChange={(event) => setKind(event.target.value)}>
+          </SearchableSelect>
+          <SearchableSelect className="rounded-lg border bg-background px-3 py-2" value={kind} onChange={(event) => setKind(event.target.value)}>
             <option value="all">{ui('الخامات والمنتجات الجاهزة')}</option>
             <option value="raw_material">{ui('الخامات')}</option>
             <option value="ready_product">{ui('المنتجات الجاهزة')}</option>
-          </select>
+          </SearchableSelect>
           <div className="relative">
             <CalendarDays className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input className="ps-9" type="date" value={date} onChange={(event) => setDate(event.target.value)} />

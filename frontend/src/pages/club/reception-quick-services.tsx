@@ -19,6 +19,7 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { RowActions, SELECT_CLS } from '@/pages/club/fitness/shared';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export type ClubQuickServiceRow = {
   id: number;
@@ -219,7 +220,7 @@ export function ClubReceptionQuickServicesPage() {
             </div>
             <div className="grid gap-2">
               <Label>{ui('الفرع (اختياري)')}</Label>
-              <select
+              <SearchableSelect
                 className={SELECT_CLS}
                 value={form.branchId}
                 onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}
@@ -230,7 +231,7 @@ export function ClubReceptionQuickServicesPage() {
                     {b.label}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ui('وصف')}</Label>

@@ -61,6 +61,8 @@ export interface ClubSearchHit {
   cardNumber: string | null;
   branchId: number;
   isActive: boolean;
+  isBlocked?: boolean;
+  blockReason?: string | null;
   matchType: string;
   activeSubscriptionType: string | null;
   subscriptionStatus: string | null;
@@ -103,8 +105,11 @@ export interface CheckInResponse {
     subscriptionType?: string | null;
     attendanceDate: string;
     status: string;
+    checkInTime?: string;
   };
   entitlement: EntitlementResult;
+  /** Scan check-in (`onceToday`): the member was already checked in today, nothing was added. */
+  alreadyCheckedInToday?: boolean;
   subscription?: {
     id: number;
     type: string | null;

@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { clampManagerDays } from '../../common/utils/manager-scope.util';
 import { Prisma, club_members } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -464,12 +465,18 @@ export class ClubMembersService {
     if (scope !== null) and.push({ branch_id: { in: scope } });
     if (q.status === 'active') and.push({ is_active: true });
     if (q.status === 'inactive') and.push({ is_active: false });
-    const audience = this.branchScope.memberGenderFilter(user);
+    // رجالي/حريمي/الكل: one-section staff are locked to their section (403 for the other one).
+    const audience = this.branchScope.resolveMemberGenderRequest(user, q.gender);
     if (audience) and.push({ gender: audience });
-    else if (q.gender && q.gender !== 'all') and.push({ gender: q.gender as 'male' | 'female' });
     // Sales reps only see their own registrations on the members list — not in pickers.
     if (!forPrintCards && !q.forSelect && user && (await this.isSalesEmployee(user.emp_code))) {
       and.push({ created_by: user.sub });
+    }
+    // Branch manager / section supervisor: «الأعضاء خلال فترة» reaches the current and the previous
+    // month (client sheet, 22 Nov); the member list itself (no dates) stays open for the desk.
+    if (q.createdFrom || q.createdTo) {
+      const r = clampManagerDays(user, 'twoMonths', q.createdFrom, q.createdTo);
+      if (r.clamped) { q.createdFrom = r.from; q.createdTo = r.to; }
     }
     if (q.createdFrom || q.createdTo) {
       const range: { gte?: Date; lte?: Date } = {};
@@ -544,14 +551,14 @@ export class ClubMembersService {
     const receptionToday = forMembershipOperation || forRefundTransfer ? null : this.receptionTodayRange(user);
     if (receptionToday) and.push({ created_at: receptionToday });
 
-    const select = { id: true, member_code: true, name: true, phone: true, gender: true, branch_id: true } as const;
+    const select = { id: true, member_code: true, name: true, phone: true, gender: true, branch_id: true, is_blocked: true, block_reason: true } as const;
     const partialWhere: Prisma.club_membersWhereInput = { AND: and };
     const exactCodeWhere: Prisma.club_membersWhereInput = { AND: [...and, { member_code: { equals: search } }] };
     // Keep the picker fast: one small identity-only query is enough. The
     // result is ranked in memory so exact codes/names still win over partial
     // matches without issuing three database scans per keystroke.
     const lookupOptions = { select, orderBy: { name: 'asc' as const }, take: 50 };
-    type LookupRow = Pick<club_members, 'id' | 'member_code' | 'name' | 'phone' | 'gender' | 'branch_id'>;
+    type LookupRow = Pick<club_members, 'id' | 'member_code' | 'name' | 'phone' | 'gender' | 'branch_id' | 'is_blocked' | 'block_reason'>;
     // Member codes are the common picker use case. Resolve an exact code with
     // an indexed equality lookup before falling back to the broader contains
     // query, which can be expensive on a large members table.
@@ -572,11 +579,14 @@ export class ClubMembersService {
       phone: row.phone,
       gender: row.gender,
       branchId: row.branch_id,
+      // A blocked member is flagged in every picker until the block is lifted (client, 22 Nov).
+      isBlocked: row.is_blocked,
+      blockReason: row.is_blocked ? row.block_reason : null,
     }));
   }
 
   /** Members for a physical barcode print run.  Codes are compared exactly as stored. */
-  async barcodeRange(codeFrom: string, codeTo: string, user?: JwtUser) {
+  async barcodeRange(codeFrom: string, codeTo: string, user?: JwtUser, gender?: string) {
     const from = codeFrom?.trim();
     const to = codeTo?.trim();
     if (!from || !to) throw new BadRequestException('أدخل كود البداية وكود النهاية');
@@ -584,7 +594,8 @@ export class ClubMembersService {
       throw new BadRequestException('كود البداية يجب أن يسبق أو يساوي كود النهاية');
     }
     const scope = this.branchScope.resolveListFilter(user, null);
-    const audience = this.branchScope.memberGenderFilter(user);
+    // رجالي/حريمي/الكل: one-section staff are locked to their section (403 for the other one).
+    const audience = this.branchScope.resolveMemberGenderRequest(user, gender);
     const rows = await this.prisma.club_members.findMany({
       where: {
         is_deleted: false,
@@ -610,10 +621,16 @@ export class ClubMembersService {
     if (scope !== null) and.push({ branch_id: { in: scope } });
     if (q.status === 'active') and.push({ is_active: true });
     if (q.status === 'inactive') and.push({ is_active: false });
-    const audience = this.branchScope.memberGenderFilter(user);
+    // رجالي/حريمي/الكل: one-section staff are locked to their section (403 for the other one).
+    const audience = this.branchScope.resolveMemberGenderRequest(user, q.gender);
     if (audience) and.push({ gender: audience });
-    else if (q.gender && q.gender !== 'all') and.push({ gender: q.gender as 'male' | 'female' });
     if (!q.forSelect && user && (await this.isSalesEmployee(user.emp_code))) and.push({ created_by: user.sub });
+    // Branch manager / section supervisor: «الأعضاء خلال فترة» reaches the current and the previous
+    // month (client sheet, 22 Nov); the member list itself (no dates) stays open for the desk.
+    if (q.createdFrom || q.createdTo) {
+      const r = clampManagerDays(user, 'twoMonths', q.createdFrom, q.createdTo);
+      if (r.clamped) { q.createdFrom = r.from; q.createdTo = r.to; }
+    }
     if (q.createdFrom || q.createdTo) {
       const range: { gte?: Date; lte?: Date } = {};
       if (q.createdFrom) range.gte = new Date(`${q.createdFrom}T00:00:00`);
@@ -677,7 +694,7 @@ export class ClubMembersService {
 
   /** Personal salesperson summary. Ownership and branch scope are both server-derived. */
   async salesPortal(user: JwtUser) {
-    if (!user.emp_code || !(await this.isSalesEmployee(user.emp_code))) {
+    if (!user.emp_code || !(await this.isSalesEmployee(user.emp_code, true))) {
       throw new ForbiddenException('هذه البوابة متاحة لأخصائي المبيعات فقط');
     }
     const scope = this.branchScope.resolveListFilter(user, null);
@@ -752,7 +769,7 @@ export class ClubMembersService {
 
   /** Renewal queue is deliberately owner- and branch-scoped before member details load. */
   async salesRenewals(user: JwtUser, query: { page?: number; pageSize?: number; window?: string; search?: string }) {
-    if (!user.emp_code || !(await this.isSalesEmployee(user.emp_code))) throw new ForbiddenException('هذه البوابة متاحة لأخصائي المبيعات فقط');
+    if (!user.emp_code || !(await this.isSalesEmployee(user.emp_code, true))) throw new ForbiddenException('هذه البوابة متاحة لأخصائي المبيعات فقط');
     const branches = this.branchScope.resolveListFilter(user, null);
     const audience = this.branchScope.memberGenderFilter(user);
     const soldRows = await this.prisma.club_subscriptions.findMany({ where: { sales_id: user.emp_code, member_id: { not: null }, ...(branches === null ? {} : { branch_id: { in: branches } }), ...(audience ? { member: { is: { is_deleted: false, gender: audience } } } : {}) }, select: { member_id: true }, distinct: ['member_id'] });
@@ -770,12 +787,12 @@ export class ClubMembersService {
       if (!latestByMember.has(subscription.member_id)) latestByMember.set(subscription.member_id, subscription);
     }
     const phones = members.map((member) => member.phone ? normalizePhoneForStorage(member.phone) : '').filter(Boolean);
-    const leads = await this.prisma.club_leads.findMany({ where: { assigned_to_id: user.emp_code, ...(branches === null ? {} : { branch_id: { in: branches } }), OR: [{ converted_member_id: { in: memberIds } }, ...(phones.length ? [{ phone: { in: phones } }] : [])] }, select: { id: true, phone: true, converted_member_id: true, last_contacted_at: true }, orderBy: [{ last_contacted_at: 'desc' }, { id: 'desc' }] });
+    const leads = await this.prisma.club_leads.findMany({ where: { assigned_to: user.emp_code, ...(branches === null ? {} : { branch_id: { in: branches } }), OR: [{ converted_member_id: { in: memberIds } }, ...(phones.length ? [{ phone: { in: phones } }] : [])] }, select: { id: true, phone: true, converted_member_id: true, last_contacted_at: true }, orderBy: [{ last_contacted_at: 'desc' }, { id: 'desc' }] });
     const leadByMember = new Map<number, (typeof leads)[number]>();
     const leadByPhone = new Map<string, (typeof leads)[number]>();
     for (const lead of leads) {
       if (lead.converted_member_id != null && !leadByMember.has(lead.converted_member_id)) leadByMember.set(lead.converted_member_id, lead);
-      const phone = normalizePhoneForStorage(lead.phone);
+      const phone = normalizePhoneForStorage(lead.phone ?? '');
       if (phone && !leadByPhone.has(phone)) leadByPhone.set(phone, lead);
     }
     const todayMs = Date.parse(`${localDateString()}T00:00:00Z`);
@@ -869,6 +886,18 @@ export class ClubMembersService {
   }
 
   /** The member phone is the configured initial mobile-app password. */
+  /** The app password typed by reception (trimmed), or undefined when left blank. */
+  private typedAppPassword(value: unknown): string | undefined {
+    if (value == null) return undefined;
+    if (typeof value !== 'string') throw new BadRequestException('كلمة مرور التطبيق لازم تبقى نص');
+    const password = value.trim();
+    if (!password) return undefined;
+    if (password.length < 4 || password.length > 72) {
+      throw new BadRequestException('كلمة مرور التطبيق من 4 إلى 72 حرف/رقم');
+    }
+    return password;
+  }
+
   private defaultAppPassword(phone: string): string {
     return phone;
   }
@@ -881,7 +910,7 @@ export class ClubMembersService {
     const phone = normalizePhoneForStorage(dto.phone ?? '');
     if (!phone) return null;
 
-    const plaintextPassword = this.defaultAppPassword(phone);
+    const plaintextPassword = this.typedAppPassword(dto.appPassword) || this.defaultAppPassword(phone);
     const existing = await tx.api_users.findFirst({ where: { user_phone: phone } });
     if (existing) {
       const otherMember = await tx.club_members.findFirst({
@@ -1198,6 +1227,21 @@ export class ClubMembersService {
       if (!salesRep) throw new BadRequestException('أخصائي المبيعات المحدد غير موجود');
     }
 
+    // A potential member (club_leads) with this phone in this branch becomes «تم الاشتراك» and
+    // their sales specialist owns the new member — so the subscription's sales_id, and the
+    // commission on it, go to the rep who worked the lead (MetaFit behaviour).
+    const normalizedPhone = normalizePhoneForStorage(dto.phone ?? '');
+    const leadPhoneVariants = normalizedPhone
+      ? [...new Set([normalizedPhone, ...(/^01\d{9}$/.test(normalizedPhone) ? [`+20${normalizedPhone.slice(1)}`, `20${normalizedPhone.slice(1)}`] : [])])]
+      : [];
+    const matchedLead = normalizedPhone
+      ? await this.prisma.club_leads.findFirst({
+          where: { branch_id: { in: clubMemberIdentityBranchIds(dto.branchId) }, phone: { in: leadPhoneVariants }, converted_member_id: null, status: { not: 'converted' } },
+          select: { id: true, assigned_to: true },
+          orderBy: [{ updated_at: 'desc' }, { id: 'desc' }],
+        })
+      : null;
+
     const registeringEmployeeId = user.emp_code && user.emp_code > 0 ? user.emp_code : null;
 
     const isChild = dto.cardNumber?.toUpperCase().includes('-C');
@@ -1224,7 +1268,7 @@ export class ClubMembersService {
         end_date: dto.endDate || null,
         notes: dto.notes || null,
         is_active: dto.isActive ?? true,
-        sales_id: dto.salesId ?? null,
+        sales_id: matchedLead?.assigned_to ?? dto.salesId ?? null,
         employee_id: registeringEmployeeId,
         guardian_name: dto.guardianName?.trim() || null,
         guardian_phone: dto.guardianPhone?.trim() || null,
@@ -1235,6 +1279,26 @@ export class ClubMembersService {
         data,
         include: { membership_type: { select: { id: true, name: true, price: true, duration_days: true } } },
       });
+
+      if (matchedLead) {
+        await tx.club_leads.update({
+          where: { id: matchedLead.id },
+          data: { status: 'converted', converted_member_id: row.id, next_follow_up_at: null, next_call_at: null },
+        });
+        await tx.club_lead_follow_ups.create({
+          data: {
+            lead_id: matchedLead.id,
+            note: `تم الاشتراك وإغلاق المتابعة تلقائيًا عند تسجيل العضو ${row.member_code} من الاستقبال`,
+            status: 'converted',
+            activity_type: 'system',
+            answered: null,
+            interests: null,
+            next_follow_up_at: null,
+            next_call_at: null,
+            created_by: user.emp_code ?? user.sub,
+          },
+        });
+      }
 
       let credentials: { username: string; plaintextPassword: string; appUserId: number } | null = null;
       if (shouldCreateUser) {
@@ -1346,6 +1410,36 @@ export class ClubMembersService {
         });
       }
       throw e;
+    }
+
+    // A password typed on edit: replaces the app password, or opens the app account when the
+    // member has none yet (same rules as on add).
+    // PUT takes Partial<UpsertClubMemberDto>, which the validation pipe cannot see: check here.
+    const appPassword = this.typedAppPassword(dto.appPassword);
+    if (appPassword) {
+      if (row.app_user_id) {
+        await this.prisma.api_users.update({
+          where: { user_id: row.app_user_id },
+          data: { user_pass: await bcrypt.hash(appPassword, 12) },
+        });
+      } else {
+        const memberRow = row;
+        row = await this.prisma.$transaction(async (tx) => {
+          const credentials = await this.provisionAppUser(tx, {
+            ...dto,
+            name: memberRow.name,
+            phone: memberRow.phone ?? '',
+            email: memberRow.email ?? undefined,
+            appPassword,
+          } as UpsertClubMemberDto);
+          if (!credentials) throw new BadRequestException('لا يمكن إنشاء حساب التطبيق: رقم الموبايل مستخدم لعضوية تانية أو فاضي');
+          return tx.club_members.update({
+            where: { id },
+            data: { app_user_id: credentials.appUserId },
+            include: { membership_type: { select: { id: true, name: true, price: true, duration_days: true } } },
+          });
+        });
+      }
     }
 
     await this.audit.log({
@@ -2004,13 +2098,19 @@ export class ClubMembersService {
     throw new BadRequestException('كود العضو مطلوب');
   }
 
-  private async isSalesEmployee(userEmpId: number | null): Promise<boolean> {
+  /**
+   * A sales specialist by job title. `includeToggle` also counts «يعمل كأخصائي مبيعات»
+   * (employees.is_sales) — used for the sales portal, NOT for narrowing the members list:
+   * a receptionist who also sells keeps seeing every member.
+   */
+  private async isSalesEmployee(userEmpId: number | null, includeToggle = false): Promise<boolean> {
     if (!userEmpId) return false;
     const emp = await this.prisma.employees.findUnique({
       where: { id: userEmpId },
-      select: { mosma_wazefy_code: true, mosma_wazefy_n: true },
+      select: { mosma_wazefy_code: true, mosma_wazefy_n: true, is_sales: true },
     });
     if (!emp) return false;
+    if (includeToggle && emp.is_sales) return true;
     if (isMarketingRepJobTitle(emp.mosma_wazefy_n)) return true;
     if (emp.mosma_wazefy_code) {
       const job = await this.prisma.department_jobs.findUnique({

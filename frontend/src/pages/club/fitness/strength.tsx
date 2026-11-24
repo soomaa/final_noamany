@@ -16,6 +16,7 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import type { ExerciseRow } from '@/types/fitness';
 import { RowActions, SELECT_CLS } from './shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function FitnessStrengthPage() {
   const ft = useFitnessT();
@@ -179,7 +180,7 @@ export function FitnessStrengthPage() {
             </div>
             <div className="grid gap-2">
               <Label>{ft('programs.difficulty')}</Label>
-              <select
+              <SearchableSelect
                 className={SELECT_CLS}
                 value={form.difficulty}
                 onChange={(e) => setForm((f) => ({ ...f, difficulty: e.target.value }))}
@@ -187,7 +188,7 @@ export function FitnessStrengthPage() {
                 <option value="easy">easy</option>
                 <option value="medium">medium</option>
                 <option value="hard">hard</option>
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.description')}</Label>

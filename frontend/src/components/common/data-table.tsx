@@ -59,6 +59,8 @@ interface DataTableProps<T> {
   onExportExcel?: () => void | Promise<void>;
   /** Fits dense operational tables into the available page width. */
   compact?: boolean;
+  /** Extra classes for one row (e.g. a colour that flags the row). */
+  rowClassName?: (row: T) => string | undefined;
 }
 
 export function DataTable<T>({
@@ -83,6 +85,7 @@ export function DataTable<T>({
   enableExport = true,
   onExportExcel,
   compact = false,
+  rowClassName,
 }: DataTableProps<T>) {
   const { t, ui } = useLocale();
   const resolvedSearchPlaceholder = searchPlaceholder ?? ui('بحث في الجدول…');
@@ -208,7 +211,7 @@ export function DataTable<T>({
             )}
             {!isLoading &&
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'}>
+                <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'} className={rowClassName?.(row.original)}>
                   {row.getVisibleCells().map((cell) => (
                     <TableCell
                       key={cell.id}

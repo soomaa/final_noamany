@@ -17,4 +17,9 @@ export class ListClubEventRegistrationsDto extends PaginationDto {
   @IsOptional()
   @IsString()
   branch?: string;
+
+  /** رجالي/حريمي/الكل: member section (guests without a member stay listed). */
+  @IsOptional()
+  @IsIn(['all', 'male', 'female'])
+  gender?: string;
 }

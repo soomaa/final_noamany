@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { clampManagerDays } from '../../common/utils/manager-scope.util';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
@@ -50,6 +51,9 @@ export class CustomerServiceService {
     if (query.subscriptionStatus === 'active') where.status = 'active';
     if (query.subscriptionStatus === 'expired') where.status = 'expired';
     if (query.category) where.gender = query.category === 'women' ? 'female' : 'male';
+    // Branch manager / section supervisor: the current and the previous month (client sheet, 22 Nov).
+    const managerRange = clampManagerDays(user, 'twoMonths', query.fromDate, query.toDate);
+    if (managerRange.clamped) { query.fromDate = managerRange.from; query.toDate = managerRange.to; }
     if (query.fromDate || query.toDate) where.subscription_start_date = { ...(query.fromDate ? { gte: query.fromDate } : {}), ...(query.toDate ? { lte: query.toDate } : {}) };
     if (query.contactStatus) {
       const contactDate = query.contactFromDate || query.contactToDate

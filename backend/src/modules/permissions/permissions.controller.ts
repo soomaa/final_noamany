@@ -27,8 +27,8 @@ export class PermissionsController {
   constructor(private readonly permissions: PermissionsService) {}
 
   @Get()
-  list(@Query() query: ListPermissionsDto, @CurrentUser('sub') userId: number) {
-    return this.permissions.list(query, userId);
+  list(@Query() query: ListPermissionsDto, @CurrentUser() user: JwtUser) {
+    return this.permissions.list(query, user);
   }
 
   @Get('available')

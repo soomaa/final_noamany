@@ -76,4 +76,33 @@ describe('InventoryLocationService', () => {
     await expect(service.resolveBranchStockLocation(2)).resolves.toBe(1004);
     expect(findFirst).toHaveBeenLastCalledWith(expect.objectContaining({ orderBy: [{ type: 'asc' }, { id: 'asc' }] }));
   });
+
+  it('lists each branch bar with the store that feeds it, cross-branch stores included', async () => {
+    const settings = [
+      { branch_id: 2, setting_key: 'sale_warehouse_id', setting_value: '1004' },
+      { branch_id: 2, setting_key: 'store_warehouse_id', setting_value: '2014' },
+      { branch_id: 5, setting_key: 'sale_warehouse_id', setting_value: '"1009"' },
+      { branch_id: 5, setting_key: 'store_warehouse_id', setting_value: '2014' },
+      // Bar of another branch: skipped. Store equal to the bar: dropped.
+      { branch_id: 6, setting_key: 'sale_warehouse_id', setting_value: '1004' },
+      { branch_id: 3, setting_key: 'sale_warehouse_id', setting_value: '1005' },
+      { branch_id: 3, setting_key: 'store_warehouse_id', setting_value: '1005' },
+    ];
+    const warehouses = [
+      { id: 1004, name_ar: 'بار طنطا', branch_id: 2 },
+      { id: 1005, name_ar: 'بار البر الشرقي', branch_id: 3 },
+      { id: 1009, name_ar: 'بار طنطا up', branch_id: 5 },
+      { id: 2014, name_ar: 'مخزن طنطا', branch_id: 2 },
+    ];
+    const svc = new InventoryLocationService({
+      sales_pos_settings: { findMany: jest.fn().mockResolvedValue(settings) },
+      inv_warehouses: { findMany: jest.fn().mockResolvedValue(warehouses) },
+    } as never);
+
+    await expect(svc.barRoutes()).resolves.toEqual([
+      { branchId: 2, barWarehouseId: 1004, barName: 'بار طنطا', storeWarehouseId: 2014, storeName: 'مخزن طنطا', storeBranchId: 2 },
+      { branchId: 3, barWarehouseId: 1005, barName: 'بار البر الشرقي', storeWarehouseId: null, storeName: null, storeBranchId: null },
+      { branchId: 5, barWarehouseId: 1009, barName: 'بار طنطا up', storeWarehouseId: 2014, storeName: 'مخزن طنطا', storeBranchId: 2 },
+    ]);
+  });
 });

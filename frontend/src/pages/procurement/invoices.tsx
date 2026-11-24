@@ -32,6 +32,7 @@ import { localToday, formatMoneyNumber } from '@/lib/formatters';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { uiStatic } from '@/lib/ui-static';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface InvoiceLineDraft {
   productId: string;
@@ -345,7 +346,7 @@ function PurchaseInvoicesTab() {
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="grid gap-1">
                 <Label>{uiStatic('المورد')}</Label>
-                <select
+                <SearchableSelect
                   className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                   value={supplierId}
                   disabled={!isDirect && !!purchaseOrderId}
@@ -360,11 +361,11 @@ function PurchaseInvoicesTab() {
                       {s.nameAr}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-1">
                 <Label>{uiStatic('الفرع')}</Label>
-                <select
+                <SearchableSelect
                   className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                   value={effectiveBranchId}
                   disabled={userBranchLocked}
@@ -379,7 +380,7 @@ function PurchaseInvoicesTab() {
                       {b.name}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-1">
                 <Label>{uiStatic('رقم فاتورة المورد')}</Label>
@@ -426,7 +427,7 @@ function PurchaseInvoicesTab() {
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <div className="grid gap-1">
                     <Label>{uiStatic('أمر الشراء')}</Label>
-                    <select
+                    <SearchableSelect
                       className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                       value={purchaseOrderId}
                       onChange={(e) => void loadPurchaseOrder(e.target.value)}
@@ -437,11 +438,11 @@ function PurchaseInvoicesTab() {
                           {po.poNumber}
                         </option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   </div>
                   <div className="grid gap-1">
                     <Label>{uiStatic('إذن الاستلام')}</Label>
-                    <select
+                    <SearchableSelect
                       className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                       value={goodsReceiptId}
                       onChange={(e) => void loadGoodsReceipt(e.target.value)}
@@ -452,7 +453,7 @@ function PurchaseInvoicesTab() {
                           {grn.grnNumber}
                         </option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   </div>
                   <p className="text-xs text-muted-foreground sm:col-span-2">
                     {uiStatic('مع أمر الشراء، البضاعة بتدخل المخزن من إذن الاستلام، والفاتورة بتتطابق معاه.')}
@@ -483,7 +484,7 @@ function PurchaseInvoicesTab() {
                     key={idx}
                     className="grid grid-cols-2 gap-2 rounded-md border p-2 sm:grid-cols-[minmax(0,2fr)_90px_minmax(0,1fr)_minmax(0,1fr)_100px_36px] sm:border-0 sm:p-0"
                   >
-                    <select
+                    <SearchableSelect
                       aria-label={uiStatic('المنتج')}
                       className="col-span-2 h-10 rounded-md border bg-background px-2 text-sm sm:col-span-1"
                       value={line.productId}
@@ -497,7 +498,7 @@ function PurchaseInvoicesTab() {
                       {lineOptions.map((o) => (
                         <option key={o.id} value={o.id}>{o.name}</option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                     <div className="nums flex h-10 items-center rounded-md border bg-muted/40 px-2 text-sm text-muted-foreground" title={uiStatic('الرصيد المتاح')}>
                       {opt?.stock == null ? '—' : toArabicDigits(opt.stock)}
                     </div>
@@ -565,7 +566,7 @@ function PurchaseInvoicesTab() {
                   </div>
                   <div className="grid gap-1">
                     <Label>{uiStatic('طريقة الدفع')}</Label>
-                    <select
+                    <SearchableSelect
                       className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                       value={paymentMethod}
                       disabled={(Number(paidAmount) || 0) <= 0}
@@ -575,7 +576,7 @@ function PurchaseInvoicesTab() {
                       <option value="bank">{uiStatic('تحويل بنكي')}</option>
                       <option value="card">{uiStatic('بطاقة')}</option>
                       <option value="wallet">{uiStatic('محفظة')}</option>
-                    </select>
+                    </SearchableSelect>
                   </div>
                   <p className="text-xs text-muted-foreground sm:col-span-3">
                     {uiStatic('الباقي بيتسجل مديونية على المورد. الفاتورة دي بتظهر كمان في')}{' '}
@@ -745,7 +746,7 @@ function SupplierPaymentsTab() {
           <div className="grid gap-3 py-2">
             <div className="grid gap-1">
               <Label>{uiStatic('المورد')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={supplierId}
                 onChange={(e) => {
@@ -759,11 +760,11 @@ function SupplierPaymentsTab() {
                     {s.nameAr}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1">
               <Label>{uiStatic('فاتورة المورد')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={invoiceId}
                 onChange={(e) => setInvoiceId(e.target.value)}
@@ -775,7 +776,7 @@ function SupplierPaymentsTab() {
                     {inv.invoiceNumber} ({toArabicDigits(inv.remainingAmount)})
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <PaidAmountField
@@ -786,7 +787,7 @@ function SupplierPaymentsTab() {
               />
               <div className="grid gap-1">
                 <Label>{uiStatic('طريقة الدفع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={paymentMethod}
                   onChange={(e) => setPaymentMethod(e.target.value)}
@@ -795,7 +796,7 @@ function SupplierPaymentsTab() {
                   <option value="bank">{uiStatic('تحويل بنكي')}</option>
                   <option value="card">{uiStatic('بطاقة')}</option>
                   <option value="wallet">{uiStatic('محفظة')}</option>
-                </select>
+                </SearchableSelect>
               </div>
             </div>
             <div className="grid gap-1">

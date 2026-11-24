@@ -13,16 +13,20 @@ import { api, apiError } from '@/lib/api';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 import { toArabicDigits } from '@/lib/utils';
 import type { WorkoutProgramRow } from '@/types/fitness';
 import { RowActions, SELECT_CLS, memberColumnDef } from './shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function FitnessProgramsPage() {
   const ft = useFitnessT();
   const { params, setParams } = useListQuery();
+  // رجالي/حريمي/الكل (locked to the employee's own section).
+  const gender = useMemberGenderFilter();
   const { data, isLoading, isError, refetch } = usePaginatedList<WorkoutProgramRow>(
     'club-workout-programs',
-    params,
+    { ...params, filters: { ...params.filters, gender: gender.value } },
   );
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
@@ -141,6 +145,7 @@ export function FitnessProgramsPage() {
         onPageSizeChange={(pageSize) => setParams({ pageSize, page: 1 })}
         search={params.search}
         onSearchChange={(search) => setParams({ search, page: 1 })}
+        toolbar={<MemberGenderSelect hideLabel value={gender.value} locked={gender.locked} onChange={(value) => { gender.setValue(value); setParams({ page: 1 }); }} />}
         isLoading={isLoading}
         isError={isError}
         onRetry={() => void refetch()}
@@ -162,7 +167,7 @@ export function FitnessProgramsPage() {
             </div>
             <div className="grid gap-2">
               <Label>{ft('programs.difficulty')}</Label>
-              <select
+              <SearchableSelect
                 className={SELECT_CLS}
                 value={form.difficulty}
                 onChange={(e) => setForm((f) => ({ ...f, difficulty: e.target.value }))}
@@ -170,7 +175,7 @@ export function FitnessProgramsPage() {
                 <option value="easy">easy</option>
                 <option value="medium">medium</option>
                 <option value="hard">hard</option>
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ft('programs.duration')}</Label>

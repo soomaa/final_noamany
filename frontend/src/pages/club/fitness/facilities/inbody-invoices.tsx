@@ -17,10 +17,12 @@ import { api, apiError } from '@/lib/api';
 import { localToday } from '@/lib/formatters';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClubMemberListItem } from '@/types/club';
 import type { ClubInbodyInvoiceRow } from '@/types/fitness';
 import { SELECT_CLS, memberColumnDef } from '../shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type ServiceRow = {
   id: number;
@@ -48,7 +50,9 @@ export function FitnessInbodyInvoicesPage() {
   const ft = useFitnessT();
   const queryClient = useQueryClient();
   const { params, setParams } = useListQuery();
-  const { data, isLoading, isError, refetch } = usePaginatedList<ClubInbodyInvoiceRow>('club-inbody-invoices', params);
+  // رجالي/حريمي/الكل (locked to the employee's own section).
+  const gender = useMemberGenderFilter();
+  const { data, isLoading, isError, refetch } = usePaginatedList<ClubInbodyInvoiceRow>('club-inbody-invoices', { ...params, filters: { ...params.filters, gender: gender.value } });
   const { data: branches } = useBranches();
   const [tab, setTab] = useState('invoices');
   const [invoiceOpen, setInvoiceOpen] = useState(false);
@@ -206,7 +210,7 @@ export function FitnessInbodyInvoicesPage() {
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList><TabsTrigger value="invoices">الفواتير والإيصالات</TabsTrigger><TabsTrigger value="settings">إعدادات الخدمات</TabsTrigger></TabsList>
         <TabsContent value="invoices" className="mt-4">
-          <DataTable columns={invoiceColumns} data={data?.data ?? []} total={data?.total ?? 0} page={params.page} pageSize={params.pageSize} onPageChange={(page) => setParams({ page })} onPageSizeChange={(pageSize) => setParams({ pageSize, page: 1 })} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} emptyTitle={ft('common.noData')} />
+          <DataTable columns={invoiceColumns} data={data?.data ?? []} total={data?.total ?? 0} page={params.page} pageSize={params.pageSize} onPageChange={(page) => setParams({ page })} onPageSizeChange={(pageSize) => setParams({ pageSize, page: 1 })} toolbar={<MemberGenderSelect hideLabel value={gender.value} locked={gender.locked} onChange={(value) => { gender.setValue(value); setParams({ page: 1 }); }} />} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} emptyTitle={ft('common.noData')} />
         </TabsContent>
         <TabsContent value="settings" className="mt-4">
           <DataTable columns={serviceColumns} data={services} total={services.length} page={1} pageSize={100} onPageChange={() => undefined} isLoading={servicesQuery.isLoading} isError={servicesQuery.isError} onRetry={() => void servicesQuery.refetch()} emptyTitle="لا توجد خدمات. أضف أول خدمة InBody." />
@@ -225,10 +229,10 @@ export function FitnessInbodyInvoicesPage() {
             )}
             {selectedMember && <div className="rounded-lg border bg-muted/40 p-3 text-sm">رصيد InBody المتبقي في الاشتراكات: <strong className="nums">{toArabicDigits(benefits?.inbody.remaining ?? 0)}</strong></div>}
             {selectedMember && (benefits?.inbody.remaining ?? 0) > 0 && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.useSubscriptionBenefit} onChange={(event) => setForm((current) => ({ ...current, useSubscriptionBenefit: event.target.checked }))} />خصم الجلسة من الاشتراك (بدون تحصيل نقدي)</label>}
-            <div className="grid gap-2"><Label>الخدمة</Label><select className={SELECT_CLS} value={form.serviceId} onChange={(event) => setForm((current) => ({ ...current, serviceId: event.target.value }))}><option value="">اختر خدمة</option>{activeServices.map((service) => <option key={service.id} value={service.id}>{service.name} — {service.price}</option>)}</select></div>
+            <div className="grid gap-2"><Label>الخدمة</Label><SearchableSelect className={SELECT_CLS} value={form.serviceId} onChange={(event) => setForm((current) => ({ ...current, serviceId: event.target.value }))}><option value="">اختر خدمة</option>{activeServices.map((service) => <option key={service.id} value={service.id}>{service.name} — {service.price}</option>)}</SearchableSelect></div>
             {selectedService && <p className="text-sm text-muted-foreground">السعر من الإعدادات: <span className="nums font-medium">{toArabicDigits(selectedService.price)}</span></p>}
-            <div className="grid gap-2"><Label>{ft('common.branch')}</Label><select className={SELECT_CLS} value={form.branchId} onChange={(event) => setForm((current) => ({ ...current, branchId: event.target.value }))}>{(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name ?? '—'}</option>)}</select></div>
-            {(!form.useSubscriptionBenefit || (benefits?.inbody.remaining ?? 0) === 0 || !selectedMember) && <div className="grid gap-2"><Label>طريقة الدفع</Label><select className={SELECT_CLS} value={form.paymentMethod} onChange={(event) => setForm((current) => ({ ...current, paymentMethod: event.target.value }))}>{PAYMENT_METHODS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>}
+            <div className="grid gap-2"><Label>{ft('common.branch')}</Label><SearchableSelect className={SELECT_CLS} value={form.branchId} onChange={(event) => setForm((current) => ({ ...current, branchId: event.target.value }))}>{(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name ?? '—'}</option>)}</SearchableSelect></div>
+            {(!form.useSubscriptionBenefit || (benefits?.inbody.remaining ?? 0) === 0 || !selectedMember) && <div className="grid gap-2"><Label>طريقة الدفع</Label><SearchableSelect className={SELECT_CLS} value={form.paymentMethod} onChange={(event) => setForm((current) => ({ ...current, paymentMethod: event.target.value }))}>{PAYMENT_METHODS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SearchableSelect></div>}
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setInvoiceOpen(false)}>{ft('common.cancel')}</Button><Button variant="brand" onClick={() => void saveInvoice()} disabled={saving || activeServices.length === 0}>{ft('common.save')}</Button></DialogFooter>
         </DialogContent>
@@ -241,7 +245,7 @@ export function FitnessInbodyInvoicesPage() {
             <div className="grid gap-2"><Label>اسم الخدمة</Label><Input value={serviceForm.name} onChange={(event) => setServiceForm((current) => ({ ...current, name: event.target.value }))} /></div>
             <div className="grid gap-2"><Label>الوصف</Label><Input value={serviceForm.description} onChange={(event) => setServiceForm((current) => ({ ...current, description: event.target.value }))} /></div>
             <div className="grid gap-2"><Label>السعر</Label><Input className="nums" type="number" min="0" value={serviceForm.price} onChange={(event) => setServiceForm((current) => ({ ...current, price: event.target.value }))} /></div>
-            <div className="grid gap-2"><Label>{ft('common.branch')}</Label><select className={SELECT_CLS} value={serviceForm.branchId} onChange={(event) => setServiceForm((current) => ({ ...current, branchId: event.target.value }))}><option value="">كل الفروع</option>{(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name ?? '—'}</option>)}</select></div>
+            <div className="grid gap-2"><Label>{ft('common.branch')}</Label><SearchableSelect className={SELECT_CLS} value={serviceForm.branchId} onChange={(event) => setServiceForm((current) => ({ ...current, branchId: event.target.value }))}><option value="">كل الفروع</option>{(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name ?? '—'}</option>)}</SearchableSelect></div>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={serviceForm.isActive} onChange={(event) => setServiceForm((current) => ({ ...current, isActive: event.target.checked }))} />الخدمة مفعلة</label>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setServiceOpen(false)}>{ft('common.cancel')}</Button><Button variant="brand" onClick={() => void saveService()} disabled={saving}>{ft('common.save')}</Button></DialogFooter>

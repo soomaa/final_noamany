@@ -46,7 +46,14 @@ export class InventoryTransactionsController {
     return this.service.createDrawing(body,user);
   }
 
-  // Static route must precede ':id'.
+  // Static routes must precede ':id'.
+  // The sale screen shows the branch bar too, so a cashier may read the routes.
+  @Get('bar-routes')
+  @RequiresPermission('gym-sales.inventory.gym_issue:view', 'gym-sales.inventory.transactions:view', 'gym-sales.sales.new_receipt:create')
+  barRoutes() {
+    return this.service.barRoutes();
+  }
+
   @Get('branch-issues')
   @RequiresPermission('gym-sales.inventory.transactions:view', 'gym-sales.inventory.branch_orders:view', 'gym-sales.inventory.branch_items_report:view')
   branchIssues(

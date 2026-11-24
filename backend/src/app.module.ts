@@ -94,6 +94,11 @@ import { AdministrativeDecisionsModule } from './modules/administrative-decision
 import { HrMobileContentModule } from './modules/hr-mobile-content/hr-mobile-content.module';
 import { PaymentMethodsModule } from './modules/payment-methods/payment-methods.module';
 import { OnlineSubscriptionsModule } from './modules/online-subscriptions/online-subscriptions.module';
+import { ClubSalesModule } from './modules/club-sales/club-sales.module';
+import { ClubMosModule } from './modules/club-mos/club-mos.module';
+import { WaCampaignsModule } from './modules/whatsapp-campaigns/wa-campaigns.module';
+import { PrivacyModule } from './common/privacy/privacy.module';
+import { LeadScopeModule } from './common/lead-scope/lead-scope.service';
 import { ClubPointsModule } from './modules/club-points/club-points.module';
 
 @Module({
@@ -195,6 +200,12 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     HrMobileContentModule,
     PaymentMethodsModule,
     OnlineSubscriptionsModule,
+    // «إدارة المبيعات والعملاء المحتملين» (ported from MetaFit)
+    PrivacyModule,
+    LeadScopeModule,
+    ClubSalesModule,
+    ClubMosModule,
+    WaCampaignsModule,
   ],
   controllers: [AppController],
   providers: [

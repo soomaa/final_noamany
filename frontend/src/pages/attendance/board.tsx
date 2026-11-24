@@ -28,6 +28,7 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits, toWesternDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface AttendanceRow {
   id: number;
@@ -301,7 +302,7 @@ export function AttendanceBoardPage() {
               onValueChange={(empCode) => setManualForm((form) => ({ ...form, empCode }))}
             />
           </div>
-          <div><Label>{ui('نوع التسجيل')}</Label><select className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={manualForm.type} onChange={(event) => setManualForm((form) => ({ ...form, type: event.target.value as 'in' | 'out' }))}><option value="in">{ui('حضور')}</option><option value="out">{ui('انصراف')}</option></select></div>
+          <div><Label>{ui('نوع التسجيل')}</Label><SearchableSelect className="mt-1.5 flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={manualForm.type} onChange={(event) => setManualForm((form) => ({ ...form, type: event.target.value as 'in' | 'out' }))}><option value="in">{ui('حضور')}</option><option value="out">{ui('انصراف')}</option></SearchableSelect></div>
           <div><Label>{ui('وقت الحضور')}</Label><Time12Input className="mt-1.5" value={manualForm.checkIn} onValueChange={(value) => setManualForm((form) => ({ ...form, checkIn: value }))} /></div>
           <div><Label>{ui('وقت الانصراف')}</Label><Time12Input className="mt-1.5" value={manualForm.checkOut} onValueChange={(value) => setManualForm((form) => ({ ...form, checkOut: value }))} /></div>
         </div>

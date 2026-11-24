@@ -22,6 +22,7 @@ import { toArabicDigits } from '@/lib/utils';
 import { searchClubMembers } from '@/lib/club-member-search';
 import { useLocale } from '@/store/locale';
 import type { ClubMemberLookupItem, ClubSubscriptionListItem } from '@/types/club';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const fetchClubSearch = (q: string) => searchClubMembers(q, undefined, false, false, true);
 
@@ -363,7 +364,7 @@ export function SubscriptionRefundsWorkspace() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="grid gap-2 sm:col-span-2">
                   <Label>{ui('فرع صرف المرتجع')}</Label>
-                  {superAdmin ? <select className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={refundBranchId ?? ''} onChange={e => setPayoutBranch(e.target.value)}>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name || `#${branch.id}`}</option>)}</select> : <p className="rounded-lg border bg-muted/30 p-3 text-sm font-semibold">{branches.find(branch => branch.id === refundBranchId)?.name ?? `#${refundBranchId}`}</p>}
+                  {superAdmin ? <SearchableSelect className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={refundBranchId ?? ''} onChange={e => setPayoutBranch(e.target.value)}>{branches.map(branch => <option key={branch.id} value={branch.id}>{branch.name || `#${branch.id}`}</option>)}</SearchableSelect> : <p className="rounded-lg border bg-muted/30 p-3 text-sm font-semibold">{branches.find(branch => branch.id === refundBranchId)?.name ?? `#${refundBranchId}`}</p>}
                   <p className="text-xs text-muted-foreground">{ui('يخصم المبلغ من خزنة هذا الفرع ويظهر في تقفيله اليومي.')}</p>
                 </div>
                 <div className="grid gap-2">
@@ -372,7 +373,7 @@ export function SubscriptionRefundsWorkspace() {
                 </div>
                 <div className="grid gap-2 sm:col-span-2">
                   <Label>{ct('subscriptions.refundReason')}</Label>
-                  <select
+                  <SearchableSelect
                     className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
@@ -381,7 +382,7 @@ export function SubscriptionRefundsWorkspace() {
                     <option value="تراجع">{ct('subscriptions.reasonCancel')}</option>
                     <option value="مغادرة">{ct('subscriptions.reasonLeave')}</option>
                     <option value="أخرى">{ct('subscriptions.reasonOther')}</option>
-                  </select>
+                  </SearchableSelect>
                 </div>
                 <div className="grid gap-2 sm:col-span-2">
                   <Label>{ct('subscriptions.refundNotes')}</Label>

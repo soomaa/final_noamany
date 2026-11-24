@@ -13,6 +13,7 @@ import { useLocale } from '@/store/locale';
 import { InventoryPageShell } from '@/pages/inventory/inventory-shell';
 import { useAuth } from '@/store/auth';
 import { useBranches } from '@/hooks/use-branches';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface SupplierDebt {
   supplierId: number;
@@ -90,7 +91,7 @@ export function CafeSupplierPaymentsPage() {
     >
       <div className="mb-4 flex items-center gap-3 rounded-xl border bg-card p-3">
         <Label className="shrink-0">{ui('فرع المديونية')}</Label>
-        {user?.branch && user.branch > 0 ? <div className="flex min-h-10 flex-1 items-center justify-between rounded-md bg-muted/50 px-3 text-sm"><span>{user.branch_name || `${ui('فرع رقم')} ${effectiveBranchId}`}</span><Lock className="size-4 text-muted-foreground" /></div> : <select className="min-h-10 flex-1 rounded-md border bg-background px-3 text-sm" value={effectiveBranchId} onChange={(event) => { setBranchId(event.target.value); setSupplierId(''); setAmount(''); }}><option value="">{ui('اختر الفرع')}</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>}
+        {user?.branch && user.branch > 0 ? <div className="flex min-h-10 flex-1 items-center justify-between rounded-md bg-muted/50 px-3 text-sm"><span>{user.branch_name || `${ui('فرع رقم')} ${effectiveBranchId}`}</span><Lock className="size-4 text-muted-foreground" /></div> : <SearchableSelect className="min-h-10 flex-1 rounded-md border bg-background px-3 text-sm" value={effectiveBranchId} onChange={(event) => { setBranchId(event.target.value); setSupplierId(''); setAmount(''); }}><option value="">{ui('اختر الفرع')}</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</SearchableSelect>}
       </div>
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
         <Card>
@@ -155,12 +156,12 @@ export function CafeSupplierPaymentsPage() {
           <CardContent className="space-y-4">
             <div className="grid gap-1.5">
               <Label>{ui('المورد')}</Label>
-              <select className="rounded-lg border bg-background px-3 py-2.5" value={supplierId} onChange={(event) => setSupplierId(event.target.value)}>
+              <SearchableSelect className="rounded-lg border bg-background px-3 py-2.5" value={supplierId} onChange={(event) => setSupplierId(event.target.value)}>
                 <option value="">{ui(debts.some((row) => row.remaining !== 0) ? 'اختر المورد' : 'لا يوجد موردين عليهم مديونية في هذا الفرع')}</option>
                 {debts.filter((row) => row.remaining !== 0).map((row) => (
                   <option key={row.supplierId} value={row.supplierId}>{row.supplierName}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
 
             <div className="grid grid-cols-2 gap-3 rounded-xl border bg-muted/25 p-3 text-sm">
@@ -181,12 +182,12 @@ export function CafeSupplierPaymentsPage() {
             </div>
             <div className="grid gap-1.5">
               <Label>{ui('طريقة الدفع')}</Label>
-              <select className="rounded-lg border bg-background px-3 py-2.5" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
+              <SearchableSelect className="rounded-lg border bg-background px-3 py-2.5" value={paymentMethod} onChange={(event) => setPaymentMethod(event.target.value)}>
                 <option value="cash">{ui('نقدي')}</option>
                 <option value="bank">{ui('تحويل بنكي')}</option>
                 <option value="card">{ui('بطاقة')}</option>
                 <option value="wallet">{ui('محفظة')}</option>
-              </select>
+              </SearchableSelect>
             </div>
             <Button className="h-12 w-full text-base" disabled={saving || !selected} onClick={() => void settle()}>
               {saving ? ui('جارٍ تسجيل التسوية…') : ui(selected && selected.remaining < 0 ? 'تسجيل استلام المبلغ المسترد' : 'حفظ وسداد المديونية')}

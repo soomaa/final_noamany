@@ -5,7 +5,7 @@ import {
   assertNoCodeRangeOverlap,
 } from '../../common/validators/validation.util';
 import { ensureRoleForJobTitle, removeRoleForJobTitle } from '../rbac/job-title-role.util';
-import { syncAllEmployeeTrainers } from '../club-fitness/trainer-sync.util';
+import { jobCountsAsTrainer, syncAllEmployeeTrainers } from '../club-fitness/trainer-sync.util';
 import { CreateDepartmentDto, UpdateDepartmentDto } from './dto/department.dto';
 import { CreateJobTitleDto, UpdateJobTitleDto } from './dto/job-title.dto';
 
@@ -217,7 +217,7 @@ export class OrgService {
       },
     });
     await ensureRoleForJobTitle(this.prisma, row);
-    if (row.is_trainer) await syncAllEmployeeTrainers(this.prisma);
+    if (jobCountsAsTrainer(row)) await syncAllEmployeeTrainers(this.prisma);
     return this.toJobView(row);
   }
 
@@ -237,7 +237,8 @@ export class OrgService {
     });
     await ensureRoleForJobTitle(this.prisma, row);
     // Re-sync the trainer roster whenever the flag might have flipped (on or off).
-    if (row.is_trainer !== existing.is_trainer) await syncAllEmployeeTrainers(this.prisma);
+    // A rename can also make a title a coach title (or stop it being one): «كابتن» in the name counts.
+    if (jobCountsAsTrainer(row) !== jobCountsAsTrainer(existing)) await syncAllEmployeeTrainers(this.prisma);
     return this.toJobView(row);
   }
 

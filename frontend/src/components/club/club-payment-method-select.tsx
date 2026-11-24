@@ -1,5 +1,6 @@
 import { useClubT } from '@/hooks/use-club-t';
 import { cn } from '@/lib/utils';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export type ClubPaymentMethod =
   | 'cash'
@@ -67,7 +68,7 @@ export function ClubPaymentMethodSelect({
 }) {
   const ct = useClubT();
   return (
-    <select
+    <SearchableSelect
       className={cn(
         'flex h-11 w-full rounded-md border border-input bg-background px-3 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
         className,
@@ -78,6 +79,6 @@ export function ClubPaymentMethodSelect({
       {CLUB_PAYMENT_METHODS.map((method) => (
         <option key={method} value={method}>{ct(`payments.${method}`)}</option>
       ))}
-    </select>
+    </SearchableSelect>
   );
 }

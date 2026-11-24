@@ -17,6 +17,7 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClubEquipmentMaintenanceRow, ClubEquipmentRow } from '@/types/fitness';
 import { RowActions, SELECT_CLS, useFitnessResourceList } from '../shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function FitnessMaintenancePage() {
   const ft = useFitnessT();
@@ -168,11 +169,11 @@ export function FitnessMaintenancePage() {
           <div className="grid gap-3 py-2">
             <div className="grid gap-2">
               <Label>{ft('equipment.title')}</Label>
-              <select className={SELECT_CLS} value={form.equipmentId} onChange={(e) => setForm((f) => ({ ...f, equipmentId: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={form.equipmentId} onChange={(e) => setForm((f) => ({ ...f, equipmentId: e.target.value }))}>
                 {(equipment ?? []).map((e) => (
                   <option key={e.id} value={e.id}>{e.name}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ft('maintenance.scheduled')}</Label>
@@ -184,10 +185,10 @@ export function FitnessMaintenancePage() {
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.status')}</Label>
-              <select className={SELECT_CLS} value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value }))}>
                 <option value="scheduled">{ft('maintenance.scheduled')}</option>
                 <option value="completed">{ft('maintenance.completed')}</option>
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ft('maintenance.cost')}</Label>

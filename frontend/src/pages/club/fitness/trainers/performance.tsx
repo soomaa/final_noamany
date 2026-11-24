@@ -17,6 +17,7 @@ import { useAuth } from '@/store/auth';
 import { toArabicDigits } from '@/lib/utils';
 import { SELECT_CLS } from '../shared';
 import { cairoMonth, fmtNumber as number, fmtPercent, useClientTable } from './trainer-shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type Trainer = { id: number; name: string; employee_id: number | null; branchIds: number[] };
 type Criterion = { id: number; title: string; description: string | null; max_score: number; sort_order: number; is_active: boolean };
@@ -122,23 +123,23 @@ export function FitnessTrainerTargetsPage() {
     <PageHeader title="تارجت المدربين" description="تارجت ثابت لكل مدرب، أو تعديل استثنائي لشهر واحد. المحقق = اشتراكات البرايفت التي باعها المدرب في الشهر (بعد الخصم، بدون المسترد)." />
     <Card className="max-w-4xl"><CardHeader><CardTitle>تارجت مدرب</CardTitle></CardHeader><CardContent className="grid gap-4 md:grid-cols-2">
       <div className="space-y-2"><Label>المدرب</Label><TrainerSelect value={trainerId} onChange={setTrainerId} trainers={trainers} locked={selfOnly} /></div>
-      <div className="space-y-2"><Label>الشهر</Label><Input type="month" value={month} onChange={(event) => setMonth(event.target.value || cairoMonth())} /></div>
+      <div className="space-y-2"><Label>الشهر</Label><Input type="month" value={selfOnly ? cairoMonth() : month} disabled={selfOnly} title={selfOnly ? 'الشهر الحالي' : undefined} onChange={(event) => setMonth(event.target.value || cairoMonth())} /></div>
       {!selfOnly && <div className="space-y-2 md:col-span-2"><Label>يُطبَّق على</Label>
-        <select className={SELECT_CLS} value={scope} onChange={(event) => setScope(event.target.value as 'month' | 'fixed')}>
+        <SearchableSelect className={SELECT_CLS} value={scope} onChange={(event) => setScope(event.target.value as 'month' | 'fixed')}>
           <option value="fixed">التارجت الثابت (كل الشهور بدون تعديل)</option>
           <option value="month">هذا الشهر فقط ({toArabicDigits(month)})</option>
-        </select></div>}
+        </SearchableSelect></div>}
       <div className="space-y-2"><Label>تارجت مبيعات البرايفت (ج.م)</Label><Input inputMode="decimal" className="nums" disabled={selfOnly} value={privateSalesTarget} onChange={(event) => setPrivateSalesTarget(event.target.value)} /></div>
       <div className="space-y-2"><Label>تارجت عدد اشتراكات البرايفت</Label><Input type="number" min="0" className="nums" disabled={selfOnly} value={subscriptionsTarget} onChange={(event) => setSubscriptionsTarget(event.target.value)} /></div>
       {target?.resolved && <p className="text-sm text-muted-foreground md:col-span-2">المطبَّق على {toArabicDigits(month)}: {SOURCE_LABEL[target.resolved.source]} — <span className="nums">{number(target.resolved.privateSalesTarget)}</span> ج.م و<span className="nums">{number(target.resolved.subscriptionsTarget)}</span> اشتراك.</p>}
       {selfOnly ? null : <div className="md:col-span-2"><Button disabled={!trainerId || isFetching || save.isPending} onClick={() => save.mutate()}><Save className="size-4" />حفظ التارجت</Button></div>}
     </CardContent></Card>
-    {trainerId && profile && <Card className="max-w-4xl"><CardHeader><CardTitle>الإنجاز وآخر ٦ شهور</CardTitle></CardHeader><CardContent className="space-y-4">
+    {trainerId && profile && <Card className="max-w-4xl"><CardHeader><CardTitle>{selfOnly ? 'الإنجاز في الشهر الحالي' : 'الإنجاز وآخر ٦ شهور'}</CardTitle></CardHeader><CardContent className="space-y-4">
       <div className="grid gap-4 md:grid-cols-2">
         <Metric label={`مبيعات البرايفت في ${toArabicDigits(month)}`} value={profile.privateSales} hint={profile.target.privateSalesTarget ? `${fmtPercent(profile.privateAchievement)} من ${number(profile.target.privateSalesTarget)}` : 'لا يوجد تارجت'} />
         <Metric label="عدد اشتراكات البرايفت" value={profile.subscriptions} hint={profile.target.subscriptionsTarget ? `${fmtPercent(profile.subscriptionsAchievement)} من ${number(profile.target.subscriptionsTarget)}` : 'لا يوجد تارجت'} />
       </div>
-      <HistoryTable rows={profile.history} />
+      {!selfOnly && <HistoryTable rows={profile.history} />}
       {!!target?.overrides.length && <div className="space-y-2"><p className="text-sm font-medium">تعديلات الشهور</p>
         <ul className="divide-y rounded-lg border text-sm">{target.overrides.map((row) => <li key={row.month} className="flex items-center justify-between p-2">
           <span className="nums">{toArabicDigits(row.month)}: {number(row.privateSalesTarget)} ج.م — {number(row.subscriptionsTarget)} اشتراك</span>
@@ -191,13 +192,13 @@ export function FitnessTrainerEvaluationsPage() {
   const complete = activeCriteria.every((item) => scores[item.id] !== undefined && scores[item.id] !== '' && Number(scores[item.id]) >= 0 && Number(scores[item.id]) <= item.max_score);
   const save = useMutation({ mutationFn: () => api.post('/club-trainer-performance/evaluations', { trainerId: Number(trainerId), month, notes, branchId: branchId ? Number(branchId) : undefined, items: activeCriteria.map((item) => ({ criterionId: item.id, score: Number(scores[item.id]) })) }), onSuccess: () => { toast.success('تم حفظ التقييم الشهري'); void qc.invalidateQueries({ queryKey: ['trainer-performance'] }); }, onError: (error) => toast.error(apiError(error)) });
   return <div className="space-y-6"><PageHeader title="تقييم المدربين الشهري" description="يدخل مدير الفرع الدرجات للمدربين التابعين لفرعه فقط وفق البنود التي حددتها الإدارة. لو للمدرب تقييم محفوظ للشهر يظهر هنا ويمكن تعديله." />
-    <Card className="max-w-4xl"><CardContent className="grid gap-4 pt-5 md:grid-cols-2"><div className="space-y-2"><Label>المدرب</Label><TrainerSelect value={trainerId} onChange={setTrainerId} trainers={trainers} locked={selfOnly} /></div><div className="space-y-2"><Label>الشهر</Label><Input type="month" value={month} onChange={(event) => setMonth(event.target.value || cairoMonth())} /></div>
-      {needsBranch && <div className="space-y-2 md:col-span-2"><Label>الفرع *</Label><select className={SELECT_CLS} value={branchId} disabled={selfOnly} onChange={(event) => setBranchId(event.target.value)}><option value="">اختر الفرع</option>{branchOptions.map((b) => <option key={b.id} value={b.id}>{b.name ?? `#${b.id}`}</option>)}</select></div>}
+    <Card className="max-w-4xl"><CardContent className="grid gap-4 pt-5 md:grid-cols-2"><div className="space-y-2"><Label>المدرب</Label><TrainerSelect value={trainerId} onChange={setTrainerId} trainers={trainers} locked={selfOnly} /></div><div className="space-y-2"><Label>الشهر</Label><Input type="month" value={selfOnly ? cairoMonth() : month} disabled={selfOnly} title={selfOnly ? 'الشهر الحالي' : undefined} onChange={(event) => setMonth(event.target.value || cairoMonth())} /></div>
+      {needsBranch && <div className="space-y-2 md:col-span-2"><Label>الفرع *</Label><SearchableSelect className={SELECT_CLS} value={branchId} disabled={selfOnly} onChange={(event) => setBranchId(event.target.value)}><option value="">اختر الفرع</option>{branchOptions.map((b) => <option key={b.id} value={b.id}>{b.name ?? `#${b.id}`}</option>)}</SearchableSelect></div>}
       {trainerId && !isFetching && <p className="text-sm text-muted-foreground md:col-span-2">{saved ? 'يوجد تقييم محفوظ لهذا الشهر — التعديل يستبدله.' : 'لا يوجد تقييم لهذا الشهر بعد.'}</p>}
       {activeCriteria.map((item) => <div key={item.id} className="space-y-2"><Label>{item.title} — من {number(item.max_score)}</Label><Input type="number" min="0" max={item.max_score} className="nums" disabled={selfOnly || !trainerId} value={scores[item.id] ?? ''} onChange={(event) => setScores((old) => ({ ...old, [item.id]: event.target.value }))} /></div>)}
       <div className="space-y-2 md:col-span-2"><Label>ملاحظات</Label><Input value={notes} disabled={selfOnly} onChange={(event) => setNotes(event.target.value)} /></div><p className="font-semibold md:col-span-2">إجمالي التقييم: {number(total)} من {number(max)}</p>{selfOnly ? null : <Button className="w-fit" disabled={!trainerId || !activeCriteria.length || !complete || (needsBranch && !branchId) || isFetching || save.isPending} onClick={() => save.mutate()}><Save className="size-4" />حفظ التقييم</Button>}
     </CardContent></Card>
-    {trainerId && profile && <Card className="max-w-4xl"><CardHeader><CardTitle>تقييمات وإنجاز آخر ٦ شهور</CardTitle></CardHeader><CardContent><HistoryTable rows={profile.history} /></CardContent></Card>}
+    {trainerId && profile && !selfOnly && <Card className="max-w-4xl"><CardHeader><CardTitle>تقييمات وإنجاز آخر ٦ شهور</CardTitle></CardHeader><CardContent><HistoryTable rows={profile.history} /></CardContent></Card>}
   </div>;
 }
 

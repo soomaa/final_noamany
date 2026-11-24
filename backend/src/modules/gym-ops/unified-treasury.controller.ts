@@ -23,6 +23,7 @@ export class UnifiedTreasuryController {
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
     @Query('branchId') branchId?: string,
+    @Query('gender') gender?: string,
   ) {
     return this.service.daily(
       {
@@ -30,6 +31,7 @@ export class UnifiedTreasuryController {
         dateFrom,
         dateTo,
         branchId: branchId ? Number(branchId) : undefined,
+        gender,
       },
       user,
     );
@@ -45,6 +47,7 @@ export class UnifiedTreasuryController {
     @Query('branchId') branchId: string | undefined,
     @Query('format') format: string | undefined,
     @Res() res: Response,
+    @Query('gender') gender?: string,
   ) {
     const data = await this.service.daily(
       {
@@ -52,6 +55,7 @@ export class UnifiedTreasuryController {
         dateFrom,
         dateTo,
         branchId: branchId ? Number(branchId) : undefined,
+        gender,
       },
       user,
     );

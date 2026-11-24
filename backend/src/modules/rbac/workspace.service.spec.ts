@@ -72,14 +72,15 @@ describe('WorkspaceService', () => {
   it('does not add branch-wide subscription widgets to a member creator without subscription views', async () => {
     const { service } = makeService(['club.members:create', 'club.members:view']);
 
+    // A member creator always sees today's new members; nothing about subscriptions.
     await expect(service.getWorkspace(16)).resolves.toEqual({
       homeRoute: '/workspace',
       roleHint: 'reception',
-      widgets: [],
+      widgets: ['members_today'],
     });
   });
 
-  it('uses the subscription list view to authorize the expiring-subscriptions widget', async () => {
+  it('uses the subscription list view to authorize the subscriptions-today widget', async () => {
     const { service } = makeService([
       'club.members:create',
       'club.members:view',
@@ -89,7 +90,7 @@ describe('WorkspaceService', () => {
     await expect(service.getWorkspace(17)).resolves.toEqual({
       homeRoute: '/workspace',
       roleHint: 'reception',
-      widgets: ['expiring_subscriptions'],
+      widgets: ['members_today', 'subscriptions_today'],
     });
   });
 
@@ -103,7 +104,7 @@ describe('WorkspaceService', () => {
     await expect(service.getWorkspace(18)).resolves.toEqual({
       homeRoute: '/workspace',
       roleHint: 'reception',
-      widgets: ['treasury_today'],
+      widgets: ['members_today', 'treasury_today'],
     });
   });
 });

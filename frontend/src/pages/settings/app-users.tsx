@@ -31,7 +31,8 @@ interface AppUserRow {
   status: number;
 }
 
-export function AppUsersPage() {
+/** `embedded`: shown as the حسابات التطبيق tab of المستخدمون, so the page title is left out. */
+export function AppUsersPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { ui } = useLocale();
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<AppUserRow>(
@@ -212,8 +213,8 @@ export function AppUsersPage() {
   return (
     <>
       <ListPageShell
-        title={ui('مستخدمو التطبيق')}
-        description={ui('حسابات مستخدمي تطبيق الجوال')}
+        title={embedded ? undefined : ui('مستخدمو التطبيق')}
+        description={embedded ? undefined : ui('حسابات مستخدمي تطبيق الجوال')}
         searchPlaceholder={ui('بحث بالاسم أو الجوال أو البريد…')}
         stats={stats}
         statsLoading={isLoading}

@@ -10,6 +10,7 @@ import { paginated } from '../../common/dto/list-result';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { isReceptionEmployee } from '../../common/utils/reception-user.util';
+import { assertManagerMayModify, managerKind, managerPeriodBounds } from '../../common/utils/manager-scope.util';
 import { localDateString } from '../club-members/club-member.utils';
 import { ModuleLedgerService } from '../accounting/module-ledger.service';
 import {
@@ -47,7 +48,13 @@ export class ExpensesService {
   }
 
   private receptionFilter(user?: JwtUser): Prisma.fin_expensesWhereInput | null {
-    return isReceptionEmployee(user) ? { branch_id: Number(user?.branch ?? 0), expense_date: localDateString() } : null;
+    if (isReceptionEmployee(user)) return { branch_id: Number(user?.branch ?? 0), expense_date: localDateString() };
+    // Branch manager / section supervisor: the current and the previous month (client sheet, 22 Nov).
+    if (managerKind(user)) {
+      const b = managerPeriodBounds('twoMonths');
+      return { expense_date: { gte: b.from, lte: b.to } };
+    }
+    return null;
   }
 
   private assertExpenseAccess(user: JwtUser | undefined, row: { branch_id: number | null; expense_date: string }) {
@@ -341,6 +348,7 @@ export class ExpensesService {
     });
     if (!existing) throw new NotFoundException('المصروف غير موجود');
     this.assertExpenseAccess(user, existing);
+    assertManagerMayModify(user);
     if (isReceptionEmployee(user) && dto.expenseDate && dto.expenseDate !== localDateString()) throw new ForbiddenException('موظف الاستقبال يمكنه تسجيل مصروفات اليوم فقط');
     if (dto.branchId != null) this.assertBranchAccess(user, dto.branchId);
 
@@ -529,6 +537,7 @@ export class ExpensesService {
     });
     if (!existing) throw new NotFoundException('المصروف غير موجود');
     this.assertExpenseAccess(user, existing);
+    assertManagerMayModify(user);
     // Resolve whole split group (parent + child) so deleting either row deletes both
     const rootId = existing.parent_id ?? (existing.nesba != null ? existing.id : null);
     const idsToDelete: number[] = [id];

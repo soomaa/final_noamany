@@ -18,11 +18,11 @@ export class ClubWorkoutsService {
   /**
    * Member-linked workout data (programs, progress, assessments) is visible only for
    * members in the user's branches and gender section. null ⇒ unrestricted.
+   * `requested` is the list's رجالي/حريمي/الكل `gender` param (403 for a one-section user asking for the other).
    */
-  private async scopedMemberIds(user?: JwtUser): Promise<number[] | null> {
-    if (!user) return null;
-    const branches = this.branchScope.memberBranchIds(user);
-    const gender = this.branchScope.memberGenderFilter(user);
+  private async scopedMemberIds(user?: JwtUser, requested?: string): Promise<number[] | null> {
+    const gender = this.branchScope.resolveMemberGenderRequest(user, requested);
+    const branches = user ? this.branchScope.memberBranchIds(user) : null;
     if (branches === null && gender === null) return null;
     const members = await this.prisma.club_members.findMany({
       where: {
@@ -156,7 +156,7 @@ export class ClubWorkoutsService {
   async listPrograms(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_workout_programsWhereInput = {};
     if (q.memberId) where.member_id = Number(q.memberId);
-    const scoped = await this.scopedMemberIds(user);
+    const scoped = await this.scopedMemberIds(user, q.gender);
     if (scoped) where.AND = [{ OR: [{ member_id: null }, { member_id: { in: scoped } }] }];
     if (q.search?.trim()) {
       const s = q.search.trim();
@@ -360,7 +360,7 @@ export class ClubWorkoutsService {
   async listProgress(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_member_progressWhereInput = {};
     if (q.memberId) where.member_id = Number(q.memberId);
-    const scoped = await this.scopedMemberIds(user);
+    const scoped = await this.scopedMemberIds(user, q.gender);
     if (scoped) where.AND = [{ member_id: { in: scoped } }];
     if (q.search?.trim()) {
       const memberIds = await searchMemberIds(this.prisma, q.search);
@@ -476,7 +476,7 @@ export class ClubWorkoutsService {
   async listAssessments(q: ListClubFitnessDto, user?: JwtUser) {
     const where: Prisma.club_physical_assessmentsWhereInput = {};
     if (q.memberId) where.member_id = Number(q.memberId);
-    const scoped = await this.scopedMemberIds(user);
+    const scoped = await this.scopedMemberIds(user, q.gender);
     if (scoped) where.AND = [{ member_id: { in: scoped } }];
     if (q.search?.trim()) {
       const memberIds = await searchMemberIds(this.prisma, q.search);

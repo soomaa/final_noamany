@@ -23,6 +23,7 @@ import { financeQueryDates, normalizeFinanceDashboard } from '@/lib/finance-api'
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { FinancePageShell } from './finance-shell';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function FinanceDashboardBody() {
   const { ui } = useLocale();
@@ -59,7 +60,7 @@ export function FinanceDashboardBody() {
         </div>
         <div className="grid gap-1">
           <Label className="text-xs">{ui('الفرع')}</Label>
-          <select
+          <SearchableSelect
             className="rounded-md border bg-background px-3 py-2 text-sm"
             value={branchId}
             onChange={(e) => setBranchId(e.target.value)}
@@ -70,7 +71,7 @@ export function FinanceDashboardBody() {
                 {b.name}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
         <Button variant="brand" onClick={() => void refetch()}>
           {ui('بحث')}

@@ -16,11 +16,12 @@ import {
   flattenCatalog,
 } from '../src/modules/rbac/catalog/rbac.catalog';
 import {
+  ADDITIONAL_SALES_ROLE_KEY,
   ensureRoleForJobTitle,
   jobTitleRoleKey,
   syncAllEmployeeUserRoles,
 } from '../src/modules/rbac/job-title-role.util';
-import { defaultPermissionCellsForJobTitle } from '../src/modules/rbac/job-title-defaults';
+import { defaultPermissionCellsForJobTitle, salesCells } from '../src/modules/rbac/job-title-defaults';
 
 const prisma = new PrismaClient();
 
@@ -31,6 +32,7 @@ const HR_MANAGER_MODULES = ['hr', 'club', 'gym-sales'];
 
 /** Starter matrices (module-level grants inherit down). super_admin needs none (bypass). */
 const ROLE_MATRICES: Record<string, Cell[]> = {
+  [ADDITIONAL_SALES_ROLE_KEY]: salesCells(),
   trainer: [
     { resourceKey: 'trainer.portal', actionKey: 'view', effect: 'allow' },
   ],
@@ -77,10 +79,11 @@ const ROLES: Array<{
   isSystem: boolean;
   isSuperAdmin: boolean;
 }> = [
-  { key: 'super_admin', nameAr: 'مدير عام للنظام', nameEn: 'Super Admin', description: 'يتجاوز كل الصلاحيات', isSystem: true, isSuperAdmin: true },
+  { key: 'super_admin', nameAr: 'ادمن', nameEn: 'Admin', description: 'يتجاوز كل الصلاحيات', isSystem: true, isSuperAdmin: true },
   { key: 'hr_manager', nameAr: 'مدير الموارد البشرية', nameEn: 'HR Manager', description: 'صلاحيات تشغيلية واسعة على وحدات الموارد البشرية', isSystem: false, isSuperAdmin: false },
   { key: 'branch_manager', nameAr: 'مدير فرع/إدارة', nameEn: 'Branch Manager', description: 'عرض واعتماد طلبات فرعه', isSystem: false, isSuperAdmin: false },
   { key: 'employee', nameAr: 'موظف', nameEn: 'Employee', description: 'خدمة ذاتية محدودة', isSystem: false, isSuperAdmin: false },
+  { key: ADDITIONAL_SALES_ROLE_KEY, nameAr: 'إدارة المبيعات (إضافية)', nameEn: 'Sales (additional)', description: 'تُضاف لأي مستخدم متفعّل عليه «يعمل كأخصائي مبيعات» فوق صلاحيات دوره', isSystem: true, isSuperAdmin: false },
   { key: 'trainer', nameAr: 'صلاحيات المدربين', nameEn: 'Trainer Permissions', description: 'وصول المدرب إلى جدوله وحضوره ومستحقاته فقط', isSystem: true, isSuperAdmin: false },
 ];
 

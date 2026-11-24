@@ -52,6 +52,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useBranches } from "@/hooks/use-branches";
+import { useCafeLocations } from "@/lib/cafe-locations";
 import { usePosEmployeeOptions } from "@/hooks/use-pos-employee-options";
 import { api, apiError } from "@/lib/api";
 import { resolveProductImageUrl } from "@/lib/product-image";
@@ -67,6 +68,7 @@ import { useLocale } from "@/store/locale";
 import { useAuth } from "@/store/auth";
 import { confirm } from "@/lib/confirm";
 import { GymSalesPageShell } from "../gym-sales/shell";
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface CartLine {
   inventoryProductId?: number | null;
@@ -142,6 +144,12 @@ export function SalesNewReceiptPage() {
   const [employeeId, setEmployeeId] = useState("");
   const [partnerId, setPartnerId] = useState("");
   const [warehouseId, setWarehouseId] = useState('');
+  // Each branch's bar; an empty warehouseId sells from it (the server's default sale warehouse).
+  const { data: barRoutes = [] } = useQuery({
+    queryKey: ['inventory-transactions', 'bar-routes'],
+    queryFn: async () => (await api.get<Array<{ branchId: number; barWarehouseId: number; barName: string }>>('/inventory-transactions/bar-routes')).data,
+    retry: false,
+  });
   const [drawingRecipient, setDrawingRecipient] = useState('');
   const [drawingReason, setDrawingReason] = useState('');
   const [recommendedEmployeeId, setRecommendedEmployeeId] = useState('');
@@ -185,13 +193,32 @@ export function SalesNewReceiptPage() {
 
   const assignedBranchId =
     user?.branch && user.branch > 0 ? String(user.branch) : "";
-  const effectiveBranchId =
+  const requestedBranchId =
     branchId ||
     (assignedBranchId &&
     (branches ?? []).some((branch) => String(branch.id) === assignedBranchId)
       ? assignedBranchId
       : "") ||
     String(branches?.[0]?.id ?? "");
+  // The client sells as 3 branches (الجلاء، البر الشرقي، طنطا); each sells from its own bar,
+  // except طنطا, which sells from طنطا up or طنطا down. The sale belongs to the bar's branch.
+  const cafe = useCafeLocations();
+  const branchIds = new Set((branches ?? []).map((b) => b.id));
+  const mainBranchId = cafe.ready && requestedBranchId ? cafe.mainBranchOf(Number(requestedBranchId)) : null;
+  // A Tanta account's branch list holds only طنطا, while it sells from طنطا up / طنطا down (the server
+  // already allows a main branch's sub-branches). Owning the main branch unlocks all of its bars; an up/down
+  // account keeps only its own bar (client, 21 Nov 2026: «مفيش طنطا up و down»).
+  const sellableBars = (main: number) =>
+    cafe.barsOfMainBranch(main).filter((bar) => branchIds.has(main) || branchIds.has(bar.branchId));
+  const mainBars = mainBranchId ? sellableBars(mainBranchId) : [];
+  const effectiveBranchId =
+    mainBars.length && !mainBars.some((bar) => String(bar.branchId) === requestedBranchId)
+      ? String(mainBars[0].branchId)
+      : requestedBranchId;
+  const salesBranches = cafe.ready
+    ? (branches ?? []).filter((b) => cafe.mainBranchIds.includes(b.id) || (b.id === mainBranchId))
+    : (branches ?? []);
+  const branchBar = barRoutes.find((r) => String(r.branchId) === String(effectiveBranchId));
 
   const { data: categories } = useQuery({
     queryKey: ["categories", "cafe-pos"],
@@ -937,26 +964,55 @@ export function SalesNewReceiptPage() {
           <div className="flex flex-wrap gap-3 rounded-2xl border bg-gradient-to-l from-primary/10 via-card to-card p-4 shadow-sm">
             <div className="min-w-[140px] flex-1">
               <Label className="text-xs">{ui("الفرع")}</Label>
-              <select
+              <SearchableSelect
                 className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
-                value={effectiveBranchId}
-                onChange={(e) => void changeBranch(e.target.value)}
-                disabled={draftId > 0 || (branches?.length ?? 0) <= 1}
+                searchable
+                aria-label={ui("الفرع")}
+                value={mainBranchId ? String(mainBranchId) : effectiveBranchId}
+                onChange={(e) => {
+                  const bars = cafe.ready ? sellableBars(Number(e.target.value)) : [];
+                  void changeBranch(bars.length ? String(bars[0].branchId) : e.target.value);
+                }}
+                disabled={draftId > 0 || salesBranches.length <= 1}
               >
-                {(branches ?? []).map((b) => (
+                {salesBranches.map((b) => (
                   <option key={b.id} value={b.id}>
                     {b.name}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
-            {/* Depends on the branch: lists only that branch's warehouses / bars. */}
+            {/* The branch bar (POS settings) is where the café sells from; with no bar set, or an
+                older draft from another warehouse, the branch's warehouses are listed instead. */}
             <div className="min-w-[180px] flex-1 [&_label]:text-xs">
-              <WarehouseSelect branchId={effectiveBranchId} value={warehouseId} disabled={!!draftId || cart.length > 0} onChange={setWarehouseId} label="مخزون البيع / البار" />
+              {mainBars.length > 1 && !warehouseId ? (
+                <>
+                  <Label className="text-xs">{ui("البيع من البار")}</Label>
+                  <SearchableSelect
+                    searchable
+                    aria-label={ui("البيع من البار")}
+                    className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                    value={effectiveBranchId}
+                    onChange={(e) => void changeBranch(e.target.value)}
+                    disabled={draftId > 0}
+                  >
+                    {mainBars.map((bar) => (
+                      <option key={bar.id} value={bar.branchId}>{bar.name}</option>
+                    ))}
+                  </SearchableSelect>
+                </>
+              ) : branchBar && (!warehouseId || warehouseId === String(branchBar.barWarehouseId)) ? (
+                <>
+                  <Label className="text-xs">{ui("البيع من البار")}</Label>
+                  <Input className="mt-1" value={branchBar.barName} readOnly disabled />
+                </>
+              ) : (
+                <WarehouseSelect branchId={effectiveBranchId} value={warehouseId} disabled={!!draftId || cart.length > 0} onChange={setWarehouseId} label="مخزون البيع / البار" />
+              )}
             </div>
             <div className="min-w-[140px] flex-1">
               <Label className="text-xs">{ui("جنس العميل")}</Label>
-              <select
+              <SearchableSelect
                 className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
                 value={gender}
                 onChange={(e) => setGender(e.target.value as "male" | "female" | "")}
@@ -964,7 +1020,7 @@ export function SalesNewReceiptPage() {
                 <option value="">{ui("اختر الجنس")}</option>
                 <option value="male">{ui("رجالي")}</option>
                 <option value="female">{ui("حريمي")}</option>
-              </select>
+              </SearchableSelect>
             </div>
             <div className="min-w-[200px] flex-[2]">
               <Label className="text-xs">{ui("بحث منتج")}</Label>
@@ -1506,7 +1562,7 @@ export function SalesNewReceiptPage() {
                   </div>
                   <div>
                     <Label className="text-[11px]">{ui("طريقة الدفع")}</Label>
-                    <select
+                    <SearchableSelect
                       className="mt-1 h-9 w-full rounded-md border bg-background px-2 text-sm"
                       value={paymentMethod}
                       onChange={(event) => setPaymentMethod(event.target.value)}
@@ -1516,7 +1572,7 @@ export function SalesNewReceiptPage() {
                           {option.label}
                         </option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   </div>
                 </div>
                 {!paymentOptions.length ? (

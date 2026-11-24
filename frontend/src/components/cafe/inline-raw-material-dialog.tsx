@@ -10,6 +10,7 @@ import { api, apiError } from '@/lib/api';
 import { CAFE_UNIT_OPTIONS } from '@/lib/cafe-units';
 import { useLocale } from '@/store/locale';
 import type { ProductListItem } from '@/types/inventory';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface Props {
   supplierId?: number;
@@ -90,9 +91,9 @@ export function InlineRawMaterialDialog({ supplierId, disabled, onCreated, creat
             </div>
             <div className="space-y-2">
               <Label>{ui('وحدة القياس')}</Label>
-              <select className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={unit} onChange={(event) => setUnit(event.target.value)}>
+              <SearchableSelect className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={unit} onChange={(event) => setUnit(event.target.value)}>
                 {CAFE_UNIT_OPTIONS.map((option) => <option key={option.value} value={option.value}>{ui(option.label)}</option>)}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="space-y-2">
               <Label>{ui('تنبيه الكمية')}</Label>

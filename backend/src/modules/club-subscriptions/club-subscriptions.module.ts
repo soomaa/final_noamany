@@ -17,6 +17,8 @@ import { ClubSubscriptionsService } from './club-subscriptions.service';
 import { SubscriptionReportsService } from './subscription-reports.service';
 import { PrivateSubscriptionsController } from './private-subscriptions.controller';
 import { PrivateSubscriptionsService } from './private-subscriptions.service';
+import { ClubWhatsAppTemplatesController } from './club-whatsapp-templates.controller';
+import { ClubWhatsAppTemplatesService } from './club-whatsapp-templates.service';
 import { ClubDiscountCodesModule } from './club-discount-codes.module';
 import { ClubPointsModule } from '../club-points/club-points.module';
 
@@ -29,6 +31,7 @@ import { ClubPointsModule } from '../club-points/club-points.module';
     ClubSubscriptionTransfersController,
     ClubReceiptsController,
     PrivateSubscriptionsController,
+    ClubWhatsAppTemplatesController,
   ],
   providers: [
     ClubSubscriptionsService,
@@ -41,6 +44,7 @@ import { ClubPointsModule } from '../club-points/club-points.module';
     ClubSubscriptionAccountingService,
     ClubSubscriptionStatusCron,
     PrivateSubscriptionsService,
+    ClubWhatsAppTemplatesService,
   ],
   exports: [
     ClubSubscriptionsService,

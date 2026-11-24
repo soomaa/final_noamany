@@ -280,7 +280,8 @@ export class ClubHallsService {
     if (bookingBranch !== undefined) {
       and.push({ hall: { branch_id: bookingBranch } });
     }
-    const gender = user ? this.branchScope.memberGenderFilter(user) : null;
+    // رجالي/حريمي/الكل: one-section staff are locked to their section (403 for the other one).
+    const gender = this.branchScope.resolveMemberGenderRequest(user, q.gender);
     if (gender) {
       const sectionMemberIds = await this.prisma.club_members.findMany({
         where: {

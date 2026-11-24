@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { fieldsToBody } from './wa-campaigns.utils';
+import { BIRTHDAY_FIELDS } from './wa-default-templates';
 
 /**
  * Birthday-greeting settings live in `wa_control_settings` row 2 (row 1 holds the WhatsApp Web
@@ -22,15 +24,7 @@ export interface BirthdaySettings {
 export const DEFAULT_BIRTHDAY_SETTINGS: BirthdaySettings = { enabled: false, time: '09:00', templateId: null, activeOnly: false, runs: {} };
 
 export const DEFAULT_BIRTHDAY_TEMPLATE_NAME = 'تهنئة عيد الميلاد 🎂';
-export const DEFAULT_BIRTHDAY_TEMPLATE = [
-  '{كل سنة وانت طيب|كل سنة وانت بخير|سنة حلوة عليك} يا {first_name} 🎂🎉',
-  'كل فريق {branch} بيتمنالك سنة جديدة مليانة صحة وفرحة 💪',
-  '{مستنيينك في الجيم نحتفل بيك|منورنا دايمًا} ❤️',
-  '---',
-  '{first_name} 🎈 {عيد ميلاد سعيد|كل سنة وانت طيب}!',
-  '{أسرة|فريق} {branch} {بيقولك|بيبعتلك} سنة حلوة عليك 🎁',
-  'نتمنالك سنة كلها {إنجازات|صحة وسعادة} 💪✨',
-].join('\n');
+export const DEFAULT_BIRTHDAY_TEMPLATE = fieldsToBody(BIRTHDAY_FIELDS);
 
 type Db = PrismaService | Prisma.TransactionClient;
 

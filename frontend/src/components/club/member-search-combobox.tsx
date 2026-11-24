@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { MEMBER_SEARCH_MIN_CHARS, searchClubMembers } from '@/lib/club-member-search';
 import { cn, toArabicDigits } from '@/lib/utils';
 import type { ClubMemberListItem, ClubMemberLookupItem } from '@/types/club';
+import { BlockedChip, BlockedMemberBanner } from './blocked-member-flag';
 
 interface MemberSearchComboboxProps {
   selectedMember: ClubMemberListItem | null;
@@ -197,7 +198,13 @@ export function MemberSearchCombobox({
                 onMouseEnter={() => setActiveIndex(index)}
                 onClick={() => void pickHit(hit)}
               >
-                <span className="font-medium">{hit.name}</span>
+                <span className="flex w-full items-center gap-2 font-medium">
+                  <span className="min-w-0 truncate">{hit.name}</span>
+                  {hit.isBlocked ? <BlockedChip className="ms-auto" /> : null}
+                </span>
+                {hit.isBlocked && hit.blockReason ? (
+                  <span className="text-xs text-destructive">السبب: {hit.blockReason}</span>
+                ) : null}
                 <span className="nums text-xs text-muted-foreground font-mono">
                   {hit.memberCode}{hit.phone ? ` · ${toArabicDigits(hit.phone)}` : ''}
                 </span>
@@ -218,6 +225,10 @@ export function MemberSearchCombobox({
       {!loading && !selectedMember && !searchFailed && query.trim().length >= MEMBER_SEARCH_MIN_CHARS && hits.length === 0 && (
         <p className="mt-1 text-xs text-muted-foreground">{ct('members.noMemberFound')}</p>
       )}
+
+      {selectedMember?.isBlocked ? (
+        <BlockedMemberBanner reason={selectedMember.blockReason} className="mt-2" />
+      ) : null}
 
       {selectedMember?.phone && (
         <p className="mt-1 text-xs text-muted-foreground nums">

@@ -1,37 +1,35 @@
 import { useQuery } from '@tanstack/react-query';
 import type { ColumnDef } from '@tanstack/react-table';
-import { KeyRound, Loader2, Pencil, Plus, Save, Trash2, Users } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { KeyRound, Pencil, Plus, Trash2, Users } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { toast } from 'sonner';
 import { Combobox } from '@/components/common/combobox';
 import { DataTable } from '@/components/common/data-table';
 import { ListPageShell } from '@/components/common/list-page-shell';
 import { StatusBadge } from '@/components/common/status-badge';
+import { AddAdminButton } from '@/components/users/add-admin-button';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import { useBranches } from '@/hooks/use-branches';
+import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { clientPaginate, useArrayResource, useMutationWithToast } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
-import { useListQuery } from '@/lib/use-list-query';
-import { toArabicDigits } from '@/lib/utils';
-import type { EmployeeListItem } from '@/types/employees';
-import { useLocale } from '@/store/locale';
-import { uiStatic } from '@/lib/ui-static';
+import { downloadExcel } from '@/lib/export';
 import { fetchAllReportRows } from '@/lib/report-fetch';
+import { useListQuery } from '@/lib/use-list-query';
+import { isSystemAdminUser } from '@/lib/user-scope';
+import { toArabicDigits } from '@/lib/utils';
+import { EditExceptions } from '@/pages/admin/exceptions';
+import { useAuth } from '@/store/auth';
+import { useLocale } from '@/store/locale';
+import type { EmployeeListItem } from '@/types/employees';
 
 interface UserRow {
   user_id: number;
@@ -43,62 +41,44 @@ interface UserRow {
   emp_code: number | null;
   approved: number | null;
   level_label?: string;
+  /** The user's roles (ادمن، مدير فرع، ريسبشن …). */
+  roles?: string[];
 }
 
-const LEVEL_OPTIONS = [
-  { value: '1', label: uiStatic('مدير على النظام') },
-  { value: '2', label: uiStatic('موظف على النظام') },
-  { value: '3', label: uiStatic('مدير فرع-ادارة') },
-];
+const emptyForm = { username: '', fullname: '', password: '' };
+const emptyCreateForm = { username: '', fullname: '', email: '', password: '', level: '2', empCode: '' };
 
-const LEVEL_LABELS: Record<number, string> = {
-  1: uiStatic('مدير على النظام'),
-  2: uiStatic('موظف على النظام'),
-  3: uiStatic('مدير فرع-ادارة'),
-};
-
-const emptyForm = {
-  username: '',
-  fullname: '',
-  email: '',
-  password: '',
-  level: '1',
-  empCode: '',
-};
-
-interface MenuNodeApi {
-  id: number;
-  title: string;
-  children?: MenuNodeApi[];
+/** Active employees for «الموظف المرتبط» (the backend derives name, branch and role from the employee). */
+function useEmployeeOptionsFull() {
+  return useQuery({
+    queryKey: ['employees', 'user-options'],
+    queryFn: async () => fetchAllReportRows<EmployeeListItem>('/employees', { status: 1 }, 200),
+    staleTime: 60_000,
+  });
 }
 
-interface UserPermissions {
-  userId: number;
-  username?: string;
-  fullName?: string;
-  tree?: MenuNodeApi[];
-  permissions?: string[];
-}
-
+/**
+ * حسابات النظام (MetaFit layout): م، اسم المستخدم، الاسم، الصلاحية، الفرع، الحالة (toggle)،
+ * الإجراءات (الصلاحيات، تعديل، حذف). Admins are added with «Add Admin»; staff accounts come
+ * from تظبيط الموظفين / the employee file.
+ */
 export function UsersManagePage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const selectedId = Number(searchParams.get('user'));
   const { ui } = useLocale();
+  const currentUser = useAuth((state) => state.user);
+  const isSystemAdmin = isSystemAdminUser(currentUser);
+  const { can } = usePermission();
+  const canUpdate = can('admin.users:update');
+  const canDelete = can('admin.users:delete');
+  const canPermissions = can('admin.exceptions:view');
   const { params, setParams } = useListQuery();
   const { data: users = [], isLoading, isError, error, refetch } = useArrayResource<UserRow>('users');
   const { data: branches = [] } = useBranches();
-  // Employee directory for level 2/3 (the backend resolves name/branch from emp_code).
-  const { data: rawEmployees = [] } = useEmployeeOptionsFull();
-
-  const employeeOptions = useMemo(
-    () =>
-      rawEmployees.map((e) => ({
-        value: String(e.emp_code),
-        label: `${e.employee ?? '—'} (${toArabicDigits(e.emp_code ?? '')})`,
-      })),
-    [rawEmployees],
-  );
-
   const branchName = (id: number | null) =>
-    id != null ? (branches.find((b) => b.id === id)?.name ?? '—') : '—';
+    id != null && id > 0 ? (branches.find((b) => b.id === id)?.name ?? '—') : '—';
+  const roleText = (row: UserRow) => (row.roles?.length ? row.roles.join('، ') : row.level_label || '—');
+  const isAdminRow = (row: UserRow) => row.level === 1 || (row.roles ?? []).includes('ادمن');
 
   const filteredUsers = useMemo(
     () => users.filter((user) => {
@@ -111,13 +91,74 @@ export function UsersManagePage() {
   const pageData = useMemo(
     () =>
       clientPaginate(filteredUsers, params, {
-        search: (u, q) =>
-          (u.username ?? '').toLowerCase().includes(q) ||
-          (u.name ?? '').toLowerCase().includes(q) ||
-          (u.email ?? '').toLowerCase().includes(q),
+        search: (u, q) => `${u.username ?? ''} ${u.name ?? ''} ${u.email ?? ''}`.toLowerCase().includes(q.toLowerCase()),
       }),
     [filteredUsers, params],
   );
+
+  const stats = useMemo(
+    () => [
+      { title: ui('المستخدمون'), value: toArabicDigits(users.length), icon: <Users className="size-5" /> },
+      { title: ui('نشطون'), value: toArabicDigits(users.filter((user) => user.approved === 1).length) },
+      { title: ui('غير نشطين'), value: toArabicDigits(users.filter((user) => user.approved !== 1).length) },
+    ],
+    [users, ui],
+  );
+
+  // «إضافة مستخدم جديد»: an admin with a free name, or a dashboard login linked to an employee
+  // (receptionist, branch manager …) whose role then follows the employee's job title.
+  const canCreate = can('admin.users:create');
+  const { data: rawEmployees = [] } = useEmployeeOptionsFull();
+  const employeeOptions = useMemo(
+    () => rawEmployees.map((e) => ({ value: String(e.emp_code), label: `${e.employee ?? '—'} (${toArabicDigits(e.emp_code ?? '')})` })),
+    [rawEmployees],
+  );
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState(emptyCreateForm);
+  const [creating, setCreating] = useState(false);
+  const level = parseInt(createForm.level, 10);
+
+  const openCreate = () => {
+    setCreateForm(emptyCreateForm);
+    setCreateOpen(true);
+  };
+
+  const create = async () => {
+    if (createForm.username.trim().length < 5) {
+      toast.error(ui('اسم المستخدم مطلوب (٥ أحرف على الأقل)'));
+      return;
+    }
+    if (createForm.password.trim().length < 5) {
+      toast.error(ui('كلمة المرور مطلوبة (٥ أحرف على الأقل)'));
+      return;
+    }
+    if (level === 1 && !createForm.fullname.trim()) {
+      toast.error(ui('الاسم الكامل مطلوب'));
+      return;
+    }
+    if (level !== 1 && !createForm.empCode) {
+      toast.error(ui('اختر الموظف المرتبط بالحساب'));
+      return;
+    }
+    const payload: Record<string, unknown> = {
+      username: createForm.username.trim(),
+      email: createForm.email.trim() || undefined,
+      level,
+      password: createForm.password.trim(),
+      ...(level === 1 ? { fullname: createForm.fullname.trim() } : { empCode: parseInt(createForm.empCode, 10) }),
+    };
+    setCreating(true);
+    try {
+      await api.post('/users', payload);
+      toast.success(ui('تم إضافة المستخدم'));
+      setCreateOpen(false);
+      void refetch();
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setCreating(false);
+    }
+  };
 
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
@@ -128,85 +169,39 @@ export function UsersManagePage() {
     (id: number) => api.delete(`/users/${id}`),
     { success: ui('تم حذف المستخدم'), invalidate: ['users'] },
   );
-
   const statusMutation = useMutationWithToast(
     (id: number) => api.patch(`/users/${id}/approved`),
     { success: ui('تم تحديث الحالة'), invalidate: ['users'] },
   );
 
-  const stats = useMemo(
-    () => [
-      { title: ui('المستخدمون'), value: toArabicDigits(users.length), icon: <Users className="size-5" /> },
-      { title: ui('نشطون'), value: toArabicDigits(users.filter((user) => user.approved === 1).length) },
-      { title: ui('غير نشطين'), value: toArabicDigits(users.filter((user) => user.approved !== 1).length) },
-    ],
-    [users],
-  );
-
   const openEdit = (row: UserRow) => {
-    // users.emp_code stores employees.id (legacy convention), while the edit API
-    // expects the employee business code selected by the form.
-    const linkedEmployee = rawEmployees.find((employee) => employee.id === row.emp_code);
     setEditId(row.user_id);
-    setForm({
-      username: row.username ?? '',
-      fullname: row.level === 1 ? (row.name ?? '') : '',
-      email: row.email ?? '',
-      password: '',
-      level: row.level != null ? String(row.level) : '1',
-      empCode: linkedEmployee?.emp_code != null ? String(linkedEmployee.emp_code) : '',
-    });
-    setFormOpen(true);
-  };
-
-  const openCreate = () => {
-    setEditId(null);
-    setForm(emptyForm);
+    setForm({ username: row.username ?? '', fullname: row.name ?? '', password: '' });
     setFormOpen(true);
   };
 
   const save = async () => {
-    const level = parseInt(form.level, 10);
-    if (form.username.trim().length < 5) {
-      toast.error(ui('اسم المستخدم مطلوب (٥ أحرف على الأقل)'));
+    if (!canUpdate || !editId) return;
+    if (form.username.trim().length < 3) {
+      toast.error(ui('اسم المستخدم مطلوب (٣ أحرف على الأقل)'));
       return;
     }
-    if (!editId && form.password.trim().length < 5) {
-      toast.error(ui('كلمة المرور مطلوبة (٥ أحرف على الأقل)'));
+    if (!form.fullname.trim()) {
+      toast.error(ui('الاسم مطلوب'));
       return;
     }
-    if (form.password.trim() && form.password.trim().length < 5) {
+    if (form.password && form.password.length < 5) {
       toast.error(ui('كلمة المرور يجب ألا تقل عن ٥ أحرف'));
       return;
     }
-    if (level === 1 && !form.fullname.trim()) {
-      toast.error(ui('الاسم الكامل مطلوب'));
-      return;
-    }
-    if (level !== 1 && !form.empCode) {
-      toast.error(ui('اختر الموظف المرتبط بالحساب'));
-      return;
-    }
-
-    const payload: Record<string, unknown> = {
-      username: form.username.trim(),
-      email: form.email.trim() || undefined,
-      level,
-      ...(level === 1
-        ? { fullname: form.fullname.trim() }
-        : { empCode: parseInt(form.empCode, 10) }),
-      ...(form.password.trim() ? { password: form.password.trim() } : {}),
-    };
-
     setSaving(true);
     try {
-      if (editId) {
-        await api.patch(`/users/${editId}`, payload);
-        toast.success(ui('تم حفظ المستخدم'));
-      } else {
-        await api.post('/users', payload);
-        toast.success(ui('تم إضافة المستخدم'));
-      }
+      await api.patch(`/users/${editId}/account`, {
+        username: form.username.trim(),
+        fullname: form.fullname.trim(),
+        ...(form.password ? { password: form.password } : {}),
+      });
+      toast.success(ui('تم حفظ المستخدم'));
       setFormOpen(false);
       void refetch();
     } catch (e) {
@@ -217,17 +212,50 @@ export function UsersManagePage() {
   };
 
   const toggleStatus = async (row: UserRow) => {
+    if (!canUpdate) return;
     const next = row.approved === 1 ? 0 : 1;
     const ok = await confirm({
       title: next === 1 ? ui('تفعيل المستخدم') : ui('إيقاف المستخدم'),
-      description:
-        next === 1
-          ? ui('هل تريد تفعيل هذا المستخدم؟')
-          : ui('هل تريد إيقاف هذا المستخدم عن الدخول؟'),
+      description: next === 1
+        ? ui('المستخدم هيقدر يدخل على النظام تاني.')
+        : ui('المستخدم مش هيقدر يدخل، وأي جلسة مفتوحة له هتقف فورًا.'),
       confirmLabel: next === 1 ? ui('تفعيل') : ui('إيقاف'),
       variant: next === 1 ? 'default' : 'destructive',
     });
     if (ok) statusMutation.mutate(row.user_id);
+  };
+
+  const exportExcel = () =>
+    downloadExcel(
+      users.map((u, i) => ({
+        n: i + 1,
+        username: u.username ?? '',
+        name: u.name ?? '',
+        role: roleText(u),
+        branch: branchName(u.branch_id_fk),
+        status: u.approved === 1 ? ui('نشط') : ui('غير نشط'),
+      })),
+      [
+        { key: 'n', header: ui('م') },
+        { key: 'username', header: ui('اسم المستخدم') },
+        { key: 'name', header: ui('الاسم') },
+        { key: 'role', header: ui('الصلاحية') },
+        { key: 'branch', header: ui('الفرع') },
+        { key: 'status', header: ui('الحالة') },
+      ],
+      'system-accounts',
+      ui('حسابات النظام'),
+      { rightToLeft: true },
+    );
+
+  const permUser = canPermissions && selectedId > 0 && users.some((u) => u.user_id === selectedId) ? selectedId : null;
+  const setPermUser = (row: UserRow | null) => {
+    setSearchParams((previous) => {
+      const next = new URLSearchParams(previous);
+      if (row) next.set('user', String(row.user_id));
+      else next.delete('user');
+      return next;
+    });
   };
 
   const columns: ColumnDef<UserRow>[] = [
@@ -236,18 +264,21 @@ export function UsersManagePage() {
       header: ui('م'),
       cell: ({ row }) => toArabicDigits((params.page - 1) * params.pageSize + row.index + 1),
     },
-    { accessorKey: 'username', header: ui('اسم المستخدم') },
+    { accessorKey: 'username', header: ui('اسم المستخدم'), cell: ({ getValue }) => (getValue() as string | null) || '—' },
     { accessorKey: 'name', header: ui('الاسم'), cell: ({ getValue }) => (getValue() as string | null) || '—' },
     {
-      accessorKey: 'email',
-      header: ui('البريد'),
-      cell: ({ getValue }) => (getValue() as string | null) || '—',
-    },
-    {
-      accessorKey: 'level',
+      id: 'roles',
       header: ui('الصلاحية'),
       cell: ({ row }) =>
-        row.original.level_label ?? LEVEL_LABELS[row.original.level ?? 0] ?? '—',
+        row.original.roles?.length ? (
+          <div className="flex flex-wrap gap-1">
+            {row.original.roles.map((r) => (
+              <Badge key={r} variant={r === 'ادمن' ? 'success' : 'secondary'} className="text-[11px]">{r}</Badge>
+            ))}
+          </div>
+        ) : (
+          row.original.level_label || '—'
+        ),
     },
     {
       accessorKey: 'branch_id_fk',
@@ -258,65 +289,79 @@ export function UsersManagePage() {
       accessorKey: 'approved',
       header: ui('الحالة'),
       cell: ({ row }) => (
-        <button type="button" onClick={() => void toggleStatus(row.original)} aria-label={ui('تغيير الحالة')}>
-          <StatusBadge
-            status={row.original.approved === 1 ? 'active' : 'suspended'}
-            label={row.original.approved === 1 ? ui('مُفعّل') : ui('موقوف')}
-            className="cursor-pointer"
+        <div className="flex items-center gap-2">
+          <Switch
+            checked={row.original.approved === 1}
+            disabled={!canUpdate || statusMutation.isPending || row.original.user_id === currentUser?.sub || (isAdminRow(row.original) && !isSystemAdmin)}
+            onCheckedChange={() => void toggleStatus(row.original)}
+            aria-label={`${ui('تغيير الحالة')} — ${row.original.name || row.original.username}`}
           />
-        </button>
+          <StatusBadge status={row.original.approved === 1 ? 'active' : 'suspended'} label={row.original.approved === 1 ? ui('نشط') : ui('غير نشط')} />
+        </div>
       ),
     },
     {
       id: 'actions',
-      header: ui('إجراء'),
+      header: ui('الإجراءات'),
       cell: ({ row }) => (
-        <div className="flex items-center gap-2 whitespace-nowrap">
-          <Button variant="outline" size="sm" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
-            <Pencil className="size-4" />
-            {ui('تعديل')}
-          </Button>
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/admin/roles" aria-label={ui('إدارة الأدوار والصلاحيات')}>
-            <KeyRound className="size-4" />
-            {ui('الأدوار والصلاحيات')}
-            </Link>
-          </Button>
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label={ui('حذف')}
-            onClick={async () => {
-              const ok = await confirm({
-                title: ui('حذف المستخدم'),
-                description: ui('هل تريد حذف هذا المستخدم؟ سيتم حذف صلاحياته أيضاً.'),
-                confirmLabel: ui('حذف'),
-                variant: 'destructive',
-              });
-              if (ok) deleteMutation.mutate(row.original.user_id);
-            }}
-          >
-            <Trash2 className="size-4 text-destructive" />
-          </Button>
+        <div className="flex items-center gap-1">
+          {canPermissions && (
+            <Button variant="outline" size="sm" onClick={() => setPermUser(row.original)}>
+              <KeyRound className="size-4" /> {ui('الصلاحيات')}
+            </Button>
+          )}
+          {canUpdate && (!isAdminRow(row.original) || isSystemAdmin) && (
+            <Button variant="ghost" size="icon" aria-label={ui('تعديل')} onClick={() => openEdit(row.original)}>
+              <Pencil className="size-4" />
+            </Button>
+          )}
+          {canDelete && row.original.user_id !== currentUser?.sub && (!isAdminRow(row.original) || isSystemAdmin) && (
+            <Button
+              variant="ghost"
+              size="icon"
+              disabled={deleteMutation.isPending}
+              aria-label={ui('حذف')}
+              onClick={async () => {
+                const ok = await confirm({
+                  title: ui('حذف المستخدم'),
+                  description: ui('الحساب هيتحذف نهائيًا من قائمة المستخدمين، ومش هيقدر يدخل تاني، وتقدر تعمل حساب جديد بنفس اسم المستخدم. الحذف مش بيمسح ملف الموظف أو عملياته السابقة.'),
+                  confirmLabel: ui('حذف'),
+                  variant: 'destructive',
+                });
+                if (ok) deleteMutation.mutate(row.original.user_id);
+              }}
+            >
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          )}
         </div>
       ),
     },
   ];
 
-  const level = parseInt(form.level, 10);
+  if (permUser) {
+    return <EditExceptions key={permUser} userId={permUser} onChangeUser={() => setPermUser(null)} catalogLoading={false} />;
+  }
 
   return (
     <>
       <ListPageShell
-        title={ui('إدارة المستخدمين')}
-        description={ui('عرض وتعديل مستخدمي النظام — يُنشأ الحساب الجديد من قسم الموارد البشرية عند تفعيل «إضافة إلى النظام» في نموذج الموظف')}
-        actions={<Button onClick={openCreate}><Plus className="size-4" />{ui('إضافة مستخدم جديد')}</Button>}
+        actions={
+          <div className="flex w-full flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">{ui('حسابات النظام')} · {toArabicDigits(users.length)}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {canCreate && <Button variant="outline" onClick={openCreate}><Plus className="size-4" />{ui('إضافة مستخدم جديد')}</Button>}
+              <AddAdminButton />
+            </div>
+          </div>
+        }
         stats={stats}
         statsLoading={isLoading}
         isError={isError}
         error={error}
       >
         <DataTable
+          searchPlaceholder={ui('بحث بالاسم أو اسم المستخدم…')}
           columns={columns}
           data={pageData.data}
           total={pageData.total}
@@ -329,6 +374,7 @@ export function UsersManagePage() {
           onRetry={() => void refetch()}
           search={params.search}
           onSearchChange={(s) => setParams({ search: s, page: 1 })}
+          onExportExcel={exportExcel}
           toolbar={
             <Select
               value={params.filters.status || 'all'}
@@ -348,31 +394,27 @@ export function UsersManagePage() {
         />
       </ListPageShell>
 
-      <Dialog open={formOpen} onOpenChange={setFormOpen}>
+      <Dialog open={createOpen} onOpenChange={(open) => { if (!creating) setCreateOpen(open); }}>
         <DialogContent aria-describedby={undefined}>
           <DialogHeader>
-            <DialogTitle>{editId ? ui('تعديل مستخدم') : ui('إضافة مستخدم جديد')}</DialogTitle>
+            <DialogTitle>{ui('إضافة مستخدم جديد')}</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
             <div>
-              <Label htmlFor="user-username">{ui('اسم المستخدم')}</Label>
-              <Input
-                id="user-username"
-                className="mt-1.5"
-                value={form.username}
-                onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
-              />
+              <Label htmlFor="new-user-username">{ui('اسم المستخدم')}</Label>
+              <Input id="new-user-username" className="mt-1.5" dir="ltr" autoComplete="off" maxLength={40} value={createForm.username}
+                onChange={(e) => setCreateForm((f) => ({ ...f, username: e.target.value }))} />
             </div>
             <div>
               <Label>{ui('المستوى')}</Label>
               <div className="mt-1.5">
                 <Select
-                  value={form.level}
-                  onValueChange={(level) => setForm((f) => ({ ...f, level, empCode: level === '1' ? '' : f.empCode }))}
+                  value={createForm.level}
+                  onValueChange={(next) => setCreateForm((f) => ({ ...f, level: next, empCode: next === '1' ? '' : f.empCode }))}
                 >
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="1">{ui('مدير على النظام')}</SelectItem>
+                    {isSystemAdmin && <SelectItem value="1">{ui('مدير على النظام')}</SelectItem>}
                     <SelectItem value="3">{ui('مدير فرع')}</SelectItem>
                     <SelectItem value="2">{ui('موظف')}</SelectItem>
                   </SelectContent>
@@ -381,237 +423,80 @@ export function UsersManagePage() {
             </div>
             {level === 1 ? (
               <div>
-                <Label htmlFor="user-fullname">{ui('الاسم الكامل')}</Label>
-                <Input
-                  id="user-fullname"
-                  className="mt-1.5"
-                  value={form.fullname}
-                  onChange={(e) => setForm((f) => ({ ...f, fullname: e.target.value }))}
-                />
+                <Label htmlFor="new-user-fullname">{ui('الاسم الكامل')}</Label>
+                <Input id="new-user-fullname" className="mt-1.5" maxLength={100} value={createForm.fullname}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, fullname: e.target.value }))} />
               </div>
             ) : (
               <div>
                 <Label>{ui('الموظف المرتبط')}</Label>
                 <div className="mt-1.5">
                   <Combobox
-                    value={form.empCode}
-                    onValueChange={(empCode) => setForm((f) => ({ ...f, empCode }))}
+                    value={createForm.empCode}
+                    onValueChange={(empCode) => setCreateForm((f) => ({ ...f, empCode }))}
                     options={employeeOptions}
                     placeholder={ui('اختر الموظف…')}
                     searchPlaceholder={ui('بحث بالاسم أو الكود…')}
                   />
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {ui('يُشتق الاسم والفرع تلقائياً من بيانات الموظف.')}
+                  {ui('الاسم والفرع والدور (ريسبشن، مدير فرع …) بييجوا من بيانات الموظف ومسماه الوظيفي.')}
                 </p>
               </div>
             )}
             <div>
-              <Label htmlFor="user-email">{ui('البريد الإلكتروني')}</Label>
-              <Input
-                id="user-email"
-                type="email"
-                className="mt-1.5"
-                value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-              />
+              <Label htmlFor="new-user-email">{ui('البريد الإلكتروني')}</Label>
+              <Input id="new-user-email" type="email" className="mt-1.5" value={createForm.email}
+                onChange={(e) => setCreateForm((f) => ({ ...f, email: e.target.value }))} />
             </div>
             <div>
-              <Label htmlFor="user-password">{editId ? ui('كلمة مرور جديدة (اختياري)') : ui('كلمة المرور')}</Label>
-              <Input
-                id="user-password"
-                type="password"
-                className="mt-1.5"
-                autoComplete="new-password"
-                value={form.password}
-                placeholder={editId ? ui('اتركها فارغة للإبقاء عليها') : ''}
-                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-              />
+              <Label htmlFor="new-user-password">{ui('كلمة المرور')}</Label>
+              <Input id="new-user-password" type="password" className="mt-1.5" autoComplete="new-password" maxLength={72} value={createForm.password}
+                onChange={(e) => setCreateForm((f) => ({ ...f, password: e.target.value }))} />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
-            <Button onClick={() => void save()} disabled={saving}>
-              {saving ? ui('جارٍ الحفظ…') : ui('حفظ')}
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>{ui('إلغاء')}</Button>
+            <Button onClick={() => void create()} disabled={creating}>
+              {creating ? ui('جارٍ الحفظ…') : ui('حفظ')}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-    </>
-  );
-}
-
-/** Like useEmployeeOptions but returns raw items so we can key by emp_code. */
-function useEmployeeOptionsFull() {
-  return useQuery({
-    queryKey: ['employees', 'user-options'],
-    queryFn: async () => {
-      return fetchAllReportRows<EmployeeListItem>('/employees', { status: 1 }, 200);
-    },
-    staleTime: 60_000,
-  });
-}
-
-function flattenIds(nodes: MenuNodeApi[]): string[] {
-  const out: string[] = [];
-  for (const n of nodes) {
-    out.push(String(n.id));
-    if (n.children?.length) out.push(...flattenIds(n.children));
-  }
-  return out;
-}
-
-function PermissionsDialog({ user, onClose }: { user: UserRow | null; onClose: () => void }) {
-  const { ui } = useLocale();
-  const userId = user?.user_id;
-  const { data, isLoading, isError, refetch } = useResourcePermissions(userId);
-  const [checked, setChecked] = useState<Set<string>>(new Set());
-  const [saving, setSaving] = useState(false);
-
-  useEffect(() => {
-    if (data?.permissions) setChecked(new Set(data.permissions));
-  }, [data?.permissions]);
-
-  const tree = data?.tree ?? [];
-
-  const toggle = (id: string, value: boolean) => {
-    setChecked((prev) => {
-      const next = new Set(prev);
-      if (value) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  };
-
-  const toggleBranch = (node: MenuNodeApi, value: boolean) => {
-    const ids = flattenIds([node]);
-    setChecked((prev) => {
-      const next = new Set(prev);
-      for (const id of ids) {
-        if (value) next.add(id);
-        else next.delete(id);
-      }
-      return next;
-    });
-  };
-
-  const save = async () => {
-    if (!userId) return;
-    setSaving(true);
-    try {
-      await api.put(`/users/${userId}/permissions`, { permissions: [...checked] });
-      toast.success(ui('تم حفظ الصلاحيات'));
-      onClose();
-    } catch (e) {
-      toast.error(apiError(e));
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Dialog open={!!user} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent size="lg">
-        <DialogHeader>
-          <DialogTitle>{ui('صلاحيات المستخدم')}</DialogTitle>
-          <DialogDescription>
-            {user?.name || user?.username || ui('المستخدم')} — {ui('تحديد الصفحات المسموح بها')} (
-            {toArabicDigits(checked.size)})
-          </DialogDescription>
-        </DialogHeader>
-        <div className="max-h-[60vh] overflow-y-auto ps-1">
-          {isLoading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 6 }).map((_, i) => (
-                <Skeleton key={i} className="h-8 w-full" />
-              ))}
+      <Dialog open={formOpen} onOpenChange={(open) => { if (!saving) setFormOpen(open); }}>
+        <DialogContent aria-describedby={undefined}>
+          <DialogHeader>
+            <DialogTitle>{ui('تعديل مستخدم')}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="user-username">{ui('اسم المستخدم')}</Label>
+              <Input id="user-username" className="mt-1.5" dir="ltr" autoComplete="off" maxLength={40} value={form.username}
+                onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))} />
             </div>
-          ) : isError ? (
-            <div className="py-8 text-center text-sm text-destructive">
-              {ui('تعذّر تحميل الصلاحيات.')}
-              <Button variant="outline" size="sm" className="me-3" onClick={() => void refetch()}>
-                {ui('إعادة المحاولة')}
+            <div>
+              <Label htmlFor="user-fullname">{ui('الاسم')}</Label>
+              <Input id="user-fullname" className="mt-1.5" maxLength={100} value={form.fullname}
+                onChange={(e) => setForm((f) => ({ ...f, fullname: e.target.value }))} />
+            </div>
+            <div>
+              <Label htmlFor="user-password">{ui('كلمة مرور جديدة (اختياري)')}</Label>
+              <Input id="user-password" type="password" className="mt-1.5" autoComplete="new-password" maxLength={72}
+                value={form.password} placeholder={ui('اتركها فارغة للإبقاء عليها')}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFormOpen(false)}>{ui('إلغاء')}</Button>
+            {canUpdate && (
+              <Button onClick={() => void save()} disabled={saving}>
+                {saving ? ui('جارٍ الحفظ…') : ui('حفظ')}
               </Button>
-            </div>
-          ) : tree.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">{ui('لا توجد صفحات في النظام.')}</p>
-          ) : (
-            <PermissionTree
-              nodes={tree}
-              checked={checked}
-              onToggle={toggle}
-              onToggleBranch={toggleBranch}
-            />
-          )}
-        </div>
-        <DialogFooter>
-          <Button variant="outline" onClick={onClose}>{ui('إلغاء')}</Button>
-          <Button onClick={() => void save()} disabled={saving || isLoading}>
-            {saving ? <Loader2 className="size-4 animate-spin" /> : <Save className="size-4" />}
-            {ui('حفظ الصلاحيات')}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function useResourcePermissions(userId?: number) {
-  return useQuery({
-    queryKey: ['users', userId, 'permissions'],
-    queryFn: async () => {
-      const { data } = await api.get<UserPermissions>(`/users/${userId}/permissions`);
-      return data;
-    },
-    enabled: userId != null,
-  });
-}
-
-function PermissionTree({
-  nodes,
-  checked,
-  onToggle,
-  onToggleBranch,
-  depth = 0,
-}: {
-  nodes: MenuNodeApi[];
-  checked: Set<string>;
-  onToggle: (id: string, value: boolean) => void;
-  onToggleBranch: (node: MenuNodeApi, value: boolean) => void;
-  depth?: number;
-}) {
-  return (
-    <ul className={depth > 0 ? 'me-4 mt-2 space-y-2 border-s border-border ps-4' : 'space-y-3'}>
-      {nodes.map((node) => {
-        const id = String(node.id);
-        const hasChildren = (node.children?.length ?? 0) > 0;
-        return (
-          <li key={id}>
-            <div className="flex items-center gap-2">
-              <Checkbox
-                id={`perm-${id}`}
-                checked={checked.has(id)}
-                onCheckedChange={(v) =>
-                  hasChildren ? onToggleBranch(node, v === true) : onToggle(id, v === true)
-                }
-              />
-              <Label htmlFor={`perm-${id}`} className={depth === 0 ? 'font-semibold' : 'font-normal'}>
-                {node.title}
-              </Label>
-            </div>
-            {hasChildren && (
-              <PermissionTree
-                nodes={node.children!}
-                checked={checked}
-                onToggle={onToggle}
-                onToggleBranch={onToggleBranch}
-                depth={depth + 1}
-              />
             )}
-          </li>
-        );
-      })}
-    </ul>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

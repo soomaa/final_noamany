@@ -5,6 +5,8 @@ import { ClubLockersPage } from './lockers';
 export { ClubLockerInventoryPage } from './locker-inventory';
 import { ClubSubscriptionRefundsPage } from './subscription-refunds';
 import { SpecialClassesPage } from './special-classes';
+import { ClubSubscriptionExpiryPage } from './subscription-expiry';
+export { ClubWhatsAppTemplatesPage } from './whatsapp-templates';
 
 export { ClubReceptionPage } from './reception';
 export { ClubReceptionQuickServicesPage } from './reception-quick-services';
@@ -58,10 +60,10 @@ export function ClubSubscriptionsReceiptsPage() {
   return <ClubSubscriptionsPage singleView="receipts" />;
 }
 export function ClubSubscriptionsExpiredPage() {
-  return <ClubSubscriptionsPage singleView="reports" reportFocus="expired" />;
+  return <ClubSubscriptionExpiryPage initialTab="expired" />;
 }
 export function ClubSubscriptionsExpiringPage() {
-  return <ClubSubscriptionsPage singleView="reports" reportFocus="expiring" />;
+  return <ClubSubscriptionExpiryPage initialTab="expiring" />;
 }
 export function ClubSubscriptionsOutstandingPage() {
   return <ClubSubscriptionsPage singleView="reports" reportFocus="outstanding" />;

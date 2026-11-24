@@ -31,6 +31,8 @@ import type { WarehouseOption } from '@/types/gym-sales';
 import type { InventoryTransactionRow, ProductListItem } from '@/types/inventory';
 import { useLocale } from '@/store/locale';
 import { indexColumn } from './simple-crud-tab';
+import { SearchableSelect } from '@/components/common/searchable-select';
+import { useCafeLocations } from '@/lib/cafe-locations';
 
 interface LineDraft {
   productId: string;
@@ -39,7 +41,8 @@ interface LineDraft {
   price: string;
 }
 
-const TXN_TYPE_LABELS: Record<string, string> = { transfer: 'تحويل / صرف للبار', issue: 'صرف استهلاك داخلي', damage: 'هالك' };
+const TXN_TYPE_LABELS: Record<string, string> = { transfer: 'تحويل', issue: 'صرف استهلاك داخلي', damage: 'هالك' };
+
 const STATUS_LABELS: Record<string, string> = { draft: 'بانتظار الاعتماد', approved: 'معتمد', rejected: 'مرفوض' };
 const formatTxnDate = (value?: string | null) => (value ? String(value).slice(0, 10) : '—');
 
@@ -89,6 +92,9 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
     },
   });
 
+  // The client's 7 locations (3 stores + 4 bars); any of them to any other.
+  const cafe = useCafeLocations();
+
   const { data: products } = useQuery({
     queryKey: ['products', 'transactions'],
     queryFn: async () => {
@@ -106,6 +112,15 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
   // Tracks the transaction id being approved/rejected so the row action can't be double-clicked.
   const [actingId, setActingId] = useState<number | null>(null);
   const [details, setDetails] = useState<InventoryTransactionRow | null>(null);
+  // Pickers offer only active stores/bars; names of stopped ones still resolve for old documents.
+  const activeWarehouses = useMemo(() => (warehouses ?? []).filter((w) => w.status !== 'inactive'), [warehouses]);
+  // From/to choices: the 7 café locations; every active warehouse only if no bar is set up yet.
+  const locationOptions = useMemo(
+    () => (cafe.ready ? cafe.all.map((l) => ({ id: l.id, label: l.name, branchId: l.branchId }))
+      : activeWarehouses.map((w) => ({ id: w.id, label: w.nameAr, branchId: w.branchId }))),
+    [cafe, activeWarehouses],
+  );
+  const sameLocation = form.txnType === 'transfer' && !!form.sourceWarehouseId && form.sourceWarehouseId === form.targetWarehouseId;
   const warehouseName = (id?: number | null) => (id == null ? '—' : warehouses?.find((w) => w.id === id)?.nameAr ?? `#${id}`);
   const branchName = (id?: number | null) => (id == null ? '—' : branches?.find((b) => b.id === id)?.name ?? `#${id}`);
 
@@ -287,11 +302,11 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
     }
     if (form.txnType === 'transfer') {
       if (!form.sourceWarehouseId || !form.targetWarehouseId) {
-        toast.error(ui('يجب اختيار مستودع المصدر والوجهة للتحويل'));
+        toast.error(ui('اختر «من» و«إلى» للتحويل'));
         return;
       }
       if (form.sourceWarehouseId === form.targetWarehouseId) {
-        toast.error(ui('مستودع المصدر والوجهة يجب أن يكونا مختلفين'));
+        toast.error(ui('خطأ: «من» و«إلى» نفس المكان. اختار مكانين مختلفين'));
         return;
       }
     }
@@ -337,7 +352,6 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
               ...TXN_EMPTY,
               txnDate: localToday(),
               branchId: String(branches?.[0]?.id ?? ''),
-              sourceWarehouseId: String(warehouses?.find((w)=>w.branchId===branches?.[0]?.id)?.id ?? ''),
             });
             setLines([{ productId: '', itemName: '', quantity: '1', price: '0' }]);
             setOpen(true);
@@ -449,21 +463,23 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
                 <Label>{ui('نوع الحركة')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.txnType}
-                  onChange={(e) => setForm((f) => ({ ...f, txnType: e.target.value }))}
+                  onChange={(e) => setForm((f) => ({ ...f, txnType: e.target.value, targetWarehouseId: e.target.value === 'transfer' ? f.targetWarehouseId : '' }))}
                 >
                   {(txnTypes ?? ['issue', 'damage', 'transfer']).map((t) => (
                     <option key={t} value={t}>
-                      {ui(({transfer: 'تحويل / صرف للبار', issue: 'صرف استهلاك داخلي', damage: 'هالك'} as Record<string,string>)[t] ?? t)}
+                      {ui(TXN_TYPE_LABELS[t] ?? t)}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
+              {/* With the café locations set up, the branch is the one the stock leaves (from «من»). */}
+              {!cafe.ready && (
               <div className="grid gap-1">
                 <Label>{ui('الفرع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.branchId}
                   onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value, sourceWarehouseId:'', targetWarehouseId:'' }))}
@@ -473,41 +489,49 @@ export function TransactionsTab({ drawingsOnly = false }: { drawingsOnly?: boole
                       {b.name}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
+              )}
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
                 <Label>{ui('من (مخزن / بار)')}</Label>
-                <select
+                <SearchableSelect
+                  searchable
+                  aria-label={ui('من (مخزن / بار)')}
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.sourceWarehouseId}
-                  onChange={(e) => setForm((f) => ({ ...f, sourceWarehouseId: e.target.value, branchId:String(warehouses?.find((w)=>w.id===Number(e.target.value))?.branchId ?? f.branchId) }))}
+                  onChange={(e) => setForm((f) => ({ ...f, sourceWarehouseId: e.target.value, branchId: String(locationOptions.find((l) => l.id === Number(e.target.value))?.branchId ?? f.branchId) }))}
                 >
-                  <option value="">{ui('—')}</option>
-                  {(warehouses ?? []).map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.nameAr} — {branchName(w.branchId)}
-                    </option>
+                  <option value="">{ui('اختر')}</option>
+                  {locationOptions.map((l) => (
+                    <option key={l.id} value={l.id}>{l.label}</option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
+              {form.txnType === 'transfer' && (
               <div className="grid gap-1">
-                <Label>{ui('إلى (مخزن / بار — أي فرع)')}</Label>
-                <select
-                  className="rounded-md border bg-background px-3 py-2 text-sm"
+                <Label>{ui('إلى (مخزن / بار)')}</Label>
+                <SearchableSelect
+                  searchable
+                  aria-label={ui('إلى (مخزن / بار)')}
+                  className={`rounded-md border bg-background px-3 py-2 text-sm ${sameLocation ? 'border-destructive' : ''}`}
                   value={form.targetWarehouseId}
                   onChange={(e) => setForm((f) => ({ ...f, targetWarehouseId: e.target.value }))}
                 >
-                  <option value="">{ui('—')}</option>
-                  {(warehouses ?? []).map((w) => (
-                    <option key={w.id} value={w.id}>
-                      {w.nameAr} — {branchName(w.branchId)}
-                    </option>
+                  <option value="">{ui('اختر')}</option>
+                  {locationOptions.map((l) => (
+                    <option key={l.id} value={l.id}>{l.label}</option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
+              )}
             </div>
+            {sameLocation && (
+              <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm font-medium text-destructive">
+                {ui('خطأ: «من» و«إلى» نفس المكان. اختار مكانين مختلفين')}
+              </p>
+            )}
 
             <div className="space-y-2">
               <Label>{ui('البنود')}</Label>

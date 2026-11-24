@@ -1,4 +1,4 @@
-import { Eraser, RotateCcw, Save, Search, ShieldCheck, UserCog } from 'lucide-react';
+import { BadgeDollarSign, Eraser, RotateCcw, Save, Search, ShieldCheck, UserCog } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { PageHeader } from '@/components/common/page-header';
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
 import {
   useCatalog,
   useClearExceptions,
@@ -17,14 +18,18 @@ import {
   useSaveExceptions,
   useOperationalScope,
   useSetOperationalScope,
+  useSalesToggle,
+  useSetSalesToggle,
   useSetSectionException,
   useUserExceptions,
 } from '@/hooks/use-rbac';
+import { usePermission } from '@/hooks/use-permission';
 import { confirm } from '@/lib/confirm';
 import { cellId } from '@/lib/rbac-resolve';
 import { diffDraft } from '@/lib/rbac-resolve';
 import type { Effect, TriState } from '@/types/rbac';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function UserExceptionsPage() {
   const { ui } = useLocale();
@@ -132,7 +137,7 @@ function PickUser({
   );
 }
 
-function EditExceptions({ userId,
+export function EditExceptions({ userId,
   onChangeUser,
   catalogLoading,
 }: {
@@ -208,6 +213,8 @@ function EditExceptions({ userId,
         </CardContent>
       </Card>
 
+      <SalesToggleCard userId={userId} />
+
       <Card>
         <CardContent className="space-y-3 p-4">
           <div>
@@ -220,9 +227,9 @@ function EditExceptions({ userId,
           </div>
           <div className="grid gap-2 sm:grid-cols-4">
             <Input type="number" min="1" value={branchId} onChange={(e) => setBranchId(e.target.value)} placeholder={ui('رقم الفرع')} />
-            <select className="h-9 rounded-md border border-input bg-background px-2 text-sm" value={section} onChange={(e) => setSection(e.target.value as 'female' | 'male')}>
+            <SearchableSelect className="h-9 rounded-md border border-input bg-background px-2 text-sm" value={section} onChange={(e) => setSection(e.target.value as 'female' | 'male')}>
               <option value="female">{ui('حريمي')}</option><option value="male">{ui('رجالي')}</option>
-            </select>
+            </SearchableSelect>
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={ui('سبب الاستثناء')} />
             <div className="flex gap-2">
               <Button size="sm" variant="outline" disabled={!branchId} onClick={() => setScope.mutate({ branchId: Number(branchId), section })}>{ui('تعيين القسم')}</Button>
@@ -289,4 +296,47 @@ function EditExceptions({ userId,
 function ar(n: number) {
   const { ui } = useLocale();
   return String(n).replace(/\d/g, (d) => ui('٠١٢٣٤٥٦٧٨٩')[Number(d)]);
+}
+
+/**
+ * «يعمل كأخصائي مبيعات (إدارة المبيعات)»: like MetaFit, any role — a head receptionist, a
+ * captain — can also sell. ON adds the sales role on top of the user's own role and lists them
+ * as a أخصائي مبيعات in the member and subscription screens.
+ */
+function SalesToggleCard({ userId }: { userId: number }) {
+  const { ui } = useLocale();
+  const { can } = usePermission();
+  const salesQ = useSalesToggle(userId);
+  const setSales = useSetSalesToggle(userId);
+  const data = salesQ.data;
+  const locked = data?.byJobTitle === true;
+  return (
+    <Card>
+      <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+        <div className="flex items-start gap-2">
+          <BadgeDollarSign className="mt-0.5 size-5 text-primary" />
+          <div>
+            <label htmlFor={`sales-toggle-${userId}`} className="text-sm font-semibold">
+              {ui('يعمل كأخصائي مبيعات (إدارة المبيعات)')}
+            </label>
+            <p className="text-xs text-muted-foreground">
+              {locked
+                ? ui('المسمى الوظيفي أخصائي مبيعات، فهو بيبيع دايمًا.')
+                : ui('شغّله لو المستخدم بيبيع كمان فوق شغله (زي رئيس الريسبشن). بياخد صلاحيات المبيعات ويظهر في قايمة أخصائي المبيعات.')}
+            </p>
+          </div>
+        </div>
+        {salesQ.isLoading ? (
+          <Skeleton className="h-6 w-11" />
+        ) : (
+          <Switch
+            id={`sales-toggle-${userId}`}
+            checked={data?.enabled ?? false}
+            disabled={locked || setSales.isPending || !can('admin.exceptions:manage')}
+            onCheckedChange={(checked) => setSales.mutate(checked)}
+          />
+        )}
+      </CardContent>
+    </Card>
+  );
 }

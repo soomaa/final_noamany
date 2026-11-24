@@ -15,6 +15,7 @@ import { toArabicDigits } from '@/lib/utils';
 import type { ClubTrainerRow } from '@/types/fitness';
 import { SELECT_CLS } from '../shared';
 import { cairoToday, useClientTable } from './trainer-shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface EarningPaymentRow {
   id: number;
@@ -103,10 +104,10 @@ export function FitnessTrainerPaymentsPage() {
         <div className="grid gap-4">
           <div className="grid gap-2">
             <Label>المدرب *</Label>
-            <select className={SELECT_CLS} value={form.trainerId} onChange={(event) => setForm((current) => ({ ...current, trainerId: event.target.value, amount: '' }))}>
+            <SearchableSelect className={SELECT_CLS} value={form.trainerId} onChange={(event) => setForm((current) => ({ ...current, trainerId: event.target.value, amount: '' }))}>
               <option value="">اختر</option>
               {(trainers ?? []).map((trainer) => <option key={trainer.id} value={trainer.id}>{trainer.name}{trainer.isActive ? '' : ' (غير نشط)'}</option>)}
-            </select>
+            </SearchableSelect>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-2"><Label>من *</Label><Input type="date" className="nums" value={form.periodFrom} onChange={(event) => setForm((current) => ({ ...current, periodFrom: event.target.value, amount: '' }))} /></div>

@@ -8,6 +8,28 @@ import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import type { ClubMemberListItem, ClubMemberOverview } from '@/types/club';
 
+/**
+ * Members imported from the old system carry the import's bookkeeping as JSON in `notes`
+ * ({"legacy_table": "tbl_members", "legacy_id": …}). That is not a note for reception: hide it
+ * and keep only real text.
+ */
+export function memberNotesText(notes: string | null | undefined): string | null {
+  const text = notes?.trim();
+  if (!text) return null;
+  if (text.startsWith('{') && text.includes('legacy_')) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (parsed && typeof parsed === 'object' && ('legacy_table' in parsed || 'legacy_id' in parsed)) {
+        const note = (parsed as Record<string, unknown>).notes;
+        return typeof note === 'string' && note.trim() ? note.trim() : null;
+      }
+    } catch {
+      return text;
+    }
+  }
+  return text;
+}
+
 export function ReceptionMemberProfile({ member, overview, branches, section, activeSubscriptions }: {
   member: ClubMemberListItem;
   overview?: ClubMemberOverview;
@@ -60,7 +82,7 @@ export function ReceptionMemberProfile({ member, overview, branches, section, ac
       ['تاريخ التسجيل', member.createdAt ? formatDateTime(member.createdAt) : null],
       ['آخر تحديث', member.updatedAt ? formatDateTime(member.updatedAt) : null],
       ['آخر حضور', overview?.member.lastCheckIn ? formatDateTime(overview.member.lastCheckIn) : null],
-      ['الملاحظات', member.notes],
+      ['الملاحظات', memberNotesText(member.notes)],
     ] as const;
     return <section className="space-y-4 rounded-2xl border bg-muted/15 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-bold">{ui('بيانات العضو')}</h3><StatusBadge status={member.isActive && !member.isBlocked ? 'active' : 'suspended'} /></div>

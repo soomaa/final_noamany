@@ -32,6 +32,7 @@ import { localToday, formatMoneyNumber } from "@/lib/formatters";
 import { toArabicDigits } from "@/lib/utils";
 import { useLocale } from "@/store/locale";
 import { GymSalesPageShell } from "../gym-sales/shell";
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface PreviewSale {
   id: number;
@@ -397,7 +398,7 @@ export function SalesSettlementsPage() {
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <Label>{ui("دورة التجميع")}</Label>
-                <select
+                <SearchableSelect
                   className="mt-1 h-10 w-full rounded-md border bg-background px-3"
                   value={billingCycle}
                   onChange={(event) =>
@@ -406,11 +407,11 @@ export function SalesSettlementsPage() {
                 >
                   <option value="daily">{ui("يومي")}</option>
                   <option value="monthly">{ui("شهري")}</option>
-                </select>
+                </SearchableSelect>
               </div>
               <div>
                 <Label>{ui("الفرع")}</Label>
-                <select
+                <SearchableSelect
                   className="mt-1 h-10 w-full rounded-md border bg-background px-3"
                   value={branchId}
                   onChange={(event) => setBranchId(event.target.value)}
@@ -421,7 +422,7 @@ export function SalesSettlementsPage() {
                       {branch.name}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-2">
@@ -793,7 +794,7 @@ export function SalesSettlementsPage() {
           <div className="space-y-3">
             <div>
               <Label>{ui("طريقة التسوية")}</Label>
-              <select
+              <SearchableSelect
                 className="mt-1 h-10 w-full rounded-md border bg-background px-3"
                 value={settlementMethod}
                 onChange={(event) =>
@@ -812,12 +813,12 @@ export function SalesSettlementsPage() {
                     {ui("خصم من نسبة أرباح الشريك")}
                   </option>
                 )}
-              </select>
+              </SearchableSelect>
             </div>
             {settlementMethod === "direct_payment" ? (
               <div>
                 <Label>{ui("وسيلة الدفع")}</Label>
-                <select
+                <SearchableSelect
                   className="mt-1 h-10 w-full rounded-md border bg-background px-3"
                   value={paymentMethod}
                   onChange={(event) =>
@@ -830,7 +831,7 @@ export function SalesSettlementsPage() {
                   <option value="transfer">
                     {ui("حساب بنكي / إنستا باي")}
                   </option>
-                </select>
+                </SearchableSelect>
               </div>
             ) : null}
           </div>

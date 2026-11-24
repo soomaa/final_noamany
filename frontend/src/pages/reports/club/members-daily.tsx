@@ -6,6 +6,7 @@ import { ClubStatCard } from '@/components/club/stat-card';
 import { ReportShell, downloadCsv } from '@/components/reports/report-shell';
 import { DateRangeFilter, firstOfMonth, todayLocal } from '@/components/reports/date-range-filter';
 import { BranchFilter, normalizeBranchParam } from '@/components/reports/branch-filter';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 import { fetchAllReportRows } from '@/lib/report-fetch';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
@@ -29,15 +30,17 @@ export function ClubMembersReportPage() {
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
   const [branch, setBranch] = useState('all');
+  const g = useMemberGenderFilter();
 
   const { data, isLoading, isError, refetch } = useQuery({
-    queryKey: ['reports', 'club-members-daily', startDate, endDate, branch],
+    queryKey: ['reports', 'club-members-daily', startDate, endDate, branch, g.value],
     queryFn: async () => {
       const branchId = normalizeBranchParam(branch);
       const data = await fetchAllReportRows<MemberRow>('/club-members', {
         createdFrom: startDate,
         createdTo: endDate,
         ...(branchId ? { branch: String(branchId) } : {}),
+        ...(g.param ? { gender: g.param } : {}),
       });
       return { data, total: data.length };
     },
@@ -92,7 +95,12 @@ export function ClubMembersReportPage() {
           endDate={endDate}
           onStartChange={setStartDate}
           onEndChange={setEndDate}
-          extra={<BranchFilter value={branch} onChange={setBranch} />}
+          extra={
+            <>
+              <BranchFilter value={branch} onChange={setBranch} />
+              <MemberGenderSelect value={g.value} onChange={g.setValue} locked={g.locked} />
+            </>
+          }
         />
       }
       stats={

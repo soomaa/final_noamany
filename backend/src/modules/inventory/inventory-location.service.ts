@@ -116,6 +116,55 @@ export class InventoryLocationService {
     return internal.id;
   }
 
+  /**
+   * Every branch whose bar is set in POS settings, with the store that feeds it (null when the
+   * branch has no valid store setting). Used by the صرف للبار form, which picks only the bar.
+   */
+  async barRoutes(): Promise<BarRoute[]> {
+    const settings = await this.prisma.sales_pos_settings.findMany({
+      where: {
+        category: SALE_WAREHOUSE_SETTING.category,
+        setting_key: { in: [SALE_WAREHOUSE_SETTING.key, STORE_WAREHOUSE_SETTING.key] },
+        branch_id: { not: null },
+        is_active: true,
+      },
+      select: { branch_id: true, setting_key: true, setting_value: true },
+    });
+    const byBranch = new Map<number, { bar?: number; store?: number }>();
+    for (const row of settings) {
+      const id = Number(row.setting_value?.replace(/"/g, ''));
+      if (!Number.isInteger(id) || id <= 0 || row.branch_id == null) continue;
+      const entry = byBranch.get(row.branch_id) ?? {};
+      if (row.setting_key === SALE_WAREHOUSE_SETTING.key) entry.bar = id;
+      else entry.store = id;
+      byBranch.set(row.branch_id, entry);
+    }
+    const ids = [...byBranch.values()].flatMap((e) => [e.bar, e.store]).filter((id): id is number => !!id);
+    const warehouses = ids.length
+      ? await this.prisma.inv_warehouses.findMany({
+          where: { id: { in: ids }, status: 'active', ...notDeletedFilter() },
+          select: { id: true, name_ar: true, branch_id: true },
+        })
+      : [];
+    const byId = new Map(warehouses.map((w) => [w.id, w]));
+    const routes: BarRoute[] = [];
+    for (const [branchId, entry] of byBranch) {
+      const bar = entry.bar ? byId.get(entry.bar) : undefined;
+      // Same rule as configuredSaleWarehouse: the bar must be the branch's own warehouse.
+      if (!bar || bar.branch_id !== branchId) continue;
+      const store = entry.store && entry.store !== bar.id ? byId.get(entry.store) : undefined;
+      routes.push({
+        branchId,
+        barWarehouseId: bar.id,
+        barName: bar.name_ar,
+        storeWarehouseId: store?.id ?? null,
+        storeName: store?.name_ar ?? null,
+        storeBranchId: store?.branch_id ?? null,
+      });
+    }
+    return routes.sort((a, b) => a.branchId - b.branchId);
+  }
+
   /** The branch's `sale_warehouse_id` POS setting, when it names an active warehouse of that branch. */
   private async configuredSaleWarehouse(db: Prisma.TransactionClient | PrismaService, branchId: number): Promise<number | null> {
     const setting = await db.sales_pos_settings.findFirst({
@@ -134,3 +183,20 @@ export class InventoryLocationService {
 
 /** Where each branch's sale warehouse (its bar) is stored in sales_pos_settings. */
 export const SALE_WAREHOUSE_SETTING = { category: 'stock', key: 'sale_warehouse_id' } as const;
+
+/**
+ * Where each branch's supply store is stored in sales_pos_settings: the warehouse a صرف order to
+ * that branch's bar comes out of. It may belong to another branch (طنطا up and طنطا down are fed
+ * by the Tanta store).
+ */
+export const STORE_WAREHOUSE_SETTING = { category: 'stock', key: 'store_warehouse_id' } as const;
+
+/** One branch's issue route: its bar (sale warehouse) and the store that feeds it. */
+export interface BarRoute {
+  branchId: number;
+  barWarehouseId: number;
+  barName: string;
+  storeWarehouseId: number | null;
+  storeName: string | null;
+  storeBranchId: number | null;
+}

@@ -17,6 +17,7 @@ import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
 import type { ClubEquipmentRow, ClubFacilityRow } from '@/types/fitness';
 import { RowActions, SELECT_CLS, useFitnessResourceList } from '../shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function FitnessEquipmentPage() {
   const ft = useFitnessT();
@@ -175,20 +176,20 @@ export function FitnessEquipmentPage() {
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.branch')}</Label>
-              <select className={SELECT_CLS} value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}>
                 {branchOptions.map((b) => (
                   <option key={b.value} value={b.value}>{b.label}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ft('facilities.title')}</Label>
-              <select className={SELECT_CLS} value={form.facilityId} onChange={(e) => setForm((f) => ({ ...f, facilityId: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={form.facilityId} onChange={(e) => setForm((f) => ({ ...f, facilityId: e.target.value }))}>
                 <option value="">—</option>
                 {(facilities ?? []).map((f) => (
                   <option key={f.id} value={f.id}>{f.name}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
           </div>
           <DialogFooter>

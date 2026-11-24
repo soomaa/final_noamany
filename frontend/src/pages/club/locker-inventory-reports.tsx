@@ -15,6 +15,8 @@ import { MoreHorizontal, Eye, Trash2, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 import { LockerInventoryReportDetailsDialog, type Report } from './locker-inventory';
+import { SearchableSelect } from '@/components/common/searchable-select';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 
 const STATUS_MAP: Record<string, string> = { pending_review: 'قيد المراجعة', approved: 'تمت الموافقة', rejected: 'مرفوض' };
 const STATUS_COLORS: Record<string, string> = { approved: 'bg-green-100 text-green-700', rejected: 'bg-red-100 text-red-700', pending_review: 'bg-yellow-100 text-yellow-700' };
@@ -24,14 +26,16 @@ export function ClubLockerInventoryReportsPage() {
   const [branchId, setBranchId] = useState('');
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
+  const g = useMemberGenderFilter();
 
   const { data: reports = [], refetch: refetchReports } = useQuery({
-    queryKey: ['locker-inventory-reports', branchId, fromDate, toDate],
+    queryKey: ['locker-inventory-reports', branchId, fromDate, toDate, g.value],
     queryFn: async () => {
       const params: Record<string, string> = {};
       if (branchId) params.branchId = branchId;
       if (fromDate) params.fromDate = fromDate;
       if (toDate) params.toDate = toDate;
+      if (g.param) params.gender = g.param;
       return (await api.get<Report[]>('/club-lockers/inventory-reports', { params })).data;
     },
   });
@@ -60,10 +64,10 @@ export function ClubLockerInventoryReportsPage() {
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex-1 min-w-[180px]">
             <Label>الفرع</Label>
-            <select className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+            <SearchableSelect className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={branchId} onChange={(e) => setBranchId(e.target.value)}>
               <option value="">كل الفروع</option>
               {branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
+            </SearchableSelect>
           </div>
 
           <div className="flex-1 min-w-[180px]">
@@ -75,6 +79,8 @@ export function ClubLockerInventoryReportsPage() {
             <Label>إلى تاريخ</Label>
             <Input type="date" value={toDate} onChange={(e) => setToDate(e.target.value)} className="mt-2 h-10" />
           </div>
+
+          <MemberGenderSelect value={g.value} onChange={g.setValue} locked={g.locked} className="flex-1" />
 
           {hasFilters && (
             <Button variant="ghost" size="icon" onClick={() => { setBranchId(''); setFromDate(''); setToDate(''); }} className="self-end">

@@ -67,12 +67,17 @@ export class ClubDiscountCodesController {
   }
 
   @Get('member-grants')
-  memberGrants(@CurrentUser() user: JwtUser, @Query('memberId') memberId?: string, @Query('period') period?: string) {
+  memberGrants(
+    @CurrentUser() user: JwtUser,
+    @Query('memberId') memberId?: string,
+    @Query('period') period?: string,
+    @Query('gender') gender?: string,
+  ) {
     const id = memberId == null || memberId === '' ? undefined : Number(memberId);
     if (id !== undefined && (!Number.isInteger(id) || id < 1)) {
       throw new BadRequestException('رقم العضو غير صالح');
     }
-    return this.service.memberGrants(id, user, { currentMonth: period === 'current' });
+    return this.service.memberGrants(id, user, { currentMonth: period === 'current', gender });
   }
 
   @Delete('member-grants/:id')
@@ -81,20 +86,26 @@ export class ClubDiscountCodesController {
   }
 
   @Get('member-grants/search')
-  memberGrantsByMemberCode(@CurrentUser() user: JwtUser, @Query('memberCode') memberCode?: string) {
+  memberGrantsByMemberCode(@CurrentUser() user: JwtUser, @Query('memberCode') memberCode?: string, @Query('gender') gender?: string) {
     if (!memberCode?.trim()) throw new BadRequestException('كود العضوية مطلوب');
-    return this.service.memberGrantsByMemberCode(memberCode, user);
+    return this.service.memberGrantsByMemberCode(memberCode, user, gender);
   }
 
   @Get('member-grants/member-lookup')
-  findMemberForGrant(@CurrentUser() user: JwtUser, @Query('term') term?: string) {
-    return this.service.findMemberForDiscountGrant(term ?? '', user);
+  findMemberForGrant(@CurrentUser() user: JwtUser, @Query('term') term?: string, @Query('gender') gender?: string) {
+    return this.service.findMemberForDiscountGrant(term ?? '', user, gender);
   }
 
   @Get('reports/usage')
-  usageReport(@CurrentUser() user: JwtUser, @Query('fromDate') fromDate?: string, @Query('toDate') toDate?: string, @Query('memberCode') memberCode?: string) {
+  usageReport(
+    @CurrentUser() user: JwtUser,
+    @Query('fromDate') fromDate?: string,
+    @Query('toDate') toDate?: string,
+    @Query('memberCode') memberCode?: string,
+    @Query('gender') gender?: string,
+  ) {
     if (!fromDate || !toDate) throw new BadRequestException('يجب تحديد تاريخ البداية والنهاية');
-    return this.service.usageReport({ fromDate, toDate, memberCode }, user);
+    return this.service.usageReport({ fromDate, toDate, memberCode, gender }, user);
   }
 
   @Post()

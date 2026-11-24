@@ -11,6 +11,7 @@ import { fetchAllReportRows } from '@/lib/report-fetch';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import type { ClubSubscriptionListItem } from '@/types/club';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 
 /**
  * تقرير الاشتراكات خلال فترة. Filters by subscription_start_date via startDateFrom/startDateTo.
@@ -20,7 +21,8 @@ export function ClubSubscriptionsReportPage() {
   const [startDate, setStartDate] = useState(firstOfMonth);
   const [endDate, setEndDate] = useState(todayLocal);
   const [branch, setBranch] = useState('all');
-  const [gender, setGender] = useState('all');
+  const g = useMemberGenderFilter();
+  const gender = g.value;
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['reports', 'club-subs-daily', startDate, endDate, branch, gender],
@@ -98,7 +100,7 @@ export function ClubSubscriptionsReportPage() {
           endDate={endDate}
           onStartChange={setStartDate}
           onEndChange={setEndDate}
-          extra={<><BranchFilter value={branch} onChange={setBranch} /><select aria-label={ui('الفئة')} value={gender} onChange={(event) => setGender(event.target.value)} className="h-9 rounded-md border bg-background px-2 text-sm"><option value="all">{ui('الكل')}</option><option value="male">{ui('رجالي')}</option><option value="female">{ui('حريمي')}</option></select></>}
+          extra={<><BranchFilter value={branch} onChange={setBranch} /><MemberGenderSelect hideLabel value={g.value} onChange={g.setValue} locked={g.locked} /></>}
         />
       }
       stats={

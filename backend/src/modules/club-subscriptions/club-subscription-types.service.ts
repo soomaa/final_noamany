@@ -4,6 +4,8 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { isSystemAdmin } from '../../common/utils/system-admin.util';
+import { localDateString } from '../club-members/club-member.utils';
+import { isOfferLive, offerColumns, promoBonusLabel, promoBonusUnits, toPromoKind } from './package-offer';
 import {
   buildDefaultSessionPriceMatrix,
   toNum,
@@ -37,8 +39,14 @@ type TypeRow = {
   allow_multiple_daily_entries: boolean;
   is_linked_to_freeze: boolean;
   freeze_days: number | null;
+  freeze_total_days: number | null;
   includes_spa: boolean;
   spa_count: number | null;
+  promo_enabled: boolean;
+  promo_kind: string | null;
+  promo_price: unknown;
+  promo_bonus: number | null;
+  promo_ends_on: string | null;
   is_active: boolean;
   branches?: { branch_id: number }[];
   class_types?: {
@@ -47,6 +55,14 @@ type TypeRow = {
   }[];
   session_prices?: SessionPriceRow[];
 };
+
+/** A blank-or-whole-number field: '' / null = unlimited (null), otherwise an integer ≥ 1. */
+function optionalCount(value: unknown, label: string): number | null {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) throw new BadRequestException(`${label} يجب أن يكون رقمًا صحيحًا أكبر من صفر أو يُترك فارغًا`);
+  return n;
+}
 
 @Injectable()
 export class ClubSubscriptionTypesService {
@@ -106,8 +122,16 @@ export class ClubSubscriptionTypesService {
       allowMultipleDailyEntries: r.allow_multiple_daily_entries,
       isLinkedToFreeze: r.is_linked_to_freeze,
       freezeDays: r.freeze_days,
+      freezeTotalDays: r.freeze_total_days,
       includesSpa: r.includes_spa,
       spaCount: r.spa_count,
+      promoEnabled: r.promo_enabled,
+      promoKind: toPromoKind(r.promo_kind),
+      promoPrice: r.promo_price != null ? toNum(r.promo_price) : null,
+      promoBonus: r.promo_bonus,
+      promoEndsOn: r.promo_ends_on,
+      promoLive: isOfferLive(r, localDateString()),
+      promoLabel: promoBonusLabel(promoBonusUnits(r.promo_kind, r.promo_bonus), r.is_linked_to_sessions) || null,
       isActive: r.is_active,
       classTypeIds: r.class_types?.map((x) => x.class_type_id) ?? [],
       classTypes: r.class_types?.map((x) => x.class_type) ?? [],
@@ -262,7 +286,6 @@ export class ClubSubscriptionTypesService {
       ...(body.inbodyCount !== undefined
         ? { inbody_count: inbodyCount }
         : {}),
-      is_special_offer: false,
       ...(body.isForStudents !== undefined ? { is_for_students: Boolean(body.isForStudents) } : {}),
       ...(body.showInApp !== undefined ? { show_in_app: Boolean(body.showInApp) } : {}),
       ...(body.notifyCustomers !== undefined ? { notify_customers: Boolean(body.notifyCustomers) } : {}),
@@ -278,7 +301,10 @@ export class ClubSubscriptionTypesService {
         : {}),
       ...(body.isLinkedToFreeze !== undefined ? { is_linked_to_freeze: Boolean(body.isLinkedToFreeze) } : {}),
       ...(body.freezeDays !== undefined
-        ? { freeze_days: body.freezeDays != null && body.freezeDays !== '' ? Number(body.freezeDays) : null }
+        ? { freeze_days: optionalCount(body.freezeDays, 'عدد مرات التجميد') }
+        : {}),
+      ...(body.freezeTotalDays !== undefined
+        ? { freeze_total_days: optionalCount(body.freezeTotalDays, 'إجمالي أيام التجميد') }
         : {}),
       ...(body.includesSpa !== undefined ? { includes_spa: Boolean(body.includesSpa) } : {}),
       ...(body.spaCount !== undefined
@@ -359,7 +385,6 @@ export class ClubSubscriptionTypesService {
         invitations_count:
           body.invitationsCount != null && body.invitationsCount !== '' ? Number(body.invitationsCount) : null,
         inbody_count: body.inbodyCount != null && body.inbodyCount !== '' ? Number(body.inbodyCount) : null,
-        is_special_offer: false,
         is_for_students: Boolean(body.isForStudents),
         show_in_app: Boolean(body.showInApp),
         notify_customers: Boolean(body.notifyCustomers),
@@ -370,10 +395,12 @@ export class ClubSubscriptionTypesService {
         sessions_count: isLinked ? sessionsCount : null,
         allow_multiple_daily_entries: Boolean(body.allowMultipleDailyEntries),
         is_linked_to_freeze: Boolean(body.isLinkedToFreeze),
-        freeze_days: body.freezeDays != null && body.freezeDays !== '' ? Number(body.freezeDays) : null,
+        freeze_days: optionalCount(body.freezeDays, 'عدد مرات التجميد'),
+        freeze_total_days: optionalCount(body.freezeTotalDays, 'إجمالي أيام التجميد'),
         includes_spa: Boolean(body.includesSpa),
         spa_count: body.spaCount != null && body.spaCount !== '' ? Number(body.spaCount) : null,
         is_active: body.isActive !== false,
+        ...(offerColumns(body, packagePrice, isLinked, localDateString()) ?? {}),
       },
     });
 
@@ -401,9 +428,15 @@ export class ClubSubscriptionTypesService {
       throw new BadRequestException('لا يمكن ترك الخطة بدون فرع');
     }
     this.assertBranchSelectionAccess(user, branchSelection, body.branchId);
+    const offer = offerColumns(
+      body,
+      body.price !== undefined ? Number(body.price) : existing.price,
+      body.isLinkedToSessions !== undefined ? Boolean(body.isLinkedToSessions) : existing.isLinkedToSessions,
+      localDateString(),
+    );
     await this.prisma.club_subscription_types.update({
       where: { id },
-      data: { ...data, is_special_offer: false },
+      data: { ...data, ...(offer ?? {}) },
     });
 
     if (branchSelection) {

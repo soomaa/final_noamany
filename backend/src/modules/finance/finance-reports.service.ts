@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException } from "@nestjs/common";
+import { clampManagerDays } from '../../common/utils/manager-scope.util';
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { BranchScopeService } from "../../common/branch-scope/branch-scope.service";
@@ -202,7 +203,18 @@ export class FinanceReportsService {
     };
   }
 
+  /** Branch manager / section supervisor: the current and the previous month (client sheet, 22 Nov). */
+  private managerWindow(q: { dateFrom?: string; dateTo?: string; startDate?: string; endDate?: string }, user?: JwtUser) {
+    const r = clampManagerDays(user, 'twoMonths', q.dateFrom ?? q.startDate, q.dateTo ?? q.endDate);
+    if (!r.clamped) return;
+    q.dateFrom = r.from;
+    q.dateTo = r.to;
+    q.startDate = r.from;
+    q.endDate = r.to;
+  }
+
   async expenseReports(q: ExpenseReportsQueryDto, user?: JwtUser) {
+    this.managerWindow(q, user);
     const activity = await this.accountingReports.profitLossActivity(
       this.accountingRange(q),
       user,
@@ -476,6 +488,7 @@ export class FinanceReportsService {
   }
 
   async analysis(q: FinanceAnalysisQueryDto, user?: JwtUser) {
+    this.managerWindow(q, user);
     const { dateFrom, dateTo } = this.resolveDateRange(q);
 
     let prevFrom: string | undefined;
@@ -595,6 +608,7 @@ export class FinanceReportsService {
    * same inventory product, matching the old `one_price_buy ... ORDER BY id DESC`.
    */
   async monthlyAnalysis(q: FinanceAnalysisQueryDto, user?: JwtUser) {
+    this.managerWindow(q, user);
     const { dateFrom, dateTo } = this.resolveDateRange(q);
     const requestedBranch = Number(q.branchId);
     const scopedBranches = this.branchScope.resolveListFilter(user, q.branchId ?? null);

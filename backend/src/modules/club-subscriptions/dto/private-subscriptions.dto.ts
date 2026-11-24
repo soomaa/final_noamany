@@ -146,4 +146,9 @@ export class ListPrivateEnrollmentsDto extends PaginationDto {
   @IsOptional()
   @IsIn(['active', 'expired', 'upcoming', 'frozen', 'all'])
   status?: string;
+
+  /** رجالي/حريمي/الكل: the members' section (one-section staff are locked to theirs). */
+  @IsOptional()
+  @IsIn(['all', 'male', 'female'])
+  gender?: string;
 }

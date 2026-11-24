@@ -23,6 +23,7 @@ import { uiStatic } from '@/lib/ui-static';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface LoanRow {
   id: number;
@@ -364,7 +365,7 @@ export function LoansPage() {
               <Input type="number" min="1" className="nums" value={createForm.amount} onChange={(event) => setCreateForm((form) => ({ ...form, amount: event.target.value }))} />
             </FormField>
             <FormField className="md:col-span-4" label={ui('طريقة سداد السلفة')}>
-              <select
+              <SearchableSelect
                 className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                 value={createForm.repaymentMethod}
                 onChange={(event) => changeRepaymentMethod(event.target.value)}
@@ -373,7 +374,7 @@ export function LoansPage() {
                 <option value="1">{ui(REPAYMENT_METHODS[1])}</option>
                 <option value="2">{ui(REPAYMENT_METHODS[2])}</option>
                 <option value="3">{ui(REPAYMENT_METHODS[3])}</option>
-              </select>
+              </SearchableSelect>
             </FormField>
             <FormField className="md:col-span-2" label={ui('عدد الأقساط')}>
               <Input

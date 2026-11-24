@@ -4,6 +4,7 @@ import { ClubLockersService } from './club-lockers.service';
 
 const receptionist = { sub: 10, level: 2, branch: 3, job_title: 'موظف استقبال', man_women_type: 1 };
 const query = { page: 1, pageSize: 20, skip: 0, take: 20 };
+const maleSection = { OR: [{ gender: 'male' }, { gender: null, member: { is: { gender: 'male' } } }] };
 
 function setup() {
   const subscriptions = { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) };
@@ -18,12 +19,23 @@ describe('reception locker subscription list', () => {
   beforeEach(() => { jest.useFakeTimers(); jest.setSystemTime(new Date('2026-10-13T08:00:00Z')); });
   afterEach(() => jest.useRealTimers());
 
-  it('limits rows and totals to registrations today within the branch and section', async () => {
+  it('limits rows and totals to registrations today within the branch (no implicit section)', async () => {
     const { service, subscriptions } = setup();
     await service.listSubscriptions(query as never, receptionist as never);
     const where = { AND: [
       { created_at: { gte: new Date('2026-10-12T21:00:00Z'), lt: new Date('2026-10-13T21:00:00Z') } },
-      { main_branch_id: { in: [3] } }, { gender: 'male' },
+      { main_branch_id: { in: [3] } },
+    ] };
+    expect(subscriptions.findMany).toHaveBeenCalledWith(expect.objectContaining({ where, skip: 0, take: 20 }));
+    expect(subscriptions.count).toHaveBeenCalledWith({ where });
+  });
+
+  it('adds the section only when the receptionist picks one', async () => {
+    const { service, subscriptions } = setup();
+    await service.listSubscriptions({ ...query, gender: 'male' } as never, receptionist as never);
+    const where = { AND: [
+      { created_at: { gte: new Date('2026-10-12T21:00:00Z'), lt: new Date('2026-10-13T21:00:00Z') } },
+      { main_branch_id: { in: [3] } }, maleSection,
     ] };
     expect(subscriptions.findMany).toHaveBeenCalledWith(expect.objectContaining({ where, skip: 0, take: 20 }));
     expect(subscriptions.count).toHaveBeenCalledWith({ where });
@@ -36,9 +48,10 @@ describe('reception locker subscription list', () => {
     const where = subscriptions.findMany.mock.calls[0][0].where;
     expect(where.AND).toEqual(expect.arrayContaining([
       { created_at: cairoDayRange() }, { member_id: 42 },
-      { main_branch_id: { in: [3] } }, { gender: 'male' },
+      { main_branch_id: { in: [3] } },
       { subscription_start_date: { gte: '2000-01-01', lte: '2099-12-31' } },
     ]));
+    expect(JSON.stringify(where)).not.toContain('gender');
     expect(where.AND.some((condition: object) => 'OR' in condition)).toBe(true);
     expect(subscriptions.count).toHaveBeenCalledWith({ where });
   });

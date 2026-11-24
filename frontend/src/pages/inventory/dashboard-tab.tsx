@@ -23,6 +23,7 @@ import type { InventoryDashboardSummary } from '@/types/inventory';
 import { useBranches } from '@/hooks/use-branches';
 import { useListQuery } from '@/lib/use-list-query';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function DashboardTab() {
   const { ui } = useLocale();
@@ -44,7 +45,7 @@ export function DashboardTab() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <label className="text-sm font-medium">{ui('الفرع')}</label>
-        <select
+        <SearchableSelect
           className="rounded-md border bg-background px-3 py-2 text-sm"
           value={branchId}
           onChange={(e) => setParams({ filters: { branchId: e.target.value } })}
@@ -55,7 +56,7 @@ export function DashboardTab() {
               {b.name}
             </option>
           ))}
-        </select>
+        </SearchableSelect>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

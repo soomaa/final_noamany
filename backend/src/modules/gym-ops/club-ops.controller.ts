@@ -13,6 +13,7 @@ import {
   UseGuards,
   Body,
 } from "@nestjs/common";
+import { managerKind } from "../../common/utils/manager-scope.util";
 import type { Response } from "express";
 import { JwtAuthGuard } from "../../common/guards/jwt-auth.guard";
 import { RequiresPermission } from "../../common/decorators/requires-permission.decorator";
@@ -80,7 +81,8 @@ export class ClubOpsController {
   )
   async branchOptions(@CurrentUser() user: JwtUser) {
     const branches = await this.branchesService.findAll();
-    if (isSystemAdmin(user)) return branches;
+    // مشرف إدارة حريمي / رجالي: every branch, with the branch filter open (client sheet, 22 Nov).
+    if (isSystemAdmin(user) || managerKind(user) === 'section') return branches;
     const ownBranch = Number(user.branch ?? 0);
     return ownBranch
       ? branches.filter((branch) => branch.id === ownBranch)
@@ -94,6 +96,7 @@ export class ClubOpsController {
     @Query("branchId") branchId?: string,
     @Query("withEntitlement") withEntitlement?: string,
     @CurrentUser() user?: JwtUser,
+    @Query("gender") genderParam?: string,
   ) {
     const bid = branchId && branchId !== "all" ? Number(branchId) : undefined;
     let scopedBranchIds = this.receptionBranchIds(user, bid);
@@ -101,7 +104,8 @@ export class ClubOpsController {
       const siblings = await this.branchGroups.siblingBranchIds(Number(user.branch));
       scopedBranchIds = [...new Set([...scopedBranchIds, ...siblings.map(canonicalClubMemberBranchId)])];
     }
-    const gender = this.branchScope.memberGenderFilter(user);
+    // رجالي/حريمي/الكل: one-section staff are locked to their section (403 for the other one).
+    const gender = this.branchScope.resolveMemberGenderRequest(user, genderParam);
     if (withEntitlement === "true" || withEntitlement === "1") {
       return this.search.searchWithEntitlement(q ?? "", scopedBranchIds, gender);
     }
@@ -114,12 +118,16 @@ export class ClubOpsController {
     @Query("limit") limit?: string,
     @Query("branchId") branchId?: string,
     @CurrentUser() user?: JwtUser,
+    @Query("gender") genderParam?: string,
   ) {
     const bid = branchId && branchId !== "all" ? Number(branchId) : undefined;
     const scopedBranchIds = this.receptionBranchIds(user, bid);
+    // Recent check-ins list members: same رجالي/حريمي/الكل rule as the member lists.
+    const gender = this.branchScope.resolveMemberGenderRequest(user, genderParam);
     return this.search.recentCheckIns(
       limit ? Number(limit) : 20,
       scopedBranchIds,
+      gender,
     );
   }
 

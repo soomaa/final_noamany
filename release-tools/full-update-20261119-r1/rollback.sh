@@ -1,0 +1,110 @@
+#!/usr/bin/env bash
+# Undo the 2026-11-19-r1 install using the backup folder that install.sh printed.
+#   bash noamany-full-update-20261119-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov19-r1-update-backup.XXXXXX
+# Restores the backend files, app.module.js, prisma/schema.prisma, public/system.html and the
+# previous Prisma Client; removes the new backend files; keeps the added assets.
+# Database: if the SQL step ran, the freeze-days move is reversed (packages read their freeze
+# limit from freeze_days again). New tables and columns stay — 18-r1 code ignores them.
+# The full dump in the backup folder is for a manual restore only (it would lose newer data).
+# Refuses to overwrite files that changed after this install unless FORCE=1.
+set -Eeuo pipefail
+
+REL=20261119-r1
+PKG="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+APP="${APP:-$(dirname "$PKG")}"
+SITE="${SITE:-https://final.noamanycenter.com}"
+DB="${DB:-noamanycenter_nest}"
+BACKUP="${1:-}"
+AUTO="${2:-}"
+export PATH="/opt/cpanel/ea-nodejs20/bin:/opt/cpanel/ea-nodejs22/bin:$PATH"
+cd "$APP"
+
+say() { printf '%s\n' "$*"; }
+die() { say "!! $*"; say "ROLLBACK FAILED: $REL"; exit 1; }
+sha() { sha256sum "$1" | cut -d' ' -f1; }
+owner_of() { stat -c '%U:%G' "$1" 2>/dev/null || stat -f '%Su:%Sg' "$1"; }
+health_ok() {
+  local body
+  body=$(curl -fsS -m 20 -H 'Cache-Control: no-cache' "$SITE/api/health?t=$(date +%s)$RANDOM" 2>/dev/null) || return 1
+  node -e '
+    const b = JSON.parse(process.argv[1]);
+    const age = Math.abs(Date.now() - Date.parse(b.ts));
+    process.exit(b.status === "ok" && b.app === "Noamany HR API" && age < 180000 ? 0 : 1);
+  ' "$body" 2>/dev/null
+}
+three_health() {
+  local i ok=0
+  for i in $(seq 1 60); do
+    if health_ok; then ok=$((ok + 1)); [ "$ok" -ge 3 ] && return 0; else ok=0; fi
+    sleep 3
+  done
+  return 1
+}
+
+[ -n "$BACKUP" ] || die "usage: rollback.sh <backup folder printed by install.sh>"
+BACKUP="$(cd "$BACKUP" 2>/dev/null && pwd)" || die "backup folder not found"
+case "$BACKUP" in "$APP"/tmp/nov19-r1-update-backup.*) ;; *) die "not a 19-r1 backup inside $APP/tmp: $BACKUP" ;; esac
+[ "$(cat "$BACKUP/RELEASE" 2>/dev/null)" = "$REL" ] || die "backup belongs to another release"
+[ -f "$BACKUP/prisma-client/index.js" ] || die "backup has no Prisma Client copy"
+
+say "=== rollback $REL from $BACKUP ==="
+(cd "$BACKUP/files" && while read -r s rel; do [ "$(sha "$rel")" = "$s" ] || { echo "corrupt: $rel"; exit 1; }; done < ../MANIFEST) \
+  || die "backup is corrupt"
+
+if [ "${FORCE:-0}" != 1 ]; then
+  while read -r s rel; do
+    [ -f "$rel" ] || continue
+    cur=$(sha "$rel")
+    [ "$cur" = "$s" ] && continue
+    case "$rel" in
+      prisma/schema.prisma) [ "$cur" = "$(sha "$PKG/payload/schema.prisma")" ] && continue ;;
+      *) [ -f "$PKG/payload/$rel" ] && [ "$cur" = "$(sha "$PKG/payload/$rel")" ] && continue ;;
+    esac
+    die "$rel changed after the install (not 19-r1, not the backup). Check before forcing with FORCE=1."
+  done < "$BACKUP/MANIFEST"
+fi
+
+OWNER=$(owner_of dist/main.js)
+while read -r s rel; do
+  cp -p "$BACKUP/files/$rel" "$rel.rbtmp"
+  mv -f "$rel.rbtmp" "$rel"
+  [ "$(id -u)" = 0 ] && chown "$OWNER" "$rel"
+  [ "$(sha "$rel")" = "$s" ] || die "$rel not restored correctly"
+done < "$BACKUP/MANIFEST"
+while read -r rel; do rm -f "$rel"; done < "$BACKUP/NEW-BACKEND-FILES"
+
+if [ "$(sha node_modules/.prisma/client/index.js)" != "$(sha "$BACKUP/prisma-client/index.js")" ]; then
+  rm -rf node_modules/.prisma/client.rbnew
+  cp -a "$BACKUP/prisma-client" node_modules/.prisma/client.rbnew
+  [ "$(id -u)" = 0 ] && chown -R "$OWNER" node_modules/.prisma/client.rbnew
+  mv node_modules/.prisma/client node_modules/.prisma/client.rbold
+  mv node_modules/.prisma/client.rbnew node_modules/.prisma/client
+  rm -rf node_modules/.prisma/client.rbold
+fi
+[ "$(sha node_modules/.prisma/client/index.js)" = "$(sha "$BACKUP/prisma-client/index.js")" ] || die "Prisma Client not restored"
+say "OK: $(wc -l < "$BACKUP/MANIFEST" | tr -d ' ') files and the Prisma Client restored, new backend files removed"
+
+if [ -f "$BACKUP/SQL-STARTED" ]; then
+  has=$(mysql -N -B "$DB" -e "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema='$DB' AND table_name='club_subscription_types' AND column_name='freeze_total_days'")
+  if [ "$has" = 1 ]; then
+    mysql "$DB" -e "UPDATE club_subscription_types SET freeze_days = freeze_total_days WHERE freeze_days IS NULL AND freeze_total_days IS NOT NULL"
+    say "OK: freeze limits moved back to freeze_days for 18-r1"
+  fi
+fi
+
+# root's PM2 runs the app; a cron job restarts it within ~1 minute of tmp/restart.txt appearing.
+PIDS_BEFORE=$(pgrep -f "node $APP/dist/main.js" 2>/dev/null | sort | tr '\n' ' ' || true)
+mkdir -p tmp && touch tmp/restart.txt
+[ "$(id -u)" = 0 ] && chown "$OWNER" tmp/restart.txt || true
+restarted=0
+for _ in $(seq 1 80); do
+  now=$(pgrep -f "node $APP/dist/main.js" 2>/dev/null | sort | tr '\n' ' ' || true)
+  if [ ! -e tmp/restart.txt ] && [ -n "$now" ] && [ "$now" != "$PIDS_BEFORE" ]; then restarted=1; break; fi
+  sleep 3
+done
+[ "$restarted" = 1 ] || die "the app process was not restarted; is the restart cron running?"
+three_health || die "API not healthy after rollback restart"
+got=$(curl -fsS -m 20 -H 'Accept: text/html' -H 'Cache-Control: no-cache' "$SITE/login" | sha256sum | cut -d' ' -f1)
+[ "$got" = "$(sha public/system.html)" ] || die "/login does not serve the restored management HTML"
+say "ROLLBACK VERIFIED: $REL removed; 18-r1 files and Prisma Client restored; API healthy."
+[ "$AUTO" = --auto ] || true

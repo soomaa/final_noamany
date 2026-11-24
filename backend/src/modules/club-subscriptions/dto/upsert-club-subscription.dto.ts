@@ -172,6 +172,11 @@ export class UpsertClubSubscriptionDto {
   @IsBoolean()
   isSpecial?: boolean;
 
+  /** Sell the package at its live special offer (price and extra days / visits from the package). */
+  @IsOptional()
+  @IsBoolean()
+  usePromotion?: boolean;
+
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean()

@@ -3,6 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   NotFoundException,
+  Optional,
 } from "@nestjs/common";
 import { Prisma } from "@prisma/client";
 import { assertNoOverlap } from "../../common/validators/validation.util";
@@ -36,6 +37,8 @@ import {
   STAGE_DATE_FIELD,
   nextRecipientMosama,
 } from "./approval-chain.util";
+import { ownOnlyEmployeeIds } from "../../common/hr-scope/own-hr-records";
+import { PermissionEngineService } from "../rbac/engine/permission-engine.service";
 
 /** legacy day-name array indexed by PHP date('N') (1=Mon .. 7=Sun). */
 const AR_DAYS = [
@@ -55,6 +58,8 @@ export class LeavesService {
     private readonly prisma: PrismaService,
     // Stateless; defaulted so the existing unit specs can still construct the service.
     private readonly scope: BranchScopeService = new BranchScopeService(),
+    // Optional so the unit specs can still construct the service without the RBAC engine.
+    @Optional() private readonly engine?: PermissionEngineService,
   ) {}
 
   // ---- branch scope ---------------------------------------------------------------------
@@ -137,6 +142,11 @@ export class LeavesService {
     if (!personal && typeof actor === "object") {
       const empIds = await this.scopedEmployeeIds(actor);
       if (empIds) and.push({ emp_id_fk: { in: empIds } });
+    }
+    // Captain / reception accounts: only their own leave requests (the inbox tab is already personal).
+    if (typeof actor === "object" && q.mode !== "wared") {
+      const own = await ownOnlyEmployeeIds(this.prisma, this.engine, actor, "leaves.requests");
+      if (own) and.push({ emp_id_fk: { in: own } });
     }
 
     if (q.search?.trim()) {

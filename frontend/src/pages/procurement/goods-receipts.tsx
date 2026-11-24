@@ -28,6 +28,7 @@ import type { GoodsReceiptRow, PurchaseOrderRow, WarehouseOption } from '@/types
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface GrnLineDraft {
   productId: number | null;
@@ -265,7 +266,7 @@ export function ProcurementGoodsReceiptsPage() {
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
                 <Label>{ui('أمر الشراء')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={purchaseOrderId}
                   onChange={(e) => void loadPoItems(e.target.value)}
@@ -276,21 +277,21 @@ export function ProcurementGoodsReceiptsPage() {
                       {po.poNumber}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-1">
                 <Label>{ui('المستودع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={warehouseId}
                   onChange={(e) => setWarehouseId(e.target.value)}
                 >
-                  {(warehouses ?? []).map((w) => (
+                  {(warehouses ?? []).filter((w) => w.status !== 'inactive').map((w) => (
                     <option key={w.id} value={w.id}>
                       {w.nameAr}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">

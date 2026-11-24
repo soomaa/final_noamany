@@ -60,6 +60,7 @@ import { localDateStr, localToday } from '@/lib/formatters';
 import { cn } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import type { ExecutiveDashboardSummary } from '@/types/club';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const CHART_COLORS = ['#D4A72C', '#8b5cf6', '#0ea5e9', '#f97316', '#f43f5e', '#64748b'];
 const IS_LOCAL_PREVIEW = ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -408,10 +409,10 @@ export function DashboardPage() {
                 </label>
                 <label className="relative flex min-w-0 items-center overflow-hidden rounded-[14px] shadow-md ring-1 ring-inset ring-amber-300/35 transition-all hover:ring-amber-200/70 focus-within:ring-2 focus-within:ring-amber-300/70" style={{ backgroundColor: '#171306' }}>
                   <Building2 className="pointer-events-none absolute start-3 size-4 text-amber-300" />
-                  <select aria-label={ui('الفرع')} value={branchId} onChange={(event) => setBranchId(event.target.value)} className="h-11 w-full appearance-none border-0 !bg-transparent py-2 pe-9 ps-10 text-xs font-bold !text-white outline-none [color-scheme:dark] [&_option]:bg-slate-950 [&_option]:text-white">
+                  <SearchableSelect aria-label={ui('الفرع')} value={branchId} onChange={(event) => setBranchId(event.target.value)} className="h-11 w-full appearance-none border-0 !bg-transparent py-2 pe-9 ps-10 text-xs font-bold !text-white outline-none [color-scheme:dark] [&_option]:bg-slate-950 [&_option]:text-white">
                     <option value="all">{ui('كل الفروع')}</option>
                     {branches.map((branch) => <option key={branch.id} value={String(branch.id)}>{branch.name}</option>)}
-                  </select>
+                  </SearchableSelect>
                   <ChevronDown className="pointer-events-none absolute end-3 size-4 text-white/65" />
                 </label>
               </div>
@@ -514,7 +515,7 @@ export function DashboardPage() {
           <SectionTitle icon={AlertTriangle} title={ui('مركز التنبيهات')} subtitle={ui('أولويات تحتاج متابعة من الإدارة')} />
           <div className="space-y-3">
             {[
-              { label: ui('تنتهي خلال 7 أيام'), value: data?.operations.expiring7 ?? 0, icon: CalendarClock, href: '/club/subscriptions/expired', tone: 'text-rose-600 bg-rose-500/10' },
+              { label: ui('تنتهي خلال 7 أيام'), value: data?.operations.expiring7 ?? 0, icon: CalendarClock, href: '/club/subscriptions/expiring', tone: 'text-rose-600 bg-rose-500/10' },
               { label: ui('تنتهي خلال 30 يومًا'), value: data?.operations.expiring30 ?? 0, icon: Clock3, href: '/reports/club/subscriptions-expiring', tone: 'text-amber-600 bg-amber-500/10' },
               { label: ui('اشتراكات عليها متبقي'), value: data?.operations.outstandingCount ?? 0, icon: WalletCards, href: '/club/subscriptions/outstanding', tone: 'text-violet-600 bg-violet-500/10' },
               { label: ui('أصناف وصلت لإعادة الطلب'), value: data?.operations.lowStock ?? 0, icon: Boxes, href: '/inventory/dashboard', tone: 'text-sky-600 bg-sky-500/10' },

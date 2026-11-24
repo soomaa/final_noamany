@@ -35,4 +35,9 @@ export class ListClubHallBookingsDto extends PaginationDto {
   @IsOptional()
   @IsIn(['pending', 'confirmed', 'active', 'completed', 'cancelled', 'all'])
   status?: string;
+
+  /** رجالي/حريمي/الكل member-section filter. */
+  @IsOptional()
+  @IsIn(['all', 'male', 'female'])
+  gender?: string;
 }

@@ -46,7 +46,7 @@ export class ClubEventRegistrationsController {
 
   @Get()
   list(@Query() query: ListClubEventRegistrationsDto, @CurrentUser() user: JwtUser) {
-    return this.service.list(query, this.scope.eventBranchFilter(user), this.scope.memberGender(user));
+    return this.service.list(query, this.scope.eventBranchFilter(user), this.scope.resolveMemberGender(user, query.gender));
   }
 
   @Get(':id')

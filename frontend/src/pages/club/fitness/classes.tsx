@@ -24,6 +24,7 @@ import { toArabicDigits } from '@/lib/utils';
 import type { ClubClassDetail, ClubClassRow, ClubClassStatistics, ClubHallRow, ClubTrainerRow } from '@/types/fitness';
 import { MemberCell } from '@/components/club/member-cell';
 import { RowActions, SELECT_CLS, useFitnessResourceList } from './shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export interface FitnessClassesPageProps {
   personalOnly?: boolean;
@@ -363,30 +364,30 @@ export function FitnessClassesPage({ personalOnly = false }: FitnessClassesPageP
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.trainer')}</Label>
-              <select className={SELECT_CLS} value={form.trainerId} onChange={(e) => setForm((f) => ({ ...f, trainerId: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={form.trainerId} onChange={(e) => setForm((f) => ({ ...f, trainerId: e.target.value }))}>
                 <option value="">—</option>
                 {(trainers ?? []).map((t) => (
                   <option key={t.id} value={t.id}>{t.name}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.branch')}</Label>
-              <select className={SELECT_CLS} value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}>
                 <option value="">—</option>
                 {branchOptions.map((b) => (
                   <option key={b.value} value={b.value}>{b.label}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ft('roomBookings.halls')}</Label>
-              <select className={SELECT_CLS} value={form.hallId} onChange={(e) => setForm((f) => ({ ...f, hallId: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={form.hallId} onChange={(e) => setForm((f) => ({ ...f, hallId: e.target.value }))}>
                 <option value="">—</option>
                 {(halls ?? []).map((h) => (
                   <option key={h.id} value={h.id}>{h.name} ({h.hallNumber})</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.date')}</Label>

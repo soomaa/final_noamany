@@ -1,5 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';
+import { FileText, Loader2 } from 'lucide-react';
+import { isImageHref } from '@/components/common/image-preview';
+import { uploadUrl } from '@/components/employees/use-uploads';
 import { StatusBadge } from '@/components/common/status-badge';
 import { MemberAvatar } from '@/components/club/member-avatar';
 import {
@@ -25,6 +27,27 @@ function num(v: number | null | undefined) {
   return v != null ? toArabicDigits(v) : '—';
 }
 
+/** The measurement's report: an image shows a thumbnail that opens the in-app preview; a PDF opens as a file. */
+function ReportFile({ url, label, date }: { url: string | null | undefined; label: string; date: string }) {
+  const href = uploadUrl(url);
+  if (!href) return <span className="text-muted-foreground">—</span>;
+  const image = isImageHref(href);
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      title={`${label} · ${toArabicDigits(date)}`}
+      className="inline-flex items-center gap-2 rounded-lg border bg-card p-1 pe-2 text-xs font-medium text-primary hover:border-primary/40 hover:bg-primary/5"
+    >
+      {image
+        ? <img src={href} alt="" loading="lazy" className="size-10 rounded-md object-cover" />
+        : <span className="grid size-10 place-items-center rounded-md bg-muted"><FileText className="size-5" /></span>}
+      {label}
+    </a>
+  );
+}
+
 export function InbodyMemberDetailDialog({ memberId, open, onOpenChange }: InbodyMemberDetailDialogProps) {
   const ft = useFitnessT();
   const ct = useClubT();
@@ -43,7 +66,9 @@ export function InbodyMemberDetailDialog({ memberId, open, onOpenChange }: Inbod
           params: { memberId: id, pageSize: 100 },
         }),
       ]);
-      return { member, measurements: measurements.data, invoices: invoices.data };
+      // Newest first, like MetaFit's InBody profile.
+      const ordered = measurements.data.slice().sort((a, b) => b.measurementDate.localeCompare(a.measurementDate) || b.id - a.id);
+      return { member, measurements: ordered, invoices: invoices.data };
     },
   });
 
@@ -128,18 +153,19 @@ export function InbodyMemberDetailDialog({ memberId, open, onOpenChange }: Inbod
                       <th className="p-2 text-start">{ft('progress.bodyFat')}</th>
                       <th className="p-2 text-start">{ft('inbody.muscleMass')}</th>
                       <th className="p-2 text-start">{ft('common.notes')}</th>
+                      <th className="p-2 text-start">{ft('inbody.fileLabel')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.measurements.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="p-6 text-center text-muted-foreground">
+                        <td colSpan={8} className="p-6 text-center text-muted-foreground">
                           {ft('common.noData')}
                         </td>
                       </tr>
                     )}
                     {data.measurements.map((m) => (
-                      <tr key={m.id} className="border-t">
+                      <tr key={m.id} className="border-t align-middle">
                         <td className="p-2 nums">{toArabicDigits(m.measurementDate)}</td>
                         <td className="p-2 nums">{num(m.weight)}</td>
                         <td className="p-2 nums">{num(m.heightCm)}</td>
@@ -147,6 +173,7 @@ export function InbodyMemberDetailDialog({ memberId, open, onOpenChange }: Inbod
                         <td className="p-2 nums">{num(m.bodyFat)}</td>
                         <td className="p-2 nums">{num(m.muscleMass)}</td>
                         <td className="max-w-[140px] truncate p-2">{m.notes ?? '—'}</td>
+                        <td className="p-2"><ReportFile url={m.reportUrl} label={ft('inbody.viewFile')} date={m.measurementDate} /></td>
                       </tr>
                     ))}
                   </tbody>

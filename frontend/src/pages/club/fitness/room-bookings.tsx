@@ -18,9 +18,11 @@ import { formatTime, localToday } from '@/lib/formatters';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClubHallBookingRow, ClubHallRow } from '@/types/fitness';
 import { RowActions, SELECT_CLS, memberColumnDef } from './shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function FitnessRoomBookingsPage() {
   const ft = useFitnessT();
@@ -30,10 +32,12 @@ export function FitnessRoomBookingsPage() {
 
   const hallQuery = useListQuery();
   const bookingQuery = useListQuery();
+  // رجالي/حريمي/الكل for bookings (locked to the employee's own section).
+  const bookingGender = useMemberGenderFilter();
   const { data: halls, isLoading: hallsLoading, isError: hallsError, refetch: refetchHalls } =
     usePaginatedList<ClubHallRow>('club-halls', hallQuery.params);
   const { data: bookings, isLoading: bookingsLoading, isError: bookingsError, refetch: refetchBookings } =
-    usePaginatedList<ClubHallBookingRow>('club-hall-bookings', bookingQuery.params);
+    usePaginatedList<ClubHallBookingRow>('club-hall-bookings', { ...bookingQuery.params, filters: { ...bookingQuery.params.filters, gender: bookingGender.value } });
 
   const hallFilters: FilterField[] = [
     { key: 'branch', label: ft('common.branch'), type: 'select', options: branchOptions },
@@ -313,6 +317,7 @@ export function FitnessRoomBookingsPage() {
             onPageSizeChange={(pageSize) => bookingQuery.setParams({ pageSize, page: 1 })}
             search={bookingQuery.params.search}
             onSearchChange={(search) => bookingQuery.setParams({ search, page: 1 })}
+            toolbar={<MemberGenderSelect hideLabel value={bookingGender.value} locked={bookingGender.locked} onChange={(value) => { bookingGender.setValue(value); bookingQuery.setParams({ page: 1 }); }} />}
             isLoading={bookingsLoading}
             isError={bookingsError}
             onRetry={() => void refetchBookings()}
@@ -339,19 +344,19 @@ export function FitnessRoomBookingsPage() {
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.branch')}</Label>
-              <select className={SELECT_CLS} value={hallForm.branchId} onChange={(e) => setHallForm((f) => ({ ...f, branchId: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={hallForm.branchId} onChange={(e) => setHallForm((f) => ({ ...f, branchId: e.target.value }))}>
                 {branchOptions.map((b) => (
                   <option key={b.value} value={b.value}>{b.label}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.status')}</Label>
-              <select className={SELECT_CLS} value={hallForm.status} onChange={(e) => setHallForm((f) => ({ ...f, status: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={hallForm.status} onChange={(e) => setHallForm((f) => ({ ...f, status: e.target.value }))}>
                 <option value="available">available</option>
                 <option value="maintenance">maintenance</option>
                 <option value="unavailable">unavailable</option>
-              </select>
+              </SearchableSelect>
             </div>
           </div>
           <DialogFooter>
@@ -367,11 +372,11 @@ export function FitnessRoomBookingsPage() {
           <div className="grid gap-3 py-2">
             <div className="grid gap-2">
               <Label>{ft('roomBookings.halls')}</Label>
-              <select className={SELECT_CLS} value={bookingForm.hallId} onChange={(e) => setBookingForm((f) => ({ ...f, hallId: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={bookingForm.hallId} onChange={(e) => setBookingForm((f) => ({ ...f, hallId: e.target.value }))}>
                 {(halls?.data ?? []).map((h) => (
                   <option key={h.id} value={h.id}>{h.name} ({h.hallNumber})</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.date')}</Label>

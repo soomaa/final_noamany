@@ -4,6 +4,12 @@ import { defaultPermissionCellsForJobTitle } from './job-title-defaults';
 
 export const JOB_TITLE_ROLE_PREFIX = 'job_title_';
 
+/**
+ * «إدارة المبيعات (إضافية)»: added on top of any role by the per-user «يعمل كأخصائي مبيعات»
+ * toggle (user exceptions). Never a job-title role, so a job-title change keeps it.
+ */
+export const ADDITIONAL_SALES_ROLE_KEY = 'additional_sales';
+
 export function jobTitleRoleKey(jobTitleId: number): string {
   return `${JOB_TITLE_ROLE_PREFIX}${jobTitleId}`;
 }
@@ -116,7 +122,10 @@ export async function syncEmployeeUserRole(prisma: EmployeeUserPrisma, employeeI
 
   const roleId = await resolveRoleIdForJobTitleId(prisma, jobTitleId);
   await prisma.users.update({ where: { user_id: user.user_id }, data: { role_id_fk: roleId } });
-  await prisma.rbac_user_roles.deleteMany({ where: { user_id: user.user_id } });
+  // The «also sells» role is per user, not per job title: a job-title change keeps it.
+  await prisma.rbac_user_roles.deleteMany({
+    where: { user_id: user.user_id, NOT: { role: { key: ADDITIONAL_SALES_ROLE_KEY } } },
+  });
   await prisma.rbac_user_roles.create({ data: { user_id: user.user_id, role_id: roleId } });
   return user.user_id;
 }

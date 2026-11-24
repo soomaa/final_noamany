@@ -14,6 +14,8 @@ import { effectiveForRole, StoredCell, unionRoles } from '../engine/permission-r
 import { RbacAuditService } from './audit.service';
 import { AssignRolesDto, SaveMatrixDto } from './dto/role.dto';
 import { AssignOperationalScopeDto, SetSectionExceptionDto } from './dto/operational-scope.dto';
+import { ADDITIONAL_SALES_ROLE_KEY } from '../job-title-role.util';
+import { isMarketingRepJobTitle } from '../../employees/marketing-rep.util';
 
 @Injectable()
 export class RbacUsersService {
@@ -194,6 +196,95 @@ export class RbacUsersService {
     await this.audit.log({ actorUserId, action: 'scope.exception.clear', targetType: 'user', targetId: userId, detail: { branchId, section } });
     this.engine.invalidateUser(userId);
     return this.getOperationalScope(userId);
+  }
+
+  // ---- «يعمل كأخصائي مبيعات» ---------------------------------------------------------------
+
+  /**
+   * The per-user sales toggle (MetaFit's `is_sales`): ON adds the `additional_sales` role on
+   * top of whatever role the user has, and marks the linked employee so they appear as a
+   * أخصائي مبيعات in the member/subscription pickers. A sales job title is always a seller.
+   */
+  async getSalesToggle(userId: number) {
+    const user = await this.prisma.users.findUnique({
+      where: { user_id: userId },
+      select: { user_id: true, emp_code: true },
+    });
+    if (!user) throw new NotFoundException('المستخدم غير موجود');
+    const [employee, link] = await Promise.all([
+      user.emp_code
+        ? this.prisma.employees.findUnique({
+            where: { id: user.emp_code },
+            select: { is_sales: true, mosma_wazefy_n: true, mosma_wazefy_code: true },
+          })
+        : Promise.resolve(null),
+      this.prisma.rbac_user_roles.findFirst({
+        where: { user_id: userId, role: { key: ADDITIONAL_SALES_ROLE_KEY } },
+        select: { id: true },
+      }),
+    ]);
+    let jobTitle = employee?.mosma_wazefy_n?.trim() || null;
+    let byJobTitle = isMarketingRepJobTitle(jobTitle);
+    if (!byJobTitle && employee?.mosma_wazefy_code) {
+      const job = await this.prisma.department_jobs.findUnique({
+        where: { id: employee.mosma_wazefy_code },
+        select: { name: true },
+      });
+      jobTitle = jobTitle ?? job?.name?.trim() ?? null;
+      byJobTitle = isMarketingRepJobTitle(job?.name);
+    }
+    return {
+      userId,
+      enabled: byJobTitle || link != null || employee?.is_sales === true,
+      byJobTitle,
+      jobTitle,
+      hasEmployee: employee != null,
+    };
+  }
+
+  async setSalesToggle(userId: number, enabled: boolean, actorUserId: number, actor?: JwtUser) {
+    const user = await this.prisma.users.findUnique({
+      where: { user_id: userId },
+      select: { user_id: true, emp_code: true },
+    });
+    if (!user) throw new NotFoundException('المستخدم غير موجود');
+    await this.assertTargetManageable(userId, actor);
+    const role = await this.prisma.rbac_roles.findUnique({
+      where: { key: ADDITIONAL_SALES_ROLE_KEY },
+      select: { id: true },
+    });
+    if (!role) throw new BadRequestException('دور إدارة المبيعات غير مهيأ على النظام');
+
+    if (enabled) {
+      // Same anti-escalation as role assignment: you cannot hand out what you do not hold.
+      const editor = await this.engine.getEffective(actorUserId);
+      if (!editor.superAdmin) {
+        if (userId === actorUserId) throw new ForbiddenException('لا يمكنك تعديل صلاحياتك بنفسك');
+        const grants = (await this.roleAllowSets([role.id])).get(role.id) ?? new Set<string>();
+        const escalations = [...grants].filter((k) => !editor.keys.has(k));
+        if (escalations.length) {
+          throw new ForbiddenException(
+            `لا يمكنك منح صلاحيات لا تملكها: ${escalations.slice(0, 5).join(', ')}${escalations.length > 5 ? ' …' : ''}`,
+          );
+        }
+      }
+    }
+
+    await this.prisma.$transaction([
+      enabled
+        ? this.prisma.rbac_user_roles.upsert({
+            where: { user_id_role_id: { user_id: userId, role_id: role.id } },
+            update: {},
+            create: { user_id: userId, role_id: role.id, created_by: actorUserId },
+          })
+        : this.prisma.rbac_user_roles.deleteMany({ where: { user_id: userId, role_id: role.id } }),
+      ...(user.emp_code
+        ? [this.prisma.employees.updateMany({ where: { id: user.emp_code }, data: { is_sales: enabled } })]
+        : []),
+    ]);
+    await this.audit.log({ actorUserId, action: 'sales.toggle', targetType: 'user', targetId: userId, detail: { enabled } });
+    this.engine.invalidateUser(userId);
+    return this.getSalesToggle(userId);
   }
 
   // ---- exceptions ---------------------------------------------------------------------

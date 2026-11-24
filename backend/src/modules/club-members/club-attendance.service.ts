@@ -5,6 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from "@nestjs/common";
+
 import { Prisma } from "@prisma/client";
 import { PrismaService } from "../../common/prisma/prisma.service";
 import { BranchScopeService, SUB_BRANCH_IDS } from "../../common/branch-scope/branch-scope.service";
@@ -20,11 +21,15 @@ import { EntitlementService } from "../gym-ops/entitlement.service";
 import { AutomationEngineService } from "../gym-ops/automation-engine.service";
 import { WebhookService } from "../webhooks/webhook.service";
 import { localDateString } from "./club-member.utils";
+import { computeBmi } from "../club-fitness/club-fitness.utils";
 import { CheckInDto, CheckOutDto, ServiceCheckInDto } from "./dto/check-in.dto";
 import { ListClubAttendanceDto } from "./dto/list-club-attendance.dto";
+import { SubscriptionUtilizationDto } from "./dto/subscription-utilization.dto";
+import { subscriptionUtilizationReport } from "./club-subscription-utilization";
 import { BarcodeScanTimesDto } from "./dto/barcode-scan-times.dto";
 import { BarcodeAttendanceReportDto } from "./dto/barcode-attendance-report.dto";
 import { isReceptionEmployee } from "../../common/utils/reception-user.util";
+import { clampManagerDays, managerKind, managerPeriodBounds } from "../../common/utils/manager-scope.util";
 import { assertSystemAdmin, isSystemAdmin } from "../../common/utils/system-admin.util";
 import { ClubMembersService } from "./club-members.service";
 import { ClubPointsService } from '../club-points/club-points.service';
@@ -112,7 +117,8 @@ export class ClubAttendanceService {
     requested?: string | number | null,
   ): number[] | null {
     if (!user) return [];
-    if (isSystemAdmin(user))
+    // مشرف إدارة حريمي / رجالي reads every branch's reports (client sheet, 22 Nov).
+    if (isSystemAdmin(user) || managerKind(user) === "section")
       return expandClubReportBranchIds(
         this.branchScope.resolveListFilter(user, requested ?? null),
       );
@@ -217,7 +223,7 @@ export class ClubAttendanceService {
       throw new ForbiddenException("لا تملك صلاحية الوصول لبيانات هذا القسم");
     }
 
-    const [subs, freezes, lockerSubs, lastAttendance, subscriptionCount, lockerSubscriptionCount, receipts, attendance, points] =
+    const [subs, freezes, lockerSubs, lastAttendance, previousAttendance, subscriptionCount, lockerSubscriptionCount, receipts, attendance, points] =
       await Promise.all([
         this.prisma.club_subscriptions.findMany({
           where: { member_id: member.id },
@@ -255,6 +261,13 @@ export class ClubAttendanceService {
           where: { member_id: member.id },
           orderBy: { id: "desc" },
           select: { check_in_time: true, attendance_date: true },
+        }),
+        // The visit before today (client, 22 Nov): a scan checks the member in at once, so the last
+        // entry is always "today"; reception wants to see when they came before that.
+        this.prisma.club_attendance.findFirst({
+          where: { member_id: member.id, attendance_date: { lt: cairoDateTime().date } },
+          orderBy: [{ attendance_date: "desc" }, { check_in_time: "desc" }],
+          select: { check_in_time: true },
         }),
         this.prisma.club_subscriptions.count({ where: { member_id: member.id } }),
         this.prisma.club_locker_subscriptions.count({ where: { member_id: member.id } }),
@@ -314,6 +327,7 @@ export class ClubAttendanceService {
         createdAt: member.created_at,
         updatedAt: member.updated_at,
         lastCheckIn: lastAttendance?.check_in_time ?? null,
+        previousCheckIn: previousAttendance?.check_in_time ?? null,
       },
       subscriptionCount,
       lockerSubscriptionCount,
@@ -597,8 +611,27 @@ export class ClubAttendanceService {
         member_id: member.id, subscription_id: sub.id, attendance_date: local.date, attendance_type: dto.attendanceType,
       } });
       if (duplicate) throw new BadRequestException('تم تسجيل حضور هذه الخدمة بالفعل اليوم');
+      const result = !spa ? dto.measurement : undefined;
+      if (result) {
+        const measured = await tx.club_inbody_measurements.findFirst({
+          where: { member_id: member.id, measurement_date: local.date }, select: { id: true },
+        });
+        if (measured) throw new BadRequestException('يوجد قياس InBody لهذا العضو اليوم');
+      }
       await tx.club_subscriptions.update({ where: { id: sub.id }, data: spa
         ? { spa_used: { increment: 1 } } : { inbody_used: { increment: 1 } } });
+      if (result) {
+        // Saved with the deduction so a result is never stored without its session or the reverse.
+        const weight = result.weight ?? null;
+        const heightCm = result.heightCm ?? null;
+        await tx.club_inbody_measurements.create({ data: {
+          member_id: member.id, measurement_date: local.date,
+          weight, height_cm: heightCm,
+          body_fat: result.bodyFat ?? null, muscle_mass: result.muscleMass ?? null,
+          bmi: weight != null && heightCm != null ? computeBmi(weight, heightCm) : null,
+          notes: result.notes?.trim() || null, report_url: result.reportUrl?.trim() || null,
+        } });
+      }
       if (spa) {
         await tx.club_spa_attendance.create({ data: {
           member_id: member.id, member_code: member.member_code, member_name: member.name,
@@ -735,6 +768,32 @@ export class ClubAttendanceService {
     const now = new Date();
     const localNow = cairoDateTime(now);
     const today = localNow.date;
+    // Reception scan: the basic subscription is checked in automatically, once a day. Scanning or
+    // searching the same member again the same day reports that visit instead of adding another.
+    if (dto.onceToday && !dto.force && chosenSub) {
+      const existing = await this.prisma.club_attendance.findFirst({
+        where: { member_id: member.id, subscription_id: chosenSub.id, attendance_date: today },
+        orderBy: { id: 'asc' },
+      });
+      if (existing) {
+        return {
+          attendance: this.mapRow(existing),
+          entitlement,
+          subscription: {
+            id: chosenSub.id,
+            type: chosenSub.subscriptionType,
+            isLinkedToSessions: chosenSub.isLinkedToSessions,
+            sessionsRemaining: chosenSub.sessionsRemaining ?? null,
+            daysRemaining: chosenSub.isLinkedToSessions ? null : (chosenSub.daysRemaining ?? null),
+            endDate: chosenSub.endDate,
+            consumedSession: false,
+          },
+          classAttendance: null,
+          overridden: false,
+          alreadyCheckedInToday: true,
+        };
+      }
+    }
     let specialClass =
       dto.attendanceType !== 'normal' && !isGrace && chosenSub?.specialClassTypeId
         ? await this.prisma.club_classes.findFirst({
@@ -1063,7 +1122,7 @@ export class ClubAttendanceService {
     if (q.memberId) and.push({ member_id: Number(q.memberId) });
     const scope = this.attendanceBranchIds(user, q.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
-    const audience = this.branchScope.memberGenderFilter(user);
+    const audience = this.branchScope.resolveMemberGenderRequest(user, q.gender);
     if (audience) and.push({ member: { is: { gender: audience } } });
     if (q.startDate && q.endDate) {
       and.push({ attendance_date: { gte: q.startDate, lte: q.endDate } });
@@ -1115,6 +1174,12 @@ export class ClubAttendanceService {
       q.startDate = today;
       q.endDate = today;
     }
+    // Branch manager / section supervisor: the current and the previous month (client sheet, 22 Nov).
+    const managerRange = clampManagerDays(user, 'twoMonths', q.startDate, q.endDate);
+    if (managerRange.clamped) {
+      q.startDate = managerRange.from;
+      q.endDate = managerRange.to;
+    }
     if (!q.startDate || !q.endDate || !validIsoDay(q.startDate) || !validIsoDay(q.endDate)) {
       throw new BadRequestException('حدد تاريخ بداية ونهاية صحيحين');
     }
@@ -1131,9 +1196,8 @@ export class ClubAttendanceService {
     ];
     const branches = this.attendanceBranchIds(user, q.branch ?? null);
     if (branches !== null) and.push({ branch_id: { in: branches } });
-    const audience = this.branchScope.memberGenderFilter(user);
+    const audience = this.branchScope.resolveMemberGenderRequest(user, q.gender);
     if (audience) and.push({ member: { is: { gender: audience } } });
-    if (q.gender && q.gender !== 'all') and.push({ member: { is: { gender: q.gender } } });
     if (q.memberCode?.trim()) and.push({ member_code: { contains: q.memberCode.trim() } });
     if (q.search?.trim()) {
       const search = q.search.trim();
@@ -1175,6 +1239,7 @@ export class ClubAttendanceService {
         scanType: row.is_grace_session ? 'استثناء' : ({ normal: 'عادي', class: 'حصص', spa: 'سبا', inbody: 'إنبودي' } as Record<string, string>)[row.attendance_type ?? 'normal'] ?? 'عادي',
       })), total, q.page, q.pageSize),
       todayOnly,
+      allowedRange: managerRange.clamped ? managerPeriodBounds('twoMonths') : null,
     };
   }
 
@@ -1187,10 +1252,11 @@ export class ClubAttendanceService {
   async barcodeAttendanceReport(q: BarcodeAttendanceReportDto, user: JwtUser) {
     const todayOnly = isReceptionEmployee(user);
     const today = cairoDateTime().date;
-    const dateFrom = todayOnly ? today : q.dateFrom;
-    const dateTo = todayOnly ? today : q.dateTo;
+    const managerRange = clampManagerDays(user, 'twoMonths', q.dateFrom, q.dateTo);
+    const dateFrom = todayOnly ? today : managerRange.clamped ? managerRange.from : q.dateFrom;
+    const dateTo = todayOnly ? today : managerRange.clamped ? managerRange.to : q.dateTo;
     const scope = this.attendanceBranchIds(user, q.branch ?? null);
-    const audience = this.branchScope.memberGenderFilter(user);
+    const audience = this.branchScope.resolveMemberGenderRequest(user, q.gender);
     const search = q.search?.trim() ? `%${q.search.trim()}%` : null;
 
     const filters = (alias: string, dateCol: string, branchCol: string, nameCol: string, codeCol: string) => {
@@ -1298,6 +1364,7 @@ export class ClubAttendanceService {
     return {
       ...paginated(data, Number(countRows[0]?.cnt ?? 0), q.page, q.pageSize),
       todayOnly,
+      allowedRange: managerRange.clamped ? managerPeriodBounds('twoMonths') : null,
       canDelete: isSystemAdmin(user),
     };
   }
@@ -1356,6 +1423,15 @@ export class ClubAttendanceService {
     throw new BadRequestException('نوع السجل غير صالح');
   }
 
+  /** «التزام الأعضاء»: attendance rate per subscription, filtered by status and commitment level. */
+  async subscriptionUtilization(q: SubscriptionUtilizationDto, user?: JwtUser) {
+    return subscriptionUtilizationReport(this.prisma, q, {
+      branchIds: this.attendanceBranchIds(user, q.branch ?? null),
+      gender: this.branchScope.resolveMemberGenderRequest(user, q.gender),
+      today: localDateString(),
+    });
+  }
+
   /**
    * Per-day attendance summary: one row per (day, member) with how many times the member
    * entered that day and the total minutes spent. Powers the "daily history" view where the
@@ -1373,7 +1449,7 @@ export class ClubAttendanceService {
           : Prisma.sql`branch_id = -1`,
       );
     }
-    const audience = this.branchScope.memberGenderFilter(user);
+    const audience = this.branchScope.resolveMemberGenderRequest(user, q.gender);
     if (audience) {
       conditions.push(Prisma.sql`member_id IN (SELECT gm.id FROM club_members gm WHERE gm.gender = ${audience})`);
     }
@@ -1450,13 +1526,13 @@ export class ClubAttendanceService {
   }
 
   async statistics(
-    query: { branch?: string; startDate?: string; endDate?: string },
+    query: { branch?: string; startDate?: string; endDate?: string; gender?: string },
     user?: JwtUser,
   ) {
     const and: Prisma.club_attendanceWhereInput[] = [];
     const scope = this.attendanceBranchIds(user, query.branch ?? null);
     if (scope !== null) and.push({ branch_id: { in: scope } });
-    const audience = this.branchScope.memberGenderFilter(user);
+    const audience = this.branchScope.resolveMemberGenderRequest(user, query.gender);
     if (audience) and.push({ member: { is: { gender: audience } } });
     if (query.startDate && query.endDate) {
       and.push({

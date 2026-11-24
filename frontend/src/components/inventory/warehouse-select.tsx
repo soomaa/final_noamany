@@ -3,6 +3,7 @@ import { api } from '@/lib/api';
 import { Label } from '@/components/ui/label';
 import { useLocale } from '@/store/locale';
 import type { PaginatedResponse } from '@/components/common/data-table';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export interface StockLocation { id: number; nameAr: string; address?: string | null; branchId: number }
 
@@ -17,9 +18,9 @@ export function WarehouseSelect({ branchId, value, onChange, label = 'المخز
     })).data.data,
   });
   return <div className="space-y-1.5"><Label>{ui(label)}</Label>
-    <select aria-label={ui(label)} disabled={disabled || isError} value={value} onChange={(e) => onChange(e.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
+    <SearchableSelect aria-label={ui(label)} disabled={disabled || isError} value={value} onChange={(e) => onChange(e.target.value)} className="h-10 w-full rounded-md border bg-background px-3 text-sm">
       <option value="">{ui(isError ? 'تعذر تحميل المخازن' : emptyLabel)}</option>
       {data.map((w) => <option key={w.id} value={w.id}>{w.nameAr}{w.address ? ` — ${w.address}` : ''}</option>)}
-    </select>
+    </SearchableSelect>
   </div>;
 }

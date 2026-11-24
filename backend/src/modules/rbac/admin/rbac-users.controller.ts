@@ -14,7 +14,7 @@ import { RequiresPermission } from '../../../common/decorators/requires-permissi
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { JwtUser } from '../../../common/types/jwt-user';
 import { RbacUsersService } from './rbac-users.service';
-import { AssignRolesDto, SaveMatrixDto } from './dto/role.dto';
+import { AssignRolesDto, SaveMatrixDto, SetSalesToggleDto } from './dto/role.dto';
 import { AssignOperationalScopeDto, SetSectionExceptionDto } from './dto/operational-scope.dto';
 
 @UseGuards(JwtAuthGuard)
@@ -80,6 +80,23 @@ export class RbacUsersController {
     @CurrentUser() actor: JwtUser,
   ) {
     return this.users.clearSectionException(id, branchId, section, actor.sub, actor);
+  }
+
+  @Get(':id/sales')
+  @RequiresPermission('admin.exceptions:view')
+  getSales(@Param('id', ParseIntPipe) id: number) {
+    return this.users.getSalesToggle(id);
+  }
+
+  /** «يعمل كأخصائي مبيعات»: any role can also sell (adds the additional_sales role). */
+  @Put(':id/sales')
+  @RequiresPermission('admin.exceptions:manage')
+  setSales(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SetSalesToggleDto,
+    @CurrentUser() actor: JwtUser,
+  ) {
+    return this.users.setSalesToggle(id, dto.enabled, actor.sub, actor);
   }
 
   @Get(':id/exceptions')

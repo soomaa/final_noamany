@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -20,8 +20,8 @@ export class ClubSubscriptionTransfersController {
   constructor(private readonly service: ClubSubscriptionTransfersService) {}
 
   @Get('statistics')
-  statistics(@CurrentUser() user: JwtUser) {
-    return this.service.statistics(user);
+  statistics(@CurrentUser() user: JwtUser, @Query('gender') gender?: string) {
+    return this.service.statistics(user, gender);
   }
 
   @Get('member/:memberId/history')
@@ -32,8 +32,8 @@ export class ClubSubscriptionTransfersController {
   @Get('member-transfers')
   @ClubGroupOperation()
   @RequiresPermission('club.subscriptions:view', 'club.subscriptions.list:view', 'club.reception:view', 'club.subscriptions.member_transfer:view')
-  listMemberTransfers(@CurrentUser() user: JwtUser) {
-    return this.service.listMemberTransfers(user);
+  listMemberTransfers(@CurrentUser() user: JwtUser, @Query('gender') gender?: string) {
+    return this.service.listMemberTransfers(user, gender);
   }
 
   @Patch('member-transfers/:id')
@@ -83,8 +83,8 @@ export class ClubSubscriptionTransfersController {
   }
 
   @Get()
-  list(@CurrentUser() user: JwtUser) {
-    return this.service.list(user);
+  list(@CurrentUser() user: JwtUser, @Query('gender') gender?: string) {
+    return this.service.list(user, gender);
   }
 
   @Get(':id')

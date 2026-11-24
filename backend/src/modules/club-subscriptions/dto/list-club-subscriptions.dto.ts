@@ -16,7 +16,7 @@ export class ListClubSubscriptionsDto extends PaginationDto {
 
   /** Filter by member gender (رجال/حريم). */
   @IsOptional()
-  @IsIn(['male', 'female'])
+  @IsIn(['all', 'male', 'female'])
   gender?: string;
 
   @IsOptional()
@@ -68,6 +68,21 @@ export class ListClubSubscriptionsDto extends PaginationDto {
   @IsOptional()
   @IsString()
   expiresWithinDays?: string;
+
+  /** Expired tab: ended within the last N days (end date in [today-N, today-1]). */
+  @IsOptional()
+  @IsString()
+  expiredWithinDays?: string;
+
+  /** Expired tab: hide members who already hold a current or upcoming subscription. */
+  @IsOptional()
+  @IsIn(['true', 'false', '1', '0'])
+  notRenewed?: string;
+
+  /** Row order; default newest first (id desc). */
+  @IsOptional()
+  @IsIn(['endDateAsc', 'endDateDesc'])
+  sort?: string;
 
   /** Filter by registration_date range (YYYY-MM-DD). */
   @IsOptional()

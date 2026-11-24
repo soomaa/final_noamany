@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Eye, FileSpreadsheet, Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -15,6 +14,10 @@ import { api, apiError } from '@/lib/api';
 import { downloadExcel } from '@/lib/export';
 import { localToday } from '@/lib/formatters';
 import { InventoryPageShell } from './inventory-shell';
+import { SearchableSelect } from '@/components/common/searchable-select';
+import type { PaginatedResponse } from '@/components/common/data-table';
+import type { ProductListItem } from '@/types/inventory';
+import { useCafeLocations } from '@/lib/cafe-locations';
 
 /** Approved warehouse transfers, shown as issue orders to the receiving branch. */
 type BranchIssueItem = { id: number; productId: number | null; itemCode: string | null; itemName: string; quantity: number; unit: string | null; price: number; total: number };
@@ -107,6 +110,150 @@ function Detail({ label, value }: { label: string; value: string }) {
   return <div className="rounded-md border p-2"><div className="text-xs text-muted-foreground">{label}</div><div className="font-medium">{value}</div></div>;
 }
 
+type IssueLine = { productId: string; quantity: string };
+
+function issueReference() {
+  const d = new Date();
+  const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+  return `صرف-${stamp}-${Math.floor(Math.random() * 9000) + 1000}`;
+}
+
+/**
+ * أمر صرف جديد: the store (مخزن الجلاء / البر الشرقي / طنطا), then the bar it issues to — the store's
+ * own bar, or طنطا up / طنطا down for مخزن طنطا. Saved as an approved transfer store → bar.
+ */
+function NewIssueOrderDialog({ open, onClose, onSaved }: { open: boolean; onClose: () => void; onSaved: () => void }) {
+  const cafe = useCafeLocations();
+  const [storeId, setStoreId] = useState('');
+  const [barId, setBarId] = useState('');
+  const [txnDate, setTxnDate] = useState(localToday());
+  const [notes, setNotes] = useState('');
+  const [lines, setLines] = useState<IssueLine[]>([{ productId: '', quantity: '1' }]);
+  const [saving, setSaving] = useState(false);
+  const store = cafe.stores.find((s) => String(s.id) === storeId);
+  const bars = store?.bars ?? [];
+
+  const { data: products = [] } = useQuery({
+    queryKey: ['products', 'issue-order', storeId],
+    queryFn: async () => (await api.get<PaginatedResponse<ProductListItem>>('/products', {
+      params: { page: 1, pageSize: 500, status: 'active', warehouseId: storeId },
+    })).data.data,
+    enabled: open && !!storeId,
+  });
+  const productOf = (id: string) => products.find((p) => String(p.id) === id);
+
+  const reset = () => { setStoreId(''); setBarId(''); setTxnDate(localToday()); setNotes(''); setLines([{ productId: '', quantity: '1' }]); };
+  const close = () => { reset(); onClose(); };
+  const pickStore = (id: string) => {
+    setStoreId(id);
+    const next = cafe.stores.find((s) => String(s.id) === id);
+    // One bar (الجلاء / البر الشرقي) is chosen for you; طنطا asks: up or down.
+    setBarId(next && next.bars.length === 1 ? String(next.bars[0].id) : '');
+    setLines([{ productId: '', quantity: '1' }]);
+  };
+  const setLine = (index: number, patch: Partial<IssueLine>) => setLines((prev) => prev.map((l, i) => (i === index ? { ...l, ...patch } : l)));
+
+  const save = async () => {
+    if (!store) { toast.error('اختر المخزن'); return; }
+    if (!barId) { toast.error('اختر البار'); return; }
+    const valid = lines.filter((l) => l.productId && Number(l.quantity) > 0);
+    if (!valid.length) { toast.error('أضف صنفًا واحدًا على الأقل'); return; }
+    const over = valid.find((l) => Number(l.quantity) > (productOf(l.productId)?.currentStock ?? 0));
+    if (over) { toast.error(`كمية ${productOf(over.productId)?.nameAr ?? ''} أكبر من رصيد ${store.name}`); return; }
+    setSaving(true);
+    try {
+      await api.post('/inventory-transactions?execute=true', {
+        reference: issueReference(),
+        txnType: 'transfer',
+        txnDate,
+        branchId: store.branchId,
+        sourceWarehouseId: store.id,
+        targetWarehouseId: Number(barId),
+        notes: notes.trim() || undefined,
+        items: valid.map((l) => {
+          const p = productOf(l.productId);
+          const quantity = Number(l.quantity);
+          const price = p?.costPrice ?? 0;
+          return { productId: Number(l.productId), itemName: p ? `${p.nameAr}${p.size ? ` — ${p.size}` : ''}` : '', quantity, price, total: Math.round(quantity * price * 100) / 100 };
+        }),
+      });
+      toast.success('تم حفظ أمر الصرف ونقل الكميات للبار');
+      reset();
+      onSaved();
+    } catch (e) {
+      toast.error(apiError(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && close()}>
+      <DialogContent size="xl" className="max-h-[90vh] overflow-y-auto" aria-describedby={undefined}>
+        <DialogHeader><DialogTitle>أمر صرف جديد</DialogTitle></DialogHeader>
+        {!cafe.ready ? (
+          <p className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">مفيش مخزن توريد متحدد لأي بار. حدده من إعدادات نقطة البيع.</p>
+        ) : (
+          <div className="space-y-4 py-2">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-1">
+                <Label htmlFor="issue-store">المخزن</Label>
+                <SearchableSelect searchable id="issue-store" aria-label="المخزن" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={storeId} onChange={(e) => pickStore(e.target.value)}>
+                  <option value="">اختر المخزن</option>
+                  {cafe.stores.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </SearchableSelect>
+              </div>
+              <div className="grid gap-1">
+                <Label htmlFor="issue-bar">البار</Label>
+                <SearchableSelect searchable id="issue-bar" aria-label="البار" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={barId} disabled={!store} onChange={(e) => setBarId(e.target.value)}>
+                  <option value="">{store ? 'اختر البار' : 'اختر المخزن الأول'}</option>
+                  {bars.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                </SearchableSelect>
+              </div>
+              <div className="grid gap-1">
+                <Label htmlFor="issue-date">تاريخ الصرف</Label>
+                <Input id="issue-date" type="date" value={txnDate} onChange={(e) => setTxnDate(e.target.value)} />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>الأصناف</Label>
+              {lines.map((line, index) => {
+                const p = productOf(line.productId);
+                return (
+                  <div key={index} className="grid items-end gap-2 rounded-lg border bg-muted/20 p-3 sm:grid-cols-[minmax(0,1fr)_140px_120px_auto]">
+                    <div className="grid gap-1">
+                      <Label className="text-xs">الصنف</Label>
+                      <SearchableSelect aria-label="الصنف" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={line.productId} disabled={!store} onChange={(e) => setLine(index, { productId: e.target.value })}>
+                        <option value="">اختر الصنف</option>
+                        {products.map((item) => <option key={item.id} value={item.id}>{item.nameAr}{item.size ? ` — ${item.size}` : ''}</option>)}
+                      </SearchableSelect>
+                    </div>
+                    <div className="grid gap-1">
+                      <Label className="text-xs">الكمية</Label>
+                      <Input aria-label="الكمية" className="nums" type="number" min={0} value={line.quantity} onChange={(e) => setLine(index, { quantity: e.target.value })} />
+                    </div>
+                    <div className="text-xs text-muted-foreground">الرصيد: <span className="nums">{p ? p.currentStock ?? 0 : '—'}</span></div>
+                    <Button type="button" variant="ghost" size="icon" aria-label="حذف الصنف" disabled={lines.length === 1} onClick={() => setLines((prev) => prev.filter((_, i) => i !== index))}><Trash2 className="size-4" /></Button>
+                  </div>
+                );
+              })}
+              <Button type="button" variant="outline" size="sm" disabled={!store} onClick={() => setLines((prev) => [...prev, { productId: '', quantity: '1' }])}><Plus className="size-4" /> إضافة صنف</Button>
+            </div>
+            <div className="grid gap-1">
+              <Label htmlFor="issue-notes">ملاحظات</Label>
+              <Input id="issue-notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </div>
+          </div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>إلغاء</Button>
+          <Button onClick={() => void save()} disabled={saving || !cafe.ready}>{saving ? 'جاري الحفظ...' : 'حفظ أمر الصرف'}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 /** أوامر الصرف للأفرع */
 export function InventoryBranchIssueOrdersPage() {
   const { branchName } = useBranchName();
@@ -114,7 +261,8 @@ export function InventoryBranchIssueOrdersPage() {
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [selected, setSelected] = useState<BranchIssue | null>(null);
-  const { data, isLoading, isError, error } = useBranchIssues({ targetBranchId: '', dateFrom: '', dateTo: '' }, search.trim(), page, pageSize);
+  const [creating, setCreating] = useState(false);
+  const { data, isLoading, isError, error, refetch } = useBranchIssues({ targetBranchId: '', dateFrom: '', dateTo: '' }, search.trim(), page, pageSize);
 
   const exportExcel = async () => {
     const rows = (await api.get<BranchIssueResult>('/inventory-transactions/branch-issues', { params: { search: search.trim(), page: 1, pageSize: 500 } })).data.data;
@@ -130,7 +278,7 @@ export function InventoryBranchIssueOrdersPage() {
       <section className="rounded-xl border bg-card">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
           <div className="flex items-center gap-2">
-            <Button asChild><Link to="/inventory/transactions"><Plus className="size-4" /> إضافة أمر صرف جديد</Link></Button>
+            <Button onClick={() => setCreating(true)}><Plus className="size-4" /> إضافة أمر صرف جديد</Button>
             <Button variant="outline" disabled={!data?.total} onClick={() => void exportExcel().catch((e) => toast.error(apiError(e)))}><FileSpreadsheet className="size-4" /> شيت إكسل</Button>
           </div>
           <div className="flex items-center gap-2"><Label htmlFor="issue-search">ابحث:</Label><Input id="issue-search" className="w-56" value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} placeholder="رقم الفاتورة أو الصنف" /></div>
@@ -158,6 +306,7 @@ export function InventoryBranchIssueOrdersPage() {
         <div className="border-t px-4 py-3"><Pagination page={page} pageSize={pageSize} total={data?.total ?? 0} onPageChange={setPage} onPageSizeChange={(size) => { setPageSize(size); setPage(1); }} /></div>
       </section>
       <IssueDetailsDialog issue={selected} onClose={() => setSelected(null)} branchName={branchName} />
+      <NewIssueOrderDialog open={creating} onClose={() => setCreating(false)} onSaved={() => { setCreating(false); setPage(1); void refetch(); }} />
     </InventoryPageShell>
   );
 }
@@ -232,7 +381,7 @@ export function InventoryBranchIssuedItemsReportPage() {
     <InventoryPageShell title="تقرير الأصناف المصروفة للأفرع" description="الأصناف والكميات المصروفة لكل فرع خلال فترة، مع تعديل الكمية بالنقص أو الحذف">
       <section className="rounded-xl border bg-card p-4">
         <div className="grid items-end gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div><Label htmlFor="bi-branch">اسم الفرع</Label><select id="bi-branch" className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={draft.targetBranchId} onChange={(e) => setDraft((f) => ({ ...f, targetBranchId: e.target.value }))}><option value="">كل الفروع</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
+          <div><Label htmlFor="bi-branch">اسم الفرع</Label><SearchableSelect id="bi-branch" className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={draft.targetBranchId} onChange={(e) => setDraft((f) => ({ ...f, targetBranchId: e.target.value }))}><option value="">كل الفروع</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</SearchableSelect></div>
           <div><Label htmlFor="bi-from">من</Label><Input id="bi-from" className="mt-2" type="date" value={draft.dateFrom} onChange={(e) => setDraft((f) => ({ ...f, dateFrom: e.target.value }))} /></div>
           <div><Label htmlFor="bi-to">إلى</Label><Input id="bi-to" className="mt-2" type="date" value={draft.dateTo} onChange={(e) => setDraft((f) => ({ ...f, dateTo: e.target.value }))} /></div>
           <Button onClick={search}><Search className="size-4" /> بحث</Button>

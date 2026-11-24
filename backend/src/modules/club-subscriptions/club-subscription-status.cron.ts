@@ -24,6 +24,9 @@ export class ClubSubscriptionStatusCron {
   }
 
   private async handleExpiredLocked() {
+    // Booked freezes due today start first (the member is frozen from 02:00 on the booked day).
+    const startedFreezeCount = await this.subscriptions.startDueFreezes();
+    if (startedFreezeCount > 0) this.log.log(`Started ${startedFreezeCount} booked subscription freezes`);
     const releasedFreezeCount = await this.subscriptions.releaseFinishedFreezes();
     if (releasedFreezeCount > 0) this.log.log(`Released ${releasedFreezeCount} finished subscription freezes`);
     const expiredSubs = await this.subscriptions.findNewlyExpired();

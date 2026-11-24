@@ -21,6 +21,7 @@ import {
   Sparkles,
   ContactRound,
   ArrowRightLeft,
+  CalendarClock,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -75,6 +76,8 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { Checkbox } from '@/components/ui/checkbox';
+import { FreezeBalance, freezeDays } from '@/components/club/freeze-balance';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Pagination } from '@/components/ui/pagination';
@@ -84,9 +87,14 @@ import { useClubT } from '@/hooks/use-club-t';
 import { usePermission } from '@/hooks/use-permission';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
+import { lockedMemberGender, preferredMemberGender } from '@/lib/user-scope';
 import { translateNavRoute } from '@/lib/nav';
 import { api, apiError } from '@/lib/api';
 import { formatMoney, formatTime, localToday } from '@/lib/formatters';
+import { useSaveAndWhatsApp } from '@/hooks/use-whatsapp-templates';
+import { messageAmount } from '@/lib/whatsapp-message';
+import { WhatsAppIcon } from '@/components/club/whatsapp-icon';
+import { SubscriptionExpiryReports } from '@/components/club/subscription-expiry-reports';
 import { resolveSessionMatrixPrice } from '@/lib/session-price-matrix';
 import { subscriptionTypesForBranch } from '@/lib/club-subscription-branches';
 import { useArrayResource, usePaginatedList } from '@/lib/api-hooks';
@@ -96,6 +104,7 @@ import { cn, toArabicDigits } from '@/lib/utils';
 import type { ClubSubscriptionsView } from '@/lib/club-routes';
 import type { ClubDiscountCode, ClubMemberListItem, ClubPrivatePackage, ClubSubscriptionListItem, ClubSubscriptionStatistics, ClubSubscriptionType } from '@/types/club';
 import type { ClubClassType } from '@/types/fitness';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const selectCls = 'flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm';
 
@@ -112,12 +121,35 @@ function resolveBranchName(
 }
 
 /** Add N days to a YYYY-MM-DD string using local time (no UTC shift). */
+/** YYYY-MM-DD + n calendar days (the freeze back day). */
+function addCalendarDays(day: string, n: number): string {
+  const d = new Date(`${day}T12:00:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 function addDaysLocal(dateStr: string, days: number): string {
   const [y, m, d] = dateStr.split('-').map(Number);
   const dt = new Date(y, (m ?? 1) - 1, (d ?? 1) + days);
   const mm = String(dt.getMonth() + 1).padStart(2, '0');
   const dd = String(dt.getDate()).padStart(2, '0');
   return `${dt.getFullYear()}-${mm}-${dd}`;
+}
+
+/**
+ * Age in whole years from a YYYY-MM-DD birth date, or null when it is missing or clearly wrong
+ * (before 1925, in the future or under 3 years: typing mistakes carried over from the old system).
+ */
+function memberAgeYears(dob?: string | null): number | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(dob ?? '');
+  if (!m) return null;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const birth = new Date(y, mo - 1, d);
+  if (Number.isNaN(birth.getTime()) || birth.getMonth() !== mo - 1 || y < 1925) return null;
+  const today = new Date();
+  let age = today.getFullYear() - y;
+  if (today.getMonth() < mo - 1 || (today.getMonth() === mo - 1 && today.getDate() < d)) age--;
+  return age < 3 ? null : age;
 }
 
 /** Last day of a subscription lasting `days` days; the start day counts, as in the old system. */
@@ -171,6 +203,23 @@ interface WaiverReportRow {
 }
 
 type SubscriptionKind = 'package' | 'sessions' | 'special' | 'private';
+
+/** SPA-only packages («سيشن سبا فقط», «اشتراك سبا فقط 10 جلسات»); same rule as the subscription reports. */
+const SPA_ONLY_TYPE_PATTERNS = ['سبا فقط', 'سيشن سبا'];
+function isSpaOnlyType(name: string | null | undefined): boolean {
+  const text = (name ?? '').replace(/\s+/g, ' ');
+  return SPA_ONLY_TYPE_PATTERNS.some((pattern) => text.includes(pattern));
+}
+
+/**
+ * One-visit class tickets («سيشن بوكسينج», «اشتراك سيشن spinning», «سيشن بيلي دانس»): a one-day
+ * plan with no session count. Reception looks for them under «حصص», so they are listed there as
+ * well as under «اشتراك» (21 Nov). They still save as an ordinary one-day subscription.
+ */
+const SINGLE_SESSION_NAME = /سيشن|سشن|حصة|حصه|session/i;
+function isSingleSessionType(type: { name?: string | null; days?: number | null; isLinkedToSessions?: boolean }): boolean {
+  return !type.isLinkedToSessions && Number(type.days) <= 1 && SINGLE_SESSION_NAME.test(type.name ?? '');
+}
 type WorkspaceSubscriptionAction = 'renew' | 'freeze' | 'unfreeze' | 'transfer';
 
 export interface ClubSubscriptionsPageProps {
@@ -421,7 +470,7 @@ export function ClubSubscriptionsPage({
     { key: 'branch', label: ct('common.branch'), type: 'select', options: branchOptions },
     { key: 'kind', label: 'فئة الاشتراك', type: 'select', options: kindOptions },
     { key: 'subscriptionType', label: ct('subscriptions.subType'), type: 'select', options: subTypeOptions },
-    { key: 'gender', label: 'الفئة', type: 'select', options: genderOptions },
+    { key: 'gender', label: 'الفئة', type: 'select', options: genderOptions, lockedValue: lockedMemberGender(user) ?? undefined, defaultValue: preferredMemberGender(user) ?? undefined },
     { key: 'status', label: ct('common.status'), type: 'select', options: statusOptions },
   ];
 
@@ -452,6 +501,8 @@ export function ClubSubscriptionsPage({
   const [receiptOpen, setReceiptOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
+  // «حفظ وإرسال واتساب»: each save handler records what to send (subscription + operation values).
+  const saveAndWhatsApp = useSaveAndWhatsApp();
   const [paymentAmount, setPaymentAmount] = useState('');
   const [installmentRows, setInstallmentRows] = useState<ClubPaymentSplitRow[]>(singlePaymentRow());
   const [paymentMaxRemaining, setPaymentMaxRemaining] = useState(0);
@@ -467,6 +518,8 @@ export function ClubSubscriptionsPage({
   const [renewForm, setRenewForm] = useState({ paidAmount: '' });
   const [renewRows, setRenewRows] = useState<ClubPaymentSplitRow[]>(singlePaymentRow());
   const [subscriptionKind, setSubscriptionKind] = useState<SubscriptionKind>('package');
+  /** «SPA» card: the normal subscription form, listing only the SPA-only packages. */
+  const [spaMode, setSpaMode] = useState(false);
   const { data: subscriptionEmployees = [] } = useQuery({
     queryKey: ['employees', 'subscription-options'],
     queryFn: async () => (await api.get<Array<{ id: number; employee: string | null; emp_code: number | null }>>('/employees/subscription-options')).data,
@@ -492,7 +545,7 @@ export function ClubSubscriptionsPage({
     endDate: '',
     subscriptionValue: '',
     paidAmount: '',
-    gender: 'male' as 'male' | 'female',
+    gender: (preferredMemberGender(user) ?? 'male') as 'male' | 'female',
     isSpecial: false,
     isTimeBased: false,
     timeFrom: '06:00',
@@ -615,10 +668,14 @@ export function ClubSubscriptionsPage({
     return subscriptionTypesForBranch(types as ClubSubscriptionType[], branchId);
   }, [subTypesRaw, form.branchId, selectedMember?.branchId]);
   const subTypes = useMemo(
-    () => availableSubTypes.filter((type) =>
-      subscriptionKind === 'sessions' ? !!type.isLinkedToSessions : !type.isLinkedToSessions,
-    ),
-    [availableSubTypes, subscriptionKind],
+    () => availableSubTypes.filter((type) => {
+      if (subscriptionKind === 'package' && spaMode) return isSpaOnlyType(type.name);
+      if (isSpaOnlyType(type.name)) return false;
+      return subscriptionKind === 'sessions'
+        ? !!type.isLinkedToSessions || isSingleSessionType(type)
+        : !type.isLinkedToSessions;
+    }),
+    [availableSubTypes, subscriptionKind, spaMode],
   );
   const [transferForm, setTransferForm] = useState({
     subscriptionId: '',
@@ -686,19 +743,31 @@ export function ClubSubscriptionsPage({
     setForm((f) => (f.branchId ? f : { ...f, branchId }));
   }, [dialogOpen, editSubId, form.branchId, user?.branch, branches]);
 
+  // «بيع بالعرض الخاص»: on by default while the chosen package has a running offer (new sales only).
+  const [usePromotion, setUsePromotion] = useState(false);
+  const promoType = useMemo(() => {
+    const type = subTypes?.find((t) => t.id === Number(form.subscriptionTypeId));
+    return type?.promoLive && type.promoPrice != null && !editSubId ? type : null;
+  }, [subTypes, form.subscriptionTypeId, editSubId]);
+  useEffect(() => { setUsePromotion(!!promoType); }, [promoType]);
+  const sellingAtOffer = usePromotion && !!promoType;
+
   useEffect(() => {
     if (!form.subscriptionTypeId || !form.startDate) return;
     const type = subTypes?.find((t) => t.id === Number(form.subscriptionTypeId));
     if (!type) return;
     const packageSessions = type.isLinkedToSessions ? Math.max(1, Number(type.sessionsCount) || 1) : 0;
+    // The offer is for the whole package: its price, plus extra days or visits (as the server applies it).
+    const bonus = sellingAtOffer && type.promoKind === 'bonus' ? Math.max(0, Number(type.promoBonus) || 0) : 0;
+    const days = type.days > 0 ? type.days : type.isLinkedToSessions ? 30 : 0;
     setForm((f) => ({
       ...f,
-      subscriptionValue: String(type.price),
+      subscriptionValue: String(sellingAtOffer ? type.promoPrice : type.price),
       isLinkedToSessions: !!type.isLinkedToSessions,
-      sessionsCount: type.isLinkedToSessions ? String(packageSessions) : '',
-      endDate: subscriptionEndLocal(f.startDate, type.days > 0 ? type.days : type.isLinkedToSessions ? 30 : 0),
+      sessionsCount: type.isLinkedToSessions ? String(packageSessions + bonus) : '',
+      endDate: subscriptionEndLocal(f.startDate, type.isLinkedToSessions ? days : days + bonus),
     }));
-  }, [form.subscriptionTypeId, form.startDate, subTypes]);
+  }, [form.subscriptionTypeId, form.startDate, subTypes, sellingAtOffer]);
 
   useEffect(() => {
     if (!form.specialClassTypeId || !form.startDate) return;
@@ -832,6 +901,7 @@ export function ClubSubscriptionsPage({
     const branchId = user?.branch && user.branch > 0 ? user.branch : (branches?.[0]?.id ?? 0);
     setEditSubId(null);
     setSubscriptionKind('package');
+    setSpaMode(false);
     setForm({
       branchId,
       memberId: '',
@@ -846,7 +916,7 @@ export function ClubSubscriptionsPage({
       endDate: '',
       subscriptionValue: '',
       paidAmount: '',
-      gender: 'male',
+      gender: preferredMemberGender(user) ?? 'male',
         isSpecial: false,
       isTimeBased: false,
       timeFrom: '06:00',
@@ -872,7 +942,9 @@ export function ClubSubscriptionsPage({
   const openEdit = async (row: ClubSubscriptionListItem) => {
     if (!canUpdateSubscriptions) return;
     setEditSubId(row.id);
-    setSubscriptionKind(row.specialClassTypeId || row.isSpecial ? 'special' : row.isLinkedToSessions ? 'sessions' : 'package');
+    const spaRow = !row.specialClassTypeId && !row.isSpecial && isSpaOnlyType(row.subscriptionType);
+    setSpaMode(spaRow);
+    setSubscriptionKind(row.specialClassTypeId || row.isSpecial ? 'special' : spaRow ? 'package' : row.isLinkedToSessions ? 'sessions' : 'package');
     setPaymentRows(singlePaymentRow((row.paymentMethod as ClubPaymentMethod) || 'cash'));
     setReceiptNumber(row.receiptNumber ?? '');
     setPaidAmountEdited(true);
@@ -890,7 +962,7 @@ export function ClubSubscriptionsPage({
       endDate: row.subscriptionEndDate,
       subscriptionValue: String(row.subscriptionValue ?? ''),
       paidAmount: String(row.paidAmount ?? ''),
-      gender: (row.gender as 'male' | 'female') ?? 'male',
+      gender: (row.gender as 'male' | 'female' | null) ?? row.memberGender ?? preferredMemberGender(user) ?? 'male',
       isSpecial: !!row.isSpecial,
       isTimeBased: !!row.isTimeBased,
       timeFrom: row.timeFrom ?? '06:00',
@@ -965,6 +1037,7 @@ export function ClubSubscriptionsPage({
     const requestedSessionsCount = Number(form.sessionsCount);
     if (
       subscriptionKind === 'sessions' &&
+      !!selectedSessionPackage?.isLinkedToSessions &&
       (!Number.isInteger(requestedSessionsCount) ||
         requestedSessionsCount < 1 ||
         requestedSessionsCount > Math.max(1, selectedSessionPackage?.sessionsCount ?? 1))
@@ -1018,7 +1091,7 @@ export function ClubSubscriptionsPage({
     let newlySavedSub: ClubSubscriptionListItem | null = null;
     try {
       if (subscriptionKind === 'private') {
-        await api.post('/club-private-subscriptions/enrollments', {
+        const { data: enrollment } = await api.post<{ id: number }>('/club-private-subscriptions/enrollments', {
           memberId: Number(form.memberId),
           packageId: Number(form.privatePackageId),
           trainerEmployeeId: Number(form.privateTrainerId),
@@ -1032,6 +1105,7 @@ export function ClubSubscriptionsPage({
           gender: form.gender,
           ...split.payload,
         });
+        if (enrollment?.id) saveAndWhatsApp.target(enrollment.id);
       } else if (subscriptionKind === 'special') {
         const specialPayload = {
           branchId: effectiveBranchId,
@@ -1060,6 +1134,7 @@ export function ClubSubscriptionsPage({
             paidAmount: form.paidAmount ? Number(form.paidAmount) : 0,
           });
           newlySavedSub = createdSpecial;
+          if (createdSpecial?.id) saveAndWhatsApp.target(createdSpecial.id);
         }
       } else if (editSubId) {
         const selectedType = subTypes?.find((t) => t.id === Number(form.subscriptionTypeId));
@@ -1123,8 +1198,10 @@ export function ClubSubscriptionsPage({
             ? Number(form.sessionsCount)
             : undefined,
           isSpecial: filterSpecial || form.isSpecial,
+          usePromotion: sellingAtOffer || undefined,
         });
         newlySavedSub = createdSub;
+        if (createdSub?.id) saveAndWhatsApp.target(createdSub.id);
       }
       toast.success(ct('common.success'));
       setDialogOpen(false);
@@ -1138,6 +1215,8 @@ export function ClubSubscriptionsPage({
       setSaving(false);
     }
   };
+
+  const saveSubAndWhatsApp = () => saveAndWhatsApp.run('subscription', saveSub, selectedMember?.phone ?? null);
 
   const openPayment = (sub: ClubSubscriptionListItem) => {
     setSelectedId(sub.id);
@@ -1169,10 +1248,12 @@ export function ClubSubscriptionsPage({
       const { data: result } = await api.patch<{
         subscription: ClubSubscriptionListItem;
         paymentAmount: number;
+        receiptNumber?: string | null;
       }>(`/club-subscriptions/${selectedId}/payment`, {
         paymentAmount: amount,
         ...split.payload,
       });
+      saveAndWhatsApp.target(selectedId, { payment_amount: messageAmount(result.paymentAmount ?? amount), receipt_number: result.receiptNumber ?? '' });
       if (result.subscription) {
         setPaymentSub(result.subscription);
         setPaymentMaxRemaining(result.subscription.remainingAmount);
@@ -1269,7 +1350,8 @@ export function ClubSubscriptionsPage({
     }
     setSaving(true);
     try {
-      await api.patch(`/club-subscriptions/${selectedId}/renew`, body);
+      const { data: renewed } = await api.patch<{ subscription?: ClubSubscriptionListItem }>(`/club-subscriptions/${selectedId}/renew`, body);
+      saveAndWhatsApp.target(renewed?.subscription?.id ?? selectedId, body.paidAmount ? { payment_amount: messageAmount(body.paidAmount) } : {});
       toast.success(ct('common.success'));
       setRenewOpen(false);
       invalidateAll();
@@ -1315,6 +1397,7 @@ export function ClubSubscriptionsPage({
           reason: freezeForm.reason.trim() || undefined,
         });
       }
+      saveAndWhatsApp.target(selectedId);
       toast.success(ct('common.success'));
       setFreezeOpen(false);
       invalidateAll();
@@ -1330,7 +1413,15 @@ export function ClubSubscriptionsPage({
     if (!ok) return;
     try {
       await api.post(`/club-subscriptions/${id}/unfreeze`, {});
-      toast.success(ct('common.success'));
+      toast.success(ct('common.success'), {
+        duration: 15_000,
+        action: {
+          label: 'إرسال واتساب',
+          onClick: () => {
+            saveAndWhatsApp.sendNow('unfreeze', id);
+          },
+        },
+      });
       invalidateAll();
     } catch (e) {
       toast.error(apiError(e));
@@ -1405,7 +1496,7 @@ export function ClubSubscriptionsPage({
     }
     setSaving(true);
     try {
-      await api.post('/club-subscription-transfers', {
+      const { data: transferred } = await api.post<{ destination_subscription_id?: number | null }>('/club-subscription-transfers', {
         subscriptionId: subId,
         toSubscriptionTypeId: typeId,
         toStartDate: transferForm.toStartDate,
@@ -1416,6 +1507,13 @@ export function ClubSubscriptionsPage({
           ? transferForm.refundPaymentMethod
           : undefined,
       });
+      if (transferred?.destination_subscription_id) {
+        saveAndWhatsApp.target(transferred.destination_subscription_id, {
+            previous_package: transferPreview.sourceType ?? '',
+            payment_amount: messageAmount(additionalPaidAmount),
+            refund_amount: messageAmount(transferPreview.refundAmount),
+          });
+      }
       toast.success(
         transferPreview.refundAmount > 0
           ? `تم التحويل ورد ${formatMoney(transferPreview.refundAmount)} من الخزينة`
@@ -1445,7 +1543,7 @@ export function ClubSubscriptionsPage({
         id: 'category',
         header: 'الفئة',
         size: 48,
-        cell: ({ row }) => row.original.gender === 'female' ? 'حريمي' : row.original.gender === 'male' ? 'رجالي' : '—',
+        cell: ({ row }) => (row.original.gender ?? row.original.memberGender) === 'female' ? 'حريمي' : (row.original.gender ?? row.original.memberGender) === 'male' ? 'رجالي' : '—',
       },
       {
         accessorKey: 'assignedStaffName',
@@ -1698,6 +1796,7 @@ export function ClubSubscriptionsPage({
           <TabsTrigger value="transfers"><Repeat className="size-4" /> {ct('subscriptions.tabTransfers')}</TabsTrigger>
           <TabsTrigger value="waivers"><ShieldOff className="size-4" /> إجمالي الإعفاءات</TabsTrigger>
           <TabsTrigger value="frozen"><Snowflake className="size-4" /> {ui('الاشتراكات الموقوفة')}</TabsTrigger>
+          {canRoute('/club/subscriptions/expiring') ? <TabsTrigger value="expiring"><CalendarClock className="size-4" /> اشتراكات على وشك الانتهاء</TabsTrigger> : null}
           <TabsTrigger value="reports">{ct('subscriptions.tabReports')}</TabsTrigger>
         </TabsList>
         </div>
@@ -1753,9 +1852,9 @@ export function ClubSubscriptionsPage({
             <Button variant="outline" onClick={() => window.print()}><Printer className="size-4" /> طباعة النتائج</Button>
           </div>
           <div className="grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-2 xl:grid-cols-4 print:hidden">
-            <select className={selectCls} value={receiptFilters.branchId} onChange={(e) => setReceiptFilters((f) => ({ ...f, branchId: e.target.value }))}>
+            <SearchableSelect className={selectCls} value={receiptFilters.branchId} onChange={(e) => setReceiptFilters((f) => ({ ...f, branchId: e.target.value }))}>
               <option value="">كل الفروع</option>{branchOptions.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
-            </select>
+            </SearchableSelect>
             <Input className="nums" inputMode="numeric" value={receiptFilters.memberId} onChange={(e) => setReceiptFilters((f) => ({ ...f, memberId: e.target.value }))} placeholder="رقم العضو (اختياري)" />
             <Input className="nums" type="date" value={receiptFilters.startDate} onChange={(e) => setReceiptFilters((f) => ({ ...f, startDate: e.target.value }))} />
             <Input className="nums" type="date" value={receiptFilters.endDate} onChange={(e) => setReceiptFilters((f) => ({ ...f, endDate: e.target.value }))} />
@@ -1879,6 +1978,10 @@ export function ClubSubscriptionsPage({
           <PrivateEnrollmentsList />
         </TabsContent>
 
+        <TabsContent value="expiring" className="space-y-4 pt-4">
+          {tab === 'expiring' ? <SubscriptionExpiryReports /> : null}
+        </TabsContent>
+
         <TabsContent value="reports" className="space-y-6 pt-4">
           {reportFocus === 'expiring' && (
           <div>
@@ -1983,7 +2086,7 @@ export function ClubSubscriptionsPage({
                       <td className="p-2">{s.customerName}</td>
                       <td className="p-2">{s.subscriptionTypeName ?? s.subscriptionType ?? '—'}</td>
                       <td className="p-2">{s.branchName ?? '—'}</td>
-                      <td className="p-2">{s.gender === 'female' ? 'حريمي' : s.gender === 'male' ? 'رجالي' : '—'}</td>
+                      <td className="p-2">{(s.gender ?? s.memberGender) === 'female' ? 'حريمي' : (s.gender ?? s.memberGender) === 'male' ? 'رجالي' : '—'}</td>
                       <td className="p-2 nums whitespace-nowrap">{toArabicDigits(s.subscriptionStartDate)}</td>
                       <td className="p-2 nums whitespace-nowrap">{toArabicDigits(s.subscriptionEndDate)}</td>
                     </tr>
@@ -2025,20 +2128,26 @@ export function ClubSubscriptionsPage({
                 <p className="font-semibold">نوع الاشتراك</p>
                 <p className="mt-1 text-sm text-muted-foreground">اختر المسار أولًا لإظهار الباقات أو الحصص المطلوبة.</p>
               </div>
-              <div className="grid w-full gap-3 sm:grid-cols-3">
+              <div className="grid w-full gap-3 sm:grid-cols-2">
                 {([
                   { value: 'package', label: 'اشتراك', description: 'الباقات العادية', icon: Package },
                   { value: 'private', label: 'اشتراكات برايفت', description: 'اشتراكات وحصص برايفت مع مدرب خاص', icon: ContactRound },
                   { value: 'sessions', label: 'حصص', description: 'باقات الحصص في الباقات والأسعار', icon: Dumbbell },
+                  { value: 'spa', label: 'SPA', description: 'باقات وجلسات السبا فقط', icon: Sparkles },
                 ] as const).map((item) => {
                   const Icon = item.icon;
-                  const selected = subscriptionKind === item.value;
+                  const selected = item.value === 'spa'
+                    ? subscriptionKind === 'package' && spaMode
+                    : subscriptionKind === item.value && !(item.value === 'package' && spaMode);
                   return (
                     <button
                       key={item.value}
                       type="button"
                       disabled={!!editSubId}
-                      onClick={() => selectSubscriptionKind(item.value)}
+                      onClick={() => {
+                        setSpaMode(item.value === 'spa');
+                        selectSubscriptionKind(item.value === 'spa' ? 'package' : item.value);
+                      }}
                       className={cn(
                         'flex min-h-24 items-center gap-3 rounded-xl border bg-background p-3 text-start transition-all',
                         selected ? 'border-primary bg-primary/5 ring-2 ring-primary/15' : 'hover:border-primary/40 hover:bg-muted/30',
@@ -2056,7 +2165,7 @@ export function ClubSubscriptionsPage({
             <DialogFormSection title={ct('subscriptions.sectionCustomer')} icon={User}>
               <DialogFormGrid className={pageFormGridCls}>
                 <FieldWrapper label={ct('common.branch')} required>
-                  <select
+                  <SearchableSelect
                     className={selectCls}
                     value={form.branchId || ''}
                     disabled={!!editSubId}
@@ -2077,7 +2186,7 @@ export function ClubSubscriptionsPage({
                     {subscriptionBranchOptions.map((branch) => (
                       <option key={branch.value} value={branch.value}>{branch.label}</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </FieldWrapper>
                 <FieldWrapper label={ct('subscriptions.customerName')} required>
                   <MemberSearchCombobox
@@ -2102,7 +2211,7 @@ export function ClubSubscriptionsPage({
                   />
                 </FieldWrapper>
                 <FieldWrapper label="الفئة" required>
-                  <select
+                  <SearchableSelect
                     className={selectCls}
                     value={form.gender}
                     onChange={(event) => setForm((current) => ({
@@ -2112,7 +2221,7 @@ export function ClubSubscriptionsPage({
                   >
                     <option value="male">رجالي</option>
                     <option value="female">حريمي</option>
-                  </select>
+                  </SearchableSelect>
                 </FieldWrapper>
                 {subscriptionKind === 'package' ? (
                   <FieldWrapper label="الموظف">
@@ -2166,7 +2275,7 @@ export function ClubSubscriptionsPage({
               <DialogFormSection title="الاشتراك الخاص" icon={CalendarDays}>
                 <DialogFormGrid className={pageFormGridCls}>
                   <FieldWrapper label="نوع الاشتراك الخاص" required>
-                    <select
+                    <SearchableSelect
                       className={selectCls}
                       value={form.specialClassTypeId}
                       onChange={(event) => {
@@ -2193,7 +2302,7 @@ export function ClubSubscriptionsPage({
                     >
                       <option value="">اختر الاشتراك الخاص</option>
                       {(specialClassTypes ?? []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                    </select>
+                    </SearchableSelect>
                   </FieldWrapper>
                   <FieldWrapper label={ct('subscriptions.startDate')} required>
                     <Input type="date" className="nums" dir="ltr" value={form.startDate} onChange={(event) => setForm((current) => ({ ...current, startDate: event.target.value }))} />
@@ -2338,20 +2447,31 @@ export function ClubSubscriptionsPage({
                         selectedType?.isForStudents ||
                         (selectedType?.name ?? '').includes('طلب');
                       if (isStudentSub) {
-                        const dob = selectedMember?.dateOfBirth;
-                        if (!dob) {
-                          toast.error('لا يمكن تحديد عمر العضو — يرجى التأكد من إدخال تاريخ الميلاد');
+                        if (!selectedMember) {
+                          toast.error('اختار العضو الأول');
                           return;
                         }
-                        const dobDate = new Date(dob);
-                        const today = new Date();
-                        let age = today.getFullYear() - dobDate.getFullYear();
-                        const monthDiff = today.getMonth() - dobDate.getMonth();
-                        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < dobDate.getDate())) {
-                          age--;
+                        const dob = selectedMember.dateOfBirth;
+                        const age = memberAgeYears(dob);
+                        // Reception fixes the member's data and comes back here with the member picked.
+                        const fixMember = {
+                          duration: 12000,
+                          action: {
+                            label: 'تعديل بيانات العضو',
+                            onClick: () => navigate(`/club/members/${selectedMember.id}?edit=1&then=subscription`),
+                          },
+                        };
+                        if (age == null) {
+                          toast.error(
+                            dob
+                              ? `تاريخ ميلاد العضو مش مظبوط (${dob}) — لا يمكن تحديد عمره. عدّله من بيانات العضو`
+                              : 'لا يمكن تحديد عمر العضو — تاريخ الميلاد مش متسجل. ضيفه من بيانات العضو',
+                            fixMember,
+                          );
+                          return;
                         }
                         if (age > 23) {
-                          toast.error('أنت لست طالباً — هذا الاشتراك خاص بالطلبة (23 سنة أو أقل)');
+                          toast.error(`العضو عنده ${age} سنة — الاشتراك ده للطلبة (23 سنة أو أقل). لو تاريخ الميلاد غلط عدّله`, fixMember);
                           return;
                         }
                       }
@@ -2360,7 +2480,9 @@ export function ClubSubscriptionsPage({
                     options={(subTypes ?? []).map((t) => ({
                       value: String(t.id),
                       label: t.name,
-                      description: t.price ? `${t.price.toLocaleString('ar-EG')} ج.م` : undefined,
+                      description: t.promoLive && t.promoPrice != null
+                        ? `عرض خاص: ${t.promoPrice.toLocaleString('ar-EG')} ج.م${t.promoLabel ? ` ${t.promoLabel}` : ''} (بدل ${t.price.toLocaleString('ar-EG')})`
+                        : t.price ? `${t.price.toLocaleString('ar-EG')} ج.م` : undefined,
                     }))}
                     placeholder="اختر نوع الاشتراك"
                     searchPlaceholder="ابحث باسم الاشتراك أو السعر…"
@@ -2376,6 +2498,19 @@ export function ClubSubscriptionsPage({
                   if (!selectedType) return null;
                   return (
                     <>
+                      {promoType ? (
+                        <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-sm sm:col-span-2">
+                          <Checkbox className="mt-0.5" checked={usePromotion} onCheckedChange={(value) => setUsePromotion(value === true)} />
+                          <span className="space-y-0.5">
+                            <b className="block">بيع بالعرض الخاص</b>
+                            <span className="nums block text-muted-foreground">
+                              {toArabicDigits(promoType.promoPrice ?? 0)} ج.م بدل {toArabicDigits(promoType.price)} ج.م
+                              {promoType.promoLabel ? ` · ${promoType.promoLabel}` : ''}
+                              {promoType.promoEndsOn ? ` · حتى ${toArabicDigits(promoType.promoEndsOn)}` : ''}
+                            </span>
+                          </span>
+                        </label>
+                      ) : null}
                       {selectedType.isLinkedToSessions ? (
                         <FieldWrapper label={ct('packages.sessionsCount')}>
                           <Input
@@ -2384,6 +2519,7 @@ export function ClubSubscriptionsPage({
                             max={Math.max(1, selectedType.sessionsCount ?? 1)}
                             step={1}
                             className="nums"
+                            disabled={sellingAtOffer}
                             value={form.sessionsCount}
                             onChange={(event) => {
                               const sessionsCount = event.target.value;
@@ -2552,6 +2688,12 @@ export function ClubSubscriptionsPage({
             {(editSubId ? canUpdateSubscriptions : canCreateSubscriptions) ? (
               <Button variant="brand" onClick={() => void saveSub()} disabled={saving}>{saving ? ct('common.saving') : ct('common.save')}</Button>
             ) : null}
+            {!editSubId && canCreateSubscriptions ? (
+              <Button variant="outline" className="border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => void saveSubAndWhatsApp()} disabled={saving}>
+                <WhatsAppIcon className="size-4" />
+                حفظ وإرسال واتساب
+              </Button>
+            ) : null}
           </FormDialogFooter>
         </DialogContent>
       </Dialog>
@@ -2587,6 +2729,10 @@ export function ClubSubscriptionsPage({
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="outline" onClick={() => setPaymentOpen(false)}>{ct('common.cancel')}</Button>
             <Button variant="brand" onClick={() => void pay()} disabled={saving}>{ct('subscriptions.pay')}</Button>
+            <Button variant="outline" className="border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => void saveAndWhatsApp.run('payment', pay)} disabled={saving}>
+              <WhatsAppIcon className="size-4" />
+              حفظ وإرسال واتساب
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2613,7 +2759,7 @@ export function ClubSubscriptionsPage({
           <div className="space-y-4">
             <DialogFormGrid>
               <FieldWrapper label="الاشتراك الحالي" required>
-                <select
+                <SearchableSelect
                   className={selectCls}
                   value={transferForm.subscriptionId}
                   onChange={(event) => setTransferForm((current) => ({
@@ -2628,7 +2774,7 @@ export function ClubSubscriptionsPage({
                       {item.subscriptionNumber} — {item.customerName} — {item.subscriptionType}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </FieldWrapper>
               <FieldWrapper label={ct('subscriptions.transferToType')} required>
                 {(() => {
@@ -2711,6 +2857,10 @@ export function ClubSubscriptionsPage({
           <DialogFooter>
             <Button variant="outline" onClick={() => setTransferOpen(false)}>{ct('common.cancel')}</Button>
             <Button variant="brand" onClick={() => void saveTransfer()} disabled={saving || !transferPreview}>{ct('common.save')}</Button>
+            <Button variant="outline" className="border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => void saveAndWhatsApp.run('transfer', saveTransfer)} disabled={saving || !transferPreview}>
+              <WhatsAppIcon className="size-4" />
+              حفظ وإرسال واتساب
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -2722,9 +2872,18 @@ export function ClubSubscriptionsPage({
           <DialogHeader><DialogTitle>{editingFreeze ? 'تعديل الإيقاف' : ct('subscriptions.freezeTitle')}</DialogTitle></DialogHeader>
           <div className="grid gap-3">
             <p className="text-sm text-muted-foreground">{ct('subscriptions.freezePreserveHint')}</p>
+            <FreezeBalance subscriptionId={freezeOpen ? selectedId : null} requestedDays={editingFreeze ? undefined : freezeDays(freezeForm.startDate, freezeForm.endDate)} onChanged={() => invalidateAll()} />
             <div className="grid grid-cols-2 gap-3">
-              <div className="grid gap-2"><Label>بداية الإيقاف</Label><Input type="date" className="nums" disabled={editingFreeze} value={freezeForm.startDate} onChange={(e) => setFreezeForm((f) => ({ ...f, startDate: e.target.value }))} /></div>
-              <div className="grid gap-2"><Label>نهاية الإيقاف</Label><Input type="date" className="nums" min={freezeForm.startDate} value={freezeForm.endDate} onChange={(e) => setFreezeForm((f) => ({ ...f, endDate: e.target.value }))} /></div>
+              {/* Same as reception: start + number of days, the back day is computed (client, 22 Nov). */}
+              <div className="grid gap-2"><Label>بداية الإيقاف</Label><Input type="date" className="nums" disabled={editingFreeze} value={freezeForm.startDate} onChange={(e) => setFreezeForm((f) => {
+                const days = freezeDays(f.startDate, f.endDate) ?? 0;
+                return { ...f, startDate: e.target.value, endDate: e.target.value ? addCalendarDays(e.target.value, days) : f.endDate };
+              })} /></div>
+              <div className="grid gap-2"><Label>عدد أيام الإيقاف</Label><Input type="number" inputMode="numeric" min={1} step={1} className="nums" placeholder="مثال: 5" value={freezeDays(freezeForm.startDate, freezeForm.endDate) ?? ''} onChange={(e) => {
+                const days = Math.max(0, Math.floor(Number(e.target.value) || 0));
+                setFreezeForm((f) => ({ ...f, endDate: addCalendarDays(f.startDate, days) }));
+              }} /></div>
+              <div className="col-span-2 grid gap-2"><Label>نهاية الإيقاف — بيرجع يدخل من اليوم ده</Label><Input type="date" className="nums bg-muted" readOnly tabIndex={-1} value={freezeForm.endDate} /></div>
             </div>
             <div className="grid gap-2">
               <Label>{ct('subscriptions.freezeReason')}</Label>
@@ -2738,6 +2897,10 @@ export function ClubSubscriptionsPage({
             <Button variant="outline" onClick={() => setFreezeOpen(false)}>{ct('common.cancel')}</Button>
             <Button variant="brand" onClick={() => void submitFreeze()} disabled={saving}>
               {saving ? ct('common.saving') : editingFreeze ? 'حفظ التعديل' : ct('subscriptions.freeze')}
+            </Button>
+            <Button variant="outline" className="border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => void saveAndWhatsApp.run('freeze', submitFreeze)} disabled={saving}>
+              <WhatsAppIcon className="size-4" />
+              حفظ وإرسال واتساب
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -2781,6 +2944,10 @@ export function ClubSubscriptionsPage({
             <Button variant="outline" onClick={() => setRenewOpen(false)}>{ct('common.cancel')}</Button>
             <Button variant="brand" onClick={() => void submitRenew()} disabled={saving}>
               {saving ? ct('common.saving') : ct('subscriptions.renew')}
+            </Button>
+            <Button variant="outline" className="border-emerald-500/40 text-emerald-700 hover:bg-emerald-500/10 dark:text-emerald-300" onClick={() => void saveAndWhatsApp.run('renewal', submitRenew)} disabled={saving}>
+              <WhatsAppIcon className="size-4" />
+              حفظ وإرسال واتساب
             </Button>
           </DialogFooter>
         </DialogContent>

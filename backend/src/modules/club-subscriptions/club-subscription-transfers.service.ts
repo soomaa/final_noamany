@@ -26,6 +26,7 @@ import {
   roundMoney,
   primaryClubPaymentMethod,
   resolveClubPayments,
+  subscriptionGenderWhere,
   toClubPaymentMethod,
   toNum,
 } from './club-subscription.utils';
@@ -331,11 +332,14 @@ export class ClubSubscriptionTransfersService {
     return transfer;
   }
 
-  async listMemberTransfers(user?: JwtUser) {
+  async listMemberTransfers(user?: JwtUser, gender?: string) {
     const allowed = await clubOperationBranchIds(this.branchScope, this.branchGroups, user);
+    // رجالي/حريمي/الكل by the transferred subscription's section (one-section staff are locked to theirs).
+    const memberGender = this.branchScope.resolveMemberGenderRequest(user, gender);
     const rows = await this.prisma.club_member_subscription_transfers.findMany({
       where: {
         ...(allowed === null ? {} : { OR: [{ source_branch_id: { in: allowed } }, { destination_branch_id: { in: allowed } }] }),
+        ...(memberGender ? { source_subscription: { is: subscriptionGenderWhere(memberGender) } } : {}),
         ...(user?.level === 2 && !isSystemAdmin(user) ? { effective_date: localDateString() } : {}),
       },
       include: {
@@ -973,9 +977,15 @@ export class ClubSubscriptionTransfersService {
     return { ...result.transfer, preview: result.preview };
   }
 
-  async list(user?: JwtUser) {
+  /** رجالي/حريمي/الكل by the transferred subscription's section (one-section staff are locked to theirs). */
+  private planGenderWhere(user: JwtUser | undefined, gender?: string): Prisma.club_subscription_transfersWhereInput {
+    const memberGender = this.branchScope.resolveMemberGenderRequest(user, gender);
+    return memberGender ? { subscription: { is: subscriptionGenderWhere(memberGender) } } : {};
+  }
+
+  async list(user?: JwtUser, gender?: string) {
     return this.prisma.club_subscription_transfers.findMany({
-      where: this.branchWhere(user),
+      where: { ...this.branchWhere(user), ...this.planGenderWhere(user, gender) },
       orderBy: { id: 'desc' },
     });
   }
@@ -1020,9 +1030,9 @@ export class ClubSubscriptionTransfersService {
     return { subscriptions, transfers, memberTransfers, history };
   }
 
-  async statistics(user?: JwtUser) {
+  async statistics(user?: JwtUser, gender?: string) {
     const rows = await this.prisma.club_subscription_transfers.findMany({
-      where: this.branchWhere(user),
+      where: { ...this.branchWhere(user), ...this.planGenderWhere(user, gender) },
     });
     const totalValueDifference = rows.reduce(
       (s, r) => s + (toNum(r.to_value) - toNum(r.from_value)),

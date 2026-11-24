@@ -1,4 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
+import { BlockedChip } from '@/components/club/blocked-member-flag';
 import { AlertTriangle, Archive, Building2, CalendarCheck, CalendarPlus, CalendarX, Copy, ExternalLink, Eye, FileText, Loader2, LockKeyhole, LogIn, LogOut, MoreHorizontal, Paperclip, Pencil, Phone, Plus, RefreshCw, Smartphone, Trash2, Undo2, User, UserCheck, UserMinus, UserX, Users, Wallet, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
@@ -16,6 +17,7 @@ import {
   useClubAttendanceStatistics,
 } from '@/components/club/attendance-summary-cards';
 import { MemberCell } from '@/components/club/member-cell';
+import { MemberCommitmentReport } from '@/components/club/member-commitment-report';
 import { DialogFormGrid, DialogFormSection, DialogFormToggle, FormDialogBody, FormDialogFooter, FormDialogHeader, FORM_DIALOG_CONTENT_CLASS } from '@/components/common/dialog-form-layout';
 import { FieldWrapper } from '@/components/common/form-fields';
 import { UploadField } from '@/components/employees/upload-fields';
@@ -51,6 +53,7 @@ import { listQueryToApiParams, useListQuery } from '@/lib/use-list-query';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { useAuth } from '@/store/auth';
+import { lockedMemberGender, preferredMemberGender } from '@/lib/user-scope';
 import type { ClubMembersView } from '@/lib/club-routes';
 import type {
   ClubMemberCreateResponse,
@@ -59,6 +62,8 @@ import type {
   ClubMemberStatistics,
   ClubMembershipType,
 } from '@/types/club';
+import { SearchableSelect } from '@/components/common/searchable-select';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 
 const selectCls = 'flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm';
 
@@ -151,6 +156,7 @@ const EMPTY_FORM: ClubMemberFormData = {
   isActive: true,
   employeeId: undefined,
   autoCreateUser: true,
+  appPassword: '',
 };
 
 function resolveBranchName(
@@ -315,6 +321,8 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   const [attendanceEndDate, setAttendanceEndDate] = useState(() => localToday());
   const [attendanceBranch, setAttendanceBranch] = useState('');
   const [attendanceStatus, setAttendanceStatus] = useState<'all' | 'checked_in' | 'checked_out'>('all');
+  // رجالي/حريمي/الكل for the attendance tab (locked to the employee's own section).
+  const attendanceGender = useMemberGenderFilter();
   const effectiveAttendanceBranch = isSystemAdmin
     ? attendanceBranch
     : user?.branch
@@ -329,9 +337,10 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         endDate: attendanceEndDate,
         branch: effectiveAttendanceBranch,
         status: attendanceStatus,
+        gender: attendanceGender.value,
       },
     }),
-    [attParams.params, attendanceStartDate, attendanceEndDate, effectiveAttendanceBranch, attendanceStatus],
+    [attParams.params, attendanceStartDate, attendanceEndDate, effectiveAttendanceBranch, attendanceStatus, attendanceGender.value],
   );
   const {
     data: attendance,
@@ -340,9 +349,10 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
     refetch: refetchAttendance,
   } = usePaginatedList<AttendanceRow>('club-attendance', attendanceListParams);
   const [attView, setAttView] = useState<'report' | 'all' | 'daily'>('report');
+  const [attSection, setAttSection] = useState<'log' | 'commitment'>('log');
   const attendanceReportFilters = useMemo(
-    () => ({ dateFrom: attendanceStartDate, dateTo: attendanceEndDate, branch: effectiveAttendanceBranch }),
-    [attendanceStartDate, attendanceEndDate, effectiveAttendanceBranch],
+    () => ({ dateFrom: attendanceStartDate, dateTo: attendanceEndDate, branch: effectiveAttendanceBranch, gender: attendanceGender.value }),
+    [attendanceStartDate, attendanceEndDate, effectiveAttendanceBranch, attendanceGender.value],
   );
   const dailyParams = useListQuery({ pageSize: 20 });
   const dailyAttendanceListParams = useMemo(
@@ -354,9 +364,10 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         endDate: attendanceEndDate,
         branch: effectiveAttendanceBranch,
         status: attendanceStatus,
+        gender: attendanceGender.value,
       },
     }),
-    [dailyParams.params, attendanceStartDate, attendanceEndDate, effectiveAttendanceBranch, attendanceStatus],
+    [dailyParams.params, attendanceStartDate, attendanceEndDate, effectiveAttendanceBranch, attendanceStatus, attendanceGender.value],
   );
   const {
     data: dailyAttendance,
@@ -409,6 +420,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       startDate: attendanceStartDate,
       endDate: attendanceEndDate,
       branch: effectiveAttendanceBranch || undefined,
+      gender: attendanceGender.param,
     },
     { enabled: tab === 'attendance' || singleView === 'attendance' },
   );
@@ -419,7 +431,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
 
   const filters: FilterField[] = [
     { key: 'branch', label: ct('common.branch'), type: 'select', options: branchOptions },
-    { key: 'gender', label: ct('members.gender'), type: 'select', options: genderOptions },
+    { key: 'gender', label: ct('members.gender'), type: 'select', options: genderOptions, lockedValue: lockedMemberGender(user) ?? undefined, defaultValue: preferredMemberGender(user) ?? undefined },
     { key: 'createdFrom', label: ui('من تاريخ'), type: 'date' },
     { key: 'createdTo', label: ui('إلى تاريخ'), type: 'date' },
   ];
@@ -582,6 +594,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
       isActive: row.isActive,
       employeeId: row.employeeId ?? undefined,
       autoCreateUser: false,
+      appPassword: '',
     });
     setGeneratedCredentials(null);
     setPhoneValidationError(null);
@@ -592,7 +605,9 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
   };
 
   useEffect(() => {
-    if (searchParams.get('tab') !== 'documents' || !memberIdParam || !canUpdateMembers || openedDocumentMember.current === memberIdParam) return;
+    // ?tab=documents (membership documents) or ?edit=1 (sent from add-subscription to fix the member's data).
+    const wantsEdit = searchParams.get('tab') === 'documents' || searchParams.get('edit') === '1';
+    if (!wantsEdit || !memberIdParam || !canUpdateMembers || openedDocumentMember.current === memberIdParam) return;
     const memberId = Number(memberIdParam);
     if (!Number.isInteger(memberId) || memberId < 1) return;
     openedDocumentMember.current = memberIdParam;
@@ -676,6 +691,11 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         return;
       }
     }
+    const typedAppPassword = form.appPassword?.trim() ?? '';
+    if ((editId || form.autoCreateUser) && typedAppPassword && typedAppPassword.length < 4) {
+      toast.error(ui('كلمة مرور التطبيق لازم تبقى 4 حروف/أرقام على الأقل'));
+      return;
+    }
     if (!form.gender) {
       toast.error('اختر النوع');
       return;
@@ -721,12 +741,19 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         profilePicture: form.profilePicture || undefined,
         notes: form.notes || undefined,
         autoCreateUser: form.autoCreateUser,
+        appPassword: (editId || form.autoCreateUser) && form.appPassword?.trim() ? form.appPassword.trim() : undefined,
       };
 
       if (editId) {
-        await api.put(`/club-members/${editId}`, payload);
+        const { data: updated } = await api.put<ClubMemberListItem>(`/club-members/${editId}`, payload);
         toast.success(ct('members.memberUpdated'));
         setDialogOpen(false);
+        // Sent here from add-subscription to fix the member's data: go back with the member picked.
+        if (searchParams.get('then') === 'subscription' && updated?.id) {
+          void qc.invalidateQueries({ queryKey: ['club-members'] });
+          navigate('/club/subscriptions/new', { state: { prefillMember: updated } });
+          return;
+        }
       } else {
         const { data: created } = await api.post<ClubMemberCreateResponse>('/club-members', payload);
         if (nextStep !== 'none' && created.member?.id) {
@@ -974,12 +1001,15 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         accessorKey: 'name',
         header: ct('members.name'),
         cell: ({ row }) => (
-          <MemberCell
-            name={row.original.name}
-            code={row.original.memberCode}
-            profilePicture={row.original.profilePicture}
-            showCode={false}
-          />
+          <div className="flex items-center gap-2">
+            <MemberCell
+              name={row.original.name}
+              code={row.original.memberCode}
+              profilePicture={row.original.profilePicture}
+              showCode={false}
+            />
+            {row.original.isBlocked ? <BlockedChip /> : null}
+          </div>
         ),
       },
       {
@@ -1335,14 +1365,37 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
         </TabsContent>
 
         <TabsContent value="attendance" className="space-y-4 pt-4">
+          <div className="grid grid-cols-2 gap-2 rounded-2xl border bg-muted/30 p-1.5" role="tablist" aria-label={ui('تقارير الحضور')}>
+            {([
+              { value: 'log' as const, label: ui('سجل الحضور اليومي'), icon: CalendarCheck },
+              { value: 'commitment' as const, label: ui('التزام الأعضاء'), icon: UserCheck },
+            ]).map((option) => {
+              const Icon = option.icon;
+              return (
+                <Button
+                  key={option.value}
+                  type="button"
+                  role="tab"
+                  aria-selected={attSection === option.value}
+                  variant={attSection === option.value ? 'brand' : 'ghost'}
+                  className="h-12 rounded-xl text-base"
+                  onClick={() => setAttSection(option.value)}
+                >
+                  <Icon className="size-5" />
+                  {option.label}
+                </Button>
+              );
+            })}
+          </div>
+          {attSection === 'commitment' ? <MemberCommitmentReport /> : (<>
           <AttendanceSummaryCards statistics={attStats} />
           <section className="relative overflow-hidden rounded-2xl border border-primary/20 bg-card p-4 shadow-sm md:p-5">
             <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-brand-gradient" />
-            <div className="grid items-end gap-3 md:grid-cols-[minmax(13rem,1fr)_minmax(10rem,.7fr)_minmax(10rem,.7fr)_auto]">
+            <div className="grid items-end gap-3 md:grid-cols-[minmax(13rem,1fr)_minmax(10rem,.7fr)_minmax(10rem,.7fr)_minmax(9rem,.6fr)_auto]">
               <div className="grid gap-1.5">
                 <Label>{ct('common.branch')}</Label>
                 {isSystemAdmin ? (
-                  <select
+                  <SearchableSelect
                     className={`${selectCls} h-11 rounded-xl border-primary/25 font-medium`}
                     value={attendanceBranch}
                     onChange={(event) => {
@@ -1357,7 +1410,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                         {branch.name?.trim() || `${ui('فرع رقم')} ${branch.id}`}
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 ) : (
                   <div className="flex h-11 items-center gap-2 rounded-xl border border-primary/20 bg-muted/45 px-3 text-sm font-semibold">
                     <Building2 className="size-4 text-primary" />
@@ -1393,6 +1446,15 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                   className="h-11 rounded-xl"
                 />
               </div>
+              <MemberGenderSelect
+                value={attendanceGender.value}
+                locked={attendanceGender.locked}
+                onChange={(value) => {
+                  attendanceGender.setValue(value);
+                  attParams.setParams({ page: 1 });
+                  dailyParams.setParams({ page: 1 });
+                }}
+              />
               <Button
                 variant="outline"
                 className="h-11 rounded-xl"
@@ -1498,6 +1560,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
               emptyTitle={ct('common.noData')}
             />
           )}
+          </>)}
         </TabsContent>
 
         <TabsContent value="financial" className="space-y-4 pt-4">
@@ -1946,7 +2009,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
               <DialogFormGrid columns={3}>
                 <FieldWrapper label={ct('common.branch')} required>
                   {isSystemAdmin && !editId ? (
-                    <select
+                    <SearchableSelect
                       className={selectCls}
                       value={form.branchId || ''}
                       onChange={(e) => setForm((f) => ({ ...f, branchId: Number(e.target.value) || 0 }))}
@@ -1955,7 +2018,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                       {memberRegistrationBranchOptions.map((branch) => (
                         <option key={branch.value} value={branch.value}>{branch.label}</option>
                       ))}
-                    </select>
+                    </SearchableSelect>
                   ) : (
                     <Input className="bg-muted" value={formBranchName} readOnly />
                   )}
@@ -2004,7 +2067,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                   {nationalIdFieldError && <p className="mt-1 flex items-center gap-1 text-xs text-destructive"><AlertTriangle className="size-3.5" />{nationalIdFieldError}</p>}
                 </FieldWrapper>
                 <FieldWrapper label={ct('members.gender')} required>
-                  <select
+                  <SearchableSelect
                     className={selectCls}
                     value={form.gender}
                     onChange={(e) => setForm((f) => ({ ...f, gender: e.target.value as 'male' | 'female' }))}
@@ -2013,7 +2076,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                     {genderOptions.map((g) => (
                       <option key={g.value} value={g.value}>{g.label}</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </FieldWrapper>
                 <FieldWrapper label={ct('members.dateOfBirth')}>
                   <Input
@@ -2048,12 +2111,12 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                 <FieldWrapper label="ملف العضوية والمستندات" hint="PDF موثّق فقط، بحد أقصى 5 ميجابايت لكل ملف">
                   <div className="space-y-3 rounded-xl border bg-muted/20 p-3">
                     <div className="grid gap-2 sm:grid-cols-[150px_minmax(0,1fr)]">
-                      <select className={selectCls} value={documentType} onChange={(event) => setDocumentType(event.target.value)} aria-label="نوع المستند">
+                      <SearchableSelect className={selectCls} value={documentType} onChange={(event) => setDocumentType(event.target.value)} aria-label="نوع المستند">
                         <option value="national_id">بطاقة الرقم القومي</option>
                         <option value="contract">عقد العضوية</option>
                         <option value="medical_clearance">إقرار طبي</option>
                         <option value="other">مستند آخر</option>
-                      </select>
+                      </SearchableSelect>
                       <Input type="file" accept="application/pdf,.pdf" disabled={memberDocumentUploading} onChange={(event) => { void addMemberDocument(event.target.files?.[0] ?? null); event.target.value = ''; }} />
                     </div>
                     {memberDocumentUploading ? <p className="text-xs text-muted-foreground">جارٍ فحص ورفع المستند…</p> : null}
@@ -2092,7 +2155,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                   />
                 </FieldWrapper>
                 <FieldWrapper label={ct('members.maritalStatus')}>
-                  <select
+                  <SearchableSelect
                     className={selectCls}
                     value={form.maritalStatus ?? ''}
                     onChange={(e) => setForm((f) => ({ ...f, maritalStatus: e.target.value }))}
@@ -2102,7 +2165,7 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                     <option value="married">{ct('members.married')}</option>
                     <option value="divorced">{ct('members.divorced')}</option>
                     <option value="widowed">{ct('members.widowed')}</option>
-                  </select>
+                  </SearchableSelect>
                 </FieldWrapper>
                 <FieldWrapper label={ct('members.address')} className="sm:col-span-2 lg:col-span-1">
                   <Input value={form.address ?? ''} onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))} />
@@ -2125,18 +2188,27 @@ export function ClubMembersPage({ singleView, openCreateOnMount }: ClubMembersPa
                   onCheckedChange={(checked) => setForm((f) => ({ ...f, autoCreateUser: checked }))}
                 />
               )}
-              {!editId && form.autoCreateUser && (
-                <FieldWrapper label={ct('members.appUsername')}>
-                  <Input className="nums bg-muted" dir="ltr" value={form.phone || ct('members.enterPhone')} readOnly />
-                </FieldWrapper>
-              )}
-              {editId && (
-                <>
+              {(editId || form.autoCreateUser) && (
+                <DialogFormGrid className="sm:grid-cols-2">
                   <FieldWrapper label={ct('members.appUsername')}>
                     <Input className="nums bg-muted" dir="ltr" value={form.phone || ct('members.enterPhone')} readOnly />
                   </FieldWrapper>
-                  <p className="text-xs text-muted-foreground">{ct('members.appAccountHint')}</p>
-                </>
+                  <FieldWrapper
+                    label={editId ? ui('كلمة مرور جديدة للتطبيق') : ui('كلمة مرور التطبيق')}
+                    hint={editId ? ui('سيبها فاضية لو مش هتغيرها') : ui('لو سبتها فاضية بتبقى رقم الموبايل')}
+                  >
+                    <Input
+                      className="nums"
+                      dir="ltr"
+                      autoComplete="new-password"
+                      maxLength={72}
+                      placeholder={editId ? '••••••' : form.phone || ''}
+                      value={form.appPassword ?? ''}
+                      onChange={(e) => setForm((f) => ({ ...f, appPassword: e.target.value }))}
+                      aria-invalid={!!form.appPassword && form.appPassword.trim().length > 0 && form.appPassword.trim().length < 4}
+                    />
+                  </FieldWrapper>
+                </DialogFormGrid>
               )}
             </DialogFormSection>
           </div>

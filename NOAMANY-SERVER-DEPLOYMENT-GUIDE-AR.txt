@@ -788,3 +788,370 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - المرجع للرفع اللي جاي: الأساس = f61555b، system.html = 27f9ddf25164f3fa146d08af73c6dc515907d4f42353faaa9cdffe356138c34c.
 - ملحوظة للتجربة المحاكية: schema السيرفر (63f965a8…) غير schema الـ git (b81782d9…)؛ في السيرفر المحاكي بس بتتغير
   البصمة المتوقعة، والحزمة الحقيقية بتفضل بفحص schema السيرفر.
+
+إصلاح بيانات: حسابات الموظفين من السيستم القديم + المزامنة، 18 نوفمبر 2026 (بالليل)
+-------------------------------------------------------------------------------
+- مافيش تغيير في الكود اللي شغال (backend/الواجهة). تغيير بيانات + سكريبت المزامنة.
+- release-tools/hr-accounts-fix-20261118/fix-hr-accounts.sh (APPLY=1)، النتيجة: enabled=7، roles_added=45.
+  - كود المسمى الوظيفي اتملى من الاسم المكتوب (كابتن/ريسيبشن/hk/بار/مدير فرع) للموظفين النشطين في السيستمين.
+  - 7 حسابات موقوفة (approved=0 جاية من القديم) لموظفين نشطين في السيستمين اتفعلت، منهم عبدالرحمن مجدي 01067254461.
+  - دور المسمى الوظيفي اتضاف (دور employee بتاع الإجازات/الأذونات فضل) للحسابات اللي اسمها اسم الموظف.
+  - الحساب 375 (فرع البر الشرقي، 01099913601) اتنقل من الملف المحذوف 2598 للملف النشط 2610.
+  - اتجرب الأول على نسخة من الجداول (hrfix_test) واتمسحت بعدها.
+- النسخة الاحتياطية: /home/noamanycenter/final.noamanycenter.com/tmp/before-hr-accounts-fix-20261118-232722.sql.gz
+  (employees, users, rbac_user_roles). الرجوع: gunzip < … | mysql noamanycenter_nest (على طول بعدها بس).
+- /usr/local/sbin/legacy-hr-sync = release-tools/legacy-hr-sync/legacy-hr-sync.sh (sha256 d4355b82…). القديم في
+  legacy-hr-sync.bak-20261118 (ba016b02…). الجديد: بيملى كود المسمى من الاسم المكتوب، والحساب اللي لسه جاي من القديم
+  بيتفعل وبياخد دور مسماه لو الموظف نشط في السيستمين واسمه على الحساب. أول تشغيل 23:30: OK job_codes=34.
+- ahmed bhrawy: حساب في السيستم القديم (noamanycenter_noamany.users 25)، branch_id_fk=4 = الجلاء من قبل كده. مااتغيرش.
+
+السيستم القديم (noamanycenter.com): باقة مش ظاهرة في إضافة اشتراك، 19 نوفمبر 2026 (بعد نص الليل)
+-------------------------------------------------------------------------------------------
+- إضافة اشتراك بتعرض الباقات اللي branch_id_fk = الفرع و approved = 1 و special_offer = 2 (Subscription_m::get_subs).
+  لو "هل الاشتراك عرض خاص؟" فضلت على "اختر"، الباقة كانت بتتحفظ special_offer = 0، فمابتظهرش لا في العادي ولا في العروض.
+- الداتا: tbl_subscription_settings 545 (اشتراك شهري طلبة شامل سبا 50%، البر الشرقي) special_offer 0 → 2. التلاتة التانيين
+  اللي عندهم 0 (512، 167، 358) موقوفين (approved=2)، ماتغيروش. باقة "اشتراك 3 شهور 50%" البر الشرقي (519) كانت بتظهر
+  أصلًا وقت الفحص.
+- الكود: public_html/application/models/Subscription_setting_m.php (3 سطور: add/add_old/edit) — special_offer الفاضي
+  بيتحفظ 2 (مش عرض خاص). php -l سليم (7.4 و8.4)، الملكية noamanycenter.
+- النسخة الاحتياطية: /home/noamanycenter/tmp/old-plan-fix-20261118/ (الملف القديم + dump للجدول).
+
+إصلاح بيانات: تواريخ ميلاد الأعضاء اللي النقل سابها فاضية، 19 نوفمبر 2026
+------------------------------------------------------------------------
+- السبب: tbl_members.birth_date في القديم varchar بأشكال كتير؛ النقل نقل yyyy-mm-dd بس. ثواني Unix (حتى السالبة، قبل
+  1970، محفوظة على نص ليل UTC+3 أو UTC) و dd-mm-yyyy (حتى بالأرقام العربي) اتنقلوا NULL. فاشتراكات الطلبة كانت
+  بتقول "لا يمكن تحديد عمر العضو".
+- release-tools/member-dob-fix-20261119/fix-member-dob.sh (APPLY=1): filled=456 (بيملى الفاضي بس، 1925–2024، من غير 1970-01-01).
+  الفاضي بعدها 2282: 1296 فاضيين في القديم أصلًا، 817 تاريخ مش حقيقي (سنة 1112 / 2222 / 1970-01-01)، 169 مش مقروء (1.13E+11).
+- نسخة احتياطية: noamanycenter_nest.club_members_dob_backup_20261119003719 (id, date_of_birth).
+- ملاحظة لسكريبت legacy-gym-sync (مش متثبت): التحويل فيه مش بيغطي ثواني Unix السالبة ولا الأرقام العربي.
+
+إصلاح بيانات: نقاط الأعضاء (إدارة النقاط)، 19 نوفمبر 2026
+------------------------------------------------------
+- السبب: القديم بيعرف نقاط العضو بـ member_code؛ عمود member_id عنده غلط في سطور كتير (مثال: سطر A19206 عليه 53 = A46).
+  النقل ربط بالـ member_id، فـ 8,542 سطر كانوا على عضو تاني في tbl_points_history وفي club_member_point_transactions.
+- release-tools/points-fix-20261119/fix-points.sh (APPLY=1): history_remapped=8542، ledger_remapped=8542.
+  ملحوظة: اتشغلت نسخة قديمة من السكريبت على السيرفر، فاتنسخ كمان 601 سطر نقاط من القديم (10 أكتوبر–18 نوفمبر، للأعضاء
+  الموجودين في الجديد، من غير ربط اشتراك). النسخة اللي في الريبو بتنسخ بس مع COPY_MISSING=1.
+- بعدها: 0 سطر على عضو غلط. 5,786 من 5,807 عضو مجموع نقاطهم زي القديم. الـ 21 الباقيين سببهم تعارض أرقام: السيستم الجديد
+  ضاف 13 سطر بأرقام 11850–11862، والقديم استخدم نفس الأرقام بعدين لـ 13 سطر تانيين، فدول ماتنسخوش.
+- لسه ناقص: 176 سطر نقاط لأعضاء مش موجودين في الجديد (313 عضو و~2,000 اشتراك اتضافوا في القديم بعد النقل)، ومستنيين
+  مزامنة الجيم، ولازم المزامنة تنقل النقاط بالـ member_code.
+- نسخة احتياطية: tbl_points_history_bak_20261119005406، club_member_point_transactions_bak_20261119005406،
+  tbl_points_exhausted_history_bak_20261119005406.
+- كود (لسه ماترفعش): club-points.service.ts — تقرير الأعضاء الحاصلين على نقاط كان بيفلتر بعمود date (القديم فيه ثواني Unix)،
+  فشهر أكتوبر كان بيطلع 5 أعضاء بدل 542. اتغير لـ date_added، وتاريخ الاستبدال بيتحول لـ YYYY-MM-DD.
+
+آخر تثبيت مؤكد: 20261118-r1، 18 نوفمبر 2026 (مكانش متسجل هنا)
+------------------------------------------------------------
+- اتأكد من السيرفر يوم 19 نوفمبر: tmp/install-20261118-r1.log فيه UPDATE VERIFIED: 2026-11-18-r1، والنسخة الاحتياطية
+  tmp/nov18-r1-update-backup.lVEABC. المحتوى: d58bb6a (الرقم القومي، شاشة العضو الأوسع، قائمة الأدوار بالحذف).
+
+آخر تثبيت مؤكد: 20261119-r1 (تحديث كامل)، 19 نوفمبر 2026
+-------------------------------------------------------
+- أول تحديث فيه قاعدة بيانات وPrisma Client من وقت r7. الأدوات: release-tools/full-update-20261119-r1 (make-package.sh،
+  install.sh، rollback.sh، sql/01..03) والمشغّل release/run-install-20261119-r1.sh. الأساس = 18-r1 (d58bb6a).
+- اتأكد: UPDATE VERIFIED: 2026-11-19-r1. النسخة الاحتياطية (ملفات + Client + dump كامل 63MB):
+  tmp/nov19-r1-update-backup.6GnV9M. الرجوع (ملفات وClient، وبيرجّع حدود التجميد لـ freeze_days):
+  bash noamany-full-update-20261119-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov19-r1-update-backup.6GnV9M
+- قاعدة البيانات: sql/01 أعمدة التجميد بالأيام وعروض الباقات (482 باقة اتنقلت قيمتها لـ freeze_total_days محلياً)؛
+  sql/02 employees.is_sales ودور additional_sales بس — إعادة ترتيب الأدوار (migration 20261118150000) مش متطبقة؛
+  sql/03 جداول المبيعات والواتساب. 01 و03 متسجلين في _prisma_migrations.
+- Prisma Client: متولد من prisma/schema.prisma بتاع السيرفر (63f965a8…) + 17 جدول و18 عمود بس (الجديد 500 model)،
+  ومعاه سطر التوافق (Object.assign(exports, {...})). main.js زي ما هو. app.module.js = بناء جديد (5 modules جديدة).
+- ملفات السيرفر المعدلة يدوياً (app.controller، all-exceptions.filter بـ DBG، permissions.guard، club-leads.service،
+  finance-reports.controller، audit.service، uploads.*) ماتلمستش. club-leads.controller/service القديمة فضلت مش مستخدمة.
+- تنضيف الكافيه بعد التحديث: اتوقف مخزن شبين الكوم (2011) ومخزن شارع البحر (2015) (فاضيين). على السيرفر مفيش بار
+  مكرر ولا مخزن E2E. السكريبت غيّر اسم 2014 (مخزن طنطا، 4,070 قطعة) لـ «مخزن طنطا (قديم)» غلط — بيرجع في
+  set-bar-routes.sh. على السيرفر مفيش store_warehouse_id لأي فرع، والبارات اسمها «مخزن …».
+- المرجع للرفع اللي جاي: الأساس = شجرة 19-r1 (أدوات الحزمة فوق)، system.html الجديد من payload الحزمة.
+
+إصلاح بيانات: أسماء البارات والمخازن وصرف للبار، 19 نوفمبر 2026 (02:53)
+-----------------------------------------------------------------------
+- release-tools/cafe-bar-routes-20261118/set-bar-routes.sh (APPLY=1). البارات LEG-WH-3/4/5/8/9 بقت «بار طنطا/البر الشرقي/
+  الجلاء/طنطا up/طنطا down»، LEG-STORAGE-3 = «مخزن البر الشرقي»، LEG-STORAGE-4 رجع «مخزن طنطا» (اسمه اتغير غلط في 19-r1).
+- store_warehouse_id: طنطا وطنطا up وطنطا down ← مخزن طنطا (2014)، البر الشرقي ← 2013، الجلاء ← 2012.
+- النشط دلوقتي 8: 5 بارات + 3 مخازن (فيهم بضاعة). شبين الكوم وشارع البحر موقوفين (فاضيين).
+- النسخة الاحتياطية: tmp/before-bar-routes-20261119-025355.sql.gz (sales_pos_settings, inv_warehouses).
+
+آخر تثبيت مؤكد: 20261119-r2، 19 نوفمبر 2026
+------------------------------------------
+- كود بس (release-tools/daily-update-20261119-r2): «حفظ وإرسال واتساب» في السداد والتجديد والتجميد ونقل الباقة والتجديد في
+  الاستقبال، و«إرسال واتساب» بعد فك التجميد؛ السداد بيرجّع receiptNumber. ملف خلفية واحد (club-subscriptions.service.js)
+  + الواجهة (280 asset).
+- اتأكد: UPDATE VERIFIED: 2026-11-19-r2. النسخة الاحتياطية (الملفات المتغيرة بس، 248K): tmp/nov19-r2-update-backup.TlVTJA
+  الرجوع: bash noamany-daily-update-20261119-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov19-r2-update-backup.TlVTJA
+- PRUNE=1: اتمسح 191 حاجة (فولدرات stage القديمة، نسخ احتياطية وحزم أقدم من 7 أيام)، 2949MB اتفضّوا. اللستة في
+  tmp/prune-20261119-r2.list. فاضل: 18-r1 و19-r1 (ومعاها dump قاعدة البيانات) و19-r2، ونسخ إصلاحات الداتا الأخيرة.
+- قاعدة للتحديثات الجاية: النسخة الاحتياطية = الملفات المتغيرة بس (dump قاعدة البيانات بس لو التحديث بيغيّرها)، وPRUNE=1
+  بعد النجاح علشان السيرفر مايتملاش نسخ.
+
+إصلاح بيانات: أكواد الخصم والنقاط من السيستم القديم + المزامنة، 19 نوفمبر 2026 (3:07 الفجر)
+------------------------------------------------------------------------------------
+- مافيش تغيير في الكود اللي شغال. تغيير بيانات + سكريبت المزامنة.
+- release-tools/legacy-gym-sync/legacy-gym-sync.sh: جزء جديد 11 (أكواد الخصم وتوزيعها على الكباتن، الأكواد اللي اتدّت
+  للأعضاء واستخدامها، النقاط المكتسبة والمستبدلة، وسجل النقاط في ملف العضو). يشتغل لوحده بـ SECTIONS=points-discounts.
+  - العضو بالـ member_code (زي القديم)، الكابتن بـ emp_code_gym + الاسم، الاشتراك بـ LEG-S-<رقم القديم>.
+  - كل سطر قديم بيتسجل في legacy_record_mappings؛ اللي اتنقل قبل كده اتعرف مرة واحدة بنفس الرقم + نفس المحتوى.
+    السيستمين بيرقّموا الجداول دي كل واحد لوحده، فسطر جديد واخد رقم سطر قديم مابيتغيرش، والقديم بيدخل برقم فاضي.
+  - القديم بيكسب في: نسبة الكود، عدد الكوبونات للكابتن، الكود اتستخدم (approved، مابيرجعش 0)، النقاط فعالة/محذوفة.
+    مفيش مسح. إعدادات النقاط مابتتزامنش (بتتعدل من الجديد).
+  - install-legacy-gym-sync.sh: الباك أب بقى فيه جداول الأكواد والنقاط، و utf8mb4 في كل أوامر mysql.
+- اتنفذ على السيرفر: SECTIONS=points-discounts APPLY=1 من tmp/points-discounts-sync-20261119/ (sha256 31a583fc…)،
+  بعد dry run بنفس الأرقام. النتيجة: اتعرف 15,746 سطر موجود (من غير تكرار)، واتضاف: 5 توزيع كوبونات كباتن (1077–1081،
+  القديم 1072–1076 كان رقمه واخده سطور اتعملت في الجديد)، 118 كود لعضو، 67 استخدام كوبون، 12 سطر نقاط + 12 في سجل العضو.
+  اتعدل: 24 سطر نقاط بقوا فعالين في القديم (ومعاهم سجل العضو)، والكود 2269 اتعلّم مستخدم.
+  تشغيل تاني بعدها: 0 تغيير.
+- بعدها: الأكواد 6/6، توزيع الكباتن 391/391، الأكواد للأعضاء 1842/1866، الاستخدام 1314/1334، النقاط 12393/12570،
+  المستبدلة 2/2. الباقي (24 كود، 20 استخدام، 177 سطر نقاط) لأعضاء لسه مش في الجديد (313 عضو)؛ بيدخلوا لوحدهم أول
+  ما العضو يوصل والمزامنة تشتغل. مجموع النقاط وسجل العضو متطابقين (339,929)؛ الـ 13 سطر اللي اتعملوا في الجديد ماتلمسوش.
+- لسه: 8 سطور نقاط قديمة (50 نقطة، كلها مش فعالة: 574، 2785، 4270، 4366، 4997، 4998، 6901، 7615) أكواد أعضائها
+  (C7155، C4454، C11817، C11918) مش موجودة لا في القديم ولا في الجديد، والنقل حطهم على A46 وA45 وC11699 وC11596.
+  مابتأثرش على الرصيد المتاح، بس بتظهر في سجلهم. مستني موافقة.
+- المزامنة التلقائية: legacy-gym-sync مش متثبتة على السيرفر (مفيش /etc/cron.d/legacy-gym-sync)، فمفيش حاجة بتتنقل
+  لوحدها لحد ما تتثبت (كاملة أو أكواد ونقاط بس). مستني قرار.
+- نسخة احتياطية: tmp/points-discounts-sync-20261119/before-points-discounts-sync-20261119-030022.sql.gz (الجداول السبعة +
+  legacy_record_mappings + legacy_import_runs). الرجوع (على طول بعدها بس): gunzip -c … | mysql --default-character-set=utf8mb4 noamanycenter_nest
+
+آخر تثبيت مؤكد: 20261119-r3 (الأدوار، قاعدة بيانات بس)، 19 نوفمبر 2026
+------------------------------------------------------------------
+- release-tools/roles-update-20261119-r3: migration 20261118150000_seven_roles_and_sales_toggle (النسخة المعدّلة، SET NAMES utf8mb4)،
+  وبوابات أمان على السيرفر: مفيش حساب نشط خسر صلاحية، الحسابات من غير دور ماززدتش، الأدمن النشطين ماقلّوش؛ وإلا رجوع تلقائي.
+- اتأكد: UPDATE VERIFIED: 2026-11-19-r3؛ الأدوار 80 → 13، المسميات 15 → 9، من غير دور 21 → 1، محدش خسر صلاحية، 143 كسبوا.
+- النسخة الاحتياطية (10 جداول): tmp/nov19-r3-roles-backup.3DHq0u/tables.sql.gz. الرجوع (بعدها على طول بس):
+  bash noamany-roles-update-20261119-r3/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov19-r3-roles-backup.3DHq0u
+- 19-r4 (جاهز): ملف خلفية واحد (employees.service.js — updateMany في تفعيل/إيقاف وحذف الموظف). سكريبت إصلاح الخانات الفاضية
+  backend/prisma/scripts/20261119-employees-empty-enum-repair.sql مش جزء منه (محتاج موافقة فاطمة ونسخة احتياطية لـ employees).
+
+آخر تثبيت مؤكد: 20261119-r4، 19 نوفمبر 2026
+------------------------------------------
+- ملف خلفية واحد: employees.service.js (updateMany في تفعيل/إيقاف وحذف الموظف؛ الحذف بيرجّع «الموظف غير موجود» لو مفيش صف).
+- اتأكد: UPDATE VERIFIED: 2026-11-19-r4. النسخة الاحتياطية: tmp/nov19-r4-update-backup.MhqloS (164K).
+  الرجوع: bash noamany-daily-update-20261119-r4/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov19-r4-update-backup.MhqloS
+- المرجع للرفع اللي جاي: الأساس = ملفات السيرفر الحالية (اقرا بصماتها من السيرفر زي make-package.sh بتاع r4).
+
+إصلاح بيانات متطبق: خانات الموظفين الفاضية + سكريبت مزامنة الموارد البشرية، 19 نوفمبر 2026 (16:24)
+---------------------------------------------------------------------------------------------
+- release/run-employees-fix-20261119.sh (مع رفع release-tools/legacy-hr-sync/legacy-hr-sync.sh لـ /root/legacy-hr-sync.new):
+  نسخة من جدول employees ومن /usr/local/sbin/legacy-hr-sync، بعدين '' → NULL في خانات yes/no (و'no' في remove_basma
+  وshahadt_jaish)؛ 191 من 203 موظف عندهم خانة فاضية واحدة على الأقل.
+- السكريبت الجديد للمزامنة: بيصلّح نفس الخانات للموظفين الجداد، وبيربط المسمى بالاسم مش برقم ثابت (بعد 19-r3 الأرقام 70 و72
+  اتمسحت: ريسيبشن → ريسبشن 1239، بار → 1238، hk → عامل خدمات 71). قبل كده موظف ريسيبشن جديد كان هياخد كود 70 (مش موجود).
+- اتأكد: FIX VERIFIED (191 → 0). النسخ الاحتياطية: tmp/before-employees-blank-fix-20261119-162432.sql.gz و
+  /usr/local/sbin/legacy-hr-sync.bak-20261119. /usr/local/sbin/legacy-hr-sync الجديد = 15601129…
+
+آخر تثبيت مؤكد: 20261119-r5، 19 نوفمبر 2026
+------------------------------------------
+- الواجهة (281 asset) + ملف خلفية واحد (club-whatsapp-templates.service.js: نوع package_details وحقلي duration/offer).
+  كارت العضو في الاستقبال: المنتهي رمادي وبيتخفي بـ X (localStorage noamany_reception_hidden_subscriptions)، من غير جلسة سماح،
+  الصورة في النص والحروف الأولى لو مفيش صورة، والملاحظات من غير JSON النقل. واتساب «اشتراك واحد» = باقات الفرع بقالب «تفاصيل باقة».
+- اتأكد: UPDATE VERIFIED: 2026-11-19-r5. النسخة الاحتياطية: tmp/nov19-r5-update-backup.AP0cdv (52K).
+  الرجوع: bash noamany-daily-update-20261119-r5/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov19-r5-update-backup.AP0cdv
+
+آخر تثبيت مؤكد: 20261119-r6، 19 نوفمبر 2026
+------------------------------------------
+- واجهة بس (280 asset، من غير أي ملف خلفية). كارت العضو في الاستقبال: كل باقة بتظهر مرة واحدة (آخر اشتراك منها)، والمنتهي
+  القديم لنفس الباقة ورا زرار «الاشتراكات السابقة (n)». الساري والمجمد واللي لسه هيبدأ بيظهر دايمًا، وX لسه بيخفي المنتهي.
+- اتأكد: UPDATE VERIFIED: 2026-11-19-r6. النسخة الاحتياطية: tmp/nov19-r6-update-backup.19m4DW (24K).
+  الرجوع: bash noamany-daily-update-20261119-r6/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov19-r6-update-backup.19m4DW
+
+تصحيح: تقرير الأعضاء الحاصلين على نقاط، 20 نوفمبر 2026
+------------------------------------------------------
+- الملاحظة اللي فوق («كود لسه ماترفعش: club-points.service.ts … date_added») قديمة: على السيرفر
+  dist/modules/club-points/club-points.service.js (19 نوفمبر 02:44، مع 19-r1) فيه date_added و POINTS_DAY_SQL.
+  أكتوبر بيطلع 553 عضو بـ date_added (كان 5 بعمود date). مفيش حاجة محتاجة ترفع.
+
+آخر تثبيت مؤكد: 20261120-r1، ملاحظات العميل 20 نوفمبر 2026
+----------------------------------------------------------
+- release-tools/daily-update-20261120-r1 (الأساس = 19-r6: system.html c9cbe23d…، والملفات الخلفية من بصمات السيرفر).
+  الحزمة: release/noamany-daily-update-20261120-r1.zip (sha256 bc5a1b60…)، المشغّل release/run-install-20261120-r1.sh.
+- الخلفية: permissions.service/controller و leaves.service (الكابتن/الريسبشن أذوناتهم وإجازاتهم بس)،
+  trainer-portal.service (شهر واحد)، وملف جديد common/hr-scope/own-hr-records.js (الرجوع بيمسحه).
+- الواجهة: أمر صرف جديد (مخزن ← بار)، الحركات المخزنية 7 أماكن، أوامر الشراء والبيع 3 فروع، فلتر تاريخ الانتهاء
+  والكود بالإنجليزي، بوابة المدرب بالشهر، تقرير التارجت بالشهر لغير الأدمن، أسماء خدمة العملاء بتفتح العضو.
+- الصور: qa-screenshots-20261120 (اتعملت على نسخة محلية noamany_overnight_test بحسابات تجربة محلية).
+- اتأكد: UPDATE VERIFIED: 2026-11-20-r1. النسخة الاحتياطية: tmp/nov20-r1-update-backup.RRosDd (220K).
+  الرجوع: bash noamany-daily-update-20261120-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov20-r1-update-backup.RRosDd
+- أول محاولة وقفت في الفحص المرحلي من غير أي تغيير (الـ stage ماكانش بيعمل فولدر common/hr-scope)؛ اتصلحت في install.sh
+  والحزمة اتبنت تاني (bc5a1b60…). فاضل فولدر tmp/nov20-r1-stage.gPmVTu من المحاولة الأولى (بيتمسح بـ PRUNE=1).
+- المرجع للرفع اللي جاي: الأساس = ملفات السيرفر الحالية (system.html = payload/public/system.html بتاع 20-r1).
+
+آخر تثبيت مؤكد: 20261121-r1 — صورة العضو في كارت الاستقبال، محضر جرد اللوكر، طنطا up/down في نقطة البيع
+----------------------------------------------------------
+- release-tools/daily-update-20261121-r1: الواجهة بس (281 asset جديد + system.html)، مفيش باك إند ولا قاعدة بيانات.
+  الأساس = system.html بتاع 20-r1 (1b8c3abf…). الحزمة release/noamany-daily-update-20261121-r1.zip (sha256 a048b8e4…)،
+  المشغّل release/run-install-20261121-r1.sh. الرجوع بيرجّع system.html بس (من tmp/nov21-r1-update-backup.*).
+- التعديل: reception.tsx — كارت الصورة self-start + lg:sticky lg:top-0 بدل self-center (كانت بتختفي مع اشتراكات كتير)؛
+  locker-inventory.tsx — الفرع بيتختار لوحده لحساب الاستقبال وفورم محضر الجرد الجديد بيظهر على طول.
+- نقطة البيع: new-receipt.tsx — حساب طنطا (فرعه 2) بيختار بار طنطا up / down (قايمة الفروع كانت فيها طنطا بس فالبارين اختفوا).
+- اتأكد: UPDATE VERIFIED: 2026-11-21-r1. النسخة الاحتياطية: tmp/nov21-r1-update-backup.isgvO1.
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261121-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov21-r1-update-backup.isgvO1
+- المرجع للرفع اللي جاي: الأساس = system.html بتاع payload 21-r1.
+- ملاحظات روضة 21 نوفمبر: B18569 / C12576 مش على السيرفر (آخر كود B18429، آخر عضو 10 أكتوبر) = مستني المزامنة.
+  دور «ريسبشن» (job_title_1239، 47 حساب) معاه gym-sales.sales.new_receipt؛ حسابات 01007855816 / 01004425051 لسه بنشوف ليه الكافيه مش ظاهر.
+  تحديث بعد الفحص: الحسابين والحساب 01061969627 (طنطا، شايف الكافيه) عليهم نفس الدور 124 بس، من غير انتهاء ولا استثناءات،
+  والدور ما اتغيرش من 19 نوفمبر (rbac_audit_log). يعني الكافيه مفتوح لهم؛ صورة روضة كانت جوه «إدارة النادي الرياضي».
+  release/check-cafe-history-20261121.sql اتصلح (SET NAMES utf8mb4_unicode_ci + COLLATE، كان بيقف بـ Illegal mix of collations).
+
+آخر تثبيت مؤكد: 20261121-r2 — السيشن الواحدة في كارت «حصص»
+----------------------------------------------------------
+- release-tools/daily-update-20261121-r2: الواجهة بس (280 asset جديد + system.html). الأساس = system.html بتاع 21-r1
+  (7e8de2ba…). الحزمة release/noamany-daily-update-20261121-r2.zip (sha256 64cb930e…)، المشغّل release/run-install-20261121-r2.sh.
+- التعديل: subscriptions.tsx — كارت «حصص» بيعرض كمان الاشتراك اليوم الواحد من غير عدد حصص واسمه فيه سيشن/حصة
+  (سيشن بوكسينج، اشتراك سيشن spinning، سيشن بيلي دانس…)، وفاضل في «اشتراك». الحفظ زي ما هو؛ شرط عدد الحصص بقى للباقات المربوطة بس.
+  السبب: ملاحظة العميل «مفيش سيشن بوكس ولا سبينينج ولا بيلي دانس، الـ12 بس اللي موجودة» — الاشتراكات موجودة ونشطة على السيرفر.
+- اتأكد: UPDATE VERIFIED: 2026-11-21-r2. النسخة الاحتياطية: tmp/nov21-r2-update-backup.QYP31h.
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261121-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov21-r2-update-backup.QYP31h
+- المرجع للرفع اللي جاي: الأساس = system.html بتاع payload 21-r2.
+
+مزامنة الجيم من القديم متثبتة (كل 5 دقايق)، 21 نوفمبر 2026 (18:31)
+------------------------------------------------------------------
+- /etc/cron.d/legacy-gym-sync → /usr/local/sbin/legacy-gym-sync (= release-tools/legacy-gym-sync/legacy-gym-sync.sh)،
+  اللوج: final.noamanycenter.com/tmp/legacy-gym-sync.log. اتثبتت بـ install-legacy-gym-sync.sh من /root/legacy-gym-sync-20261121/.
+- النسخة الاحتياطية قبل أول تشغيل: tmp/legacy-gym-sync-backup-20261121-182642.sql.gz (21 جدول).
+  وقف المزامنة: rm /etc/cron.d/legacy-gym-sync. الرجوع (على طول بس): rm -f /etc/cron.d/legacy-gym-sync; gunzip -c <النسخة> | mysql --default-character-set=utf8mb4 noamanycenter_nest
+- أول تشغيل (42 ثانية): أعضاء +351 (و581 اتربطوا: نفس الكود والاسم موجودين في الجديد من 2-3 أغسطس من غير ledger)،
+  اشتراكات +2160، إيصالات +2092، إيقافات +778، مرتجعات +3، تحويلات +57، حضور +41024، لوكر +51، InBody +1232،
+  أكواد لأعضاء +24، استخدام كوبونات +20، نقاط +191. مدفوع الشهر: القديم 599,802.50 = الجديد 599,802.50.
+- اتصلح في نفس التشغيل (القديم بيكسب):
+  - كل تواريخ النقل الأول كانت ناقصة يوم (UTC بدل القاهرة؛ القديم بيعرض date('Y-m-d') بتوقيت Africa/Cairo):
+    38,192 اشتراك (تسجيل/بداية/نهاية) و37,038 إيصال LEG-SUB (receipt_date = تاريخ تسجيل الاشتراك) و3,882 إيقاف.
+  - 682 عضو كانوا is_active=0 من يوم النقل (7 أكتوبر) وهم نشطين في القديم ومش محظورين → نشطين. المحظورين (is_blocked) 13 زي ما هم.
+  - 137 باقة اتوقفت في القديم بعد 2 نوفمبر → اتقفلت. 26 موبايل رجعوا لرقم القديم (3 منهم كانوا اتعدلوا في الجديد).
+- تعديلات السكريبت (كلها اتجربت على نسخة noamanycenter_synctest_20261121 بنفس collation السيرفر، وتشغيل تاني = 0 تغيير):
+  عضو/باقة/اشتراك اتمسح في الجديد بيتساب (ما بيرجعش وما بيتربطش)؛ الإيصالات بالرقم LEG-SUB (club_receipts اتعادت أرقامه)؛
+  ربط العضو اللي موجود بنفس الكود والاسم؛ حضور/لوكر عضوه لسه مش موجود بيستنى؛ تاريخ الميلاد بمحلّل member-dob-fix؛
+  عضو is_blocked ما بيرجعش نشط؛ جداول الموبايل المؤقتة COLLATE utf8mb4_unicode_ci (أول محاولة على السيرفر وقفت بسببها ومتغيرش حاجة).
+- مش متغطي: القيود المحاسبية / fin_revenues للاشتراكات الجديدة (زي ما كان).
+- 7 أكواد متكررة (القديم أقدم في السبعة): C12461، A20393–A20398 — العضو بتاع الجديد واخد نفس الكود. مستني قرار الكود الجديد.
+
+آخر تثبيت مؤكد: 20261122-r1 — ملاحظات 22 نوفمبر (الاستقبال، الباركود، جرد اللوكر، الإيقاف)
+----------------------------------------------------------------------------------------
+- release-tools/daily-update-20261122-r1: الواجهة + 6 ملفات خلفية (sidebar-api-permissions، employees.service،
+  club-attendance.service، dto/check-in.dto، gym-ops/entitlement.service، club-subscriptions.service). الأساس 21-r2.
+- اتأكد: UPDATE VERIFIED: 2026-11-22-r1. النسخة الاحتياطية: tmp/nov22-r1-update-backup.3db1kS.
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261122-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov22-r1-update-backup.3db1kS
+- فيه كمان شريط «فيه نسخة جديدة» (update-banner.tsx من شات تاني ليلة 21 نوفمبر).
+- بيانات (22 نوفمبر): «إدارة خدمة العملاء» (hr_edarat_aqsam 1067) ← «قسم خدمة العملاء» (1068)، والمسمى «خدمة عملاء»
+  (department_jobs 1241) ودوره job_title_1241 (rbac_roles 129، من غير صلاحيات؛ ندى تحددها). اتعمل بـ /root/create-customer-service-20261122.cjs
+  (نفس ensureRoleForJobTitle بتاع الشاشة).
+- مستني تشغيل: release/link-orphan-accounts-20261122.sql (ربط حساب أنس عماد الدين 307 → موظف 195، وفيلمون 184 → موظف 84).
+
+جاهز: 20261122-r2 — حجز الإيقاف لقدام، التجديد بيتحرك مع الإيقاف، تعديل/مسح إيقاف، وترتيب شاشة الاستقبال
+-------------------------------------------------------------------------------------------------
+- release-tools/daily-update-20261122-r2 (الأساس 22-r1، system.html c6af9a0d…): club-subscriptions.service/controller،
+  club-subscription-status.cron، وملف جديد freeze-chain.js. مفيش قاعدة بيانات: الإيقاف المحجوز = is_active=0 و actual_days NULL
+  (كل الإيقافات المنتهية والمتزامنة فيها actual_days). الجوب 2 بالليل: startDueFreezes قبل releaseFinishedFreezes.
+- renew بقى بيكتب renewed_from_subscription_id؛ التجديدات القديمة بتتعرف بنفس العضو/الفرع/الباقة وبيبدأ تاني يوم.
+- اشتراكات LEG- مينفعش تتوقف أو يتعدل إيقافها في الجديد (المزامنة بتكتب عليها من القديم).
+- اتأكد: UPDATE VERIFIED: 2026-11-22-r2 (14:34). النسخة الاحتياطية: tmp/nov22-r2-update-backup.dpgHqY.
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261122-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov22-r2-update-backup.dpgHqY
+  (release/noamany-daily-update-20261122-r2.zip = النسخة المتثبتة، sha256 780c5ba4…، اترجعت من السيرفر.)
+
+جاهز: 20261122-r3 (الواجهة بس، فوق 22-r2، system.html e343ec92…) — «متابعة الحضور» بدل «مسح» في سجل الإيقاف
+------------------------------------------------------------------------------------------------
+- الإيقاف الجاري: «متابعة الحضور» = POST /club-subscriptions/:id/unfreeze (الأيام اللي فاتت بس، والباقي يرجع ويتشال من آخر الاشتراك،
+  والتجديد بيرجع معاه). المحجوز: «إلغاء الحجز» (DELETE). المنتهي: من غير زرار. زرار الكارت/القايمة اسمه «متابعة الحضور».
+- اتأكد: UPDATE VERIFIED: 2026-11-22-r3. النسخة الاحتياطية: tmp/nov22-r3-update-backup.3sfCxt.
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261122-r3/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov22-r3-update-backup.3sfCxt
+  فيه كمان: «مجمّد منذ N يوم · يرجع بعد M» على كارت الاشتراك، وInBody/السبا تحت الصورة أصغر بزرارين جنب بعض.
+- المرجع للرفع اللي جاي: الأساس = system.html بتاع payload 22-r3، والخلفية = ملفات 22-r2.
+- 22-r3 اتأكد: UPDATE VERIFIED: 2026-11-22-r3 (system.html 36d0a4c3…). النسخة الاحتياطية: tmp/nov22-r3-update-backup.3sfCxt.
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261122-r3/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov22-r3-update-backup.3sfCxt
+  وفيه كمان: «مجمّد منذ N يوم · يرجع بعد M» على كارت الاشتراك، وInBody/السبا تحت الصورة أصغر بزرارين جنب بعض.
+- حساب نوران 01034219817 (موظفة 178، emp_type=2 حريمي) كان بيعرض الحريمي بس → اتحل في 22-r4 (القسم بقى فلتر افتراضي).
+
+22-r4 (خلفية + واجهة، فوق 22-r3) — القسم رجالي/حريمي فلتر افتراضي بس، والكل يقدر يختار «الكل»، والبحث بيجيب كل الناس
+-------------------------------------------------------------------------------------------------------------
+- اتأكد: UPDATE VERIFIED: 2026-11-22-r4 (system.html c0701527…). النسخة الاحتياطية: tmp/nov22-r4-update-backup.S36efR.
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261122-r4/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov22-r4-update-backup.S36efR
+
+جاهز: 20261122-r5 (الواجهة بس، فوق 22-r4، system.html c0701527…) — ألوان كروت الاشتراكات في الاستقبال
+---------------------------------------------------------------------------------------------------
+- الساري أخضر، الموقوف أصفر، المنتهي أحمر (العلامة وكارت الإيقاف تحت الصورة بنفس اللون). zip sha256 65c1030f…
+- الرفع: release/run-install-20261122-r5.sh (العلامة في route-pages chunk: border-emerald-300 bg-emerald-50).
+
+جاهز: 20261122-r6 (خلفية + واجهة + سكريبت المزامنة، فوق 22-r4؛ فيه r5 — r5 مش لازم) — صورة أكبر، آخر مرة ضرب الباركود، العضو المحظور
+-----------------------------------------------------------------------------------------------------------------
+- الخلفية: club-attendance.service (previousCheckIn = آخر حضور قبل النهارده)، club-members.service.lookup و gym-ops/club-search
+  بيرجعوا isBlocked/blockReason. الواجهة: BlockedChip/BlockedMemberBanner في كل بحث عن عضو والاستقبال وقايمة الأعضاء.
+- /usr/local/sbin/legacy-gym-sync بيتبدل (كان 769c89b6…): البلوك من القديم (tbl_members.blocked + tbl_members_blocked.reason)
+  بيتنقل؛ والشيل من القديم بيشيل بس البلوك اللي blocked_by NULL. اتجرب dry-run على noamanycenter_synctest_20261121.
+- الرفع: release/run-install-20261122-r6.sh (zip sha256 782e7749…). الرجوع بيرجع سكريبت المزامنة كمان.
+- وفيه كمان: شاشة الاستقبال عرض بس (مفيش تسجيل دخول تلقائي ولا قفل لوحدها؛ بتفضل لحد السكان اللي بعده) — فويس 22 نوفمبر 15:23.
+
+جاهز: 20261122-r7 (خلفية + قاعدة بيانات، فوق 22-r6 — لازم r6 الأول) — صلاحيات مدير الفرع / مشرف إدارة حريمي-رجالي
+---------------------------------------------------------------------------------------------------------
+- common/utils/manager-scope.util (managerKind من نص المسمى: مدير/مديرة فرع، مشرف إدارة حريمي/رجالي؛ الفترات؛
+  assertManagerMayModify) و manager-staff.util (موظفين فرعه وقسمه emp_type + كل الريسيبشن). 20 ملف اتعدل.
+- المشرف: allowedBranchIds = null (كل الفروع) + club/branch-options + تقارير الباركود.
+- DB (apply-manager-sheet.cjs): بيضيف «مشرف إدارة حريمي/رجالي» (نسخة من مدير فرع)، وبيستبدل صلاحيات أدوار
+  job_title_73 / job_title_1240 + الجداد بورقة الصلاحيات + موافقات الإجازات اللي كانت عندهم. القديم في
+  <backup>/manager-sheet-before.json والرجوع بيرجعه. اتجرب محلي (apply/rollback) ومن API كمدير ومشرف.
+- مدراء الإنتاج: ندى حمدى (151)، ريهام (153)، محمد عباس (175، رجالي طنطا)، روضه سعد (185)، ماجي (349).
+- الرفع: release/run-install-20261122-r7.sh (zip sha256 8f88d4c5…؛ اتبنى تاني 23 نوفمبر فوق r6 المتثبت).
+- وفيه كمان (فيديو 23 نوفمبر، حساب كابتن): link-coaches.cjs بيربط 13 مدرب إنجليزي (COACH / …) بالكابتن بتاعهم
+  (1002→32، 1020→33، 1029→43، 1032→83، 1035→54، 1037→102، 1038→70، 1040→80، 1041→92، 1042→40، 1043→38، 1045→12، 1046→10)،
+  وبيخفي 1021/1023/1028/1044/1047 (مكرر أو مش واضح)، وبيعمل سجل مدرب لكل كابتن ملوش (~50). ولا واحد من الـ18 كان مستخدم.
+  الكابتن يشوف نفسه بس والشهر الحالي بس (trainer-performance selfMonth). تقرير التارجت: من يوم لحد يوم جوه الشهر.
+- مش متضاف عن قصد: 9 ملفات dist مختلفة محليًا من أكتوبر (main.js، permissions.guard، uploads، audit…) مش من الشغل ده.
+
+22-r7 اتأكد: UPDATE VERIFIED (23 نوفمبر). backup: tmp/nov22-r7-update-backup.39MGDs. 67 مدرب نشط كلهم عربي ومربوطين.
+
+جاهز: 20261122-r8 (خلفية بس، فوق 22-r7) — ربط الكباتن في كل الطرق
+---------------------------------------------------------------
+- staff-setup.service: syncEmployeeTrainer بعد تغيير المسمى. employees.remove: بيخفي سجل المدرب (catch).
+- trainer-sync.util: isTrainerJobTitle = الأسماء القديمة أو أي مسمى فيه كابتن/coach/captain؛ jobCountsAsTrainer؛
+  org.service بيعمل sync لو المسمى بقى/بطل مدرب بالاسم أو بالعلامة. مفيش تغيير بيانات وقت التنزيل.
+- لسه مستني ندى: 33 كابتن «موقوف» (employee_type=2) سجلاتهم نشطة؛ و599 برايفت قديم من غير كابتن.
+- الرفع: release/run-install-20261122-r8.sh (zip sha256 5b935352…). اتأكد: UPDATE VERIFIED (23 نوفمبر)، backup tmp/nov22-r8-update-backup.pqcj44.
+
+آخر تثبيت مؤكد: 20261124-r1 (الواجهة بس، فوق 22-r8، system.html a0cbb543…) — شاشة العضو في الاستقبال
+------------------------------------------------------------------------------------------------
+- زرار كاميرا على صورة العضو لتغييرها، و«تعديل البيانات» جوه «عرض بيانات العضو وسجلاته» (club.members:update؛ PUT /club-members/:id
+  بالحقول اللي اتغيرت بس)، والترتيب تحت الصورة: السبا ← InBody ← اللوكرز ← الموقوف. ملف جديد: reception-member-edit.tsx.
+- الأساس: system.html 288a4f6b… (= payload 22-r7، وده اللي كان على السيرفر). release-tools/daily-update-20261124-r1، 281 asset جديد.
+- الرفع: release/run-install-20261124-r1.sh (zip sha256 4edbf0c7…). اتأكد: UPDATE VERIFIED: 2026-11-24-r1، وتحقق خارجي (HTML والـchunk والصحة).
+  النسخة الاحتياطية: tmp/nov24-r1-update-backup.oEv23q
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261124-r1/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov24-r1-update-backup.oEv23q
+- ملحوظة: الخلفية لسه بتمنع موظف الاستقبال العادي (مش مدير/مشرف) يعدّل غير الأعضاء المضافين النهارده (assertReceptionCanModify)، والصورة كمان.
+
+آخر تثبيت مؤكد: 20261124-r2 (الواجهة بس، فوق 24-r1، system.html 4416d47e…) — تاريخ الميلاد مقفول + مرفقات العضو في الاستقبال
+-----------------------------------------------------------------------------------------------------------------
+- «عرض بيانات العضو وسجلاته»: تاريخ الميلاد بيتعرض ومش بيتعدل (ولا بيتبعت في الحفظ)، و«مرفقات العضو» تحت البيانات: عرض وفتح للكل،
+  ورفع/حذف لـ club.members:update (نفس API صفحة المرفقات: /club-members/:id/membership-documents، type=other، 5 ميجا).
+- الرفع: release/run-install-20261124-r2.sh (zip sha256 f9a5b2d0…). اتأكد: UPDATE VERIFIED: 2026-11-24-r2 + تحقق خارجي.
+  النسخة الاحتياطية: tmp/nov24-r2-update-backup.udxTEx
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261124-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov24-r2-update-backup.udxTEx
+
+آخر تثبيت مؤكد: 20261124-r3 — واتساب: حدود جيمورا SaaS + تهنئة أعياد الميلاد (24 نوفمبر 2026، 14:47)
+-----------------------------------------------------------------------------------------------------
+- release-tools/daily-update-20261124-r3 (الأساس = 24-r2 المتثبت، system.html 4416d47e…؛ بصمات الخلفية من السيرفر
+  = payload 19-r1 بالبايت). الحزمة release/noamany-daily-update-20261124-r3.zip (sha256 d1956689…)، المشغّل
+  release/run-install-20261124-r3.sh (scp + ssh root). مفيش قاعدة بيانات ولا schema ولا Client.
+- الخلفية: modules/whatsapp-campaigns — 6 ملفات اتغيرت (wa-control.client، wa-campaigns.service/controller/module/utils،
+  dto/wa-campaigns.dto) + 2 جداد (wa-birthdays.service، wa-birthdays.settings؛ الرجوع بيمسحهم). الواجهة: صفحة واتساب.
+- حدود الإرسال: لو WA_CONTROL_URL و WA_CONTROL_KEY (wak_…) في .env جذر التطبيق (العملية شغالة من الجذر ده، اتأكد بـ
+  /proc/<pid>/cwd) كل رسالة بتاخد تصريح من جيمورا (/api/public/wa-control/…، 10 ثواني timeout)؛ من غيرهم الحد المحلي
+  (wa_clients) زي الأول. وقت التثبيت: مش متحطين (المثبّت بيطبع ده). بعد إضافتهم: touch tmp/restart.txt.
+- أعياد الميلاد: مصدر birthdays، والإعدادات في wa_control_settings صف 2 (selectors JSON: enabled/time/templateId/
+  activeOnly/runs)، وقالب «تهنئة عيد الميلاد 🎂» بيتعمل أول استخدام. Cron كل 5 دقايق (Africa/Cairo، بيحترم
+  DISABLE_SCHEDULED_TASKS) + GET_LOCK('cron:wa-birthdays'): حملة واحدة لكل فرع عنده جهاز مربوط في اليوم؛ اللي فاضل
+  queued بعد اليوم بيتلغي (birthday_passed). التلقائي مقفول لحد ما يتفتح من الصفحة.
+- اتأكد: UPDATE VERIFIED: 2026-11-24-r3، والعملية اتغيرت لـ 3602171. فحص خارجي: 3 صحة، /login و/club/whatsapp
+  و/club/reception بيقدموا HTML الجديد، / الموقع العام. قراءة على الإنتاج (preview بس): أعياد ميلاد النهارده
+  فرع 2 = 32، فرع 3 = 57، فرع 4 = 45.
+- النسخة الاحتياطية: tmp/nov24-r3-update-backup.18iFsC
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261124-r3/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov24-r3-update-backup.18iFsC
+- الإضافة: release-tools/whatsapp-extension-20261124 (1.4.1، السيرفر https://final.noamanycenter.com متكتب لوحده).
+- المرجع للرفع اللي جاي: system.html = payload 24-r3، والخلفية = ملفات 24-r3.
+
+آخر تثبيت مؤكد: 20261124-r4 — سطر «ابعت إيقاف» اختياري لكل قالب (24 نوفمبر 2026، 15:01)
+-----------------------------------------------------------------------------------------
+- release-tools/daily-update-20261124-r4 (الأساس = 24-r3، system.html af2afcf7…). الحزمة release/noamany-daily-update-20261124-r4.zip
+  (sha256 d81d951c…)، المشغّل release/run-install-20261124-r4.sh. الخلفية: wa-campaigns.service، dto، wa-birthdays.service
+  + جديد wa-template-options.js (الرجوع بيمسحه). الاختيار في wa_control_settings صف 3 (noOptOutLine: [ids]).
+- اتأكد: UPDATE VERIFIED: 2026-11-24-r4. backup: tmp/nov24-r4-update-backup.i9mhn8
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261124-r4/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov24-r4-update-backup.i9mhn8
+- وقت التثبيت: التهنئة التلقائية متشغلة (09:00)، واتعملت حملة 1 لفرع 4 (11:53) بالنص القديم واتلغت يدوي بعد 1 مبعوت + 4 محتاجين مراجعة.
+- المرجع للرفع اللي جاي: system.html = payload 24-r4، والخلفية = ملفات 24-r4.

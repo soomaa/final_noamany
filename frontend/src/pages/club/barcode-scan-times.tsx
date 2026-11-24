@@ -13,6 +13,8 @@ import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { downloadExcel } from '@/lib/export';
 import { useAuth } from '@/store/auth';
+import { lockedMemberGender, preferredMemberGender } from '@/lib/user-scope';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type Filters = {
   branch: string;
@@ -62,9 +64,11 @@ export function ClubBarcodeScanTimesPage() {
   const { data: branches = [] } = useBranches();
   const today = cairoDate();
   const initialBranch = isAdmin ? '' : String(user?.branch ?? '');
+  // One-section staff are locked to their own رجالي/حريمي section (the backend refuses the other).
+  const lockedGender = lockedMemberGender(user);
   const [draft, setDraft] = useState<Filters>({
     branch: initialBranch,
-    gender: 'all',
+    gender: lockedGender ?? preferredMemberGender(user) ?? 'all',
     memberCode: '',
     startDate: shiftDay(today, -6),
     endDate: today,
@@ -201,8 +205,8 @@ export function ClubBarcodeScanTimesPage() {
 
     <section className="barcode-times-filters w-full rounded-xl border bg-card p-4">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <div><Label htmlFor="scan-branch">اسم الفرع</Label><select id="scan-branch" className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={draft.branch} onChange={(event) => setDraft((value) => ({ ...value, branch: event.target.value }))}><option value="">كل الفروع</option>{allowedBranches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></div>
-        <div><Label htmlFor="scan-gender">حريمي-رجالي</Label><select id="scan-gender" className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={draft.gender} onChange={(event) => setDraft((value) => ({ ...value, gender: event.target.value as Filters['gender'] }))}><option value="all">الكل</option><option value="male">رجالي</option><option value="female">حريمي</option></select></div>
+        <div><Label htmlFor="scan-branch">اسم الفرع</Label><SearchableSelect id="scan-branch" className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={draft.branch} onChange={(event) => setDraft((value) => ({ ...value, branch: event.target.value }))}><option value="">كل الفروع</option>{allowedBranches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</SearchableSelect></div>
+        <div><Label htmlFor="scan-gender">حريمي-رجالي</Label><SearchableSelect id="scan-gender" className="mt-2 h-10 w-full rounded-md border bg-background px-3" disabled={lockedGender != null} value={lockedGender ?? draft.gender} onChange={(event) => setDraft((value) => ({ ...value, gender: event.target.value as Filters['gender'] }))}><option value="all">الكل</option><option value="male">رجالي</option><option value="female">حريمي</option></SearchableSelect></div>
         <div><Label htmlFor="scan-code">كود العضو</Label><Input id="scan-code" className="mt-2" value={draft.memberCode} onChange={(event) => setDraft((value) => ({ ...value, memberCode: event.target.value }))} /></div>
         <div><Label htmlFor="scan-start-date">من تاريخ</Label><Input id="scan-start-date" className="mt-2" type="date" disabled={todayOnly} value={draft.startDate} onChange={(event) => setDraft((value) => ({ ...value, startDate: event.target.value }))} /></div>
         <div><Label htmlFor="scan-end-date">إلى تاريخ</Label><Input id="scan-end-date" className="mt-2" type="date" disabled={todayOnly} value={draft.endDate} onChange={(event) => setDraft((value) => ({ ...value, endDate: event.target.value }))} /></div>

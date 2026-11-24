@@ -12,6 +12,7 @@ import { ar, enUS } from "date-fns/locale";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useNavigate } from "react-router-dom";
+import { DashboardShortcuts } from "@/components/dashboard/dashboard-shortcuts";
 import { PreferenceToggles } from "@/components/layout/preference-toggles";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,7 @@ import { useBranches } from "@/hooks/use-branches";
 import { useAuth } from "@/store/auth";
 import { useLocale } from "@/store/locale";
 import type { MenuNode } from "@/types";
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 function getGreetingKey(hour: number) {
   if (hour < 12) return "greeting.morning";
@@ -189,7 +191,7 @@ function BirthdayDropdown() {
         {/* Branch filter — admin only */}
         {isAdmin && branches.length > 0 && (
           <div className="border-b border-border/40 px-3 py-2">
-            <select
+            <SearchableSelect
               className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground focus:outline-none"
               value={selectedBranch}
               onChange={e => setSelectedBranch(e.target.value)}
@@ -198,7 +200,7 @@ function BirthdayDropdown() {
               {branches.map(b => (
                 <option key={b.id} value={String(b.id)}>{b.name}</option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
         )}
         {/* Table header */}
@@ -356,6 +358,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
           <DateTimePill />
 
           <PreferenceToggles />
+          <DashboardShortcuts />
 
           <BirthdayDropdown />
 

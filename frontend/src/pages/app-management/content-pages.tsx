@@ -9,6 +9,7 @@ import { api } from '@/lib/api';
 import { useLocale } from '@/store/locale';
 import { AppCrudPage } from './app-crud';
 import { uploadAppImage } from './app-shell';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface OfferRow {
   id: number;
@@ -196,7 +197,7 @@ export function AppExercisesPage() {
           <div className="grid gap-1"><Label>{ui('الاسم')}</Label><Input value={String(form.name ?? '')} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
           <div className="grid gap-1">
             <Label>{ui('التصنيف')}</Label>
-            <select
+            <SearchableSelect
               className="rounded-md border bg-background px-3 py-2 text-sm"
               value={String(form.categoryId ?? '')}
               onChange={(e) => setForm({ ...form, categoryId: e.target.value })}
@@ -207,7 +208,7 @@ export function AppExercisesPage() {
                   {c.name}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
           <div className="grid gap-1"><Label>{ui('الوصف')}</Label><Textarea value={String(form.description ?? '')} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
           <div className="grid gap-1"><Label>{ui('التعليمات')}</Label><Textarea value={String(form.instructions ?? '')} onChange={(e) => setForm({ ...form, instructions: e.target.value })} /></div>
@@ -215,11 +216,11 @@ export function AppExercisesPage() {
             <div className="grid gap-1"><Label>{ui('المدة (د)')}</Label><Input className="nums" type="number" value={String(form.duration ?? '')} onChange={(e) => setForm({ ...form, duration: e.target.value })} /></div>
             <div className="grid gap-1">
               <Label>{ui('الصعوبة')}</Label>
-              <select className="rounded-md border bg-background px-3 py-2 text-sm" value={String(form.difficulty ?? 'easy')} onChange={(e) => setForm({ ...form, difficulty: e.target.value })}>
+              <SearchableSelect className="rounded-md border bg-background px-3 py-2 text-sm" value={String(form.difficulty ?? 'easy')} onChange={(e) => setForm({ ...form, difficulty: e.target.value })}>
                 <option value="easy">{ui('سهل')}</option>
                 <option value="medium">{ui('متوسط')}</option>
                 <option value="hard">{ui('صعب')}</option>
-              </select>
+              </SearchableSelect>
             </div>
           </div>
         </div>

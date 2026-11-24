@@ -17,6 +17,7 @@ import { usePaginatedList } from '@/lib/api-hooks';
 import { formatMoney, localToday } from '@/lib/formatters';
 import { cn, toArabicDigits } from '@/lib/utils';
 import type { ClubMemberListItem, ClubSubscriptionListItem } from '@/types/club';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 function dateDaysRemaining(endDate: string) {
   const today = new Date(`${localToday()}T00:00:00`);
@@ -114,10 +115,10 @@ export function ClubMemberTransferPage() {
             <div className="space-y-2 sm:col-span-2 lg:col-span-3">
               <Label htmlFor="transfer-source-search">الاشتراك المصدر *</Label>
               <div className="relative mb-2"><Search className="absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input id="transfer-source-search" className="ps-9" value={sourceSearch} onChange={(event) => { setSourceSearch(event.target.value); setSubscriptionId(''); setTarget(null); }} placeholder="ابحث بكود العضو أو رقم الهاتف أو الاسم أو رقم الاشتراك" /></div>
-              <select aria-label="الاشتراك المصدر" disabled={searching || isError || eligible.length === 0} className="flex h-11 w-full rounded-md border bg-background px-3 text-sm" value={subscriptionId} onChange={(event) => { setSubscriptionId(event.target.value); setTarget(null); }}>
+              <SearchableSelect aria-label="الاشتراك المصدر" disabled={searching || isError || eligible.length === 0} className="flex h-11 w-full rounded-md border bg-background px-3 text-sm" value={subscriptionId} onChange={(event) => { setSubscriptionId(event.target.value); setTarget(null); }}>
                 <option value="">{searching ? 'جاري البحث عن الاشتراكات…' : isError ? 'تعذر تحميل الاشتراكات' : eligible.length ? 'اختر اشتراكًا من النتائج' : 'لا توجد اشتراكات مؤهلة للتحويل'}</option>
                 {eligible.map((row) => <option key={row.id} value={row.id}>{row.customerName} — {row.memberCode ?? 'بدون كود'} — {row.memberPhone ?? 'بدون هاتف'} — {row.subscriptionNumber} — {row.subscriptionTypeName ?? row.subscriptionType} — {row.branchName ?? branchName(row.branchId)}</option>)}
-              </select>
+              </SearchableSelect>
               <p role="status" aria-live="polite" className={cn('text-sm', isError ? 'text-destructive' : 'text-muted-foreground')}>
                 {searching ? 'جاري البحث…' : isError ? apiError(error) : eligible.length ? `ظهر ${toArabicDigits(subscriptions?.total ?? eligible.length)} اشتراكًا مؤهلًا للتحويل${(subscriptions?.total ?? 0) > eligible.length ? `؛ معروض أول ${toArabicDigits(eligible.length)} نتيجة، حدّد البحث للوصول للاشتراك المطلوب` : ' في القائمة'}` : 'لا توجد اشتراكات نشطة مسددة ومؤهلة للتحويل مطابقة للبحث ضمن نطاق صلاحياتك.'}
               </p>
@@ -137,7 +138,7 @@ export function ClubMemberTransferPage() {
           </div></section>
 
           <section className="rounded-xl border"><h3 className="border-b bg-muted/40 px-4 py-3 font-semibold">بيانات العضو المحوَّل إليه</h3><div className="grid gap-4 p-4 sm:grid-cols-2 lg:grid-cols-3">
-            <div className="space-y-2"><Label htmlFor="transfer-target-branch">الفرع *</Label><select id="transfer-target-branch" className="flex h-10 w-full rounded-md border bg-background px-3 text-sm" value={targetBranchId} onChange={(event) => { setTargetBranchId(event.target.value); setTarget(null); }}><option value="">اختر الفرع</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select></div>
+            <div className="space-y-2"><Label htmlFor="transfer-target-branch">الفرع *</Label><SearchableSelect id="transfer-target-branch" className="flex h-10 w-full rounded-md border bg-background px-3 text-sm" value={targetBranchId} onChange={(event) => { setTargetBranchId(event.target.value); setTarget(null); }}><option value="">اختر الفرع</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</SearchableSelect></div>
             <div className="space-y-2"><Label>العضو المستلم *</Label><MemberSearchCombobox key={targetBranchId} selectedMember={target} onSelect={setTarget} onClear={() => setTarget(null)} branchId={targetBranchId ? Number(targetBranchId) : undefined} exactBranch forRefundTransfer disabled={!source || !targetBranchId} /></div>
             <ReadonlyField label="رقم الهاتف" value={target?.phone ?? '—'} />
             <div className="space-y-2 sm:col-span-2 lg:col-span-3"><Label>سبب التحويل *</Label><Textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="اكتب سبب تحويل الاشتراك (3 أحرف على الأقل)" /></div>

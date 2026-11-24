@@ -30,6 +30,7 @@ export function marketingRepEmployeeWhere(jobIds: number[]): Prisma.employeesWhe
     { mosma_wazefy_n: { contains: title } },
   ]);
   return {
-    OR: [...(jobIds.length ? [{ mosma_wazefy_code: { in: jobIds } }] : []), ...titleMatch],
+    // `is_sales`: anyone switched to «يعمل كأخصائي مبيعات» from user exceptions also sells.
+    OR: [{ is_sales: true }, ...(jobIds.length ? [{ mosma_wazefy_code: { in: jobIds } }] : []), ...titleMatch],
   };
 }

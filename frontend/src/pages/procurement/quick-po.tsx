@@ -26,6 +26,7 @@ import type { PaginatedResponse } from '@/components/common/data-table';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const EMPTY = {
   supplierId: '',
@@ -293,7 +294,7 @@ export function ProcurementQuickPoPage() {
           <div className="grid gap-3 py-2">
             <div className="grid gap-1">
               <Label>{ui('المورد')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={form.supplierId}
                 onChange={(e) => setForm((f) => ({ ...f, supplierId: e.target.value }))}
@@ -304,11 +305,11 @@ export function ProcurementQuickPoPage() {
                     {s.nameAr}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1">
               <Label>{ui('المنتج')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={form.productId}
                 onChange={(e) => onProductPick(e.target.value)}
@@ -319,7 +320,7 @@ export function ProcurementQuickPoPage() {
                     {p.nameAr} ({p.productCode})
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
@@ -343,22 +344,22 @@ export function ProcurementQuickPoPage() {
             </div>
             <div className="grid gap-1">
               <Label>{ui('المستودع')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={form.warehouseId}
                 onChange={(e) => setForm((f) => ({ ...f, warehouseId: e.target.value }))}
               >
                 <option value="">{ui('—')}</option>
-                {(warehouses ?? []).map((w) => (
+                {(warehouses ?? []).filter((w) => w.status !== 'inactive').map((w) => (
                   <option key={w.id} value={w.id}>
                     {w.nameAr}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1">
               <Label>{ui('الفرع')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={form.branchId}
                 onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}
@@ -368,7 +369,7 @@ export function ProcurementQuickPoPage() {
                     {b.name}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1">
               <Label>{ui('ملاحظات')}</Label>

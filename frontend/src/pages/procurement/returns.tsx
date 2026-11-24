@@ -27,6 +27,7 @@ import type { PaginatedResponse } from '@/components/common/data-table';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface LineDraft {
   productId: string;
@@ -357,10 +358,10 @@ export function ProcurementReturnsPage() {
           <div className="grid gap-4 py-2">
             <div className="grid gap-1">
               <Label>{ui('فاتورة الشراء الأصلية')}</Label>
-              <select className="h-10 w-full rounded-md border bg-background px-3" value={sourceInvoiceId} disabled={mode !== 'create'} onChange={(e) => pickInvoice(e.target.value)}>
+              <SearchableSelect className="h-10 w-full rounded-md border bg-background px-3" value={sourceInvoiceId} disabled={mode !== 'create'} onChange={(e) => pickInvoice(e.target.value)}>
                 <option value="">{ui('اختر الفاتورة')}</option>
                 {sourceInvoices.filter((i) => !i.isOpeningBalance).map((i) => <option key={i.id} value={i.id}>{i.invoiceNumber}</option>)}
-              </select>
+              </SearchableSelect>
               <p className="text-xs text-muted-foreground">{ui('أدخل كمية المرتجع بوحدة المخزون الأساسية؛ السعر والمورد والمكان تُراجع من الفاتورة الأصلية.')}</p>
             </div>
 

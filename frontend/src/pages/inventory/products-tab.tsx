@@ -35,6 +35,7 @@ import { useAuth } from '@/store/auth';
 import { usePermission } from '@/hooks/use-permission';
 import { RecipeEditor, type RecipeLine } from '@/components/cafe/recipe-editor';
 import type { RecipeUnit } from '@/types/cafe';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 function useCatalogOptions(resource: string, enabled = true) {
   return useQuery({
@@ -641,7 +642,7 @@ export function ProductsTab({
             {!editId && (inventoryKind === 'raw_material' || inventoryKind === 'ready_product') && !isComposite && (
               <div className="grid gap-2">
                 <Label>{ui('فرع الرصيد الافتتاحي')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.openingBranchId ?? ''}
                   disabled={!!user?.branch && user.level !== 1}
@@ -649,14 +650,14 @@ export function ProductsTab({
                 >
                   <option value="">{ui('اختر الفرع')}</option>
                   {(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-                </select>
+                </SearchableSelect>
                 <p className="text-xs text-muted-foreground">{ui('سيتم تسجيل الرصيد الافتتاحي وحركته المخزنية على هذا الفرع.')}</p>
               </div>
             )}
 
             <div className="grid gap-2">
               <Label>{ui(isComposite ? 'وحدة ناتج الوصفة' : 'وحدة القياس')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={form.unitOfMeasure ?? 'piece'}
                 onChange={(e) => setForm((f) => ({ ...f, unitOfMeasure: e.target.value }))}
@@ -664,7 +665,7 @@ export function ProductsTab({
                 {CAFE_UNIT_OPTIONS.map((option) => (
                   <option key={option.value} value={option.value}>{ui(option.label)}</option>
                 ))}
-              </select>
+              </SearchableSelect>
               {editId ? (
                 <p className="rounded-lg border border-amber-300/60 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
                   {ui('يمكن تصحيح الوحدة الأساسية إذا لم تبدأ حركة الخامة ولم تُستخدم في وصفة. إذا وُجد رصيد أو حركة أو وصفة فسيمنع النظام الحفظ لحماية الكميات والتكلفة.')}
@@ -685,7 +686,7 @@ export function ProductsTab({
               <>
                 <div className="grid gap-2">
                   <Label>{ui('التصنيف')}</Label>
-                  <select
+                  <SearchableSelect
                     className="rounded-md border bg-background px-3 py-2 text-sm"
                     value={form.categoryId ?? ''}
                     onChange={(e) =>
@@ -696,11 +697,11 @@ export function ProductsTab({
                     {categoryOptions.map((o) => (
                       <option key={o.value} value={o.value}>{o.label}</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
                 <div className="grid gap-2">
                   <Label>{ui('العلامة التجارية')}</Label>
-                  <select
+                  <SearchableSelect
                     className="rounded-md border bg-background px-3 py-2 text-sm"
                     value={form.brandId ?? ''}
                     onChange={(e) =>
@@ -711,7 +712,7 @@ export function ProductsTab({
                     {(brands ?? []).map((b) => (
                       <option key={b.id} value={b.id}>{b.nameAr ?? b.name}</option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
               </>
             )}
@@ -719,7 +720,7 @@ export function ProductsTab({
             {!isComposite && (
               <div className="grid gap-2">
                 <Label>{ui(isRawMaterial ? 'المورد الأساسي' : 'المورد')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.supplierId ?? ''}
                   onChange={(e) =>
@@ -730,7 +731,7 @@ export function ProductsTab({
                   {(suppliers ?? []).map((s) => (
                     <option key={s.id} value={s.id}>{s.nameAr}</option>
                   ))}
-                </select>
+                </SearchableSelect>
                 {isRawMaterial ? (
                   <p className="text-xs text-muted-foreground">
                     {ui('اختيار المورد هنا يجعل الخامة تظهر تلقائيًا في مشتريات هذا المورد.')}
@@ -807,10 +808,10 @@ export function ProductsTab({
             {isRawMaterial && (
               <div className="grid gap-2">
                 <Label>{ui('الحالة')}</Label>
-                <select className="rounded-md border bg-background px-3 py-2 text-sm" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as 'active' | 'inactive' }))}>
+                <SearchableSelect className="rounded-md border bg-background px-3 py-2 text-sm" value={form.status} onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as 'active' | 'inactive' }))}>
                   <option value="active">{ui('نشط')}</option>
                   <option value="inactive">{ui('غير نشط')}</option>
-                </select>
+                </SearchableSelect>
               </div>
             )}
           </div>

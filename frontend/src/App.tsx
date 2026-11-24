@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { AppRouter } from '@/app/router';
 import { LOGO_SRC } from '@/components/brand/logo';
+import { ImagePreviewHost } from '@/components/common/image-preview';
 import { useAuth } from '@/store/auth';
 import { useLocale } from '@/store/locale';
 
@@ -29,5 +30,10 @@ export function App() {
     );
   }
 
-  return <AppRouter />;
+  return (
+    <>
+      <AppRouter />
+      <ImagePreviewHost />
+    </>
+  );
 }

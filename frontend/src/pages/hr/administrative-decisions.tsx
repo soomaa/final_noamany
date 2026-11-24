@@ -16,6 +16,7 @@ import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export interface AdministrativeDecisionRow {
   id: number;
@@ -189,9 +190,9 @@ export function AdministrativeDecisionsPage() {
           <DialogHeader><DialogTitle>{editId ? ui('تعديل القرار الإداري') : ui('قرار تعيين مؤقت جديد')}</DialogTitle></DialogHeader>
           <div className="grid gap-4 md:grid-cols-3">
             <div><Label htmlFor="decision-name">{ui('اسم الموظف')}</Label><Input id="decision-name" className="mt-1.5" value={form.empName} onChange={(event) => setForm((current) => ({ ...current, empName: event.target.value }))} /></div>
-            <div><Label htmlFor="decision-department">{ui('الإدارة')}</Label><select id="decision-department" className="mt-1.5 h-10 w-full rounded-md border bg-background px-3" value={form.edaraId} onChange={(event) => setForm((current) => ({ ...current, edaraId: event.target.value, qsmId: '' }))}><option value="">{ui('اختر…')}</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></div>
-            <div><Label htmlFor="decision-section">{ui('القسم')}</Label><select id="decision-section" className="mt-1.5 h-10 w-full rounded-md border bg-background px-3" value={form.qsmId} onChange={(event) => setForm((current) => ({ ...current, qsmId: event.target.value }))}><option value="">{ui('بدون قسم')}</option>{sections.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></div>
-            <div><Label htmlFor="decision-job-title">{ui('المسمى الوظيفي')}</Label><select id="decision-job-title" className="mt-1.5 h-10 w-full rounded-md border bg-background px-3" value={form.jobTitleId} onChange={(event) => setForm((current) => ({ ...current, jobTitleId: event.target.value }))}><option value="">{ui('اختر…')}</option>{lookups?.jobTitles.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></div>
+            <div><Label htmlFor="decision-department">{ui('الإدارة')}</Label><SearchableSelect id="decision-department" className="mt-1.5 h-10 w-full rounded-md border bg-background px-3" value={form.edaraId} onChange={(event) => setForm((current) => ({ ...current, edaraId: event.target.value, qsmId: '' }))}><option value="">{ui('اختر…')}</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</SearchableSelect></div>
+            <div><Label htmlFor="decision-section">{ui('القسم')}</Label><SearchableSelect id="decision-section" className="mt-1.5 h-10 w-full rounded-md border bg-background px-3" value={form.qsmId} onChange={(event) => setForm((current) => ({ ...current, qsmId: event.target.value }))}><option value="">{ui('بدون قسم')}</option>{sections.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</SearchableSelect></div>
+            <div><Label htmlFor="decision-job-title">{ui('المسمى الوظيفي')}</Label><SearchableSelect id="decision-job-title" className="mt-1.5 h-10 w-full rounded-md border bg-background px-3" value={form.jobTitleId} onChange={(event) => setForm((current) => ({ ...current, jobTitleId: event.target.value }))}><option value="">{ui('اختر…')}</option>{lookups?.jobTitles.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</SearchableSelect></div>
             {numberField('salary', 'الراتب الأساسي')}
             {numberField('housingAllowance', 'بدل السكن')}
             {numberField('transportAllowance', 'بدل المواصلات')}

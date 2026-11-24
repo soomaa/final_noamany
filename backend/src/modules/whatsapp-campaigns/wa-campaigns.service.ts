@@ -13,14 +13,18 @@ import {
   ListWaCampaignsDto,
   ListWaMessagesDto,
   UpsertWaTemplateDto,
+  WaAbsenceLookupDto,
+  WaAbsenceSettingsDto,
   WaAudienceDto,
   WaOptOutDto,
 } from './dto/wa-campaigns.dto';
 import {
   ageOn,
   birthdaySuffixes,
+  bodyToFields,
   classifyRecipients,
   daysBetween,
+  fieldsToBody,
   displayPhone,
   firstName,
   formatDate,
@@ -32,7 +36,9 @@ import {
 } from './wa-campaigns.utils';
 import { ControlUnavailableError, WaControlClient } from './wa-control.client';
 import { readBirthdaySettings } from './wa-birthdays.settings';
-import { readTemplateOptions, setOptOutLine } from './wa-template-options';
+import { readTemplateOptions, setOptOutLine, updateTemplateOptions } from './wa-template-options';
+import { BIRTHDAY_FIELDS, DEFAULT_TEMPLATES } from './wa-default-templates';
+import { runWithMysqlLock } from '../../common/automation/cron-dedup.util';
 
 const MAX_AUDIENCE = 5000;
 /** A phone that got any campaign message this recently is skipped, so reminders never stack. */
@@ -84,6 +90,7 @@ export class WaCampaignsService {
   // ── templates ─────────────────────────────────────────────────────────────
 
   async listTemplates() {
+    await this.seedDefaultTemplates();
     const [rows, birthdays, options] = await Promise.all([
       this.prisma.wa_templates.findMany({ orderBy: [{ is_active: 'desc' }, { id: 'desc' }] }),
       readBirthdaySettings(this.prisma),
@@ -95,16 +102,58 @@ export class WaCampaignsService {
       body: t.body,
       isActive: t.is_active,
       isBirthday: t.id === birthdays.templateId,
+      isAbsence: t.id === options.absence.templateId,
       addOptOutLine: !options.noOptOutLine.includes(t.id),
+      fields: options.fields[String(t.id)] ?? bodyToFields(t.body),
       updatedAt: t.updated_at,
     }));
   }
 
-  async createTemplate(dto: UpsertWaTemplateDto, user: JwtUser) {
-    const row = await this.prisma.wa_templates.create({
-      data: { name: dto.name.trim(), body: dto.body.trim(), is_active: dto.isActive ?? true, created_by: user.sub },
+  /**
+   * The page's starting templates, each created once: «بينتهي النهاردة», «منتهي من فترة» and
+   * «لم يحضر منذ مدة»; the birthday template (made by the birthday settings) gets its fields.
+   */
+  private async seedDefaultTemplates() {
+    const options = await readTemplateOptions(this.prisma);
+    const birthdays = await readBirthdaySettings(this.prisma);
+    const birthdayPending = !!birthdays.templateId && !options.fields[String(birthdays.templateId)] && !options.seeded.includes('birthday_fields');
+    if (DEFAULT_TEMPLATES.every((d) => options.seeded.includes(d.key)) && !birthdayPending) return;
+    await runWithMysqlLock(this.prisma, 'wa:templates-seed', 10, async () => {
+      const current = await readTemplateOptions(this.prisma);
+      const created: Record<string, number> = {};
+      for (const d of DEFAULT_TEMPLATES) {
+        if (current.seeded.includes(d.key)) continue;
+        const row = await this.prisma.wa_templates.create({ data: { name: d.name, body: fieldsToBody(d.fields), is_active: true } });
+        created[d.key] = row.id;
+      }
+      const birthday = birthdays.templateId ? await this.prisma.wa_templates.findUnique({ where: { id: birthdays.templateId } }) : null;
+      // The birthday text written before the field editor: the free-week greeting becomes the
+      // matching fields; any other text is split into fields line by line.
+      const birthdayFields = birthday && !current.fields[String(birthday.id)] && !current.seeded.includes('birthday_fields')
+        ? (birthday.body.includes('أسبوع فري') ? BIRTHDAY_FIELDS : bodyToFields(birthday.body))
+        : null;
+      if (birthday && birthdayFields) await this.prisma.wa_templates.update({ where: { id: birthday.id }, data: { body: fieldsToBody(birthdayFields) } });
+      await updateTemplateOptions(this.prisma, (o) => {
+        for (const d of DEFAULT_TEMPLATES) {
+          if (!created[d.key]) continue;
+          o.fields[String(created[d.key])] = d.fields;
+          o.seeded.push(d.key);
+          if (d.key === 'absence' && !o.absence.templateId) o.absence.templateId = created[d.key];
+        }
+        if (birthday && birthdayFields) {
+          o.fields[String(birthday.id)] = birthdayFields;
+          o.seeded.push('birthday_fields');
+        }
+      });
     });
-    if (dto.addOptOutLine === false) await setOptOutLine(this.prisma, row.id, false);
+  }
+
+  async createTemplate(dto: UpsertWaTemplateDto, user: JwtUser) {
+    const body = this.templateBody(dto);
+    const row = await this.prisma.wa_templates.create({
+      data: { name: dto.name.trim(), body, is_active: dto.isActive ?? true, created_by: user.sub },
+    });
+    await this.saveTemplateOptions(row.id, dto);
     return { id: row.id };
   }
 
@@ -114,16 +163,39 @@ export class WaCampaignsService {
     });
     await this.prisma.wa_templates.update({
       where: { id },
-      data: { name: dto.name.trim(), body: dto.body.trim(), ...(dto.isActive !== undefined ? { is_active: dto.isActive } : {}) },
+      data: { name: dto.name.trim(), body: this.templateBody(dto), ...(dto.isActive !== undefined ? { is_active: dto.isActive } : {}) },
     });
-    if (dto.addOptOutLine !== undefined) await setOptOutLine(this.prisma, id, dto.addOptOutLine);
+    await this.saveTemplateOptions(id, dto);
     return { id };
+  }
+
+  /** With fields the body is generated from them (one line each, `{a|b}` for several wordings). */
+  private templateBody(dto: UpsertWaTemplateDto): string {
+    const body = dto.fields?.length ? fieldsToBody(dto.fields) : dto.body.trim();
+    if (!body) throw new BadRequestException('اكتب نص الرسالة');
+    return body;
+  }
+
+  private async saveTemplateOptions(id: number, dto: UpsertWaTemplateDto) {
+    await updateTemplateOptions(this.prisma, (o) => {
+      if (dto.addOptOutLine !== undefined) {
+        const ids = new Set(o.noOptOutLine);
+        if (dto.addOptOutLine) ids.delete(id);
+        else ids.add(id);
+        o.noOptOutLine = [...ids].sort((a, b) => a - b);
+      }
+      // Fields given → stored; plain text only → the stored fields would be stale, so they go.
+      if (dto.fields?.length) o.fields[String(id)] = dto.fields.map((f) => ({ label: f.label.trim(), options: f.options.map((x) => x.trim()).filter(Boolean) })).filter((f) => f.options.length);
+      else delete o.fields[String(id)];
+    });
   }
 
   async removeTemplate(id: number) {
     if ((await readBirthdaySettings(this.prisma)).templateId === id) throw new ConflictException('ده قالب أعياد الميلاد — اختار قالب تاني لأعياد الميلاد الأول');
+    if ((await readTemplateOptions(this.prisma)).absence.templateId === id) throw new ConflictException('ده قالب «لم يحضر منذ مدة» — اختار قالب تاني ليه الأول');
     await this.prisma.wa_templates.deleteMany({ where: { id } });
     await setOptOutLine(this.prisma, id, true);
+    await updateTemplateOptions(this.prisma, (o) => { delete o.fields[String(id)]; });
     return { id };
   }
 
@@ -564,6 +636,78 @@ export class WaCampaignsService {
     if (!device || device.revoked_at) throw new NotFoundException('الجهاز غير موجود');
     if (!this.branches.isBranchAllowed(user, device.branch_id)) throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا الفرع');
     return device;
+  }
+
+  // ── «لم يحضر منذ مدة» (attendance list) ─────────────────────────────────────
+
+  async absenceSettings() {
+    await this.seedDefaultTemplates();
+    const { absence } = await readTemplateOptions(this.prisma);
+    return absence;
+  }
+
+  async updateAbsenceSettings(dto: WaAbsenceSettingsDto) {
+    if (dto.templateId !== undefined && !(await this.prisma.wa_templates.findUnique({ where: { id: dto.templateId }, select: { id: true } }))) {
+      throw new BadRequestException('القالب غير موجود');
+    }
+    const options = await updateTemplateOptions(this.prisma, (o) => {
+      if (dto.yellowDays !== undefined) o.absence.yellowDays = dto.yellowDays;
+      if (dto.redDays !== undefined) o.absence.redDays = dto.redDays;
+      if (dto.templateId !== undefined) o.absence.templateId = dto.templateId;
+    });
+    if (options.absence.redDays < options.absence.yellowDays) {
+      await updateTemplateOptions(this.prisma, (o) => { o.absence.redDays = o.absence.yellowDays; });
+    }
+    return this.absenceSettings();
+  }
+
+  /**
+   * For the members on one page of the attendance list: the last visit before that day, how many
+   * days ago, the colour, and — from the yellow threshold on — the «لم يحضر منذ مدة» message ready
+   * to open in WhatsApp (sent by hand from the reception phone, not by the extension).
+   */
+  async absenceLookup(q: WaAbsenceLookupDto, user: JwtUser) {
+    await this.seedDefaultTemplates();
+    const day = q.date ?? localDateString();
+    const ids = [...new Set(q.members.split(',').map(Number))];
+    const { absence } = await readTemplateOptions(this.prisma);
+    const scope = this.branches.allowedBranchIds(user);
+    const [members, visits, template] = await Promise.all([
+      this.prisma.club_members.findMany({
+        where: { id: { in: ids }, ...(scope !== null ? { branch_id: { in: scope } } : {}) },
+        select: { id: true, name: true, member_code: true, phone: true, branch_id: true },
+      }),
+      this.prisma.club_attendance.groupBy({
+        by: ['member_id'],
+        where: { member_id: { in: ids }, attendance_date: { lt: day } },
+        _max: { attendance_date: true },
+      }),
+      absence.templateId ? this.prisma.wa_templates.findUnique({ where: { id: absence.templateId } }) : null,
+    ]);
+    const lastVisit = new Map(visits.map((v) => [v.member_id, v._max.attendance_date ?? null]));
+    const branchNames = new Map<number, string>();
+    for (const id of new Set(members.map((m) => m.branch_id))) branchNames.set(id, await this.branchName(id));
+    return {
+      yellowDays: absence.yellowDays,
+      redDays: absence.redDays,
+      rows: members.map((m) => {
+        const last = lastVisit.get(m.id) ?? null;
+        const days = last ? daysBetween(last, day) : null;
+        const level = days === null ? null : days >= absence.redDays ? 'red' : days >= absence.yellowDays ? 'yellow' : null;
+        const phone = toWhatsAppPhone(m.phone);
+        const text = level && template
+          ? renderTemplate(varyTemplate(template.body), {
+              name: m.name,
+              first_name: firstName(m.name),
+              code: m.member_code,
+              days: String(days),
+              last_visit: formatDate(last),
+              branch: branchNames.get(m.branch_id) ?? '',
+            })
+          : null;
+        return { memberId: m.id, lastVisit: last, days, level, phone, text };
+      }),
+    };
   }
 
   // ── opt-outs ──────────────────────────────────────────────────────────────

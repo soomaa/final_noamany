@@ -1,5 +1,5 @@
 import type { ColumnDef } from '@tanstack/react-table';
-import { FileText, Plus, Upload, X } from 'lucide-react';
+import { Eye, FileText, Plus, Upload, X } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
@@ -19,10 +19,12 @@ import { localToday } from '@/lib/formatters';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 import { toArabicDigits } from '@/lib/utils';
 import type { InbodyMeasurementRow } from '@/types/fitness';
 import type { ClubMemberListItem } from '@/types/club';
 import { RowActions } from './shared';
+import { InbodyMemberDetailDialog } from './inbody-member-detail-dialog';
 
 export function FitnessInbodyPage() {
   const ft = useFitnessT();
@@ -31,9 +33,11 @@ export function FitnessInbodyPage() {
   const title = user?.job_title?.normalize('NFKD') ?? '';
   const todayOnly = !superAdmin && user?.level !== 3 && /(استقبال|ريسيبشن|ريسبشن|reception)/i.test(title) && !/(مدير|مشرف|رئيس|manager|supervisor|head)/i.test(title);
   const { params, setParams } = useListQuery();
+  // رجالي/حريمي/الكل (locked to the employee's own section).
+  const gender = useMemberGenderFilter();
   const { data, isLoading, isError, refetch } = usePaginatedList<InbodyMeasurementRow>(
     'club-inbody-measurements',
-    params,
+    { ...params, filters: { ...params.filters, gender: gender.value } },
   );
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
@@ -109,6 +113,8 @@ export function FitnessInbodyPage() {
     }
   };
 
+  const [profileMemberId, setProfileMemberId] = useState<number | null>(null);
+
   const columns = useMemo<ColumnDef<InbodyMeasurementRow>[]>(
     () => [
       {
@@ -152,6 +158,16 @@ export function FitnessInbodyPage() {
         header: ft('common.actions'),
         cell: ({ row }) => (
           <div className="flex items-center gap-1">
+            {/* Every InBody measurement and file this member has, newest first. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              title={ft('inbody.viewDetails')}
+              aria-label={ft('inbody.viewDetails')}
+              onClick={() => setProfileMemberId(row.original.memberId)}
+            >
+              <Eye className="size-4" />
+            </Button>
             <RowActions
               editLabel={ft('common.edit')}
               deleteLabel={ft('common.delete')}
@@ -190,6 +206,7 @@ export function FitnessInbodyPage() {
         onPageSizeChange={(pageSize) => setParams({ pageSize, page: 1 })}
         search={params.search}
         onSearchChange={(search) => setParams({ search, page: 1 })}
+        toolbar={<MemberGenderSelect hideLabel value={gender.value} locked={gender.locked} onChange={(value) => { gender.setValue(value); setParams({ page: 1 }); }} />}
         isLoading={isLoading}
         isError={isError}
         onRetry={() => void refetch()}
@@ -270,6 +287,11 @@ export function FitnessInbodyPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <InbodyMemberDetailDialog
+        memberId={profileMemberId}
+        open={profileMemberId != null}
+        onOpenChange={(next) => { if (!next) setProfileMemberId(null); }}
+      />
     </div>
   );
 }

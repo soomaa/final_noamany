@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Patch, Post, Req, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
@@ -12,8 +12,12 @@ import { MemberJwtUser } from '../../common/types/member-jwt-user';
 import { MemberAuthService } from '../member/member-auth.service';
 import { AuthService } from './auth.service';
 import { UploadsService } from '../uploads/uploads.service';
+import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
+import { UpdateProfileNameDto } from './dto/update-profile.dto';
+import { PrismaService } from '../../common/prisma/prisma.service';
+import { employeeForLogin, employeeSells } from '../employees/sales-attribution.util';
 
 const ACCESS_COOKIE = 'one80_access';
 const REFRESH_COOKIE = 'one80_refresh';
@@ -25,6 +29,8 @@ export class AuthController {
     private readonly memberAuth: MemberAuthService,
     private readonly config: ConfigService,
     private readonly uploads: UploadsService,
+    private readonly branchScope: BranchScopeService,
+    private readonly prisma: PrismaService,
   ) {}
 
   private cookieOpts(maxAgeMs: number) {
@@ -92,8 +98,29 @@ export class AuthController {
 
   @UseGuards(JwtAuthGuard)
   @Get('me')
-  me(@CurrentUser() user: JwtUser) {
-    return this.auth.getSessionUser(user.sub);
+  async me(@CurrentUser() user: JwtUser) {
+    const session = await this.auth.getSessionUser(user.sub);
+    // The men/women section the club screens OPEN on (a default the employee can switch to الكل):
+    // null = both. From the request user so active section exceptions count too.
+    const memberGender = this.branchScope.defaultMemberSection(user);
+    // For the sales screens ported from MetaFit: `employeeId` is the employees.id every sales
+    // dropdown is keyed by, and `isSalesRep` lets the client lock the attribution field to the
+    // rep. Presentation only — the server enforces ownership on every write.
+    const employee = await employeeForLogin(this.prisma, session.emp_code).catch(() => null);
+    return {
+      ...session,
+      member_gender: memberGender,
+      member_sections: user.member_sections ?? null,
+      employeeId: employee?.id ?? null,
+      isSalesRep: employeeSells(employee),
+    };
+  }
+
+  /** الملف الشخصي: the signed-in user renames their own account (MetaFit). */
+  @UseGuards(JwtAuthGuard)
+  @Patch('profile')
+  updateProfile(@CurrentUser() user: JwtUser, @Body() dto: UpdateProfileNameDto) {
+    return this.auth.updateProfileName(user.sub, dto.name);
   }
 
   /** The JWT supplies the owner, so this route can never change another employee's photo. */

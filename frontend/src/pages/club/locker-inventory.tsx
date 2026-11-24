@@ -11,9 +11,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { useBranches } from '@/hooks/use-branches';
 import { useEmployeeOptions } from '@/hooks/use-employee-options';
 import { useAuth } from '@/store/auth';
+import { isSystemAdminUser } from '@/lib/user-scope';
 import { api, apiError } from '@/lib/api';
 import { confirm } from '@/lib/confirm';
 import { Pencil, Trash2, Eye } from 'lucide-react';
+import { SearchableSelect } from '@/components/common/searchable-select';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 
 type Locker = { id: number; locker_number: string; is_available: boolean };
 type InventoryLocker = {
@@ -102,7 +105,7 @@ function InventoryRowsTable({ lockers, findings, onChange, day, blankLockerIds }
           <TableCell>{locker.previousCustomerName || (blank ? '—' : 'غير مشغول')}</TableCell>
           <TableCell><span dir="ltr" className="inline-block font-mono">{locker.previousCustomerPhone || '—'}</span></TableCell>
           <TableCell><span className={dateSummary.tone}>{blank && !locker.latestSubscriptionStartDate ? '—' : dateSummary.label}</span><span dir="ltr" className="block text-xs text-muted-foreground">{dateSummary.detail}</span></TableCell>
-          <TableCell><select aria-label={`حالة اللوكر ${locker.lockerNumber}`} className="h-10 w-40 rounded-md border bg-background px-3 text-sm" value={findings[locker.id]?.status ?? ''} onChange={(event) => onChange((current) => ({ ...current, [locker.id]: { status: event.target.value, notes: current[locker.id]?.notes ?? '' } }))}><option value="">— اختر الحالة —</option><option value="available">متاح</option><option value="occupied">مشغول</option><option value="maintenance">صيانة</option><option value="missing">غير موجود</option></select></TableCell>
+          <TableCell><SearchableSelect aria-label={`حالة اللوكر ${locker.lockerNumber}`} className="h-10 w-40 rounded-md border bg-background px-3 text-sm" value={findings[locker.id]?.status ?? ''} onChange={(event) => onChange((current) => ({ ...current, [locker.id]: { status: event.target.value, notes: current[locker.id]?.notes ?? '' } }))}><option value="">— اختر الحالة —</option><option value="available">متاح</option><option value="occupied">مشغول</option><option value="maintenance">صيانة</option><option value="missing">غير موجود</option></SearchableSelect></TableCell>
           <TableCell><Input aria-label={`ملاحظات اللوكر ${locker.lockerNumber}`} className="min-w-48" placeholder="ملاحظة على اللوكر (اختياري)" value={findings[locker.id]?.notes ?? ''} onChange={(event) => onChange((current) => ({ ...current, [locker.id]: { status: current[locker.id]?.status ?? '', notes: event.target.value } }))} /></TableCell>
         </TableRow>;
       })}</TableBody>
@@ -141,12 +144,22 @@ export function ClubLockerInventoryPage() {
   const [items, setItems] = useState<Record<number, { status: string; notes: string }>>({});
   const [detailReport, setDetailReport] = useState<Report | null>(null);
   const [editReport, setEditReport] = useState<Report | null>(null);
+  const g = useMemberGenderFilter();
 
   useEffect(() => { if (empCode) setEmployeeId(String(empCode)); }, [empCode]);
+  // Reception opens the page ready to count its own branch: the new-record form only appears once a branch is
+  // chosen, and an empty branch select read as «no way to add a locker inventory record» (client, 21 Nov 2026).
+  useEffect(() => {
+    if (branchId || !branches.length) return;
+    const own = !isSystemAdminUser(user) && user?.branch ? branches.find((b) => b.id === user.branch) : undefined;
+    const only = branches.length === 1 ? branches[0] : undefined;
+    const pick = own ?? only;
+    if (pick) setBranchId(String(pick.id));
+  }, [branchId, branches, user]);
   const employeeLocked = !!empCode;
 
-  const { data: lockers = [], refetch: refetchLockers } = useQuery({ queryKey: ['locker-inventory-lockers', branchId], enabled: !!branchId, queryFn: async () => (await api.get<InventoryLocker[]>('/club-lockers/inventory-snapshot', { params: { branchId } })).data });
-  const { data: reports = [], refetch: refetchReports } = useQuery({ queryKey: ['locker-inventory-reports', branchId], queryFn: async () => (await api.get<Report[]>('/club-lockers/inventory-reports', { params: branchId ? { branchId } : {} })).data });
+  const { data: lockers = [], refetch: refetchLockers } = useQuery({ queryKey: ['locker-inventory-lockers', branchId, g.value], enabled: !!branchId, queryFn: async () => (await api.get<InventoryLocker[]>('/club-lockers/inventory-snapshot', { params: { branchId, gender: g.param } })).data });
+  const { data: reports = [], refetch: refetchReports } = useQuery({ queryKey: ['locker-inventory-reports', branchId, g.value], queryFn: async () => (await api.get<Report[]>('/club-lockers/inventory-reports', { params: { ...(branchId ? { branchId } : {}), gender: g.param } })).data });
 
   const branchName = useMemo(() => branches.find((b) => String(b.id) === branchId)?.name ?? '—', [branches, branchId]);
   const todayDay = cairoDay();
@@ -184,11 +197,14 @@ export function ClubLockerInventoryPage() {
 
   return <div className="space-y-5"><PageHeader title="جرد اللوكر" description="سجل الحالة الفعلية لكل لوكر وارفع التقرير للمراجعة" />
 
-    <div className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-2"><div><Label>الفرع</Label><select className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={branchId} onChange={(e) => setBranchId(e.target.value)}><option value="">اختر الفرع</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</select></div>
-      <div><Label>الموظف المسؤول عن الجرد</Label><select className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={employeeId} disabled={employeeLocked} onChange={(e) => setEmployeeId(e.target.value)}><option value="">— اختر الموظف —</option>{employeeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</select></div></div>
+    <div className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-3"><div><Label>الفرع</Label><SearchableSelect className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={branchId} onChange={(e) => setBranchId(e.target.value)}><option value="">اختر الفرع</option>{branches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}</SearchableSelect></div>
+      <div><Label>الموظف المسؤول عن الجرد</Label><SearchableSelect className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={employeeId} disabled={employeeLocked} onChange={(e) => setEmployeeId(e.target.value)}><option value="">— اختر الموظف —</option>{employeeOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}</SearchableSelect></div>
+      <MemberGenderSelect value={g.value} onChange={g.setValue} locked={g.locked} /></div>
+
+    {!branchId && <div className="rounded-xl border border-dashed bg-card p-4 text-sm text-muted-foreground">اختار الفرع علشان تبدأ محضر جرد لوكر جديد.</div>}
 
     {branchId && <div className="rounded-xl border bg-card p-4">
-      <p className="mb-3 font-medium">لوكرات فرع {branchName}</p>
+      <p className="mb-3 font-medium">محضر جرد جديد — لوكرات فرع {branchName}</p>
       <InventoryRowsTable lockers={lockers} findings={items} onChange={setItems} day={todayDay} />
       <Textarea className="mt-4" placeholder="ملاحظات عامة للتقرير (اختياري)" value={notes} onChange={(e) => setNotes(e.target.value)} />
       <Button className="mt-3" disabled={!ready} onClick={() => void submit()}>رفع الجرد للمراجعة</Button>
@@ -292,7 +308,7 @@ function EditReportForm({ report, branches, employeeOptions, onClose }: { report
     <PageHeader title={`تعديل تقرير الجرد #${report.id}`} description="راجع نفس بيانات المحضر المسجلة وعدّل الحالة أو الملاحظات ثم احفظ التغييرات" />
     <div className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-2">
       <div><Label>الفرع</Label><Input className="mt-2" value={branches.find((branch) => branch.id === report.branch_id)?.name ?? String(report.branch_id)} readOnly /></div>
-      <div><Label>الموظف المسؤول عن الجرد</Label><select className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}><option value="">— اختر الموظف —</option>{employeeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></div>
+      <div><Label>الموظف المسؤول عن الجرد</Label><SearchableSelect className="mt-2 h-10 w-full rounded-md border bg-background px-3" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}><option value="">— اختر الموظف —</option>{employeeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</SearchableSelect></div>
     </div>
     <div className="rounded-xl border bg-card p-4">
       <p className="mb-3 font-medium">لوكرات فرع {branches.find((branch) => branch.id === report.branch_id)?.name ?? report.branch_id}</p>

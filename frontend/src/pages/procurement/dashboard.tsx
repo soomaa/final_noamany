@@ -18,6 +18,7 @@ import type { SupplierDashboardStats, SupplierReportRow } from '@/types/gym-sale
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export function ProcurementDashboardPage() {
   const { ui } = useLocale();
@@ -169,7 +170,7 @@ export function ProcurementDashboardPage() {
     >
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <label className="text-sm font-medium">{ui('الفرع')}</label>
-        <select
+        <SearchableSelect
           className="rounded-md border bg-background px-3 py-2 text-sm"
           value={branchId}
           onChange={(e) => setParams({ filters: { branchId: e.target.value }, page: 1 })}
@@ -180,7 +181,7 @@ export function ProcurementDashboardPage() {
               {b.name}
             </option>
           ))}
-        </select>
+        </SearchableSelect>
       </div>
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">

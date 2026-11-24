@@ -15,6 +15,7 @@ import { ListClubLockerSubscriptionsDto } from './dto/list-club-locker-subscript
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { isReceptionEmployee } from '../../common/utils/reception-user.util';
+import { assertManagerMayModify, clampManagerDays, managerKind, managerPeriodBounds } from '../../common/utils/manager-scope.util';
 import { cairoDayRange } from '../../common/utils/cairo-day-range.util';
 
 const STATUS_MAP: Record<string, string> = {
@@ -66,13 +67,15 @@ export class ClubLockersService {
   }
 
   /** Current inventory context: the latest and immediately preceding booking per locker. */
-  async inventorySnapshot(branchId: number, user: JwtUser): Promise<LockerInventorySnapshot[]> {
+  async inventorySnapshot(branchId: number, user: JwtUser, gender?: string): Promise<LockerInventorySnapshot[]> {
     if (!Number.isInteger(branchId) || branchId <= 0) {
       throw new BadRequestException('اختر فرعًا صالحًا لجرد اللوكر');
     }
     if (!this.branchScope.isBranchAllowed(user, branchId)) {
       throw new ForbiddenException('لا تملك صلاحية هذا الفرع');
     }
+    // رجالي/حريمي: occupant names/phones only come from bookings of the resolved section.
+    const section = this.branchScope.resolveMemberGenderRequest(user, gender);
 
     const lockers = await this.prisma.club_lockers.findMany({
       where: { main_branch_id: branchId },
@@ -82,6 +85,7 @@ export class ClubLockersService {
         locker_number: true,
         is_available: true,
         subscriptions: {
+          ...(section ? { where: this.lockerSubscriptionSectionWhere(section) } : {}),
           orderBy: [{ subscription_start_date: 'desc' }, { created_at: 'desc' }, { id: 'desc' }],
           // Renewals by the same member stack up, so look further back for the previous customer.
           take: 25,
@@ -149,11 +153,17 @@ export class ClubLockersService {
     return this.prisma.club_locker_inventory_reports.create({ data: { branch_id: branchId, employee_id: employeeId, notes: body.notes?.trim() || null, created_by: user.sub ?? null, items: { create: items } }, include: { items: { include: { locker: true } } } });
   }
 
-  async listInventoryReports(branchId: string | undefined, user: JwtUser, fromDate?: string, toDate?: string) {
+  async listInventoryReports(branchId: string | undefined, user: JwtUser, fromDate?: string, toDate?: string, gender?: string) {
     const scope = this.branchScope.resolveListFilter(user, branchId ?? null);
+    const section = this.branchScope.resolveMemberGenderRequest(user, gender);
     const dateFilter: Prisma.club_locker_inventory_reportsWhereInput = {};
     // Dates are whole Cairo days: "to" includes everything recorded on that day.
     const cairoDay = (day: string) => cairoDayRange(new Date(`${day}T12:00:00Z`));
+    // Branch manager / section supervisor: «تقارير جرد اللوكر خلال اليوم فقط» (client sheet, 22 Nov).
+    if (managerKind(user)) {
+      fromDate = managerPeriodBounds('today').from;
+      toDate = fromDate;
+    }
     if (fromDate || toDate) {
       dateFilter.created_at = {
         ...(fromDate ? { gte: cairoDay(fromDate).gte } : {}),
@@ -164,13 +174,59 @@ export class ClubLockersService {
     const empIds = [...new Set(reports.map((r) => r.employee_id).filter((id): id is number => id != null))];
     const employees = empIds.length ? await this.prisma.employees.findMany({ where: { id: { in: empIds } }, select: { id: true, employee: true } }) : [];
     const empMap = new Map(employees.map((e) => [e.id, e.employee]));
-    return reports.map((r) => ({ ...r, employee_name: r.employee_id != null ? empMap.get(r.employee_id) ?? null : null }));
+    const visible = section ? await this.maskOtherSectionOccupants(reports, section) : reports;
+    return visible.map((r) => ({ ...r, employee_name: r.employee_id != null ? empMap.get(r.employee_id) ?? null : null }));
+  }
+
+  /** Locker bookings of one men/women section (booking gender, else the linked member's). */
+  private lockerSubscriptionSectionWhere(section: 'male' | 'female'): Prisma.club_locker_subscriptionsWhereInput {
+    return { OR: [{ gender: section }, { gender: null, member: { is: { gender: section } } }] };
+  }
+
+  /**
+   * Inventory report items keep the occupant name/phone captured at the time. For a section-filtered
+   * view, blank the occupants whose booking on that locker is not in the section.
+   */
+  private async maskOtherSectionOccupants<
+    R extends {
+      items: {
+        locker_id: number;
+        latest_customer_name: string | null;
+        latest_customer_phone: string | null;
+        previous_customer_name: string | null;
+        previous_customer_phone: string | null;
+      }[];
+    },
+  >(reports: R[], section: 'male' | 'female'): Promise<R[]> {
+    const lockerIds = [...new Set(reports.flatMap((r) => r.items.map((i) => i.locker_id)))];
+    if (!lockerIds.length) return reports;
+    const subs = await this.prisma.club_locker_subscriptions.findMany({
+      where: { AND: [{ locker_id: { in: lockerIds } }, this.lockerSubscriptionSectionWhere(section)] },
+      select: { locker_id: true, customer_name: true },
+    });
+    const inSection = new Set(subs.map((s) => `${s.locker_id}:${s.customer_name.trim()}`));
+    const keep = (lockerId: number, name: string | null) => name != null && inSection.has(`${lockerId}:${name.trim()}`);
+    return reports.map((r) => ({
+      ...r,
+      items: r.items.map((i) => {
+        const latest = keep(i.locker_id, i.latest_customer_name);
+        const previous = keep(i.locker_id, i.previous_customer_name);
+        return {
+          ...i,
+          latest_customer_name: latest ? i.latest_customer_name : null,
+          latest_customer_phone: latest ? i.latest_customer_phone : null,
+          previous_customer_name: previous ? i.previous_customer_name : null,
+          previous_customer_phone: previous ? i.previous_customer_phone : null,
+        };
+      }),
+    }));
   }
 
   async deleteInventoryReport(id: number, user: JwtUser) {
     const report = await this.prisma.club_locker_inventory_reports.findUnique({ where: { id } });
     if (!report) throw new NotFoundException('التقرير غير موجود');
     if (!this.branchScope.isBranchAllowed(user, report.branch_id)) throw new ForbiddenException('لا تملك صلاحية هذا الفرع');
+    assertManagerMayModify(user);
     await this.prisma.club_locker_inventory_reports.delete({ where: { id } });
     return { success: true };
   }
@@ -187,6 +243,7 @@ export class ClubLockersService {
     const report = await this.prisma.club_locker_inventory_reports.findUnique({ where: { id }, include: { items: true } });
     if (!report) throw new NotFoundException('التقرير غير موجود');
     if (!this.branchScope.isBranchAllowed(user, report.branch_id)) throw new ForbiddenException('لا تملك صلاحية هذا الفرع');
+    assertManagerMayModify(user);
 
     const validStatuses = ['available', 'occupied', 'maintenance', 'missing'];
     const editedItems = body.items === undefined
@@ -436,15 +493,15 @@ export class ClubLockersService {
     return { success: true };
   }
 
-  async lockerStatistics(user?: JwtUser) {
+  async lockerStatistics(user?: JwtUser, gender?: string) {
     const branchScope = this.branchScope.resolveListFilter(user, null);
-    const category = this.branchScope.memberGenderFilter(user);
+    const category = this.branchScope.resolveMemberGenderRequest(user, gender);
     const [lockers, subs] = await Promise.all([
       this.prisma.club_lockers.findMany({ where: branchScope === null ? {} : { main_branch_id: { in: branchScope } } }),
       this.prisma.club_locker_subscriptions.findMany({
         where: {
           ...(branchScope === null ? {} : { main_branch_id: { in: branchScope } }),
-          ...(category ? { gender: category } : {}),
+          ...(category ? this.lockerSubscriptionSectionWhere(category) : {}),
         },
       }),
     ]);
@@ -564,6 +621,17 @@ export class ClubLockersService {
     const and: Prisma.club_locker_subscriptionsWhereInput[] = [];
     // Restrict the desk list by registration day, regardless of rental start date.
     if (isReceptionEmployee(user)) and.push({ created_at: cairoDayRange() });
+    // Branch manager / section supervisor (client sheet, 22 Nov): the lockers screen shows today's
+    // registrations; the locker report (dated) reaches the current and the previous month.
+    if (managerKind(user) && q.memberId == null) {
+      if (q.dateFrom || q.dateTo) {
+        const r = clampManagerDays(user, 'twoMonths', q.dateFrom, q.dateTo);
+        q.dateFrom = r.from;
+        q.dateTo = r.to;
+      } else {
+        and.push({ created_at: cairoDayRange() });
+      }
+    }
     if (q.search?.trim()) {
       const s = q.search.trim();
       and.push({
@@ -580,9 +648,8 @@ export class ClubLockersService {
     // Default a branch-scoped user to their allowed branches (locker branch = main_branch_id).
     const scope = this.branchScope.resolveListFilter(user, q.mainBranchId ?? null);
     if (scope !== null) and.push({ main_branch_id: { in: scope } });
-    const category = this.branchScope.memberGenderFilter(user);
-    if (category) and.push({ gender: category });
-    else if (q.gender === 'male' || q.gender === 'female') and.push({ gender: q.gender });
+    const category = this.branchScope.resolveMemberGenderRequest(user, q.gender);
+    if (category) and.push(this.lockerSubscriptionSectionWhere(category));
     if (q.dateFrom || q.dateTo) {
       and.push({
         subscription_start_date: {
@@ -822,6 +889,7 @@ export class ClubLockersService {
     const existing = await this.prisma.club_locker_subscriptions.findUnique({ where: { id } });
     if (!existing) throw new NotFoundException('اشتراك اللوكر غير موجود');
     await this.assertLockerSubscriptionAccess(user, existing);
+    assertManagerMayModify(user);
     if (user && body.memberId != null && body.memberId !== '') await this.assertLockerMemberAccess(user, Number(body.memberId));
     if (user && (body.gender === 'male' || body.gender === 'female') && !this.branchScope.isMemberGenderAllowed(user, body.gender)) {
       throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
@@ -904,6 +972,7 @@ export class ClubLockersService {
     const sub = await this.prisma.club_locker_subscriptions.findUnique({ where: { id } });
     if (!sub) throw new NotFoundException('اشتراك اللوكر غير موجود');
     await this.assertLockerSubscriptionAccess(user, sub);
+    assertManagerMayModify(user);
     await this.prisma.club_locker_subscriptions.delete({ where: { id } });
     await this.freeLockerIfUnoccupied(sub.locker_id, id);
     return { success: true };

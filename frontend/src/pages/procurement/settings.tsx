@@ -29,6 +29,7 @@ import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { uiStatic } from '@/lib/ui-static';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type SettingsTab = 'general' | 'categories' | 'regions' | 'payment-terms';
 
@@ -221,7 +222,7 @@ function GeneralSettingsTab() {
       <div className="grid gap-4 sm:grid-cols-2">
         <div className="grid gap-1">
           <Label>{uiStatic('الفرع الافتراضي')}</Label>
-          <select
+          <SearchableSelect
             className="rounded-md border bg-background px-3 py-2 text-sm"
             value={form.branchId ?? ''}
             onChange={(e) => setForm((f) => ({ ...f, branchId: Number(e.target.value) || null }))}
@@ -232,7 +233,7 @@ function GeneralSettingsTab() {
                 {b.name}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
         <div className="grid gap-1">
           <Label>{uiStatic('حد الموافقة')}</Label>

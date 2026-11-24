@@ -25,6 +25,7 @@ import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface BookingRow {
   id: number;
@@ -226,7 +227,7 @@ export function SalesBookingsPage() {
     >
       <div className="mb-4 flex items-center gap-3">
         <Label>{ui('الفرع')}</Label>
-        <select
+        <SearchableSelect
           className="rounded-md border bg-background px-3 py-2 text-sm"
           value={effectiveBranch}
           onChange={(e) => setBranchId(e.target.value)}
@@ -236,7 +237,7 @@ export function SalesBookingsPage() {
               {b.name}
             </option>
           ))}
-        </select>
+        </SearchableSelect>
       </div>
 
       <DataTable
@@ -272,7 +273,7 @@ export function SalesBookingsPage() {
             />
             <div className="grid gap-1">
               <Label>{ui('الخدمة')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={form.serviceId}
                 onChange={(e) => setForm((f) => ({ ...f, serviceId: e.target.value }))}
@@ -283,7 +284,7 @@ export function SalesBookingsPage() {
                     {s.name} — {toArabicDigits(s.price)}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             {selectedService && (
               <p className="text-sm text-muted-foreground">
@@ -292,7 +293,7 @@ export function SalesBookingsPage() {
             )}
             <div className="grid gap-1">
               <Label>{ui('موظف المبيعات')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={form.salesEmployeeId}
                 onChange={(e) => setForm((f) => ({ ...f, salesEmployeeId: e.target.value }))}
@@ -303,7 +304,7 @@ export function SalesBookingsPage() {
                     {e.name}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="grid gap-1">
@@ -336,7 +337,7 @@ export function SalesBookingsPage() {
           <div className="grid gap-3 py-2">
             <p className="text-sm text-muted-foreground">{selectedBooking?.bookingNumber} — {selectedBooking?.customerName}</p>
             <div className="grid gap-1"><Label>{ui('المبلغ')}</Label><Input type="number" min="0.01" step="0.01" className="nums" value={paymentForm.amount} onChange={(event) => setPaymentForm((current) => ({ ...current, amount: event.target.value }))} /></div>
-            <div className="grid gap-1"><Label>{ui('طريقة الدفع')}</Label><select className="rounded-md border bg-background px-3 py-2 text-sm" value={paymentForm.method} onChange={(event) => setPaymentForm((current) => ({ ...current, method: event.target.value }))}><option value="cash">{ui('نقدي')}</option><option value="card">{ui('بطاقة')}</option><option value="wallet">{ui('محفظة')}</option><option value="transfer">{ui('تحويل')}</option></select></div>
+            <div className="grid gap-1"><Label>{ui('طريقة الدفع')}</Label><SearchableSelect className="rounded-md border bg-background px-3 py-2 text-sm" value={paymentForm.method} onChange={(event) => setPaymentForm((current) => ({ ...current, method: event.target.value }))}><option value="cash">{ui('نقدي')}</option><option value="card">{ui('بطاقة')}</option><option value="wallet">{ui('محفظة')}</option><option value="transfer">{ui('تحويل')}</option></SearchableSelect></div>
             <div className="grid gap-1"><Label>{ui('التاريخ')}</Label><Input type="date" className="nums" value={paymentForm.paymentDate} onChange={(event) => setPaymentForm((current) => ({ ...current, paymentDate: event.target.value }))} /></div>
             <div className="grid gap-1"><Label>{ui('ملاحظات')}</Label><Input value={paymentForm.notes} onChange={(event) => setPaymentForm((current) => ({ ...current, notes: event.target.value }))} /></div>
           </div>

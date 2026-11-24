@@ -38,12 +38,17 @@ describe('ClubOpsController', () => {
     expect(universalSearch).toHaveBeenCalledWith('محمد', [3], 10, null);
   });
 
-  it('limits a women-section employee search to female members', async () => {
+  it('does not limit a women-section employee search to female members; an explicit section filters', async () => {
     const universalSearch = jest.fn();
     const controller = new ClubOpsController({ universalSearch } as never, {} as never, {} as never, {} as never, {} as never, {} as never, {} as never, new BranchScopeService(),
       { siblingBranchIds: jest.fn().mockResolvedValue([3]) } as never);
-    await controller.universalSearch('منى', '3', undefined, { level: 2, branch: 3, man_women_type: 2 } as never);
-    expect(universalSearch).toHaveBeenCalledWith('منى', [3], 10, 'female');
+    const womenSection = { level: 2, branch: 3, man_women_type: 2 } as never;
+    await controller.universalSearch('منى', '3', undefined, womenSection);
+    expect(universalSearch).toHaveBeenLastCalledWith('منى', [3], 10, null);
+    await controller.universalSearch('منى', '3', undefined, womenSection, 'female');
+    expect(universalSearch).toHaveBeenLastCalledWith('منى', [3], 10, 'female');
+    await controller.universalSearch('محمد', '3', undefined, womenSection, 'male');
+    expect(universalSearch).toHaveBeenLastCalledWith('محمد', [3], 10, 'male');
   });
 
   it('hides audit entries of other branches from a branch user', async () => {

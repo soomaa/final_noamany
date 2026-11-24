@@ -293,10 +293,22 @@ export const RESOURCE_TREE: ResourceNode[] = [
         page('club.members.surveys', 'الاستبيانات', '/club/members/surveys', LIST, 'Surveys'),
         { key: 'sales.portal', nameAr: 'بوابة المبيعات', nameEn: 'Sales portal', type: 'page', actions: ['view', 'update'] },
       ], 'Membership'),
+      // «إدارة المبيعات والعملاء المحتملين» (ported from MetaFit).
+      group('club.sales-management', 'إدارة المبيعات', 'Handshake', [
+        page('club.leads', 'العملاء المحتملون', '/mos/potential-members', LIST, 'Potential members'),
+        page('club.calls', 'سجل المكالمات', '/mos/calls', REPORT, 'Calls log'),
+        // configure = pair devices / add to the do-not-message list; delete = unpair / remove from it.
+        page('club.whatsapp', 'رسائل واتساب', '/club/whatsapp', ['view', 'create', 'update', 'delete', 'configure', 'audit'], 'WhatsApp messages'),
+        page('club.sales.dashboard', 'أداء فريق المبيعات', '/club/sales-reports', [...REPORT, 'update'], 'Sales team performance'),
+        // Permission scopes inside the unified sales screen, not separate sidebar links.
+        { key: 'club.sales.settings', nameAr: 'أهداف وعمولات المبيعات', nameEn: 'Sales targets & commissions', type: 'page', actions: SETTINGS },
+        { key: 'club.sales.reports', nameAr: 'فريق المبيعات', nameEn: 'Sales team', type: 'page', actions: REPORT },
+      ], 'Sales Management'),
       group('club.subscriptions', 'إدارة الاشتراكات والمدفوعات', 'CreditCard', [
         page('club.packages.settings', 'الباقات والأسعار', '/club/packages/settings', SETTINGS, 'Packages'),
         page('club.subscriptions.list', 'الاشتراكات', '/club/subscriptions', APPROVAL, 'Subscriptions'),
         page('club.subscriptions.member_transfer', 'تحويلات الاشتراكات', '/club/subscriptions/member-transfer', ['view', 'create', 'update', 'delete', 'export'], 'Subscription transfers'),
+        page('club.subscriptions.expiring', 'اشتراكات على وشك الانتهاء', '/club/subscriptions/expiring', REPORT, 'Expiring subscriptions'),
         page('club.subscriptions.new', 'إضافة اشتراك جديد', '/club/subscriptions/new', APPROVAL, 'New subscription'),
         page('club.subscriptions.special', 'الاشتراكات الخاصة والحصص', '/club/subscriptions/special', APPROVAL, 'Special classes'),
         page(
@@ -320,6 +332,7 @@ export const RESOURCE_TREE: ResourceNode[] = [
         page('club.subscriptions.unified_treasury', 'الخزينة الموحدة', '/club/unified-treasury', APPROVAL, 'Unified treasury'),
         page('club.subscriptions.refunds', 'المستردات', '/club/subscriptions/refunds', APPROVAL, 'Refunds'),
         page('club.subscriptions.customer_sources', 'مصادر العملاء', '/club/subscriptions/customer-sources', LIST, 'Customer sources'),
+        page('club.subscriptions.whatsapp_templates', 'قوالب واتساب', '/club/subscriptions/whatsapp-templates', SETTINGS, 'WhatsApp templates'),
       ], 'Subscriptions'),
       group('club.lockers', 'إدارة اللوكر', 'Lock', [
         page('club.lockers.list', 'قائمة اللوكر', '/club/lockers', LIST, 'Lockers'),

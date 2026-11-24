@@ -36,6 +36,7 @@ import {
 import { useLocale } from '@/store/locale';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { FinancePageShell } from './finance-shell';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const EMPTY_FORM = {
   revenueDate: '',
@@ -307,7 +308,7 @@ export function FinanceRevenuesPage() {
               </div>
               <div className="grid gap-1">
                 <Label>{ui('الفرع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.branchId}
                   onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}
@@ -318,13 +319,13 @@ export function FinanceRevenuesPage() {
                       {b.name}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
                 <Label>{ui('المصدر')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.source}
                   onChange={(e) => setForm((f) => ({ ...f, source: e.target.value }))}
@@ -335,7 +336,7 @@ export function FinanceRevenuesPage() {
                       {s.label}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-1">
                 <Label>{ui('المصدر الفرعي')}</Label>
@@ -356,7 +357,7 @@ export function FinanceRevenuesPage() {
               </div>
               <div className="grid gap-1">
                 <Label>{ui('طريقة الدفع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.paymentMethod}
                   onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value }))}
@@ -366,11 +367,11 @@ export function FinanceRevenuesPage() {
                       {m.label}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-1">
                 <Label>{ui('حالة الدفع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.paymentStatus}
                   onChange={(e) => setForm((f) => ({ ...f, paymentStatus: e.target.value }))}
@@ -380,7 +381,7 @@ export function FinanceRevenuesPage() {
                       {s.label}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">

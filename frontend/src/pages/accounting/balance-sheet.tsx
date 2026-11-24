@@ -17,6 +17,7 @@ import {
   useAccountingCurrency,
   type StatementItem,
 } from './report-shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface BalanceSheetResponse {
   assets: { total: number; items: StatementItem[] };
@@ -113,7 +114,7 @@ export function BalanceSheetPage() {
         </div>
         <div className="grid gap-1">
           <Label className="text-xs">{ui('الفرع')}</Label>
-          <select
+          <SearchableSelect
             className="rounded-md border bg-background px-3 py-2 text-sm"
             value={branchId}
             onChange={(e) => setBranchId(e.target.value)}
@@ -124,7 +125,7 @@ export function BalanceSheetPage() {
                 {b.name}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
         <Button variant="brand" onClick={() => void refetch()}>
           {ui('بحث')}

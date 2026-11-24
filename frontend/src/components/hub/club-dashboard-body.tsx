@@ -16,6 +16,7 @@ import { api, apiError } from '@/lib/api';
 import { localDateStr, localToday } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClubDashboardSummary } from '@/types/club';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const selectCls =
   'flex h-10 w-full max-w-xs rounded-md border border-input bg-background px-3 text-sm shadow-sm';
@@ -92,11 +93,11 @@ export function ClubDashboardBody({ embedded }: { embedded?: boolean }) {
       <div className="flex flex-wrap items-end gap-4 rounded-2xl border bg-card/50 p-4 shadow-sm">
         <div className="grid gap-1.5">
           <Label>{ct('common.branch')}</Label>
-          <select className={selectCls} value={branchId} onChange={(e) => setBranchId(e.target.value)}>
+          <SearchableSelect className={selectCls} value={branchId} onChange={(e) => setBranchId(e.target.value)}>
             {branchOptions.map((b) => (
               <option key={b.value} value={b.value}>{b.label}</option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
         <div className="grid gap-1.5">
           <Label>{ct('common.dateFrom')}</Label>

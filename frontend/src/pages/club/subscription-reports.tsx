@@ -9,6 +9,7 @@ import {
   CircleDollarSign,
   CreditCard,
   Download,
+  FileSpreadsheet,
   Filter,
   Landmark,
   PieChart as PieChartIcon,
@@ -52,6 +53,12 @@ import { downloadExcel } from '@/lib/export';
 import { formatDateTime, formatMoney } from '@/lib/formatters';
 import { cn, toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
+import { useBranches } from '@/hooks/use-branches';
+import { exportPeriodWorkbook, type PeriodExport } from '@/lib/subscription-period-excel';
+import { exportSubscriptionTypesWorkbook, type ExportContext, type TypeExportGroup } from '@/lib/subscription-report-excel';
+
+const GYM_NAME = 'النعماني';
 
 type DetailDimension = 'payment' | 'sales' | 'user' | 'status' | 'source' | 'subscriptionType';
 
@@ -216,6 +223,8 @@ export function ClubSubscriptionReportsPage() {
   const [detail, setDetail] = useState<{ dimension: DetailDimension; key: string; title: string } | null>(null);
   const [detailPage, setDetailPage] = useState(1);
   const [exportingDetails, setExportingDetails] = useState(false);
+  const [exporting, setExporting] = useState<'types' | 'period' | null>(null);
+  const { data: branchOptions } = useBranches();
   const detailSectionRef = useRef<HTMLDivElement | null>(null);
   const detailPageSize = 10;
 
@@ -399,6 +408,57 @@ export function ClubSubscriptionReportsPage() {
     anchor.download = `subscription-reports-${applied.startDate}-${applied.endDate}.csv`;
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const branchLabel = () =>
+    applied.branch === 'all' || !applied.branch
+      ? ui('كل الفروع')
+      : branchOptions?.find((option) => String(option.id) === applied.branch)?.name ?? applied.branch;
+
+  const exportContext = (): ExportContext => {
+    const filters: string[] = [`${ui('الفرع')}: ${branchLabel()}`];
+    if (applied.subscriptionTypeId !== 'all') filters.push(`${ui('الباقة')}: ${subscriptionTypes?.find((type) => String(type.id) === applied.subscriptionTypeId)?.name ?? applied.subscriptionTypeId}`);
+    if (applied.paymentMethod !== 'all') filters.push(`${ui('طريقة الدفع')}: ${clubPaymentMethodLabel(ct, applied.paymentMethod as (typeof CLUB_PAYMENT_METHODS)[number])}`);
+    if (applied.salesId !== 'all') filters.push(`${ui('أخصائي المبيعات')}: ${salesReps?.find((rep) => String(rep.id) === applied.salesId)?.name ?? applied.salesId}`);
+    const otherFilters = ['gender', 'status', 'paymentState', 'userId', 'customerSourceId', 'hasDiscount', 'kind', 'source'] as const;
+    const extra = otherFilters.filter((key) => applied[key] !== 'all' && applied[key] !== '').length;
+    if (extra) filters.push(`${ui('فلاتر إضافية مطبقة')}: ${extra}`);
+    return {
+      gymName: GYM_NAME,
+      startDate: applied.startDate,
+      endDate: applied.endDate,
+      filters,
+      paymentLabel: (method) => (method ? clubPaymentMethodLabel(ct, method as (typeof CLUB_PAYMENT_METHODS)[number]) : '—'),
+      formatDateTime: (iso) => formatDateTime(iso, locale),
+    };
+  };
+
+  /** «الأداء حسب نوع الاشتراك»: a summary sheet plus one sheet per package. */
+  const exportTypes = async () => {
+    setExporting('types');
+    try {
+      const response = await api.get<{ types: TypeExportGroup[] }>('/club-subscriptions/reports/subscription-types/export', { params: cleanParams(applied) });
+      if (!response.data.types.length) { toast.info(ui('لا توجد اشتراكات في الفترة المختارة')); return; }
+      await exportSubscriptionTypesWorkbook(response.data.types, exportContext());
+    } catch (error) {
+      toast.error(apiError(error));
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  /** «نظرة عامة»: the period's subscriptions with a column per payment method, totals on top. */
+  const exportPeriod = async () => {
+    setExporting('period');
+    try {
+      const response = await api.get<PeriodExport>('/club-subscriptions/reports/period-export', { params: cleanParams(applied) });
+      if (!response.data.rows.length && !response.data.other.length) { toast.info(ui('لا توجد اشتراكات في الفترة المختارة')); return; }
+      await exportPeriodWorkbook(response.data, { gymName: GYM_NAME, branch: branchLabel() });
+    } catch (error) {
+      toast.error(apiError(error));
+    } finally {
+      setExporting(null);
+    }
   };
 
   const exportDetails = async () => {
@@ -615,6 +675,19 @@ export function ClubSubscriptionReportsPage() {
                   <div className="shrink-0 [&_select]:w-44">
                     <BranchFilter value={draft.branch} onChange={(branch) => applyBaseFilters({ branch })} />
                   </div>
+                  {tab === 'overview' ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => void exportPeriod()}
+                      disabled={exporting !== null || filtersChanged}
+                      title={filtersChanged ? ui('طبّق الفلاتر أولًا ثم صدّر الملف') : undefined}
+                      className="h-9 shrink-0 border-primary/30 text-primary"
+                    >
+                      <FileSpreadsheet className="size-4" />
+                      {exporting === 'period' ? ui('جارٍ التصدير…') : ui('تصدير Excel للفترة')}
+                    </Button>
+                  ) : null}
                 </div>
               </div>
 
@@ -774,8 +847,17 @@ export function ClubSubscriptionReportsPage() {
                 <ClubStatCard centered label={ui('اشتراكات عليها خصم')} value={data.overview.discountedCount} icon={Sparkles} />
               </div>
               <div>
-                <h2 className="mb-1 text-lg font-semibold">{ui('الأداء حسب نوع الاشتراك')}</h2>
-                <p className="mb-4 text-sm text-muted-foreground">{ui('قيمة العقود والتحصيل الفعلي لكل باقة.')}</p>
+                <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                  <div>
+                    <h2 className="mb-1 text-lg font-semibold">{ui('الأداء حسب نوع الاشتراك')}</h2>
+                    <p className="text-sm text-muted-foreground">{ui('قيمة العقود والتحصيل الفعلي لكل باقة.')}</p>
+                  </div>
+                  {data.subscriptionTypes.length ? (
+                    <Button variant="outline" onClick={() => void exportTypes()} disabled={exporting !== null}>
+                      <Download className="size-4" /> {exporting === 'types' ? ui('جارٍ التصدير…') : ui('تصدير Excel')}
+                    </Button>
+                  ) : null}
+                </div>
                 <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
                   {data.subscriptionTypes.map((row) => (
                     <AnalysisCard
@@ -886,7 +968,7 @@ export function ClubSubscriptionReportsPage() {
             <TabsContent value="services" className="space-y-5 pt-5">
               <div>
                 <h2 className="text-lg font-semibold">{ui('الإيرادات حسب المصدر والخدمة')}</h2>
-                <p className="text-sm text-muted-foreground">{ui('الاشتراكات وفواتير SPA وInBody واللوكر في مكان واحد.')}</p>
+                <p className="text-sm text-muted-foreground">{ui('الاشتراكات وSPA (اشتراكات «سبا فقط» وفواتير SPA) وInBody واللوكر في مكان واحد.')}</p>
               </div>
               <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
                 {data.services.map((row) => (
@@ -935,13 +1017,13 @@ function SelectFilter({
   return (
     <div className="grid min-w-40 gap-1.5">
       <Label className="text-xs text-muted-foreground">{label}</Label>
-      <select
+      <SearchableSelect
         value={value}
         onChange={(event) => onChange(event.target.value)}
         className="flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
       >
         {options.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-      </select>
+      </SearchableSelect>
     </div>
   );
 }

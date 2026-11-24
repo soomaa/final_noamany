@@ -17,6 +17,7 @@ import { confirmWithPreview } from '@/lib/confirm';
 import { formatMoney } from '@/lib/formatters';
 import { toast } from 'sonner';
 import type { CafeProductListItem, CafeCategory, CafeCartItem, CafeProductVariant } from '@/types/cafe';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface CafeSellCartResult {
   saleNumber: string;
@@ -169,7 +170,7 @@ export function CafePosPage() {
           <div className="flex flex-wrap items-end gap-3">
             <div className="grid gap-1.5">
               <Label className="text-xs text-muted-foreground">{ui('الفرع')}</Label>
-              <select
+              <SearchableSelect
                 className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
                 value={effectiveBranchId || ''}
                 onChange={(e) => setBranchId(Number(e.target.value))}
@@ -177,11 +178,11 @@ export function CafePosPage() {
                 {(branches ?? []).map((b) => (
                   <option key={b.id} value={b.id}>{b.name}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1.5">
               <Label className="text-xs text-muted-foreground">{ui('جنس العميل')}</Label>
-              <select
+              <SearchableSelect
                 className="flex h-10 rounded-md border border-input bg-background px-3 text-sm"
                 value={gender}
                 onChange={(event) => setGender(event.target.value as 'male' | 'female' | '')}
@@ -189,7 +190,7 @@ export function CafePosPage() {
                 <option value="">{ui('اختر الجنس')}</option>
                 <option value="male">{ui('رجالي')}</option>
                 <option value="female">{ui('حريمي')}</option>
-              </select>
+              </SearchableSelect>
             </div>
           </div>
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

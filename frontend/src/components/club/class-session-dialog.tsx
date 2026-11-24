@@ -12,6 +12,7 @@ import { api, apiError } from '@/lib/api';
 import { formatTime } from '@/lib/formatters';
 import { confirm } from '@/lib/confirm';
 import type { ClubClassDetail, ClubHallRow, ClubTrainerRow } from '@/types/fitness';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const SELECT_CLS = 'h-10 w-full rounded-md border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring';
 
@@ -125,8 +126,8 @@ export function ClassSessionDialog({
 
             {editing ? (
               <div className="grid gap-3 rounded-xl border p-4 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="space-y-2"><Label>المدرب</Label><select className={SELECT_CLS} value={form.trainerId} onChange={(e) => setForm((f) => ({ ...f, trainerId: e.target.value }))}>{trainers.map((trainer) => <option key={trainer.id} value={trainer.id}>{trainer.name}</option>)}</select></div>
-                <div className="space-y-2"><Label>القاعة</Label><select className={SELECT_CLS} value={form.hallId} onChange={(e) => setForm((f) => ({ ...f, hallId: e.target.value }))}><option value="">بدون قاعة</option>{halls.filter((hall) => hall.branchId === session.branchId).map((hall) => <option key={hall.id} value={hall.id}>{hall.name}</option>)}</select></div>
+                <div className="space-y-2"><Label>المدرب</Label><SearchableSelect className={SELECT_CLS} value={form.trainerId} onChange={(e) => setForm((f) => ({ ...f, trainerId: e.target.value }))}>{trainers.map((trainer) => <option key={trainer.id} value={trainer.id}>{trainer.name}</option>)}</SearchableSelect></div>
+                <div className="space-y-2"><Label>القاعة</Label><SearchableSelect className={SELECT_CLS} value={form.hallId} onChange={(e) => setForm((f) => ({ ...f, hallId: e.target.value }))}><option value="">بدون قاعة</option>{halls.filter((hall) => hall.branchId === session.branchId).map((hall) => <option key={hall.id} value={hall.id}>{hall.name}</option>)}</SearchableSelect></div>
                 <div className="space-y-2"><Label>التاريخ</Label><Input type="date" className="nums" value={form.classDate} onChange={(e) => setForm((f) => ({ ...f, classDate: e.target.value }))} /></div>
                 <div className="space-y-2"><Label>من</Label><Time12Input value={form.startTime} onValueChange={(value) => setForm((f) => ({ ...f, startTime: value }))} /></div>
                 <div className="space-y-2"><Label>إلى</Label><Time12Input value={form.endTime} onValueChange={(value) => setForm((f) => ({ ...f, endTime: value }))} /></div>

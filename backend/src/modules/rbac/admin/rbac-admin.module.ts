@@ -5,14 +5,16 @@ import { RbacRolesService } from './roles.service';
 import { RbacAuditService } from './audit.service';
 import { RbacUsersController } from './rbac-users.controller';
 import { RbacUsersService } from './rbac-users.service';
+import { StaffSetupController } from './staff-setup.controller';
+import { StaffSetupService } from './staff-setup.service';
 
 /**
  * Admin-facing RBAC management (roles, matrices, user roles & exceptions, audit).
  * The permission engine itself lives in the (global) RbacModule.
  */
 @Module({
-  controllers: [RbacAdminController, RbacUsersController],
-  providers: [RbacCatalogService, RbacRolesService, RbacUsersService, RbacAuditService],
+  controllers: [RbacAdminController, RbacUsersController, StaffSetupController],
+  providers: [RbacCatalogService, RbacRolesService, RbacUsersService, RbacAuditService, StaffSetupService],
   exports: [RbacCatalogService, RbacRolesService, RbacUsersService],
 })
 export class RbacAdminModule {}

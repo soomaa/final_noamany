@@ -52,6 +52,9 @@ import type {
   ClubMemberListItem,
 } from '@/types/club';
 import type { EmployeeListItem } from '@/types/employees';
+import { SearchableSelect } from '@/components/common/searchable-select';
+import { lockedMemberGender, preferredMemberGender } from '@/lib/user-scope';
+import { useAuth } from '@/store/auth';
 
 const selectCls = 'flex h-10 w-full rounded-md border border-input bg-background px-3 text-sm';
 
@@ -163,6 +166,9 @@ export function ClubLockersPage({
   const location = useLocation();
   const lockerSubscriptionPrefill = location.state as LockerSubscriptionPrefill | null;
   const qc = useQueryClient();
+  const authUser = useAuth((s) => s.user);
+  const lockedGender = lockedMemberGender(authUser);
+  const defaultGender = preferredMemberGender(authUser);
   const { params, setParams } = useListQuery();
   const { data, isLoading, isError, error, refetch } = usePaginatedList<ClubLockerListItem>(
     'club-locker-subscriptions',
@@ -177,9 +183,10 @@ export function ClubLockersPage({
     queryFn: async () => (await api.get<Pick<EmployeeListItem, 'id' | 'employee' | 'emp_code'>[]>('/employees/subscription-options')).data ?? [],
   });
   const { data: stats } = useQuery({
-    queryKey: ['club-lockers', 'statistics'],
+    queryKey: ['club-lockers', 'statistics', params.filters.gender ?? ''],
     queryFn: async () => {
-      const { data: s } = await api.get<ClubLockerStatistics>('/club-lockers/statistics');
+      const gender = params.filters.gender;
+      const { data: s } = await api.get<ClubLockerStatistics>('/club-lockers/statistics', { params: gender ? { gender } : {} });
       return s;
     },
   });
@@ -196,7 +203,7 @@ export function ClubLockersPage({
   const branchOptions = (branches ?? []).map((b) => ({ value: String(b.id), label: b.name ?? '—' }));
   const filters: FilterField[] = [
     { key: 'mainBranchId', label: ct('lockers.mainBranch'), type: 'select', options: branchOptions },
-    { key: 'gender', label: 'الفئة', type: 'select', options: [{ value: 'male', label: 'رجالي' }, { value: 'female', label: 'حريمي' }] },
+    { key: 'gender', label: 'الفئة', type: 'select', options: [{ value: 'male', label: 'رجالي' }, { value: 'female', label: 'حريمي' }], lockedValue: lockedGender ?? undefined, defaultValue: defaultGender ?? undefined },
     { key: 'status', label: ct('common.status'), type: 'select', options: statusOptions },
   ];
 
@@ -859,7 +866,7 @@ export function ClubLockersPage({
             <div className="grid gap-3 md:grid-cols-2">
               <div className="grid gap-2">
                 <Label>الفرع</Label>
-                <select
+                <SearchableSelect
                   className={selectCls}
                   value={form.mainBranchId || ''}
                   onChange={(e) => {
@@ -870,7 +877,7 @@ export function ClubLockersPage({
                 >
                   <option value="">—</option>
                   {(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-2">
                 <Label>اسم العميل</Label>
@@ -939,10 +946,10 @@ export function ClubLockersPage({
               </div>
               <div className="grid gap-2">
                 <Label>الفئة</Label>
-                <select className={selectCls} value={form.gender} onChange={(e) => setForm((f) => ({ ...f, gender: e.target.value as LockerSubscriptionPrefill['gender'] }))}>
+                <SearchableSelect className={selectCls} value={form.gender} onChange={(e) => setForm((f) => ({ ...f, gender: e.target.value as LockerSubscriptionPrefill['gender'] }))}>
                   <option value="male">رجالي</option>
                   <option value="female">حريمي</option>
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-2">
                 <Label>الموظف (اختياري)</Label>
@@ -957,13 +964,13 @@ export function ClubLockersPage({
             <div className="grid gap-3 md:grid-cols-3">
               <div className="grid gap-2">
                 <Label>حالة الخصم</Label>
-                <select className={selectCls} value={form.discountMode} onChange={(e) => setForm((current) => ({ ...current, discountMode: e.target.value as SubscriptionDiscountMode, discountValue: '', discountCodeId: '', memberDiscountGrantId: '', pointsToRedeem: '' }))}>
+                <SearchableSelect className={selectCls} value={form.discountMode} onChange={(e) => setForm((current) => ({ ...current, discountMode: e.target.value as SubscriptionDiscountMode, discountValue: '', discountCodeId: '', memberDiscountGrantId: '', pointsToRedeem: '' }))}>
                   <option value="none">بدون خصم</option>
                   <option value="fixed">مبلغ</option>
                   <option value="percentage">نسبة</option>
                   <option value="code">كود خصم</option>
                   <option value="points">خصم نقاط</option>
-                </select>
+                </SearchableSelect>
               </div>
               {form.discountMode === 'fixed' && (
                 <div className="grid gap-2"><Label>قيمة الخصم</Label><Input className="nums" type="number" min="0" max={referencePrice} value={form.discountValue} onChange={(e) => setForm((current) => ({ ...current, discountValue: e.target.value }))} /></div>
@@ -972,7 +979,7 @@ export function ClubLockersPage({
                 <div className="grid gap-2"><Label>نسبة الخصم</Label><Input className="nums" type="number" min="0" max="100" value={form.discountValue} onChange={(e) => setForm((current) => ({ ...current, discountValue: e.target.value }))} /></div>
               )}
               {form.discountMode === 'code' && (
-                <div className="grid gap-2"><Label>كود الخصم الممنوح للعضو</Label><select className={selectCls} value={form.memberDiscountGrantId} onChange={(e) => setForm((current) => ({ ...current, memberDiscountGrantId: e.target.value }))}><option value="">—</option>{memberDiscountGrants.map((code) => <option key={code.id} value={code.id}>{code.code} — {code.percentage}%</option>)}</select>{!memberDiscountGrants.length ? <p className="text-xs text-muted-foreground">لا توجد أكواد خصم صالحة ممنوحة للعضو.</p> : null}</div>
+                <div className="grid gap-2"><Label>كود الخصم الممنوح للعضو</Label><SearchableSelect className={selectCls} value={form.memberDiscountGrantId} onChange={(e) => setForm((current) => ({ ...current, memberDiscountGrantId: e.target.value }))}><option value="">—</option>{memberDiscountGrants.map((code) => <option key={code.id} value={code.id}>{code.code} — {code.percentage}%</option>)}</SearchableSelect>{!memberDiscountGrants.length ? <p className="text-xs text-muted-foreground">لا توجد أكواد خصم صالحة ممنوحة للعضو.</p> : null}</div>
               )}
               {form.discountMode === 'points' && (
                 <div className="grid gap-2"><Label>النقاط المستخدمة</Label><Input className="nums" type="number" min="1" max={pointsAccount?.points || undefined} value={form.pointsToRedeem} onChange={(e) => setForm((current) => ({ ...current, pointsToRedeem: e.target.value }))} /><p className="text-xs text-muted-foreground">الرصيد: {toArabicDigits(pointsAccount?.points ?? 0)} نقطة</p></div>
@@ -991,11 +998,11 @@ export function ClubLockersPage({
               <div className="grid gap-2"><Label>{ct('common.remaining')}</Label><Input className="nums" readOnly value={remainingDue} /></div>
               <div className="grid gap-2">
                 <Label>{ct('common.paymentMethod')}</Label>
-                <select className={selectCls} value={form.paymentMethod} onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value }))}>
+                <SearchableSelect className={selectCls} value={form.paymentMethod} onChange={(e) => setForm((f) => ({ ...f, paymentMethod: e.target.value }))}>
                   <option value="cash">{ct('common.cash')}</option>
                   <option value="card">{ct('common.card')}</option>
                   <option value="bank">{ct('common.bank')}</option>
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-2">
                 <Label>{ct('subscriptions.receiptNumber')}</Label>
@@ -1045,10 +1052,10 @@ export function ClubLockersPage({
               <div className="grid gap-2"><Label>رقم اللوكر</Label><Input readOnly value={editingSubscription.lockerNumber ?? '—'} /></div>
               <div className="grid gap-2"><Label>الفرع</Label><Input readOnly value={branches?.find((branch) => branch.id === editingSubscription.mainBranchId)?.name ?? '—'} /></div>
               <div className="grid gap-2"><Label>اسم العميل</Label><Input value={editForm.customerName} onChange={(event) => setEditForm((form) => ({ ...form, customerName: event.target.value }))} /></div>
-              <div className="grid gap-2"><Label>الفئة</Label><select className={selectCls} value={editForm.gender} onChange={(event) => setEditForm((form) => ({ ...form, gender: event.target.value as 'male' | 'female' }))}><option value="male">رجالي</option><option value="female">حريمي</option></select></div>
+              <div className="grid gap-2"><Label>الفئة</Label><SearchableSelect className={selectCls} value={editForm.gender} onChange={(event) => setEditForm((form) => ({ ...form, gender: event.target.value as 'male' | 'female' }))}><option value="male">رجالي</option><option value="female">حريمي</option></SearchableSelect></div>
               <div className="grid gap-2"><Label>بداية الاشتراك</Label><Input type="date" value={editForm.startDate} onChange={(event) => setEditForm((form) => ({ ...form, startDate: event.target.value }))} /></div>
               <div className="grid gap-2"><Label>نهاية الاشتراك</Label><Input type="date" value={editForm.endDate} onChange={(event) => setEditForm((form) => ({ ...form, endDate: event.target.value }))} /></div>
-              <div className="grid gap-2 md:col-span-2"><Label>الموظف</Label><select className={selectCls} value={editForm.employeeId} onChange={(event) => setEditForm((form) => ({ ...form, employeeId: event.target.value }))}><option value="">بدون موظف</option>{editingSubscription.recommendedEmployeeId != null && !employees.some((employee) => employee.id === editingSubscription.recommendedEmployeeId) && <option value={editingSubscription.recommendedEmployeeId}>{editingSubscription.recommendedEmployeeName ?? `موظف #${editingSubscription.recommendedEmployeeId}`}</option>}{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.employee ?? `موظف #${employee.id}`}</option>)}</select></div>
+              <div className="grid gap-2 md:col-span-2"><Label>الموظف</Label><SearchableSelect className={selectCls} value={editForm.employeeId} onChange={(event) => setEditForm((form) => ({ ...form, employeeId: event.target.value }))}><option value="">بدون موظف</option>{editingSubscription.recommendedEmployeeId != null && !employees.some((employee) => employee.id === editingSubscription.recommendedEmployeeId) && <option value={editingSubscription.recommendedEmployeeId}>{editingSubscription.recommendedEmployeeName ?? `موظف #${editingSubscription.recommendedEmployeeId}`}</option>}{employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.employee ?? `موظف #${employee.id}`}</option>)}</SearchableSelect></div>
             </div>
           )}
           <DialogFooter>
@@ -1068,13 +1075,13 @@ export function ClubLockersPage({
             </div>
             <div className="grid gap-2">
               <Label>{ct('lockers.mainBranch')}</Label>
-              <select
+              <SearchableSelect
                 className={selectCls}
                 value={lockerForm.mainBranchId || ''}
                 onChange={(e) => setLockerForm((f) => ({ ...f, mainBranchId: Number(e.target.value), subBranchId: Number(e.target.value) }))}
               >
                 {branchOptions.map((b) => <option key={b.value} value={b.value}>{b.label}</option>)}
-              </select>
+              </SearchableSelect>
             </div>
           </div>
           <DialogFooter>
@@ -1091,7 +1098,7 @@ export function ClubLockersPage({
             <Input placeholder={ct('members.typeName')} value={typeForm.name} onChange={(e) => setTypeForm((f) => ({ ...f, name: e.target.value }))} />
             <Input className="nums" placeholder={ct('lockers.metaValue')} value={typeForm.metaValue} onChange={(e) => setTypeForm((f) => ({ ...f, metaValue: e.target.value }))} />
             <Input className="nums" placeholder={ct('lockers.days')} value={typeForm.days} onChange={(e) => setTypeForm((f) => ({ ...f, days: e.target.value }))} />
-            <select className={selectCls} value={typeForm.branchId} onChange={(e) => setTypeForm((f) => ({ ...f, branchId: e.target.value }))}><option value="">كل الفروع</option>{branchOptions.map((branch) => <option key={branch.value} value={branch.value}>{branch.label}</option>)}</select>
+            <SearchableSelect className={selectCls} value={typeForm.branchId} onChange={(e) => setTypeForm((f) => ({ ...f, branchId: e.target.value }))}><option value="">كل الفروع</option>{branchOptions.map((branch) => <option key={branch.value} value={branch.value}>{branch.label}</option>)}</SearchableSelect>
             <label className="flex items-center gap-2"><input type="checkbox" checked={typeForm.hasStop} onChange={(e) => setTypeForm((f) => ({ ...f, hasStop: e.target.checked }))} />يسمح بالوقف</label>
             {typeForm.hasStop && <Input type="number" min="1" placeholder="عدد أيام الوقف" value={typeForm.stopDays} onChange={(e) => setTypeForm((f) => ({ ...f, stopDays: e.target.value }))} />}
             <label className="flex items-center gap-2"><input type="checkbox" checked={typeForm.isTargetBased} onChange={(e) => setTypeForm((f) => ({ ...f, isTargetBased: e.target.checked }))} />تابع للتارجت</label>

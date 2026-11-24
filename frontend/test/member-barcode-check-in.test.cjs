@@ -171,7 +171,9 @@ test('expired subscriptions and exhausted balances cannot register another servi
   subscription.sessionsUsed = 4; subscription.spaUsed = 4; subscription.inbodyUsed = 4;
   await ui.scan('A1');
   const buttons = ui.all(ui.render(), (node) => node.type === 'Button' && node.props['aria-label']?.startsWith('تسجيل حضور'));
-  assert.equal(buttons.length, 3);
+  // Class, SPA and InBody in the subscriptions table, plus the quick SPA/InBody box on the member card.
+  assert.deepEqual([...new Set(buttons.map((button) => button.props['aria-label']))].sort(), ['تسجيل حضور الإنبودي', 'تسجيل حضور الحصص', 'تسجيل حضور السبا'].sort());
+  assert.ok(buttons.length >= 3);
   assert.ok(buttons.every((button) => button.props.disabled));
 });
 

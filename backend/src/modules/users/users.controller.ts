@@ -15,6 +15,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RequiresPermission } from '../../common/decorators/requires-permission.decorator';
 import { JwtUser } from '../../common/types/jwt-user';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateAccountDto } from './dto/update-account.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UsersService } from './users.service';
 
@@ -35,6 +36,12 @@ export class UsersController {
   @RequiresPermission('admin.users:create')
   create(@Body() dto: CreateUserDto, @CurrentUser() actor: JwtUser) {
     return this.users.create(dto, actor);
+  }
+
+  @Patch(':id/account')
+  @RequiresPermission('admin.users:update')
+  updateAccount(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateAccountDto, @CurrentUser() actor: JwtUser) {
+    return this.users.updateAccount(id, dto, actor);
   }
 
   @Patch(':id')

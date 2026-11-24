@@ -17,6 +17,15 @@ export const CLUB_ROUTES = {
     usageReport: '/club/discount-codes/usage-report',
   },
   dashboard: '/hub/club',
+  /** «إدارة المبيعات والعملاء المحتملين» (ported from MetaFit). */
+  sales: {
+    dashboard: '/club/sales-dashboard',
+    leads: '/mos/potential-members',
+    whatsapp: '/club/whatsapp',
+    calls: '/mos/calls',
+    team: '/club/sales-reports',
+    settings: '/club/sales-settings',
+  },
   packages: {
     settings: '/club/packages/settings',
   },
@@ -54,6 +63,8 @@ export const CLUB_ROUTES = {
     inbodyInvoices: '/club/subscriptions/inbody-invoices',
     financialReports: '/club/subscriptions/financial-reports',
     expired: '/club/subscriptions/expired',
+    expiring: '/club/subscriptions/expiring',
+    whatsappTemplates: '/club/subscriptions/whatsapp-templates',
     outstanding: '/club/subscriptions/outstanding',
     memberFinancial: '/club/subscriptions/member-financial',
     treasury: '/club/subscriptions/treasury',
@@ -105,6 +116,7 @@ export type ClubSubscriptionsView =
   | 'transfers'
   | 'waivers'
   | 'private'
+  | 'expiring'
   | 'reports';
 
 export type ClubLockersView = 'subscriptions' | 'lockers' | 'types';

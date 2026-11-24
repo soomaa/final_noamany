@@ -14,7 +14,9 @@ function load(entry) {
     write: false,
   });
   const module = { exports: {} };
-  vm.runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, require, process, console });
+  // Backend files import @nestjs/common, which only the backend has installed.
+  const from = entry.includes('/backend/') ? require('node:module').createRequire(path.resolve(__dirname, '../../backend/package.json')) : require;
+  vm.runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, require: from, process, console });
   return module.exports;
 }
 
@@ -22,6 +24,7 @@ const { ACTIONS, flattenCatalog } = load('../../backend/src/modules/rbac/catalog
 const { RbacCatalogService } = load('../../backend/src/modules/rbac/admin/catalog.service.ts');
 const { NAV_SECTIONS } = load('../src/lib/nav.ts');
 const { orderRbacCatalogForSidebar } = load('../src/lib/rbac-nav-order.ts');
+const { routePermissionAlias } = load('../src/lib/route-permission-aliases.ts');
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
 test('opening permissions restores missing sidebar resources and their actions without replacing grants', async () => {
@@ -105,7 +108,8 @@ test('opening permissions restores missing sidebar resources and their actions w
     const actualGroups = displayed.filter((node) => node.type === 'group');
     assert.deepEqual(plain(actualGroups.map((group) => group.key)), plain(expectedGroups.map((group) => `sidebar-group:${section.id}:${group.id}`)));
     expectedGroups.forEach((group, groupIndex) => {
-      assert.deepEqual(plain(actualGroups[groupIndex].children.map((page) => page.route)), plain(group.items.map((item) => item.to)));
+      // A combined page (e.g. /club/sales-dashboard → /club/sales-reports) shows the routes it is permissioned by.
+      assert.deepEqual(plain(actualGroups[groupIndex].children.map((page) => page.route)), plain(group.items.flatMap((item) => routePermissionAlias(item.to) ?? [item.to])));
     });
   });
   assert.equal(resources.get('club.subscriptions.member_transfer').parent_id, resources.get('club.subscriptions').id);

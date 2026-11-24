@@ -66,7 +66,7 @@ describe('ClubSubscriptionsService.dailyCashierReport', () => {
     },
   };
   const permissions = { isSuperAdmin: jest.fn() };
-  const branchScope = { resolveListFilter: jest.fn().mockReturnValue([3]) };
+  const branchScope = { resolveListFilter: jest.fn().mockReturnValue([3]), resolveMemberGenderRequest: jest.fn().mockReturnValue(null) };
   const service = new ClubSubscriptionsService(
     prisma as unknown as PrismaService,
     {} as ClubReceiptsService,

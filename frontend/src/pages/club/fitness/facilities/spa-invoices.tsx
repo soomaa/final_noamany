@@ -15,10 +15,12 @@ import { api, apiError } from '@/lib/api';
 import { localToday } from '@/lib/formatters';
 import { usePaginatedList } from '@/lib/api-hooks';
 import { useListQuery } from '@/lib/use-list-query';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClubMemberListItem } from '@/types/club';
 import type { ClubSpaInvoiceRow, ClubSpaServiceRow } from '@/types/fitness';
 import { SELECT_CLS, useFitnessResourceList, memberColumnDef } from '../shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type BenefitResponse = {
   member: { id: number; memberCode: string; name: string; branchId: number };
@@ -36,7 +38,9 @@ const PAYMENT_METHODS = [
 export function FitnessSpaInvoicesPage() {
   const ft = useFitnessT();
   const { params, setParams } = useListQuery();
-  const { data, isLoading, isError, refetch } = usePaginatedList<ClubSpaInvoiceRow>('club-spa-invoices', params);
+  // رجالي/حريمي/الكل (locked to the employee's own section).
+  const gender = useMemberGenderFilter();
+  const { data, isLoading, isError, refetch } = usePaginatedList<ClubSpaInvoiceRow>('club-spa-invoices', { ...params, filters: { ...params.filters, gender: gender.value } });
   const { data: branches } = useBranches();
   const { items } = useFitnessResourceList<ClubSpaServiceRow>('club-spa-services');
   const services = (items ?? []).filter((service) => service.isActive);
@@ -123,22 +127,22 @@ export function FitnessSpaInvoicesPage() {
   return (
     <div className="space-y-6">
       <PageHeader title={ft('spaInvoices.title')} actions={<Button variant="brand" onClick={openCreate}><Plus className="size-4" />فاتورة جديدة</Button>} />
-      <DataTable columns={columns} data={data?.data ?? []} total={data?.total ?? 0} page={params.page} pageSize={params.pageSize} onPageChange={(page) => setParams({ page })} onPageSizeChange={(pageSize) => setParams({ pageSize, page: 1 })} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} emptyTitle={ft('common.noData')} />
+      <DataTable columns={columns} data={data?.data ?? []} total={data?.total ?? 0} page={params.page} pageSize={params.pageSize} onPageChange={(page) => setParams({ page })} onPageSizeChange={(pageSize) => setParams({ pageSize, page: 1 })} toolbar={<MemberGenderSelect hideLabel value={gender.value} locked={gender.locked} onChange={(value) => { gender.setValue(value); setParams({ page: 1 }); }} />} isLoading={isLoading} isError={isError} onRetry={() => void refetch()} emptyTitle={ft('common.noData')} />
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent size="md" aria-describedby={undefined}>
           <DialogHeader><DialogTitle>فاتورة SPA جديدة</DialogTitle></DialogHeader>
           <div className="grid gap-3 py-2">
             <div className="grid gap-2"><Label>ابحث بكود العضو أو الاسم</Label><MemberSearchCombobox selectedMember={selectedMember} onSelect={(member) => void selectMember(member)} onClear={() => { setSelectedMember(null); setBenefits(null); }} /></div>
             {selectedMember && <div className="rounded-lg border bg-muted/40 p-3 text-sm">رصيد SPA المتبقي في الاشتراكات: <strong className="nums">{toArabicDigits(benefits?.spa.remaining ?? 0)}</strong></div>}
-            <div className="grid gap-2"><Label>{ft('spaServices.title')}</Label><select className={SELECT_CLS} value={form.serviceId} onChange={(event) => setForm((current) => ({ ...current, serviceId: event.target.value }))}><option value="">اختر خدمة</option>{services.map((service) => <option key={service.id} value={service.id}>{service.name} — {service.price}</option>)}</select></div>
+            <div className="grid gap-2"><Label>{ft('spaServices.title')}</Label><SearchableSelect className={SELECT_CLS} value={form.serviceId} onChange={(event) => setForm((current) => ({ ...current, serviceId: event.target.value }))}><option value="">اختر خدمة</option>{services.map((service) => <option key={service.id} value={service.id}>{service.name} — {service.price}</option>)}</SearchableSelect></div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2"><Label>{ft('spaInvoices.quantity')}</Label><Input type="number" min="1" className="nums" value={form.quantity} onChange={(event) => setForm((current) => ({ ...current, quantity: event.target.value }))} /></div>
               <div className="grid gap-2"><Label>السعر من الإعدادات</Label><Input disabled className="nums" value={selectedService?.price ?? ''} /></div>
             </div>
             {selectedMember && hasEnoughBenefits && <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.useSubscriptionBenefit} onChange={(event) => setForm((current) => ({ ...current, useSubscriptionBenefit: event.target.checked }))} />خصم الخدمة من الاشتراك (بدون تحصيل نقدي)</label>}
             {selectedMember && !hasEnoughBenefits && (benefits?.spa.remaining ?? 0) > 0 && <p className="text-sm text-amber-700">الرصيد المتبقي لا يكفي الكمية المطلوبة؛ ستُسجل الفاتورة مدفوعة.</p>}
-            <div className="grid gap-2"><Label>{ft('common.branch')}</Label><select className={SELECT_CLS} value={form.branchId} onChange={(event) => setForm((current) => ({ ...current, branchId: event.target.value }))}>{(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name ?? '—'}</option>)}</select></div>
-            {(!form.useSubscriptionBenefit || !hasEnoughBenefits) && <div className="grid gap-2"><Label>طريقة الدفع</Label><select className={SELECT_CLS} value={form.paymentMethod} onChange={(event) => setForm((current) => ({ ...current, paymentMethod: event.target.value }))}>{PAYMENT_METHODS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>}
+            <div className="grid gap-2"><Label>{ft('common.branch')}</Label><SearchableSelect className={SELECT_CLS} value={form.branchId} onChange={(event) => setForm((current) => ({ ...current, branchId: event.target.value }))}>{(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name ?? '—'}</option>)}</SearchableSelect></div>
+            {(!form.useSubscriptionBenefit || !hasEnoughBenefits) && <div className="grid gap-2"><Label>طريقة الدفع</Label><SearchableSelect className={SELECT_CLS} value={form.paymentMethod} onChange={(event) => setForm((current) => ({ ...current, paymentMethod: event.target.value }))}>{PAYMENT_METHODS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</SearchableSelect></div>}
             <p className="text-sm text-muted-foreground">الإجمالي: <span className="nums font-medium">{toArabicDigits(form.useSubscriptionBenefit && hasEnoughBenefits ? 0 : quantity * (selectedService?.price ?? 0))}</span></p>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setOpen(false)}>{ft('common.cancel')}</Button><Button variant="brand" onClick={() => void save()} disabled={saving || services.length === 0}>{ft('common.save')}</Button></DialogFooter>

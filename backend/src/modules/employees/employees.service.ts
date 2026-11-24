@@ -618,7 +618,12 @@ export class EmployeesService {
   }
 
   /** Sales specialists (أخصائي مبيعات) for member registration dropdown. */
-  async salesReps(user: JwtUser) {
+  /**
+   * Sales specialists. With a user, limited to the branches that user may pick from (member
+   * forms); without one, every rep — the sales-management screens apply their own scope.
+   * `branchIds` = home branch + extra branches from «إدارة المبيعات» (club_sales_rep_branches).
+   */
+  async salesReps(user?: JwtUser) {
     const marketingJobs = await this.prisma.department_jobs.findMany({
       where: marketingRepJobTitleWhere,
       select: { id: true },
@@ -630,28 +635,41 @@ export class EmployeesService {
           { OR: [{ leave_emp: null }, { leave_emp: 0 }] },
           { employee_type: 1 },
           marketingRepEmployeeWhere(jobIds),
-          this.pickerBranchWhere(user),
+          ...(user ? [this.pickerBranchWhere(user)] : []),
         ],
       },
       select: { id: true, employee: true, emp_code: true, branch_id_fk: true },
       orderBy: { employee: 'asc' },
+    });
+    const assignments = rows.length
+      ? await this.prisma.club_sales_rep_branches.findMany({
+          where: { employee_id: { in: rows.map((row) => row.id) } },
+          select: { employee_id: true, branch_id: true },
+          orderBy: [{ employee_id: 'asc' }, { branch_id: 'asc' }],
+        })
+      : [];
+    const branchesByEmployee = new Map<number, number[]>();
+    assignments.forEach((assignment) => {
+      branchesByEmployee.set(assignment.employee_id, [...(branchesByEmployee.get(assignment.employee_id) ?? []), assignment.branch_id]);
     });
     return rows.map((r) => ({
       id: r.id,
       name: r.employee,
       empCode: r.emp_code,
       branchId: r.branch_id_fk,
+      branchIds: [...new Set([...(r.branch_id_fk ? [r.branch_id_fk] : []), ...(branchesByEmployee.get(r.id) ?? [])])],
     }));
   }
 
-  /** Whether the logged-in user is a sales specialist (أخصائي مبيعات). */
+  /** Whether the logged-in user sells: a sales job title, or the «يعمل كأخصائي مبيعات» toggle. */
   async isSalesEmployee(userEmpId: number | null): Promise<boolean> {
     if (!userEmpId) return false;
     const emp = await this.prisma.employees.findUnique({
       where: { id: userEmpId },
-      select: { mosma_wazefy_code: true, mosma_wazefy_n: true },
+      select: { mosma_wazefy_code: true, mosma_wazefy_n: true, is_sales: true },
     });
     if (!emp) return false;
+    if (emp.is_sales) return true;
     if (isMarketingRepJobTitle(emp.mosma_wazefy_n)) return true;
     if (emp.mosma_wazefy_code) {
       const job = await this.prisma.department_jobs.findUnique({
@@ -770,7 +788,12 @@ export class EmployeesService {
       if (roleId == null) await this.revokeDashboardAccess(id);
       await this.syncTrainerCommission(id, body);
     } catch (error) {
-      syncWarning = 'تم حفظ بيانات الموظف، لكن تعذرت مزامنة حساب النظام تلقائيًا';
+      // Say why (phone already on another employee / app account / system account), so the
+      // admin can fix that record instead of guessing from a generic warning.
+      const reason = error instanceof ConflictException ? error.message : '';
+      syncWarning = reason
+        ? `تم حفظ بيانات الموظف، لكن حساب النظام ماتحدّثش: ${reason}`
+        : 'تم حفظ بيانات الموظف، لكن تعذرت مزامنة حساب النظام تلقائيًا';
       this.logger.error(`Employee ${id} profile saved but account synchronization failed`, error);
     }
     return { id, ...(syncWarning ? { warning: syncWarning } : {}) };
@@ -990,13 +1013,19 @@ export class EmployeesService {
     }
     const employee = await this.prisma.employees.findUnique({ where: { id }, select: { id: true } });
     if (!employee) throw new NotFoundException('الموظف غير موجود');
-    await this.prisma.employees.update({ where: { id }, data: { employee_type: employeeType } });
+    // updateMany does not read the row back: legacy rows can hold '' in yes/no enum columns
+    // (e.g. person_img), which Prisma cannot decode, and that broke the status switch.
+    await this.prisma.employees.updateMany({ where: { id }, data: { employee_type: employeeType } });
     return { id, employee_type: employeeType };
   }
 
   /** Soft delete (recoverable) — better than the legacy hard delete. */
   async remove(id: number) {
-    await this.prisma.employees.update({ where: { id }, data: { leave_emp: 1 } });
+    const { count } = await this.prisma.employees.updateMany({ where: { id }, data: { leave_emp: 1 } });
+    if (!count) throw new NotFoundException('الموظف غير موجود');
+    // A deleted captain leaves the coach lists (record kept for history) (client, 23 Nov). Reads only a
+    // few plain columns (never the legacy enum ones); a roster hiccup must not undo the delete.
+    await syncEmployeeTrainer(this.prisma, id).catch(() => undefined);
     return { id };
   }
 

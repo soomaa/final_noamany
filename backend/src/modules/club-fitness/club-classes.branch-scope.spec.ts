@@ -58,12 +58,32 @@ describe('ClubClassesService branch isolation', () => {
     }));
   });
 
-  it('rejects enrolling a member of the other gender section', async () => {
-    const service = makeService({
+  it('enrolls a member of the other men/women section (the section is only a screen default)', async () => {
+    const create = jest.fn().mockResolvedValue({ id: 1 });
+    const members = { findFirst: jest.fn().mockResolvedValue({ id: 9, name: 'Ali', gender: 'male' }) };
+    const tx = {
+      club_members: members,
+      club_class_enrollments: {
+        count: jest.fn().mockResolvedValue(0),
+        findUnique: jest.fn().mockResolvedValue(null),
+        create,
+      },
+    };
+    const prisma = {
       club_classes: { findFirst: jest.fn().mockResolvedValue({ ...classRow(3), class_date: '2999-01-01' }) },
-      club_members: { findFirst: jest.fn().mockResolvedValue({ gender: 'male' }) },
-    });
+      club_members: members,
+      $transaction: jest.fn((fn: (t: unknown) => unknown) => fn(tx)),
+    };
+    const service = new ClubClassesService(
+      prisma as never,
+      { validate: jest.fn().mockResolvedValue({ allowed: true }) } as never,
+      {} as never,
+      { dispatch: jest.fn().mockResolvedValue(undefined) } as never,
+      { siblingBranchIds: async (id: number) => [id] },
+      new BranchScopeService(),
+    );
     const womenOnly = { sub: 7, level: 2, branch: 3, man_women_type: 2 } as never;
-    await expect(service.enrollMember(21, 9, {}, womenOnly)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.enrollMember(21, 9, {}, womenOnly)).resolves.toEqual(expect.objectContaining({ id: 21 }));
+    expect(create).toHaveBeenCalledWith({ data: expect.objectContaining({ class_id: 21, member_id: 9 }) });
   });
 });

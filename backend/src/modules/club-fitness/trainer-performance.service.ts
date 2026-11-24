@@ -3,6 +3,7 @@ import { PrismaService } from '../../common/prisma/prisma.service';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { JwtUser } from '../../common/types/jwt-user';
 import { isSystemAdmin } from '../../common/utils/system-admin.util';
+import { managerPeriodBounds } from '../../common/utils/manager-scope.util';
 import { PermissionEngineService } from '../rbac/engine/permission-engine.service';
 import { toNum } from './club-fitness.utils';
 import { trainerBranchMap, trainersVisibleInBranches } from './trainer-branches.util';
@@ -38,6 +39,11 @@ export class TrainerPerformanceService {
     if (!user || user.trainer_id == null || isSystemAdmin(user)) return false;
     if (this.permissions) return !(await this.permissions.can(user.sub, 'club.fitness.trainers', 'update'));
     return user.level !== 3;
+  }
+
+  /** A trainer on their own account reads only the current month (client video, 23 Nov). */
+  private async selfMonth(user: JwtUser | undefined, month: string): Promise<string> {
+    return (await this.isTrainerSelfOnly(user)) ? managerPeriodBounds('month').from.slice(0, 7) : month;
   }
 
   /** Trainer ids visible to the user; null ⇒ unrestricted. See trainer-branches.util for the branch rule. */
@@ -104,6 +110,7 @@ export class TrainerPerformanceService {
   async getTarget(trainerId: number, month: string | undefined, user?: JwtUser) {
     if (!trainerId) throw new BadRequestException('اختر المدرب');
     await this.assertTrainerAccess(user, trainerId);
+    if (month) month = await this.selfMonth(user, month);
     if (month) this.month(month);
     const db = this.db();
     const [fixed, override, overrides] = await Promise.all([
@@ -157,6 +164,7 @@ export class TrainerPerformanceService {
   }
 
   async getEvaluation(trainerId: number, month: string, user?: JwtUser) {
+    month = await this.selfMonth(user, month);
     this.month(month);
     await this.assertTrainerAccess(user, trainerId);
     const row = await this.db().club_trainer_evaluations.findUnique({
@@ -203,6 +211,7 @@ export class TrainerPerformanceService {
   }
 
   async profile(trainerId: number, month: string, user?: JwtUser) {
+    month = await this.selfMonth(user, month);
     this.month(month); await this.assertTrainerAccess(user, trainerId);
     const db = this.db();
     const firstMonth = shiftMonth(month, -5);

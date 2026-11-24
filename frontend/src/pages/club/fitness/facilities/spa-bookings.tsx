@@ -18,9 +18,11 @@ import { formatTime, localToday } from '@/lib/formatters';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
+import { useMemberGenderFilterField } from '@/components/club/member-gender-filter';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClubSpaBookingRow, ClubSpaServiceRow } from '@/types/fitness';
 import { RowActions, SELECT_CLS, useFitnessResourceList, memberColumnDef } from '../shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 const BOOKING_STATUS_MAP = {
   pending: 'pending',
@@ -40,8 +42,10 @@ export function FitnessSpaBookingsPage() {
   const { items: services } = useFitnessResourceList<ClubSpaServiceRow>('club-spa-services');
   const branchOptions = (branches ?? []).map((b) => ({ value: String(b.id), label: b.name ?? '—' }));
 
+  const genderField = useMemberGenderFilterField();
   const filters: FilterField[] = [
     { key: 'branch', label: ft('common.branch'), type: 'select', options: branchOptions },
+    genderField,
   ];
 
   const [open, setOpen] = useState(false);
@@ -217,19 +221,19 @@ export function FitnessSpaBookingsPage() {
             </div>
             <div className="grid gap-2">
               <Label>{ft('spaServices.title')}</Label>
-              <select className={SELECT_CLS} value={form.serviceId} onChange={(e) => setForm((f) => ({ ...f, serviceId: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={form.serviceId} onChange={(e) => setForm((f) => ({ ...f, serviceId: e.target.value }))}>
                 {(services ?? []).map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-2">
               <Label>{ft('common.branch')}</Label>
-              <select className={SELECT_CLS} value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}>
+              <SearchableSelect className={SELECT_CLS} value={form.branchId} onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}>
                 {branchOptions.map((b) => (
                   <option key={b.value} value={b.value}>{b.label}</option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-2">

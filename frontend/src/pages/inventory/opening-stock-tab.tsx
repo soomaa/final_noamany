@@ -26,6 +26,7 @@ import { useAuth } from '@/store/auth';
 import { useBranches } from '@/hooks/use-branches';
 import { indexColumn } from './simple-crud-tab';
 import { WarehouseSelect } from '@/components/inventory/warehouse-select';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface OpeningStockRow {
   id: number;
@@ -169,7 +170,7 @@ export function OpeningStockTab() {
           <div className="grid gap-3 py-2">
             <div className="grid gap-1">
               <Label>{ui('المنتج')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={form.productId}
                 onChange={(e) => onProductPick(e.target.value)}
@@ -180,7 +181,7 @@ export function OpeningStockTab() {
                     {p.nameAr}{p.size ? ` — ${p.size}` : ''} ({p.productCode})
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1">
               <WarehouseSelect branchId={effectiveBranchId} value={warehouseId} onChange={setWarehouseId} />
@@ -218,7 +219,7 @@ export function OpeningStockTab() {
                   <Lock className="size-4 text-muted-foreground" />
                 </div>
               ) : (
-                <select
+                <SearchableSelect
                   className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                   value={effectiveBranchId}
                   onChange={(e) => {
@@ -230,7 +231,7 @@ export function OpeningStockTab() {
                   {branches.map((branch) => (
                     <option key={branch.id} value={branch.id}>{branch.name}</option>
                   ))}
-                </select>
+                </SearchableSelect>
               )}
             </div>
           </div>

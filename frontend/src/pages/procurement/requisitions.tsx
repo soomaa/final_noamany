@@ -28,6 +28,7 @@ import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { uiStatic } from '@/lib/ui-static';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type ReqTab = 'requisitions' | 'rfqs' | 'quotations' | 'approvals';
 
@@ -205,7 +206,7 @@ function RequisitionsTab() {
               </div>
               <div className="grid gap-1">
                 <Label>{uiStatic('الفرع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.branchId}
                   onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}
@@ -215,7 +216,7 @@ function RequisitionsTab() {
                       {b.name}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -229,7 +230,7 @@ function RequisitionsTab() {
               </div>
               <div className="grid gap-1">
                 <Label>{uiStatic('الأولوية')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.priority}
                   onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))}
@@ -238,7 +239,7 @@ function RequisitionsTab() {
                   <option value="normal">{uiStatic('عادية')}</option>
                   <option value="high">{uiStatic('عالية')}</option>
                   <option value="urgent">{uiStatic('عاجلة')}</option>
-                </select>
+                </SearchableSelect>
               </div>
             </div>
             <div className="space-y-2">
@@ -421,7 +422,7 @@ function RfqsTab() {
             <div className="grid grid-cols-2 gap-3">
               <div className="grid gap-1">
                 <Label>{uiStatic('الفرع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={form.branchId}
                   onChange={(e) => setForm((f) => ({ ...f, branchId: e.target.value }))}
@@ -431,7 +432,7 @@ function RfqsTab() {
                       {b.name}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
               <div className="grid gap-1">
                 <Label>{uiStatic('الميزانية التقديرية')}</Label>
@@ -594,7 +595,7 @@ function QuotationsTab() {
           <div className="grid gap-3 py-2">
             <div className="grid gap-1">
               <Label>{uiStatic('طلب عرض السعر')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={form.rfqId}
                 onChange={(e) => setForm((f) => ({ ...f, rfqId: e.target.value }))}
@@ -605,11 +606,11 @@ function QuotationsTab() {
                     {r.rfqNumber} — {r.subject}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1">
               <Label>{uiStatic('المورد')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={form.supplierId}
                 onChange={(e) => setForm((f) => ({ ...f, supplierId: e.target.value }))}
@@ -620,7 +621,7 @@ function QuotationsTab() {
                     {s.nameAr}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1">
               <Label>{uiStatic('السعر الإجمالي')}</Label>

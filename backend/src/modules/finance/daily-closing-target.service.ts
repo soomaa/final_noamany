@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable } from '@nestjs/common';
+import { clampManagerDays, managerKind } from '../../common/utils/manager-scope.util';
 import { Prisma, QuickSaleStatus } from '@prisma/client';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -387,7 +388,7 @@ export class DailyClosingTargetService {
     branchIds: number[] | null,
   ): Promise<number | null> {
     const requestedEmployeeId = query.employeeId ?? query.targetEmployeeId;
-    if (!isSystemAdmin(user) && user.level !== 3) {
+    if (!isSystemAdmin(user) && user.level !== 3 && !managerKind(user)) {
       if (!user.emp_code) throw new ForbiddenException('لا يوجد موظف مرتبط بالمستخدم');
       if (requestedEmployeeId && requestedEmployeeId !== user.emp_code) {
         throw new ForbiddenException('الموظف المحدد خارج نطاق الصلاحية');
@@ -408,7 +409,17 @@ export class DailyClosingTargetService {
 
   private targetDates(query: TargetReportQuery, user: JwtUser): { fromDate: string; toDate: string } {
     const currentMonth = this.targetMonth();
-    if (!isSystemAdmin(user)) return currentMonth;
+    // Branch manager / section supervisor: the current and the previous month (client sheet, 22 Nov).
+    const managerRange = clampManagerDays(user, 'twoMonths', query.fromDate ?? currentMonth.fromDate, query.toDate ?? currentMonth.toDate);
+    if (managerRange.clamped) return { fromDate: managerRange.from!, toDate: managerRange.to! };
+    // Everyone else: any days inside the current month (client video, 23 Nov: «من يوم ٤ لحد يوم ٦»).
+    if (!isSystemAdmin(user)) {
+      const clamp = (d: string | undefined, fallback: string) => (!d || d < currentMonth.fromDate || d > currentMonth.toDate ? fallback : d.slice(0, 10));
+      const fromDate = clamp(query.fromDate, currentMonth.fromDate);
+      const toDate = clamp(query.toDate, currentMonth.toDate);
+      if (fromDate > toDate) throw new BadRequestException('تاريخ البداية يجب أن يسبق تاريخ النهاية');
+      return { fromDate, toDate };
+    }
     const fromDate = query.fromDate ?? currentMonth.fromDate;
     const toDate = query.toDate ?? currentMonth.toDate;
     if (fromDate > toDate) throw new BadRequestException('تاريخ البداية يجب أن يسبق تاريخ النهاية');

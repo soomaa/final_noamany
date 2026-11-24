@@ -15,6 +15,13 @@ function makeService(audience: 'male' | 'female' | null = null) {
   const branchScope = {
     memberGenderFilter: jest.fn().mockReturnValue(audience),
     resolveListFilter: jest.fn((_user, requested) => requested ? [Number(requested)] : null),
+    // Same rule as BranchScopeService: a one-section employee is locked to it (403 for the other).
+    resolveMemberGenderRequest: jest.fn((_user, requested?: string | null) => {
+      const wanted = requested === 'male' || requested === 'female' ? requested : null;
+      if (audience === null) return wanted;
+      if (wanted && wanted !== audience) throw new ForbiddenException('لا تملك صلاحية الوصول لبيانات هذا القسم');
+      return audience;
+    }),
   };
   const service = new ClubAttendanceService(
     prisma as never, {} as never, {} as never, {} as never, {} as never,
@@ -48,14 +55,13 @@ describe('barcode scan times', () => {
     expect(result.data[0]).toMatchObject({ memberCode: 'A7118', scanType: 'عادي' });
   });
 
-  it('keeps the employee section restriction even when another gender is requested', async () => {
+  it('keeps the employee section restriction: the other section is refused, their own is applied', async () => {
     const { service, prisma } = makeService('male');
-    await service.barcodeScanTimes(query as never, { sub: 5, level: 2, branch: 3 } as never);
-    const where = prisma.club_attendance.findMany.mock.calls[0][0].where;
-    expect(where.AND).toEqual(expect.arrayContaining([
-      { member: { is: { gender: 'male' } } },
-      { member: { is: { gender: 'female' } } },
-    ]));
+    const user = { sub: 5, level: 2, branch: 3 } as never;
+    await expect(service.barcodeScanTimes(query as never, user)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(prisma.club_attendance.findMany).not.toHaveBeenCalled();
+    await service.barcodeScanTimes({ ...query, gender: undefined } as never, user);
+    expect(prisma.club_attendance.findMany.mock.calls[0][0].where.AND).toContainEqual({ member: { is: { gender: 'male' } } });
   });
 
   it('uses the winter Cairo offset for time filters outside daylight saving', async () => {

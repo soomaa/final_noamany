@@ -19,6 +19,7 @@ import { InventoryPageShell } from './inventory-shell';
 import { useBranches } from '@/hooks/use-branches';
 import { cafeUnitLabel } from '@/lib/cafe-units';
 import { confirm } from '@/lib/confirm';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface IssueLine {
   productId: number;
@@ -193,11 +194,11 @@ export function InventoryGymIssuePage() {
                 <Label>{ui('الفرع')}</Label>
                 {user?.branch ? <div className="flex min-h-10 items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-sm">
                   <span>{user.branch_name || `${ui('فرع رقم')} ${effectiveBranchId}`}</span><Lock className="size-4 text-muted-foreground" />
-                </div> : <select className="min-h-10 rounded-md border bg-background px-3 py-2 text-sm" value={selectedBranchId} onChange={async (event) => {
+                </div> : <SearchableSelect className="min-h-10 rounded-md border bg-background px-3 py-2 text-sm" value={selectedBranchId} onChange={async (event) => {
                   const next = event.target.value;
                   if (lines.length && !await confirm({ title: ui('تغيير الفرع؟'), description: ui('سيتم مسح أصناف الصرف الحالية لأن الأرصدة تختلف من فرع لآخر'), confirmLabel: ui('تغيير ومسح الأصناف') })) return;
                   setSelectedBranchId(next); setLines([]);
-                }}><option value="">{ui('اختر الفرع')}</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</select>}
+                }}><option value="">{ui('اختر الفرع')}</option>{branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}</SearchableSelect>}
               </div>
               <div className="grid gap-1.5">
                 <Label>{ui('التاريخ')}</Label>
@@ -218,7 +219,7 @@ export function InventoryGymIssuePage() {
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="grid gap-1.5">
                   <Label>{ui('الفئة')}</Label>
-                  <select
+                  <SearchableSelect
                     className="h-10 w-full rounded-md border bg-background px-3 text-sm"
                     value={categoryId}
                     onChange={(event) => {
@@ -232,7 +233,7 @@ export function InventoryGymIssuePage() {
                         {category.nameAr ?? category.name ?? '—'}
                       </option>
                     ))}
-                  </select>
+                  </SearchableSelect>
                 </div>
                 <div className="grid gap-1.5">
                   <Label>{ui('بحث عن الصنف')}</Label>

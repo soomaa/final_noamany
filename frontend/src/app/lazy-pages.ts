@@ -9,15 +9,36 @@ import { EvaluationItemsPage as EvaluationItemsPageComponent } from '@/pages/eva
 import { AddEvaluationPage as AddEvaluationPageComponent } from '@/pages/evaluation-management/add-evaluation';
 import { EvaluationReportPage as EvaluationReportPageComponent } from '@/pages/evaluation-management/report';
 
+const CHUNK_RELOAD_KEY = 'one80_chunk_reload_at';
+
+/**
+ * After a deploy, a tab opened earlier asks for page chunks that no longer exist. Reload once
+ * so it picks up the new build instead of failing; a second failure within a minute is real.
+ */
+function reloadOnceForStaleChunk(error: unknown): Promise<never> {
+  try {
+    const last = Number(sessionStorage.getItem(CHUNK_RELOAD_KEY) ?? 0);
+    if (Date.now() - last > 60_000) {
+      sessionStorage.setItem(CHUNK_RELOAD_KEY, String(Date.now()));
+      location.reload();
+      return new Promise<never>(() => {});
+    }
+  } catch {
+    // Storage unavailable: surface the original error.
+  }
+  return Promise.reject(error);
+}
+
 /** Lazy-load a page module by named export (keeps route chunks split). */
 function lazyPage(
   loader: () => Promise<Record<string, unknown>>,
   exportName: string,
 ): LazyExoticComponent<ComponentType<unknown>> {
   return lazy(() =>
-    loader().then((mod) => ({
-      default: mod[exportName] as ComponentType<unknown>,
-    })),
+    loader().then(
+      (mod) => ({ default: mod[exportName] as ComponentType<unknown> }),
+      reloadOnceForStaleChunk,
+    ),
   );
 }
 
@@ -143,6 +164,7 @@ export const PushBroadcastPage = lazyPage(() => import('@/pages/settings/push'),
 export const AdminLayout = lazyPage(() => import('@/pages/admin/layout'), 'AdminLayout');
 export const RolesPage = lazyPage(() => import('@/pages/admin/roles'), 'RolesPage');
 export const RoleListPage = lazyPage(() => import('@/pages/admin/role-list'), 'RoleListPage');
+export const StaffSetupPage = lazyPage(() => import('@/pages/admin/staff-setup'), 'StaffSetupPage');
 export const UserExceptionsPage = lazyPage(() => import('@/pages/admin/exceptions'), 'UserExceptionsPage');
 export const AuditPage = lazyPage(() => import('@/pages/admin/audit'), 'AuditPage');
 export const ClubMembersManagementPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubMembersManagementPage');
@@ -170,6 +192,8 @@ export const ClubCustomerSourcesPage = lazyPage(() => import('@/pages/club/route
 export const ClubPackageSettingsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubPackageSettingsPage');
 export const ClubBranchGroupsPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubBranchGroupsPage');
 export const ClubSubscriptionsExpiredPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSubscriptionsExpiredPage');
+export const ClubSubscriptionsExpiringPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSubscriptionsExpiringPage');
+export const ClubWhatsAppTemplatesPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubWhatsAppTemplatesPage');
 export const ClubSubscriptionsOutstandingPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubSubscriptionsOutstandingPage');
 export const ClubTreasuryPage = lazyPage(() => import('@/pages/club/route-pages'), 'ClubTreasuryPage');
 export const UnifiedTreasuryPage = lazyPage(() => import('@/pages/club/route-pages'), 'UnifiedTreasuryPage');
@@ -309,3 +333,8 @@ export const ClubEventLiveGuestPage = lazyPage(() => import('@/pages/club/events
 export const ClubEventLiveKioskRedirectPage = lazyPage(() => import('@/pages/club/events/route-pages'), 'EventLiveKioskRedirect');
 export const ClubEventLiveProgramPage = lazyPage(() => import('@/pages/club/events/route-pages'), 'EventLiveProgram');
 export const ClubEventLiveSettingsPage = lazyPage(() => import('@/pages/club/events/route-pages'), 'EventLiveSettings');
+// «إدارة المبيعات والعملاء المحتملين» (ported from MetaFit)
+export const ClubSalesReportsPage = lazyPage(() => import('@/pages/club/sales-reports'), 'ClubSalesReportsPage');
+export const MosLeadsPage = lazyPage(() => import('@/pages/mos/leads-page'), 'MosLeadsPage');
+export const MosCallsPage = lazyPage(() => import('@/pages/mos/calls-page'), 'MosCallsPage');
+export const ClubWhatsappPage = lazyPage(() => import('@/pages/club/whatsapp'), 'ClubWhatsappPage');

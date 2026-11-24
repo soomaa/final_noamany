@@ -69,6 +69,11 @@ export class ListClubReceiptsDto extends PaginationDto {
   @IsOptional()
   @IsString()
   endDate?: string;
+
+  /** رجالي/حريمي/الكل: the members' section (one-section staff are locked to theirs). */
+  @IsOptional()
+  @IsIn(['all', 'male', 'female'])
+  gender?: string;
 }
 
 export class CreateClubReceiptDto {

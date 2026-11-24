@@ -7,11 +7,13 @@ import { BranchScopeService } from '../../common/branch-scope/branch-scope.servi
 import { JwtUser } from '../../common/types/jwt-user';
 import { assertMemberExists, localDateString } from '../club-members/club-member.utils';
 import { isReceptionEmployee } from '../../common/utils/reception-user.util';
+import { assertManagerMayModify, managerKind } from '../../common/utils/manager-scope.util';
 import { ClubReceiptsService } from './club-receipts.service';
 import { ClubSubscriptionAccountingService } from './club-subscription-accounting.service';
 import {
   netValue,
   primaryClubPaymentMethod,
+  receiptGenderWhere,
   resolveClubPayments,
   roundMoney,
   toClubPaymentMethod,
@@ -121,6 +123,8 @@ export class ClubReceiptsCrudService {
 
   async list(q: ListClubReceiptsDto, user?: JwtUser) {
     const and: Prisma.club_receiptsWhereInput[] = [this.receiptScopeWhere(user)];
+    const memberGender = this.branchScope.resolveMemberGenderRequest(user, q.gender);
+    if (memberGender) and.push(receiptGenderWhere(memberGender));
     const where: Prisma.club_receiptsWhereInput = {};
     if (q.status) where.status = q.status;
     if (q.subscriptionId != null) where.subscription_id = q.subscriptionId;
@@ -147,6 +151,10 @@ export class ClubReceiptsCrudService {
     // Reception's receipts list is today-only. A single subscription's or member's history
     // (payment dialog, renewal) stays complete; it is already branch-scoped.
     if (isReceptionEmployee(user) && q.subscriptionId == null && q.memberId == null) {
+      where.receipt_date = localDateString();
+    }
+    // Branch manager / section supervisor: «الإيصالات خلال اليوم فقط» (client sheet, 22 Nov).
+    if (managerKind(user) && q.subscriptionId == null && q.memberId == null) {
       where.receipt_date = localDateString();
     }
     and.push(where);
@@ -323,6 +331,7 @@ export class ClubReceiptsCrudService {
 
   async update(id: number, body: UpdateClubReceiptDto, user?: JwtUser) {
     if (isReceptionEmployee(user)) throw new ForbiddenException('موظف الاستقبال لا يمكنه تعديل الإيصالات');
+    assertManagerMayModify(user);
     const existing = await this.findOne(id, user);
     // Only description/type/payment_method are mutable. Amount/date/subscription are immutable —
     // changing money on a posted receipt would desync the GL; cancel and re-issue instead.

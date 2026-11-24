@@ -4,8 +4,18 @@ type TrainerSyncPrisma = Pick<PrismaClient, 'employees' | 'department_jobs' | 'c
 
 const TRAINER_JOB_TITLES = new Set(['مدرب', 'مدرب لياقة', 'مدربة لياقة']);
 
-function isTrainerJobTitle(title?: string | null): boolean {
-  return TRAINER_JOB_TITLES.has(title?.trim() ?? '');
+/**
+ * A coach job title even when nobody ticked «مدرب» on it: the old exact names, or any title with
+ * «كابتن» / coach / captain in it (client, 23 Nov: a new «كابتن حريمي» title must link by itself).
+ */
+export function isTrainerJobTitle(title?: string | null): boolean {
+  const t = (title ?? '').trim();
+  return TRAINER_JOB_TITLES.has(t) || /كابتن|coach|captain/i.test(t);
+}
+
+/** Whether employees holding this job title get a coach record. */
+export function jobCountsAsTrainer(job?: { is_trainer?: boolean | null; name?: string | null } | null): boolean {
+  return !!job?.is_trainer || isTrainerJobTitle(job?.name);
 }
 
 /**
@@ -40,7 +50,7 @@ export async function syncEmployeeTrainer(
         select: { is_trainer: true, name: true },
       })
     : null;
-  const jobIsTrainer = !!job?.is_trainer || isTrainerJobTitle(job?.name);
+  const jobIsTrainer = jobCountsAsTrainer(job);
   // leave_emp null/0 = active employee (non-terminated), mirroring the HR "active" convention.
   const shouldBeTrainer = jobIsTrainer && (emp.leave_emp == null || emp.leave_emp === 0);
 
@@ -90,11 +100,8 @@ export async function syncEmployeeTrainer(
 export async function syncAllEmployeeTrainers(prisma: TrainerSyncPrisma): Promise<number[]> {
   const empIds = new Set<number>();
 
-  const trainerJobs = await prisma.department_jobs.findMany({
-    where: { OR: [{ is_trainer: true }, { name: { in: [...TRAINER_JOB_TITLES] } }] },
-    select: { id: true },
-  });
-  const jobIds = trainerJobs.map((j) => j.id);
+  const allJobs = await prisma.department_jobs.findMany({ select: { id: true, name: true, is_trainer: true } });
+  const jobIds = allJobs.filter((j) => jobCountsAsTrainer(j)).map((j) => j.id);
   if (jobIds.length) {
     const emps = await prisma.employees.findMany({
       where: { mosma_wazefy_code: { in: jobIds } },

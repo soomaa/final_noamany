@@ -17,6 +17,9 @@ export interface ClubSearchHit {
   cardNumber: string | null;
   branchId: number;
   isActive: boolean;
+  /** Blocked by the gym: every search shows it until the block is lifted (client, 22 Nov). */
+  isBlocked: boolean;
+  blockReason: string | null;
   matchType: 'code' | 'card' | 'phone' | 'name' | 'partial';
   activeSubscriptionType: string | null;
   subscriptionStatus: string | null;
@@ -165,6 +168,8 @@ export class ClubSearchService {
         cardNumber: m.card_number,
         branchId: m.branch_id,
         isActive: m.is_active,
+        isBlocked: m.is_blocked,
+        blockReason: m.is_blocked ? m.block_reason : null,
         matchType,
         activeSubscriptionType: active?.subscription_type ?? null,
         subscriptionStatus: active
@@ -181,11 +186,11 @@ export class ClubSearchService {
     return hits.sort((a, b) => b.score - a.score).slice(0, take);
   }
 
-  async recentCheckIns(limit = 20, branchIds: number[] | null = null) {
+  async recentCheckIns(limit = 20, branchIds: number[] | null = null, gender: 'male' | 'female' | null = null) {
     // Attendance keeps a denormalized member name for historical reports. Never use those
     // historical rows to surface a member that has since been removed from the active roster.
     const where: Prisma.club_attendanceWhereInput = {
-      member: { is_deleted: false },
+      member: { is_deleted: false, ...(gender ? { gender } : {}) },
     };
     if (branchIds !== null) where.branch_id = { in: branchIds };
 

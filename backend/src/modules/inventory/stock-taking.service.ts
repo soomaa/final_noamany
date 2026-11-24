@@ -1,4 +1,5 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { managerKind } from '../../common/utils/manager-scope.util';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { InventoryTxnType, MovementDirection, Prisma } from '@prisma/client';
 import { paginated } from '../../common/dto/list-result';
@@ -54,6 +55,8 @@ export class StockTakingService {
     if (user) { const branches=new BranchScopeService().resolveListFilter(user); if(branches) and.push({branch_id:{in:branches}}); }
     // Reception employees only see today's count reports.
     if (isReceptionEmployee(user)) and.push({ created_at: cairoDayRange() });
+    // Branch manager / section supervisor: «محاضر الجرد اليومي» = today's (client sheet, 22 Nov).
+    if (managerKind(user)) and.push({ created_at: cairoDayRange() });
     if (q.search?.trim()) and.push({ session_number: { contains: q.search.trim() } });
     if (q.warehouseId && q.warehouseId !== 'all') and.push({ warehouse_id: Number(q.warehouseId) });
     if (q.status && q.status !== 'all') and.push({ status: q.status });

@@ -22,8 +22,9 @@ export class ClubDashboardController {
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
     @Query('branchId') branchId?: string,
+    @Query('gender') gender?: string,
   ) {
-    return this.service.treasury({ date, dateFrom, dateTo, branchId }, user);
+    return this.service.treasury({ date, dateFrom, dateTo, branchId, gender }, user);
   }
 
   @Get('summary')
@@ -32,7 +33,8 @@ export class ClubDashboardController {
     @Query('endDate') endDate?: string,
     @Query('branchId') branchId?: string,
     @CurrentUser() user?: JwtUser,
+    @Query('gender') gender?: string,
   ) {
-    return this.service.summary({ startDate, endDate, branchId }, user);
+    return this.service.summary({ startDate, endDate, branchId, gender }, user);
   }
 }

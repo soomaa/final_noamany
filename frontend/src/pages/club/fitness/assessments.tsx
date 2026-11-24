@@ -15,6 +15,7 @@ import { localToday } from '@/lib/formatters';
 import { useMutationWithToast, usePaginatedList } from '@/lib/api-hooks';
 import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 import { toArabicDigits } from '@/lib/utils';
 import type { PhysicalAssessmentRow } from '@/types/fitness';
 import { RowActions, jsonArrayToLines, linesToJsonArray, memberColumnDef } from './shared';
@@ -22,9 +23,11 @@ import { RowActions, jsonArrayToLines, linesToJsonArray, memberColumnDef } from 
 export function FitnessAssessmentsPage() {
   const ft = useFitnessT();
   const { params, setParams } = useListQuery();
+  // رجالي/حريمي/الكل (locked to the employee's own section).
+  const gender = useMemberGenderFilter();
   const { data, isLoading, isError, refetch } = usePaginatedList<PhysicalAssessmentRow>(
     'club-physical-assessments',
-    params,
+    { ...params, filters: { ...params.filters, gender: gender.value } },
   );
   const [open, setOpen] = useState(false);
   const [editId, setEditId] = useState<number | null>(null);
@@ -141,6 +144,7 @@ export function FitnessAssessmentsPage() {
         onPageSizeChange={(pageSize) => setParams({ pageSize, page: 1 })}
         search={params.search}
         onSearchChange={(search) => setParams({ search, page: 1 })}
+        toolbar={<MemberGenderSelect hideLabel value={gender.value} locked={gender.locked} onChange={(value) => { gender.setValue(value); setParams({ page: 1 }); }} />}
         isLoading={isLoading}
         isError={isError}
         onRetry={() => void refetch()}

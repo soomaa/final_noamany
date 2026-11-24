@@ -29,6 +29,7 @@ import { GymSalesPageShell } from '../gym-sales/shell';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import type { PurchaseReturnRow } from '@/types/gym-sales';
 import { uiStatic } from '@/lib/ui-static';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 function ReturnsTab() {
   const { ui } = useLocale();
@@ -197,7 +198,7 @@ function DebitNotesTab() {
           <div className="grid gap-3 py-2">
             <div className="grid gap-1">
               <Label>{uiStatic('المورد')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={supplierId}
                 onChange={(e) => setSupplierId(e.target.value)}
@@ -208,7 +209,7 @@ function DebitNotesTab() {
                     {s.nameAr}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="grid gap-1">
               <Label>{uiStatic('السبب')}</Label>
@@ -226,7 +227,7 @@ function DebitNotesTab() {
               </div>
               <div className="grid gap-1">
                 <Label>{uiStatic('الفرع')}</Label>
-                <select
+                <SearchableSelect
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={branchId}
                   onChange={(e) => setBranchId(e.target.value)}
@@ -236,7 +237,7 @@ function DebitNotesTab() {
                       {b.name}
                     </option>
                   ))}
-                </select>
+                </SearchableSelect>
               </div>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { BusinessAuditService } from '../gym-ops/business-audit.service';
 import { ClubMembersService } from '../club-members/club-members.service';
@@ -227,13 +228,19 @@ export class ClubEventCheckinService {
     });
   }
 
-  async roster(eventId: number) {
+  /** Registrations of one men/women section; guests (no member) stay listed, as in the registrations list. */
+  private sectionWhere(memberGender?: 'male' | 'female' | null): Prisma.club_event_registrationsWhereInput {
+    return memberGender ? { OR: [{ member_id: null }, { member: { gender: memberGender } }] } : {};
+  }
+
+  /** `memberGender` is the caller's resolved رجالي/حريمي/الكل section (null ⇒ both). */
+  async roster(eventId: number, memberGender?: 'male' | 'female' | null) {
     const event = await this.prisma.club_events.findFirst({ where: { id: eventId, is_deleted: false } });
     if (!event) throw new NotFoundException('الفعالية غير موجودة');
 
     const [registrations, sessions] = await Promise.all([
       this.prisma.club_event_registrations.findMany({
-        where: { event_id: eventId, is_deleted: false, status: { not: 'cancelled' } },
+        where: { event_id: eventId, is_deleted: false, status: { not: 'cancelled' }, ...this.sectionWhere(memberGender) },
         include: { checkins: true },
         orderBy: { id: 'asc' },
       }),
@@ -275,12 +282,12 @@ export class ClubEventCheckinService {
     };
   }
 
-  async statistics(eventId: number) {
+  async statistics(eventId: number, memberGender?: 'male' | 'female' | null) {
     const event = await this.prisma.club_events.findFirst({ where: { id: eventId, is_deleted: false } });
     if (!event) throw new NotFoundException('الفعالية غير موجودة');
 
     const registrations = await this.prisma.club_event_registrations.findMany({
-      where: { event_id: eventId, is_deleted: false, status: { not: 'cancelled' } },
+      where: { event_id: eventId, is_deleted: false, status: { not: 'cancelled' }, ...this.sectionWhere(memberGender) },
       include: { checkins: true, tier: true },
     });
 

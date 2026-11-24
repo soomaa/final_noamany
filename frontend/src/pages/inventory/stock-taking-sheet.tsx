@@ -17,6 +17,7 @@ import { useAuth } from '@/store/auth';
 import { useLocale } from '@/store/locale';
 import { indexColumn } from './simple-crud-tab';
 import { type CountSession, isApproved, STATUS_LABELS, StockCountDetailsDialog, shortage, surplus } from './stock-count-shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface SheetProduct {
   productId: number;
@@ -307,7 +308,7 @@ export function StockTakingSheet() {
           />
           <div className="space-y-1.5">
             <Label htmlFor="count-category">{ui('نوع الجرد (بار / بروتين …)')}</Label>
-            <select
+            <SearchableSelect
               id="count-category"
               className="h-10 w-full rounded-md border bg-background px-3 text-sm"
               value={categoryId}
@@ -318,7 +319,7 @@ export function StockTakingSheet() {
               {categories.filter((c) => c.isActive !== false).map((c) => (
                 <option key={c.id} value={c.id}>{c.nameAr}</option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
           <div className="space-y-1.5">
             <Label>{ui('اسم الموظف')}</Label>

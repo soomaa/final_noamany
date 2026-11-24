@@ -21,13 +21,13 @@ export class ClubSubscriptionRefundsController {
   constructor(private readonly service: ClubSubscriptionRefundsService) {}
 
   @Get('statistics')
-  statistics(@CurrentUser() user: JwtUser) {
-    return this.service.statistics(user);
+  statistics(@CurrentUser() user: JwtUser, @Query('gender') gender?: string) {
+    return this.service.statistics(user, gender);
   }
 
   @Get()
-  list(@CurrentUser() user: JwtUser) {
-    return this.service.list(user);
+  list(@CurrentUser() user: JwtUser, @Query('gender') gender?: string) {
+    return this.service.list(user, gender);
   }
 
   @Get(':id')

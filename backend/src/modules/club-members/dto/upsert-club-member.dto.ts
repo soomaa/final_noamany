@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsInt, IsOptional, IsString, Length } from 'class-validator';
 
 export class UpsertClubMemberDto {
   @Transform(({ value }) => (value != null && value !== '' ? Number(value) : undefined))
@@ -64,6 +64,14 @@ export class UpsertClubMemberDto {
   @Transform(({ value }) => value === true || value === 'true' || value === 1 || value === '1')
   @IsBoolean()
   autoCreateUser?: boolean;
+
+  /** Mobile-app password typed by reception. On add: blank keeps the default (the phone number).
+   *  On edit: sets a new password (or creates the app account when the member has none). */
+  @IsOptional()
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() || undefined : value))
+  @IsString()
+  @Length(4, 72, { message: 'كلمة مرور التطبيق من 4 إلى 72 حرف/رقم' })
+  appPassword?: string;
 
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === 1 || value === '1')

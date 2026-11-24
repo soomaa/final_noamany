@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { WaCampaignsController, WaDeviceGuard, WaExtController } from './wa-campaigns.controller';
+import { WaCampaignsController, WaDeviceGuard, WaExtController, WaRemindersController } from './wa-campaigns.controller';
 import { WaBirthdaysService } from './wa-birthdays.service';
 import { WaCampaignsService } from './wa-campaigns.service';
 import { WaControlClient } from './wa-control.client';
@@ -8,7 +8,7 @@ import { WaExtService } from './wa-ext.service';
 
 /** WhatsApp Web campaigns: staff queue + the paired Chrome extension that sends them. */
 @Module({
-  controllers: [WaCampaignsController, WaExtController],
+  controllers: [WaCampaignsController, WaExtController, WaRemindersController],
   providers: [WaCampaignsService, WaBirthdaysService, WaExtService, WaControlClient, WaControlService, WaDeviceGuard],
 })
 export class WaCampaignsModule {}

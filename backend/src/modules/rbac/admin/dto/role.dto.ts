@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
 import {
   IsArray,
+  IsBoolean,
   IsIn,
   IsInt,
   IsOptional,
@@ -80,4 +81,9 @@ export class AssignRolesDto {
   @IsArray()
   @IsInt({ each: true })
   roleIds!: number[];
+}
+
+export class SetSalesToggleDto {
+  @IsBoolean()
+  enabled!: boolean;
 }

@@ -33,6 +33,7 @@ import { formatDate, formatTimeFromDate, localToday, formatMoneyNumber } from '@
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import { GymSalesPageShell } from '../gym-sales/shell';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type MovementType = 'petty_expense' | 'custody_issue' | 'custody_return';
 
@@ -219,9 +220,9 @@ export function SalesTreasuryPage() {
       <div className="mb-5 flex flex-wrap items-end gap-3 rounded-2xl border bg-muted/20 p-4">
         <div>
           <Label className="text-xs">{ui('الفرع')}</Label>
-          <select className="mt-1 block h-10 rounded-md border bg-background px-3 text-sm" value={effectiveBranch} onChange={(event) => setBranchId(event.target.value)}>
+          <SearchableSelect className="mt-1 block h-10 rounded-md border bg-background px-3 text-sm" value={effectiveBranch} onChange={(event) => setBranchId(event.target.value)}>
             {(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-          </select>
+          </SearchableSelect>
         </div>
         <div>
           <Label className="text-xs">{ui('التاريخ')}</Label>
@@ -334,11 +335,11 @@ export function SalesTreasuryPage() {
           <DialogHeader><DialogTitle>{ui(movementType === 'petty_expense' ? 'تسجيل مصروف من الدرج' : movementType === 'custody_issue' ? 'صرف عهدة لموظف' : 'رد عهدة مصروفة')}</DialogTitle><DialogDescription>{ui('الحفظ يحدّث رصيد الدرج وسجل الحركة والقيد المحاسبي في عملية واحدة.')}</DialogDescription></DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-3 gap-1 rounded-xl bg-muted p-1">{([['petty_expense', ui('مصروف')], ['custody_issue', ui('صرف عهدة')], ['custody_return', ui('رد عهدة')]] as const).map(([value, label]) => <Button key={value} type="button" size="sm" variant={movementType === value ? 'default' : 'ghost'} onClick={() => openMovement(value)}>{label}</Button>)}</div>
-            {movementType === 'custody_return' ? <div><Label>{ui('العهدة المطلوب ردها')}</Label><select className="mt-1 h-11 w-full rounded-md border bg-background px-3" value={sourceTransactionId} onChange={(event) => chooseCustody(event.target.value)}><option value="">{ui('اختر من العهد المصروفة')}</option>{(custodies?.data ?? []).map((custody) => <option key={custody.id} value={custody.id}>{custody.employee?.employee ?? ui('موظف')} · {custody.reference} · {custody.outstandingAmount.toFixed(2)} EGP</option>)}</select></div> : null}
-            {movementType === 'custody_issue' ? <div><Label>{ui('الموظف صاحب العهدة')}</Label><select className="mt-1 h-11 w-full rounded-md border bg-background px-3" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}><option value="">{ui('اختر الموظف')}</option>{employees.map((employee) => <option key={employee.value} value={employee.value}>{employee.label} · {employee.description}</option>)}</select></div> : null}
+            {movementType === 'custody_return' ? <div><Label>{ui('العهدة المطلوب ردها')}</Label><SearchableSelect className="mt-1 h-11 w-full rounded-md border bg-background px-3" value={sourceTransactionId} onChange={(event) => chooseCustody(event.target.value)}><option value="">{ui('اختر من العهد المصروفة')}</option>{(custodies?.data ?? []).map((custody) => <option key={custody.id} value={custody.id}>{custody.employee?.employee ?? ui('موظف')} · {custody.reference} · {custody.outstandingAmount.toFixed(2)} EGP</option>)}</SearchableSelect></div> : null}
+            {movementType === 'custody_issue' ? <div><Label>{ui('الموظف صاحب العهدة')}</Label><SearchableSelect className="mt-1 h-11 w-full rounded-md border bg-background px-3" value={employeeId} onChange={(event) => setEmployeeId(event.target.value)}><option value="">{ui('اختر الموظف')}</option>{employees.map((employee) => <option key={employee.value} value={employee.value}>{employee.label} · {employee.description}</option>)}</SearchableSelect></div> : null}
             {selectedCustody ? <div className="grid grid-cols-3 gap-2 rounded-xl border bg-amber-50/60 p-3 text-center text-xs dark:bg-amber-950/10"><div><span className="text-muted-foreground">{ui('المصروف')}</span><b className="nums mt-1 block">{formatMoneyNumber(selectedCustody.issuedAmount)}</b></div><div><span className="text-muted-foreground">{ui('تم رده')}</span><b className="nums mt-1 block text-emerald-600">{formatMoneyNumber(selectedCustody.returnedAmount)}</b></div><div><span className="text-muted-foreground">{ui('المتبقي')}</span><b className="nums mt-1 block text-amber-700">{formatMoneyNumber(selectedCustody.outstandingAmount)}</b></div></div> : null}
             <div><Label>{ui(movementType === 'custody_return' ? 'المبلغ المُراد رده' : 'المبلغ')}</Label><Input className="nums mt-1" type="number" min={0.01} max={selectedCustody?.outstandingAmount} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} /></div>
-            {movementType === 'petty_expense' ? <div><Label>{ui('نوع المصروف')}</Label><select className="mt-1 h-11 w-full rounded-md border bg-background px-3" value={category} onChange={(event) => setCategory(event.target.value)}><option value="maintenance">{ui('صيانة')}</option><option value="emergency_service">{ui('خدمة طارئة')}</option><option value="urgent_purchase">{ui('مشتريات عاجلة')}</option><option value="supplies">{ui('مستلزمات سريعة')}</option><option value="other">{ui('أخرى')}</option></select></div> : null}
+            {movementType === 'petty_expense' ? <div><Label>{ui('نوع المصروف')}</Label><SearchableSelect className="mt-1 h-11 w-full rounded-md border bg-background px-3" value={category} onChange={(event) => setCategory(event.target.value)}><option value="maintenance">{ui('صيانة')}</option><option value="emergency_service">{ui('خدمة طارئة')}</option><option value="urgent_purchase">{ui('مشتريات عاجلة')}</option><option value="supplies">{ui('مستلزمات سريعة')}</option><option value="other">{ui('أخرى')}</option></SearchableSelect></div> : null}
             <div><Label>{ui('البيان / السبب')}</Label><Textarea className="mt-1" rows={3} value={description} onChange={(event) => setDescription(event.target.value)} placeholder={ui('اكتب سبب واضح يظهر في السجل والمحاسبة')} /></div>
           </div>
           <DialogFooter><Button onClick={() => void saveMovement()} disabled={saving}>{saving ? ui('جارٍ الحفظ…') : ui('حفظ واعتماد الحركة')}</Button><Button variant="outline" onClick={() => setMovementOpen(false)}>{ui('إلغاء')}</Button></DialogFooter>

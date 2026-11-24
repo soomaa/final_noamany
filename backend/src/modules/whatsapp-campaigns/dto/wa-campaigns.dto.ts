@@ -12,10 +12,16 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+export class WaTemplateFieldDto {
+  @IsString() @MaxLength(60) label!: string;
+  @IsArray() @ArrayMaxSize(8) @IsString({ each: true }) @MaxLength(500, { each: true }) options!: string[];
+}
 
 export class UpsertWaTemplateDto {
   @IsString() @Length(1, 120) name!: string;
@@ -23,6 +29,22 @@ export class UpsertWaTemplateDto {
   @IsOptional() @IsBoolean() isActive?: boolean;
   /** false = this template's messages go out without the automatic «ابعت إيقاف» line. */
   @IsOptional() @IsBoolean() addOptOutLine?: boolean;
+  /** The template as fields (one line each, several wordings); the body is generated from them. */
+  @IsOptional() @IsArray() @ArrayMaxSize(12) @ValidateNested({ each: true }) @Type(() => WaTemplateFieldDto) fields?: WaTemplateFieldDto[];
+}
+
+/** «لم يحضر منذ مدة»: when a check-in row turns yellow / red, and which template the WhatsApp button uses. */
+export class WaAbsenceSettingsDto {
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(365) yellowDays?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(365) redDays?: number;
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) templateId?: number;
+}
+
+export class WaAbsenceLookupDto {
+  /** Comma-separated member ids from one page of the attendance list. */
+  @Matches(/^\d+(,\d+){0,199}$/) members!: string;
+  /** The day the members checked in (default: today, Cairo). */
+  @IsOptional() @Matches(DATE) date?: string;
 }
 
 export class WaAudienceDto {

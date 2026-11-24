@@ -44,6 +44,8 @@ export interface ClubMemberLookupItem {
   phone: string | null;
   gender: 'male' | 'female';
   branchId: number;
+  isBlocked?: boolean;
+  blockReason?: string | null;
 }
 
 export interface ClubMemberStatistics {
@@ -115,6 +117,8 @@ export interface ClubMemberOverview {
     isBlocked: boolean;
     blockReason: string | null;
     lastCheckIn: string | null;
+    /** Last visit before today (the scan checks in at once, so lastCheckIn is usually today). */
+    previousCheckIn?: string | null;
   };
   subscriptionCount: number;
   lockerSubscriptionCount: number;
@@ -163,6 +167,8 @@ export interface ClubMemberFormData {
   guardianName?: string;
   guardianPhone?: string;
   autoCreateUser?: boolean;
+  /** Typed by reception. Add: blank = phone number. Edit: blank = keep the current password. */
+  appPassword?: string;
 }
 
 export interface ClubMemberCreateResponse {
@@ -249,6 +255,8 @@ export interface ClubSubscriptionListItem {
   memberId: number | null;
   memberCode?: string | null;
   memberPhone?: string | null;
+  /** The member's own gender (male / female); the default when the subscription has no category. */
+  memberGender?: 'male' | 'female' | null;
   customerName: string | null;
   subscriptionTypeId?: number | null;
   specialClassTypeId?: number | null;
@@ -387,7 +395,19 @@ export interface ClubSubscriptionType {
   sessionPrices?: Array<{ sessionsCount: number; price: number }>;
   allowMultipleDailyEntries?: boolean;
   isLinkedToFreeze?: boolean;
-  freezeDays?: number | null; // max freeze times allowed on the package
+  freezeDays?: number | null; // max freeze times allowed on the package (null = unlimited)
+  /** Total days the package may stay frozen across all freezes (null = unlimited). */
+  freezeTotalDays?: number | null;
+  /** Special offer («عرض خاص»): a lower price, or extra days / visits, until promoEndsOn. */
+  promoEnabled?: boolean;
+  promoKind?: 'discount' | 'bonus';
+  promoPrice?: number | null;
+  promoBonus?: number | null;
+  promoEndsOn?: string | null;
+  /** The offer can be sold today. */
+  promoLive?: boolean;
+  /** "+7 أيام إضافية" / "+4 زيارات إضافية" for a bonus offer. */
+  promoLabel?: string | null;
   includesSpa?: boolean;
   spaCount?: number | null;
   isActive?: boolean;

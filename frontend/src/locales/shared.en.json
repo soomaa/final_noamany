@@ -92,6 +92,7 @@
     "inProgress": "In progress",
     "underReview": "Under review",
     "suspended": "Suspended",
+    "blocked": "Blocked",
     "expired": "Expired",
     "paid": "Paid",
     "unpaid": "Unpaid",
@@ -244,6 +245,12 @@
     "submitted": "Submitted",
     "uploaded": "Uploaded",
     "synced": "Synchronized"
+  },
+  "appUpdate": {
+    "title": "A new version is available",
+    "body": "Press Update to load the latest version.",
+    "later": "Later",
+    "update": "Update"
   },
   "payroll": {
     "steps": {

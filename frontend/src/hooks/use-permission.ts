@@ -33,7 +33,10 @@ export function useMyPermissions() {
   const status = useAuth((s) => s.status);
   return useQuery({
     queryKey: ['me', 'permissions'],
-    queryFn: async () => (await api.get<MyPermissions>('/me/permissions')).data,
+    // A superseded refetch is aborted (frees the browser connection) and a stalled request
+    // gives up instead of hanging forever.
+    queryFn: async ({ signal }) =>
+      (await api.get<MyPermissions>('/me/permissions', { signal, timeout: 20_000 })).data,
     enabled: status === 'authenticated',
     staleTime: 0,
     refetchOnMount: 'always',
@@ -82,6 +85,8 @@ export interface PermissionApi {
   canNavRoute: (pathname: string) => boolean;
   superAdmin: boolean;
   isReady: boolean;
+  /** A permission set has been loaded at least once (it stays cached while refetching). */
+  hasData: boolean;
   /** Permissions endpoint failed — routes stay blocked until retry succeeds. */
   hasError: boolean;
   retry: () => void;
@@ -162,6 +167,7 @@ export function usePermission(): PermissionApi {
     canNavRoute,
     superAdmin: !!data?.superAdmin,
     isReady: !isLoading && (!!data || isError),
+    hasData: !!data,
     hasError: isError,
     retry: () => void refetch(),
     refresh,

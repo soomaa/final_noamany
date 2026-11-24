@@ -1,5 +1,5 @@
 import { Transform } from 'class-transformer';
-import { IsDateString, IsInt, IsNumber, Min } from 'class-validator';
+import { IsDateString, IsIn, IsInt, IsNumber, IsOptional, Min } from 'class-validator';
 
 export class SavePointsConversionDto {
   @Transform(({ value }) => Number(value))
@@ -53,4 +53,8 @@ export class PointsDateRangeQueryDto {
 
   @IsDateString()
   toDate!: string;
+
+  @IsOptional()
+  @IsIn(['all', 'male', 'female'])
+  gender?: string;
 }

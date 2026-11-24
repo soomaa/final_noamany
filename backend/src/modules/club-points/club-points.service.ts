@@ -18,6 +18,16 @@ export type EarnedPoints = {
 
 type PointsDbClient = Pick<PrismaService, '$queryRaw' | '$executeRaw'>;
 
+/**
+ * The day of a redemption (tbl_points_exhausted_history.date) as YYYY-MM-DD. Rows from the old system keep
+ * Unix seconds (midnight Cairo, UTC+3) there, rows added by this system keep YYYY-MM-DD. tbl_points_history
+ * has date_added (always YYYY-MM-DD) for the same purpose; its `date` column has both forms too, so it is
+ * never used to filter or sort.
+ */
+const POINTS_DAY_SQL = Prisma.sql`(CASE WHEN date REGEXP '^[0-9]+$'
+  THEN DATE_FORMAT(DATE_ADD('1970-01-01', INTERVAL CAST(date AS SIGNED) + 10800 SECOND), '%Y-%m-%d')
+  ELSE LEFT(date, 10) END)`;
+
 @Injectable()
 export class ClubPointsService {
   constructor(
@@ -26,10 +36,11 @@ export class ClubPointsService {
   ) {}
 
   /** SQL fragment (alias `m` = club_members) limiting report rows to the user's branches and gender section. */
-  private memberScopeSql(user?: JwtUser): Prisma.Sql | null {
+  private memberScopeSql(user?: JwtUser, requestedGender?: string): Prisma.Sql | null {
     if (!user) return null;
     const branches = this.branchScope.memberBranchIds(user);
-    const gender = this.branchScope.memberGenderFilter(user);
+    // رجالي/حريمي/الكل: one-section staff are held to their section (403 for the other one).
+    const gender = this.branchScope.resolveMemberGenderRequest(user, requestedGender);
     if (branches === null && gender === null) return null;
     const parts: Prisma.Sql[] = [];
     if (branches !== null) {
@@ -223,11 +234,11 @@ export class ClubPointsService {
       occurred_on: string | null; expires_on: string | null; subscription_id: number | null;
     }>>(Prisma.sql`
       SELECT id, 'earn' AS direction, points, NULL AS value, action_name AS action,
-             date AS occurred_on, deadline_date AS expires_on, sub_id_fk AS subscription_id
+             date_added AS occurred_on, deadline_date AS expires_on, sub_id_fk AS subscription_id
       FROM tbl_points_history WHERE member_id=${memberId} AND deleted=0
       UNION ALL
       SELECT id, 'redeem' AS direction, points, points_value AS value, sub_type AS action,
-             date AS occurred_on, NULL AS expires_on, sub_id_fk AS subscription_id
+             ${POINTS_DAY_SQL} AS occurred_on, NULL AS expires_on, sub_id_fk AS subscription_id
       FROM tbl_points_exhausted_history WHERE member_id=${memberId} AND deleted=0
       ORDER BY occurred_on DESC, id DESC`);
     return {
@@ -239,9 +250,9 @@ export class ClubPointsService {
     };
   }
 
-  async activeMembersReport(user?: JwtUser) {
+  async activeMembersReport(user?: JwtUser, gender?: string) {
     const today = this.today();
-    const scope = this.memberScopeSql(user);
+    const scope = this.memberScopeSql(user, gender);
     const rows = await this.prisma.$queryRaw<Array<{ member_id: number; member_code: string | null; earned: number; exhausted: number }>>(Prisma.sql`
       SELECT h.member_id, MAX(h.member_code) AS member_code, SUM(h.points) AS earned,
         COALESCE((SELECT SUM(e.points) FROM tbl_points_exhausted_history e WHERE e.member_id=h.member_id AND e.deleted=0),0) AS exhausted
@@ -264,16 +275,16 @@ export class ClubPointsService {
     return this.history(members[0].id, user);
   }
 
-  async earnedMembersReport(fromDate: string, toDate: string, user?: JwtUser) {
+  async earnedMembersReport(fromDate: string, toDate: string, user?: JwtUser, gender?: string) {
     this.assertDateRange(fromDate, toDate);
-    const scope = this.memberScopeSql(user);
+    const scope = this.memberScopeSql(user, gender);
     const rows = await this.prisma.$queryRaw<Array<{
       member_id: number | null; member_code: string | null; member_name: string | null; points: number;
     }>>(Prisma.sql`
       SELECT h.member_id, MAX(h.member_code) AS member_code, MAX(m.name) AS member_name, SUM(h.points) AS points
       FROM tbl_points_history h
       LEFT JOIN club_members m ON m.id=h.member_id
-      WHERE h.deleted=0 AND h.date >= ${fromDate} AND h.date <= ${toDate} ${scope ?? Prisma.empty}
+      WHERE h.deleted=0 AND h.date_added >= ${fromDate} AND h.date_added <= ${toDate} ${scope ?? Prisma.empty}
       GROUP BY h.member_id
       ORDER BY member_name ASC, member_code ASC`);
     return rows.map((row) => ({

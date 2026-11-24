@@ -14,6 +14,8 @@ import { confirm } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
 import { useAuth } from '@/store/auth';
 import { SELECT_CLS } from './shared';
+import { SearchableSelect } from '@/components/common/searchable-select';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 
 export type BarcodeReportKind = 'member' | 'class' | 'spa';
 
@@ -66,18 +68,19 @@ export function BarcodeAttendanceReportPanel({
   externalFilters,
 }: {
   kind: BarcodeReportKind;
-  /** When the host page owns the date/branch filters, the panel hides its own filter bar. */
-  externalFilters?: { dateFrom?: string; dateTo?: string; branch?: string };
+  /** When the host page owns the date/branch/gender filters, the panel hides its own filter bar. */
+  externalFilters?: { dateFrom?: string; dateTo?: string; branch?: string; gender?: string };
 }) {
   const { params, setParams } = useListQuery();
+  const gender = useMemberGenderFilter();
   const user = useAuth((state) => state.user);
   const { superAdmin } = usePermission();
   const isAdmin = user?.level === 1 || superAdmin;
   const qc = useQueryClient();
   const { data: branches } = useBranches();
   const query = useMemo(
-    () => ({ ...params, filters: { ...(externalFilters ?? params.filters), kind } }),
-    [params, kind, externalFilters],
+    () => ({ ...params, filters: { ...(externalFilters ?? { ...params.filters, gender: gender.value }), kind } }),
+    [params, kind, externalFilters, gender.value],
   );
   const { data, isLoading, isError, refetch } = usePaginatedList<ReportRow>(RESOURCE, query);
   const response = data as ReportResponse | undefined;
@@ -134,18 +137,22 @@ export function BarcodeAttendanceReportPanel({
   return (
     <div className="space-y-6">
       {externalFilters ? null : todayOnly ? (
-        <p className="rounded-xl border bg-card p-4 text-sm text-muted-foreground">يعرض التقرير حضور اليوم فقط.</p>
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-card p-4">
+          <p className="flex-1 text-sm text-muted-foreground">يعرض التقرير حضور اليوم فقط.</p>
+          <MemberGenderSelect value={gender.value} onChange={gender.setValue} locked={gender.locked} hideLabel />
+        </div>
       ) : (
-        <div className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-4">
+        <div className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-5">
           <Input type="date" aria-label="من تاريخ" value={params.filters.dateFrom ?? ''} onChange={(e) => setFilter('dateFrom', e.target.value)} />
           <Input type="date" aria-label="إلى تاريخ" value={params.filters.dateTo ?? ''} onChange={(e) => setFilter('dateTo', e.target.value)} />
           {isAdmin ? (
-            <select className={SELECT_CLS} aria-label="الفرع" value={params.filters.branch ?? ''} onChange={(e) => setFilter('branch', e.target.value)}>
+            <SearchableSelect className={SELECT_CLS} aria-label="الفرع" value={params.filters.branch ?? ''} onChange={(e) => setFilter('branch', e.target.value)}>
               <option value="">كل الفروع</option>
               {(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-            </select>
+            </SearchableSelect>
           ) : <div />}
-          <Button variant="outline" onClick={() => setParams({ filters: {}, search: '', page: 1 })}><RotateCcw className="size-4" />مسح الفلاتر</Button>
+          <MemberGenderSelect value={gender.value} onChange={gender.setValue} locked={gender.locked} hideLabel />
+          <Button variant="outline" onClick={() => { setParams({ filters: {}, search: '', page: 1 }); gender.setValue('all'); }}><RotateCcw className="size-4" />مسح الفلاتر</Button>
         </div>
       )}
       <DataTable

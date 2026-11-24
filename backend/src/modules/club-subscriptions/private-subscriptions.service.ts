@@ -10,7 +10,7 @@ import { BranchScopeService } from '../../common/branch-scope/branch-scope.servi
 import { paginated } from '../../common/dto/list-result';
 import { JwtUser } from '../../common/types/jwt-user';
 import { localDateString } from '../club-members/club-member.utils';
-import { addDays, deriveSessionAwareStatus, subscriptionEndDate, toNum } from './club-subscription.utils';
+import { addDays, deriveSessionAwareStatus, subscriptionEndDate, subscriptionGenderWhere, toNum } from './club-subscription.utils';
 import { ClubSubscriptionsService } from './club-subscriptions.service';
 import {
   CreatePrivateEnrollmentDto,
@@ -294,6 +294,8 @@ export class PrivateSubscriptionsService {
     const and: Prisma.club_subscriptionsWhereInput[] = [this.privateEnrollmentWhere()];
     const branches = this.branchScope.resolveListFilter(user, query.branchId ?? null);
     if (branches) and.push({ branch_id: { in: branches } });
+    const memberGender = this.branchScope.resolveMemberGenderRequest(user, query.gender);
+    if (memberGender) and.push(subscriptionGenderWhere(memberGender));
     if (query.trainerId) and.push({ private_trainer_id: query.trainerId });
     if (query.search?.trim()) {
       const search = query.search.trim();

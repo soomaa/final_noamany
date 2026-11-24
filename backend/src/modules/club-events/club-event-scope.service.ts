@@ -62,6 +62,11 @@ export class ClubEventScopeService {
     return this.branchScope.memberGenderFilter(user);
   }
 
+  /** رجالي/حريمي/الكل list filter: the section to show (null = both); 403 for another section. */
+  resolveMemberGender(user: JwtUser, requested?: string | null): 'male' | 'female' | null {
+    return this.branchScope.resolveMemberGenderRequest(user, requested);
+  }
+
   assertBranch(user: JwtUser, branchId: number | null | undefined): void {
     this.branchScope.assertBranchAllowed(user, branchId, FORBIDDEN_EVENT);
   }

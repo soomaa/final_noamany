@@ -28,8 +28,42 @@ interface ComboboxProps {
   onSearch?: (query: string) => void;
 }
 
-function normalizeArabic(s: string) {
-  return s.trim().toLowerCase().replace(/\s+/g, ' ');
+/**
+ * Search-friendly text: lower case, Arabic letter variants folded (أ/إ/آ→ا, ة→ه, ى→ي, ؤ→و, ئ→ي),
+ * diacritics and tatweel removed, Arabic/Persian digits → Latin, spaces collapsed.
+ */
+export function normalizeSearchText(s: string) {
+  return s
+    .toLowerCase()
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, '')
+    .replace(/[أإآٱ]/g, 'ا')
+    .replace(/ة/g, 'ه')
+    .replace(/ى/g, 'ي')
+    .replace(/ؤ/g, 'و')
+    .replace(/ئ/g, 'ي')
+    .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
+    .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Filter + rank options for a query: every word of the query must appear (any order);
+ * labels that start with the query come first, then labels containing it, then the rest.
+ */
+export function searchOptions<T extends { label: string; description?: string; searchText?: string }>(options: T[], query: string): T[] {
+  const q = normalizeSearchText(query);
+  if (!q) return options;
+  const words = q.split(' ');
+  const scored: { o: T; score: number; i: number }[] = [];
+  options.forEach((o, i) => {
+    const label = normalizeSearchText(o.label);
+    const hay = `${label} ${normalizeSearchText(`${o.description ?? ''} ${o.searchText ?? ''}`)}`;
+    if (!words.every((w) => hay.includes(w))) return;
+    const score = label === q ? 0 : label.startsWith(q) ? 1 : label.includes(q) ? 2 : 3;
+    scored.push({ o, score, i });
+  });
+  return scored.sort((a, b) => a.score - b.score || a.i - b.i).map((x) => x.o);
 }
 
 export function Combobox({
@@ -78,11 +112,8 @@ export function Combobox({
 
   const selected = options.find((o) => o.value === value);
 
-  const filtered = useMemo(() => {
-    const q = normalizeArabic(query);
-    if (!q) return options;
-    return options.filter((o) => normalizeArabic(`${o.label} ${o.description ?? ''} ${o.searchText ?? ''}`).includes(q));
-  }, [options, query]);
+  // With a server-side search (onSearch) the server already filtered; keep its order.
+  const filtered = useMemo(() => (onSearch ? options : searchOptions(options, query)), [options, query, onSearch]);
 
   const select = useCallback(
     (v: string) => {
@@ -225,11 +256,7 @@ export function MultiSelect({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
 
-  const filtered = useMemo(() => {
-    const q = normalizeArabic(query);
-    if (!q) return options;
-    return options.filter((o) => normalizeArabic(o.label).includes(q));
-  }, [options, query]);
+  const filtered = useMemo(() => searchOptions(options, query), [options, query]);
 
   const toggle = (v: string) => {
     onValuesChange(values.includes(v) ? values.filter((x) => x !== v) : [...values, v]);

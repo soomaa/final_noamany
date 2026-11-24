@@ -6,6 +6,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { clampManagerDays } from '../../common/utils/manager-scope.util';
 import { ClubClassAudience, Prisma } from '@prisma/client';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { ClubBranchGroupReader, ClubBranchGroupService } from '../../common/branch-groups/club-branch-group.service';
@@ -942,6 +943,9 @@ export class ClubClassesService {
     const reportBranch = user ? this.branchFilter(user, q.branch) : undefined;
     if (reportBranch) classWhere.branch_id = reportBranch;
     else if (q.branch && q.branch !== 'all') classWhere.branch_id = Number(q.branch);
+    // Branch manager / section supervisor: the current and the previous month (client sheet, 22 Nov).
+    const managerRange = clampManagerDays(user, 'twoMonths', q.dateFrom, q.dateTo);
+    if (managerRange.clamped) { q.dateFrom = managerRange.from; q.dateTo = managerRange.to; }
     if (q.dateFrom || q.dateTo) classWhere.class_date = { ...(q.dateFrom ? { gte: q.dateFrom } : {}), ...(q.dateTo ? { lte: q.dateTo } : {}) };
     if (q.classTypeId && q.classTypeId !== 'all') classWhere.class_type_id = Number(q.classTypeId);
 

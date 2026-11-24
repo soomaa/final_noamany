@@ -16,6 +16,7 @@ import { InventoryPageShell } from '@/pages/inventory/inventory-shell';
 import { useAuth } from '@/store/auth';
 import { useLocale } from '@/store/locale';
 import { formatMoneyNumber } from '@/lib/formatters';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface StatementLine {
   date: string;
@@ -154,20 +155,20 @@ export function CafeSupplierStatementPage() {
         <CardContent className="grid gap-3 pt-6 md:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] xl:items-end">
           <div className="grid gap-1.5">
             <Label className="flex items-center gap-2"><Users className="size-4" />{ui('الموردين')}</Label>
-            <select className="min-h-10 rounded-md border bg-background px-3 text-sm" value={draft.supplierId} onChange={(event) => setDraft({ ...draft, supplierId: event.target.value })}>
+            <SearchableSelect className="min-h-10 rounded-md border bg-background px-3 text-sm" value={draft.supplierId} onChange={(event) => setDraft({ ...draft, supplierId: event.target.value })}>
               <option value="">{ui('اختر المورد')}</option>
               {suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
-            </select>
+            </SearchableSelect>
           </div>
           <div className="grid gap-1.5">
             <Label>{ui('الفرع')}</Label>
             {lockedBranch
               ? <div className="flex min-h-10 items-center rounded-md bg-muted/50 px-3 text-sm">{user?.branch_name || `${ui('فرع رقم')} ${user?.branch}`}</div>
               : (
-                <select className="min-h-10 rounded-md border bg-background px-3 text-sm" value={draft.branchId} onChange={(event) => setDraft({ ...draft, branchId: event.target.value })}>
+                <SearchableSelect className="min-h-10 rounded-md border bg-background px-3 text-sm" value={draft.branchId} onChange={(event) => setDraft({ ...draft, branchId: event.target.value })}>
                   <option value="">{ui('كل الفروع')}</option>
                   {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-                </select>
+                </SearchableSelect>
               )}
           </div>
           <div className="grid gap-1.5">

@@ -16,6 +16,7 @@ import { confirm } from '@/lib/confirm';
 import { isSystemAdminUser } from '@/lib/user-scope';
 import { toArabicDigits } from '@/lib/utils';
 import { useAuth } from '@/store/auth';
+import { MemberGenderSelect, useMemberGenderFilter } from '@/components/club/member-gender-filter';
 
 type Code = { id: number; code: string; percentage: number };
 type Assignment = { employeeId: number | null; codeId: number | null; allowedCount: number; remainingThisMonth?: number };
@@ -155,6 +156,7 @@ export function DiscountMemberGrantsView() {
   const [saving, setSaving] = useState(false);
   const [revokingId, setRevokingId] = useState<number | null>(null);
   const [filter, setFilter] = useState('');
+  const g = useMemberGenderFilter();
 
   const { data: employeeOptions = [] } = useEmployeeOptions(!ownEmployeeId);
   const { data: codes = [] } = useQuery({ queryKey: ['club-discount-codes'], queryFn: async () => (await api.get<Code[]>('/club-discount-codes')).data });
@@ -163,8 +165,8 @@ export function DiscountMemberGrantsView() {
     queryFn: async () => (await api.get<Assignment[]>('/club-discount-codes/employee-assignments')).data,
   });
   const { data: grants = [], isLoading } = useQuery({
-    queryKey: [...GRANTS_KEY, 'current-month'],
-    queryFn: async () => (await api.get<Grant[]>('/club-discount-codes/member-grants', { params: { period: 'current' } })).data,
+    queryKey: [...GRANTS_KEY, 'current-month', g.value],
+    queryFn: async () => (await api.get<Grant[]>('/club-discount-codes/member-grants', { params: { period: 'current', gender: g.param } })).data,
   });
 
   const myCodes = useMemo(() => codes.flatMap((code) => {
@@ -279,7 +281,10 @@ export function DiscountMemberGrantsView() {
           <CardTitle className="text-base">
             أكواد هذا الشهر <span className="nums text-sm font-normal text-muted-foreground">({toArabicDigits(grants.length)})</span>
           </CardTitle>
-          <Input className="max-w-xs" value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="بحث بكود العضو أو الاسم" />
+          <div className="flex flex-wrap items-center gap-2">
+            <MemberGenderSelect value={g.value} onChange={g.setValue} locked={g.locked} hideLabel />
+            <Input className="max-w-xs" value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="بحث بكود العضو أو الاسم" />
+          </div>
         </CardHeader>
         <CardContent>
           {isLoading

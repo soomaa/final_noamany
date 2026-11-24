@@ -15,6 +15,7 @@ import type { AccountingDashboard } from '@/types/accounting';
 import { ErrorState } from '@/components/common/states';
 import { useLocale } from '@/store/locale';
 import { AccountingPageShell } from './accounting-shell';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 function monthStart() {
   const d = new Date();
@@ -55,7 +56,7 @@ export function AccountingDashboardBody() {
         </div>
         <div className="grid gap-1">
           <Label className="text-xs">{ui('الفرع')}</Label>
-          <select
+          <SearchableSelect
             className="rounded-md border bg-background px-3 py-2 text-sm"
             value={branchId}
             onChange={(e) => setBranchId(e.target.value)}
@@ -66,7 +67,7 @@ export function AccountingDashboardBody() {
                 {b.name}
               </option>
             ))}
-          </select>
+          </SearchableSelect>
         </div>
         <Button variant="brand" onClick={() => void refetch()}>
           {ui('بحث')}

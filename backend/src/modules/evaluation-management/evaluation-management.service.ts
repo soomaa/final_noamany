@@ -1,4 +1,6 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { managerStaff } from '../../common/utils/manager-staff.util';
+import { managerPeriodBounds } from '../../common/utils/manager-scope.util';
 import { Prisma } from '@prisma/client';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { paginated } from '../../common/dto/list-result';
@@ -41,6 +43,20 @@ export class EvaluationManagementService {
   ): Promise<Prisma.employee_evaluationsWhereInput> {
     const branchIds = this.branchScope.resolveListFilter(user, requestedBranchId);
     const where: Prisma.employee_evaluationsWhereInput = branchIds ? { branch_id: { in: branchIds } } : {};
+    // Branch manager / section supervisor (client sheet, 22 Nov): their branch and section's staff plus
+    // the branch's reception employees, during the current year.
+    const staff = await managerStaff(this.prisma, user, this.branchScope.allowedBranchIds(user));
+    if (staff) {
+      const year = managerPeriodBounds('year');
+      // As AND terms so a chosen employee / narrower dates still apply on top.
+      return {
+        ...where,
+        AND: [
+          { employee_id: { in: staff.length ? staff.map((e) => e.id) : [-1] } },
+          { evaluation_date: { gte: new Date(year.from), lte: new Date(`${year.to}T23:59:59.999Z`) } },
+        ],
+      };
+    }
     if (await this.isEvaluationManager(user)) return where;
     // Self-service: an unlinked account (no employee) sees nothing.
     return { ...where, employee_id: user.emp_code != null ? Number(user.emp_code) : -1 };

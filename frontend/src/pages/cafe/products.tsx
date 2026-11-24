@@ -45,6 +45,7 @@ import { CAFE_UNIT_OPTIONS, convertCafeUnit } from '@/lib/cafe-units';
 import { useBranches } from '@/hooks/use-branches';
 import { useAuth } from '@/store/auth';
 import { usePermission } from '@/hooks/use-permission';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface ProductFormState {
   name: string;
@@ -875,10 +876,10 @@ export function CafeProductsPage() {
           <div className="grid gap-4">
             <div className="space-y-2">
               <Label>{ui('الفرع')}</Label>
-              <select className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={effectiveProductionBranchId} onChange={(event) => setProductionBranchId(event.target.value)}>
+              <SearchableSelect className="w-full rounded-md border bg-background px-3 py-2 text-sm" value={effectiveProductionBranchId} onChange={(event) => setProductionBranchId(event.target.value)}>
                 <option value="">{ui('اختر الفرع')}</option>
                 {(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name}</option>)}
-              </select>
+              </SearchableSelect>
             </div>
             <div className="space-y-2"><Label>{ui('الكمية المصنعة')}</Label><Input type="number" min={0.001} step={0.001} value={productionQuantity} onChange={(event) => setProductionQuantity(Number(event.target.value))} /></div>
           </div>

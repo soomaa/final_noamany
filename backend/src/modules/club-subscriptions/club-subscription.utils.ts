@@ -1,6 +1,27 @@
 import { BadRequestException } from '@nestjs/common';
-import { ClubPaymentMethod, ClubSubStatus } from '@prisma/client';
+import { ClubGender, ClubPaymentMethod, ClubSubStatus, Prisma } from '@prisma/client';
 import { localDateString, parseDateOnly } from '../club-members/club-member.utils';
+
+/**
+ * رجالي/حريمي section of a subscription: its own category, or the member's gender when the
+ * subscription has none.
+ */
+export function subscriptionGenderWhere(gender: ClubGender): Prisma.club_subscriptionsWhereInput {
+  return { OR: [{ gender }, { gender: null, member: { is: { gender } } }] };
+}
+
+/**
+ * رجالي/حريمي section of a receipt: the section of its subscription, or the member's gender for
+ * receipts that are not tied to a subscription (lockers, other services).
+ */
+export function receiptGenderWhere(gender: ClubGender): Prisma.club_receiptsWhereInput {
+  return {
+    OR: [
+      { subscription: { is: subscriptionGenderWhere(gender) } },
+      { subscription_id: null, member: { is: { gender } } },
+    ],
+  };
+}
 
 /** Legacy sentinel previously used for session packages with no calendar expiry. */
 export const OPEN_ENDED_SUBSCRIPTION_END = '2099-12-31';

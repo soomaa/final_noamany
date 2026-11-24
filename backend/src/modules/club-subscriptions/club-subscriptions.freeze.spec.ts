@@ -25,7 +25,9 @@ describe('ClubSubscriptionsService.freeze', () => {
     sessions_used: 0,
   };
   const tx = {
-    club_subscription_freezes: { create: jest.fn() },
+    $queryRaw: jest.fn(),
+    club_subscription_types: { findUnique: jest.fn() },
+    club_subscription_freezes: { create: jest.fn(), findFirst: jest.fn().mockResolvedValue(null), findMany: jest.fn().mockResolvedValue([]) },
     club_subscriptions: { update: jest.fn() },
   };
   const prisma = {

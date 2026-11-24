@@ -1,6 +1,6 @@
 /** Pure helpers for WhatsApp campaigns — phone format, template rendering, recipient filtering. */
 
-export const TEMPLATE_VARIABLES = ['name', 'first_name', 'end_date', 'days', 'package', 'branch', 'code', 'age'] as const;
+export const TEMPLATE_VARIABLES = ['name', 'first_name', 'end_date', 'days', 'package', 'branch', 'code', 'age', 'last_visit'] as const;
 export type TemplateVars = Partial<Record<(typeof TEMPLATE_VARIABLES)[number], string>>;
 
 /**
@@ -114,8 +114,11 @@ export function ageOn(dateOfBirth: string | null | undefined, today: string): nu
 
 /** A line holding only `---` splits a template into alternative versions of the same message. */
 const VERSION_SEPARATOR = /\n[ \t]*-{3,}[ \t]*(?:\n|$)/;
-/** `{أهلًا|إزيك|مساء الخير}` → one of the choices. Variables such as `{first_name}` have no `|` and are left alone. */
-const CHOICES = /\{([^{}\n]*\|[^{}\n]*)\}/g;
+/**
+ * `{أهلًا|إزيك|مساء الخير}` → one of the choices. Variables such as `{first_name}` have no `|` and are
+ * left alone — also inside a choice: `{في {branch}|معانا}` works.
+ */
+const CHOICES = /\{((?:[^{}\n]|\{\w+\})*\|(?:[^{}\n]|\{\w+\})*)\}/g;
 
 /** The non-empty versions of a template (one when it has no `---` line). */
 export function templateVersions(body: string): string[] {
@@ -158,4 +161,57 @@ export function isStopReply(text: string | null | undefined): boolean {
 /** Plain links in a cold message are a strong spam signal; staff get a warning before sending. */
 export function hasLink(text: string): boolean {
   return /https?:\/\/|www\.|\b[a-z0-9-]+\.(?:com|net|org|eg|me|app|link|ly)\b/i.test(text ?? '');
+}
+
+// ── template fields ───────────────────────────────────────────────────────────
+
+/** A template as staff edit it: one line per field, each with one or more wordings. */
+export interface TemplateField {
+  label: string;
+  options: string[];
+}
+
+const MAX_FIELD_OPTIONS = 8;
+
+/** One wording, safe inside a `{a|b}` group: no `|`, no line breaks, no stray braces around words. */
+function cleanOption(text: string): string {
+  return String(text ?? '').replace(/[\r\n]+/g, ' ').replace(/\|/g, '/').trim();
+}
+
+/** Fields → the stored body: a line per field, `{a|b|c}` when it has several wordings. */
+export function fieldsToBody(fields: TemplateField[]): string {
+  return fields
+    .map((f) => [...new Set((f.options ?? []).map(cleanOption).filter(Boolean))])
+    .filter((options) => options.length)
+    .map((options) => (options.length > 1 ? `{${options.join('|')}}` : options[0]))
+    .join('\n');
+}
+
+/** Every concrete wording of one line (inline choices expanded), capped. */
+function expandLine(line: string): string[] {
+  const match = new RegExp(CHOICES.source).exec(line);
+  if (!match) return [line.trim()];
+  const out: string[] = [];
+  for (const choice of match[1].split('|')) {
+    for (const rest of expandLine(line.slice(0, match.index) + choice.trim() + line.slice(match.index + match[0].length))) {
+      if (out.length >= MAX_FIELD_OPTIONS) return out;
+      out.push(rest.replace(/\s{2,}/g, ' ').trim());
+    }
+  }
+  return out;
+}
+
+/**
+ * A free-text body → fields, for templates written before the field editor. Line n of every
+ * `---` version becomes the wordings of field n (versions written line by line read naturally).
+ */
+export function bodyToFields(body: string): TemplateField[] {
+  const versions = templateVersions(body).map((v) => v.split('\n').map((l) => l.trim()).filter(Boolean));
+  const lines = Math.max(0, ...versions.map((v) => v.length));
+  const fields: TemplateField[] = [];
+  for (let i = 0; i < lines; i += 1) {
+    const options = [...new Set(versions.flatMap((v) => (v[i] ? expandLine(v[i]) : [])))].slice(0, MAX_FIELD_OPTIONS);
+    if (options.length) fields.push({ label: `السطر ${i + 1}`, options });
+  }
+  return fields;
 }

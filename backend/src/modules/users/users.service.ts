@@ -1,9 +1,11 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -11,6 +13,7 @@ import { JwtUser } from '../../common/types/jwt-user';
 import type { MenuNode } from '../rbac/menu.service';
 import { syncEmployeeUserRole } from '../rbac/job-title-role.util';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateAccountDto } from './dto/update-account.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { assertCanGrantLevel, assertCanManageUser } from './user-target-scope.util';
 
@@ -29,6 +32,17 @@ const USER_PUBLIC_FIELDS = {
   emp_code: true,
   approved: true,
 } as const;
+
+/**
+ * Accounts that were deleted but could not be removed from the table (other records still
+ * point at them) are renamed to this prefix: hidden everywhere, unable to log in, and their
+ * old username is free for a new account.
+ */
+const RETIRED_PREFIX = '_retired_';
+
+export function isRetiredUsername(username: string | null | undefined): boolean {
+  return /^_retired_/i.test((username ?? '').trim());
+}
 
 /** Human labels for users.level (faithful to legacy $fea map). */
 export const LEVEL_LABELS: Record<number, string> = {
@@ -56,12 +70,32 @@ export class UsersService {
           { emp_code: { not: null } },
           { role_id_fk: { not: null } },
         ],
-        NOT: { username: { startsWith: '_retired_' } },
+        NOT: { username: { startsWith: RETIRED_PREFIX } },
       },
       select: USER_PUBLIC_FIELDS,
       orderBy: { user_id: 'desc' },
     });
-    return rows.map((u) => ({ ...u, level_label: LEVEL_LABELS[u.level ?? 0] ?? '' }));
+    // الصلاحية column: the user's actual roles (ادمن، مدير فرع، ريسبشن …), not the legacy level.
+    const links = rows.length
+      ? await this.prisma.rbac_user_roles.findMany({
+          where: { user_id: { in: rows.map((u) => u.user_id) } },
+          select: { user_id: true, role: { select: { name_ar: true, is_super_admin: true } } },
+          orderBy: { role_id: 'asc' },
+        })
+      : [];
+    const rolesOf = new Map<number, string[]>();
+    for (const link of links) {
+      const list = rolesOf.get(link.user_id) ?? [];
+      // The super-admin role first, so «ادمن» leads the badge list.
+      if (link.role.is_super_admin) list.unshift(link.role.name_ar.trim());
+      else list.push(link.role.name_ar.trim());
+      rolesOf.set(link.user_id, list);
+    }
+    return rows.map((u) => ({
+      ...u,
+      level_label: LEVEL_LABELS[u.level ?? 0] ?? '',
+      roles: rolesOf.get(u.user_id) ?? (u.level === 1 ? ['ادمن'] : []),
+    }));
   }
 
   findByUsername(username: string) {
@@ -222,21 +256,74 @@ export class UsersService {
     return { ...user, level_label: LEVEL_LABELS[user.level ?? 0] ?? '' };
   }
 
-  /** DELETE /users/:id — faithful to User::del + User_m::delete_user. */
+  /**
+   * PATCH /users/:id/account — تعديل on حسابات النظام (MetaFit): username, name and an
+   * optional new password. Role, employee link and status are not touched here.
+   */
+  async updateAccount(userId: number, dto: UpdateAccountDto, actor: JwtUser) {
+    const existing = await this.prisma.users.findUnique({ where: { user_id: userId }, select: { user_id: true } });
+    if (!existing) throw new NotFoundException('المستخدم غير موجود');
+    await assertCanManageUser(this.prisma, this.scope, actor, userId);
+    const username = dto.username.trim();
+    if (isRetiredUsername(username)) throw new BadRequestException('اسم المستخدم غير مسموح');
+    await this.assertUsernameUnique(username, userId);
+    const data: Prisma.usersUpdateInput = { username, name: dto.fullname.trim() };
+    if (dto.password) {
+      if (Buffer.byteLength(dto.password, 'utf8') > 72) throw new BadRequestException('كلمة المرور طويلة جدًا');
+      data.password = await bcrypt.hash(dto.password, BCRYPT_ROUNDS);
+      data.app_pass = null;
+      data.user_pass = null;
+      data.pass_demo = null;
+      data.x_y_z = null;
+    }
+    const user = await this.prisma.users.update({ where: { user_id: userId }, data, select: USER_PUBLIC_FIELDS });
+    return { ...user, level_label: LEVEL_LABELS[user.level ?? 0] ?? '' };
+  }
+
+  /**
+   * DELETE /users/:id — the account is gone: not listed, cannot log in, and its username can be
+   * used again right away. The row is removed; if other records still reference it (legacy
+   * mappings, audit links) it is retired instead: renamed `_retired_<id>_…`, password cleared,
+   * disabled. The employee file and past operations are never touched.
+   */
   async remove(userId: number, actor: JwtUser) {
+    if (actor?.sub === userId) throw new ForbiddenException('لا يمكنك حذف حسابك بنفسك');
     const existing = await this.prisma.users.findUnique({ where: { user_id: userId } });
     if (!existing) throw new NotFoundException('المستخدم غير موجود');
     await assertCanManageUser(this.prisma, this.scope, actor, userId);
 
     // Clean up the permission grants for this user as well (legacy left orphans;
     // we keep it tidy and avoid dangling rows in the permissions junction).
-    await this.prisma.$transaction([
+    const grants = [
       this.prisma.permissions.deleteMany({ where: { user_id: userId } }),
       this.prisma.rbac_user_exceptions.deleteMany({ where: { user_id: userId } }),
       this.prisma.rbac_user_roles.deleteMany({ where: { user_id: userId } }),
-      this.prisma.users.delete({ where: { user_id: userId } }),
+    ];
+    try {
+      await this.prisma.$transaction([...grants, this.prisma.users.delete({ where: { user_id: userId } })]);
+      return { userId, retired: false };
+    } catch (error) {
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2003') throw error;
+    }
+    await this.prisma.$transaction([
+      ...grants,
+      this.prisma.users.update({
+        where: { user_id: userId },
+        data: {
+          username: `${RETIRED_PREFIX}${userId}_${Date.now()}`.slice(0, 40),
+          approved: 0,
+          password: null,
+          app_pass: null,
+          user_pass: null,
+          pass_demo: null,
+          x_y_z: null,
+          email: null,
+          role_id_fk: null,
+          device_token: '',
+        },
+      }),
     ]);
-    return { userId };
+    return { userId, retired: true };
   }
 
   /**
@@ -244,6 +331,7 @@ export class UsersService {
    * User_m::update_status_user_type, which TOGGLES approved (1 -> 0, 0 -> 1).
    */
   async toggleApproved(userId: number, actor: JwtUser) {
+    if (actor?.sub === userId) throw new ForbiddenException('لا يمكنك إيقاف حسابك بنفسك');
     const existing = await this.prisma.users.findUnique({
       where: { user_id: userId },
       select: { approved: true },

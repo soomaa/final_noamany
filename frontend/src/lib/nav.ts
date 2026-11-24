@@ -14,6 +14,7 @@ import {
   FileText,
   Fingerprint,
   HandCoins,
+  Handshake,
   Headphones,
   Lock,
   Mail,
@@ -126,7 +127,7 @@ export const NAV_SECTIONS: NavSection[] = [
         icon: Users,
         items: [
           { to: CR.members.reception },
-          { to: CR.members.checkIn },
+          // Check-in lives in reception's member screen; /club/attendance stays for old links.
           { to: CR.members.quickServices },
           { to: CR.members.management },
           { to: CR.members.measurements, label: 'قياسات الأعضاء' },
@@ -151,6 +152,7 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: CR.packages.settings },
           { to: CR.subscriptions.list },
           { to: CR.subscriptions.memberTransfer },
+          { to: CR.subscriptions.expiring },
           { to: CR.subscriptions.online, label: 'اشتراكات الأونلاين' },
           { to: CR.subscriptions.new },
           { to: CR.subscriptions.special },
@@ -164,6 +166,18 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: CR.subscriptions.unifiedTreasury },
           { to: CR.subscriptions.refunds },
           { to: CR.subscriptions.customerSources },
+          { to: CR.subscriptions.whatsappTemplates },
+        ],
+      },
+      {
+        id: 'club-sales-management',
+        icon: Handshake,
+        items: [
+          // Team + target/commission live as in-page sections of the sales overview.
+          { to: CR.sales.dashboard },
+          { to: CR.sales.leads },
+          { to: CR.sales.whatsapp },
+          { to: CR.sales.calls },
         ],
       },
       {
@@ -304,11 +318,13 @@ export const NAV_SECTIONS: NavSection[] = [
         items: [
           { to: CR.cafe.suppliers },
           { to: CR.cafe.purchases },
+          // أوامر الشراء posts its own supplier invoice on save (stock, debt and journal), like
+          // مشتريات الكافيه; the client uses it and asked for it back (8 Nov).
+          { to: GS.procurement.purchaseOrders },
           { to: CR.cafe.supplierPayments },
           { to: CR.cafe.supplierStatement },
-          // The café buys through مشتريات الكافيه only. Requisitions → orders → receipts → three-way
-          // invoices never reached the supplier balance, so those screens are off the sidebar
-          // (still reachable by link for their old records).
+          // Requisitions → receipts → three-way invoices never reached the supplier balance, so
+          // those screens stay off the sidebar (still reachable by link for their old records).
           { to: GS.procurement.returns },
           { to: GS.procurement.dashboard },
           { to: GS.procurement.settings },

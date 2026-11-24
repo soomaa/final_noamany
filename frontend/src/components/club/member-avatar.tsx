@@ -1,10 +1,11 @@
+import { useState } from 'react';
 import { uploadUrl } from '@/components/employees/use-uploads';
 import { cn } from '@/lib/utils';
 
 export interface MemberAvatarProps {
   name?: string | null;
   profilePicture?: string | null;
-  size?: 'sm' | 'md' | 'lg' | 'xl';
+  size?: 'sm' | 'md' | 'lg' | 'xl' | 'portrait';
   className?: string;
 }
 
@@ -13,6 +14,8 @@ const sizeCls = {
   md: 'size-10 text-sm',
   lg: 'size-20 text-2xl',
   xl: 'size-32 text-3xl sm:size-36',
+  /** Reception identity photo (as in MetaFit): full card width. */
+  portrait: 'aspect-[4/3] w-full text-4xl',
 };
 
 export function memberInitials(name?: string | null): string {
@@ -23,13 +26,17 @@ export function memberInitials(name?: string | null): string {
 
 export function MemberAvatar({ name, profilePicture, size = 'md', className }: MemberAvatarProps) {
   const url = uploadUrl(profilePicture);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const cls = sizeCls[size];
 
-  if (url) {
+  // A photo that never made it across from the old server falls back to the initials,
+  // instead of an empty box with a broken-image icon.
+  if (url && failedUrl !== url) {
     return (
       <img
         src={url}
         alt=""
+        onError={() => setFailedUrl(url)}
         className={cn(cls, 'shrink-0 rounded-full object-cover ring-1 ring-border', className)}
       />
     );

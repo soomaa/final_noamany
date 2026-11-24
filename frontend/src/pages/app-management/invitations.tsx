@@ -23,6 +23,7 @@ import { useLocale } from '@/store/locale';
 import { indexColumn } from '../inventory/simple-crud-tab';
 import { AppManagementShell } from './app-shell';
 import { uiStatic } from '@/lib/ui-static';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 export type InvitationStatus = 'pending' | 'accepted' | 'rejected' | 'attended';
 
@@ -231,7 +232,7 @@ function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
             </div>
             <div className="grid gap-1">
               <Label>{uiStatic('الفرع')}</Label>
-              <select
+              <SearchableSelect
                 className="rounded-md border bg-background px-3 py-2 text-sm"
                 value={form.branchId}
                 onChange={(e) => setForm({ ...form, branchId: e.target.value })}
@@ -242,7 +243,7 @@ function InvitationsPageInner({ statusKey }: { statusKey: InvitationStatus }) {
                     {b.name}
                   </option>
                 ))}
-              </select>
+              </SearchableSelect>
             </div>
           </div>
           <DialogFooter>

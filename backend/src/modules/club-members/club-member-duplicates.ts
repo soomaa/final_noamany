@@ -31,7 +31,6 @@ export async function findMemberDuplicates(
   const globalMemberWhere: Prisma.club_membersWhereInput = { is_deleted: false };
   const branchMemberWhere: Prisma.club_membersWhereInput = {
     ...globalMemberWhere,
-    branch_id: opts.branchId,
   };
   if (exclude) {
     globalMemberWhere.id = { not: exclude };

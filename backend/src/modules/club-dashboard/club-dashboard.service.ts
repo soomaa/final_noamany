@@ -12,6 +12,8 @@ import {
   resolveFinanceCreatorScope,
 } from '../finance/finance-user-scope';
 
+type MemberSection = 'male' | 'female';
+
 type DashboardLedgerRow = {
   date: string;
   account_type: 'revenue' | 'expense';
@@ -75,6 +77,57 @@ export class ClubDashboardService {
         { member: { is_deleted: false } },
       ],
     };
+  }
+
+  /** رجالي/حريمي: a subscription's own section, falling back to its member's. */
+  private subscriptionSectionWhere(gender: MemberSection): Prisma.club_subscriptionsWhereInput {
+    return {
+      OR: [
+        { gender },
+        { gender: null, member: { is: { gender } } },
+      ],
+    };
+  }
+
+  private lockerSectionWhere(gender: MemberSection): Prisma.club_locker_subscriptionsWhereInput {
+    return {
+      OR: [
+        { gender },
+        { gender: null, member: { is: { gender } } },
+      ],
+    };
+  }
+
+  /** Receipts follow their subscription's section, else the member's, else the locker contract's. */
+  private receiptSectionWhere(gender: MemberSection): Prisma.club_receiptsWhereInput {
+    return {
+      OR: [
+        { subscription: { is: this.subscriptionSectionWhere(gender) } },
+        { subscription_id: null, member: { is: { gender } } },
+        {
+          subscription_id: null,
+          member_id: null,
+          locker_subscription: { is: this.lockerSectionWhere(gender) },
+        },
+      ],
+    };
+  }
+
+  /**
+   * Spa/InBody invoices and class enrollments carry a bare member_id (no relation), so their
+   * section is checked against the members table. Returns the ids that belong to `gender`.
+   */
+  private async sectionMemberIds(
+    gender: MemberSection,
+    memberIds: Array<number | null | undefined>,
+  ): Promise<Set<number>> {
+    const ids = [...new Set(memberIds.filter((id): id is number => typeof id === 'number'))];
+    if (ids.length === 0) return new Set();
+    const rows = await this.prisma.club_members.findMany({
+      where: { id: { in: ids }, gender },
+      select: { id: true },
+    });
+    return new Set(rows.map((row) => row.id));
   }
 
   private dashboardPeriod(startDate?: string, endDate?: string) {
@@ -158,30 +211,41 @@ export class ClubDashboardService {
   }
 
   async summary(
-    query: { startDate?: string; endDate?: string; branchId?: string },
+    query: { startDate?: string; endDate?: string; branchId?: string; gender?: string },
     user?: JwtUser,
     providedLedgerRows?: DashboardLedgerRow[],
+    // The executive dashboard reuses this summary as its base; it is not section-filtered.
+    applyMemberSection = true,
   ) {
     const { start, end } = this.dashboardPeriod(query.startDate, query.endDate);
     const scopedBranches = this.branchIds(user, query.branchId ?? null);
     const clubBranchWhere = this.branchWhere(scopedBranches);
     const lockerBranchWhere = this.branchWhere(scopedBranches, 'main_branch_id');
+    // رجالي/حريمي/الكل: one-section staff are forced to their section (403 for the other one).
+    const gender = applyMemberSection
+      ? this.branchScope.resolveMemberGenderRequest(user, query.gender)
+      : null;
 
-    const memberWhere = { is_deleted: false, ...clubBranchWhere };
-    const subWhere = {
+    const memberWhere = { is_deleted: false, ...clubBranchWhere, ...(gender ? { gender } : {}) };
+    const subWhere: Prisma.club_subscriptionsWhereInput = {
       ...clubBranchWhere,
       registration_date: { gte: start, lte: end },
       ...this.visibleSubscriptionWhere(),
+      ...(gender ? { AND: [this.subscriptionSectionWhere(gender)] } : {}),
     };
-    const lockerSubWhere = {
+    const lockerSubWhere: Prisma.club_locker_subscriptionsWhereInput = {
       ...lockerBranchWhere,
       subscription_start_date: { gte: start, lte: end },
+      ...(gender ? { AND: [this.lockerSectionWhere(gender)] } : {}),
     };
 
     const today = localDateString();
     const renewalWindow = addDays(today, 7);
     const subscriptionBranchSql = scopedBranches?.length
       ? Prisma.sql`AND s.branch_id IN (${Prisma.join(scopedBranches)})`
+      : Prisma.empty;
+    const subscriptionSectionSql = gender
+      ? Prisma.sql`AND COALESCE(s.gender, m.gender) = ${gender}`
       : Prisma.empty;
 
     const [totalMembers, legacyActiveMembers, newMembersInPeriod, subsInRange, lockerSubs, attendance, facilityCount, subscriptionMetricsRows, trainerCount, classesToday, spaInvoices, inbodyInvoices, classEnrollmentsPaid, ledgerRows] =
@@ -212,6 +276,7 @@ export class ClubDashboardService {
           where: {
             attendance_date: { gte: start, lte: end },
             ...clubBranchWhere,
+            ...(gender ? { member: { is: { gender } } } : {}),
           },
         }),
         this.prisma.club_halls.count({ where: { is_deleted: false, ...clubBranchWhere } }),
@@ -233,6 +298,7 @@ export class ClubDashboardService {
           LEFT JOIN club_members m ON m.id = s.member_id
           WHERE (s.member_id IS NULL OR m.is_deleted = 0)
             ${subscriptionBranchSql}
+            ${subscriptionSectionSql}
         `,
         this.prisma.club_trainers.count({ where: { is_deleted: false, is_active: true } }),
         this.prisma.club_classes.count({
@@ -248,7 +314,7 @@ export class ClubDashboardService {
             invoice_date: { gte: start, lte: end },
             ...clubBranchWhere,
           },
-          select: { status: true, total_amount: true },
+          select: { status: true, total_amount: true, member_id: true },
         }),
         this.prisma.club_inbody_invoices.findMany({
           where: {
@@ -256,7 +322,7 @@ export class ClubDashboardService {
             invoice_date: { gte: start, lte: end },
             ...clubBranchWhere,
           },
-          select: { status: true, total_amount: true },
+          select: { status: true, total_amount: true, member_id: true },
         }),
         this.prisma.club_class_enrollments.findMany({
           where: {
@@ -272,16 +338,25 @@ export class ClubDashboardService {
         providedLedgerRows ?? this.financialLedgerRows(start, end, scopedBranches),
       ]);
 
+    const sectionMembers = gender
+      ? await this.sectionMemberIds(gender, [
+          ...spaInvoices.map((i) => i.member_id),
+          ...inbodyInvoices.map((i) => i.member_id),
+          ...classEnrollmentsPaid.map((e) => e.member_id),
+        ])
+      : null;
+    const inSection = (memberId: number | null) =>
+      sectionMembers === null || (memberId != null && sectionMembers.has(memberId));
+
     const spaRevenue = spaInvoices
-      .filter((i) => i.status === 'paid')
+      .filter((i) => i.status === 'paid' && inSection(i.member_id))
       .reduce((sum, i) => sum + toNum(i.total_amount), 0);
     const inbodyRevenue = inbodyInvoices
-      .filter((i) => i.status === 'paid')
+      .filter((i) => i.status === 'paid' && inSection(i.member_id))
       .reduce((sum, i) => sum + toNum(i.total_amount), 0);
-    const classRevenue = classEnrollmentsPaid.reduce(
-      (sum, e) => sum + toNum(e.class.price),
-      0,
-    );
+    const classRevenue = classEnrollmentsPaid
+      .filter((e) => inSection(e.member_id))
+      .reduce((sum, e) => sum + toNum(e.class.price), 0);
 
     const subscriptionMetrics = subscriptionMetricsRows[0];
 
@@ -357,6 +432,7 @@ export class ClubDashboardService {
                 },
               ],
             },
+            ...(gender ? [this.receiptSectionWhere(gender)] : []),
           ],
           // Honor the branch filter via the receipt's subscription/member (receipts have no branch column).
           ...(scopedBranches
@@ -372,6 +448,7 @@ export class ClubDashboardService {
           status: 'completed',
           refund_date: { gte: start, lte: end },
           ...clubBranchWhere,
+          ...(gender ? { subscription: { is: this.subscriptionSectionWhere(gender) } } : {}),
         },
         select: { refund_amount: true },
       }),
@@ -492,7 +569,7 @@ export class ClubDashboardService {
     // membership, attendance, inventory and sales queries.
     const ledgerRowsPromise = this.financialLedgerRows(start, end, scopedBranches);
     const basePromise = ledgerRowsPromise.then((ledgerRows) =>
-      this.summary({ startDate: start, endDate: end, branchId: query.branchId }, user, ledgerRows),
+      this.summary({ startDate: start, endDate: end, branchId: query.branchId }, user, ledgerRows, false),
     );
 
     const [
@@ -811,7 +888,10 @@ export class ClubDashboardService {
   }
 
   async treasury(
-    params: { date?: string; dateFrom?: string; dateTo?: string; branchId?: string } | string | undefined,
+    params:
+      | { date?: string; dateFrom?: string; dateTo?: string; branchId?: string; gender?: string }
+      | string
+      | undefined,
     user?: JwtUser,
     legacyBranchId?: string,
   ) {
@@ -819,6 +899,11 @@ export class ClubDashboardService {
       typeof params === 'string' || params == null
         ? { date: params ?? undefined, branchId: legacyBranchId }
         : { ...params, branchId: params.branchId ?? legacyBranchId };
+    // رجالي/حريمي/الكل: member money only (receipts, subscriptions, lockers, spa, InBody).
+    const gender = this.branchScope.resolveMemberGenderRequest(
+      user,
+      typeof params === 'object' && params ? params.gender : undefined,
+    );
 
     const {
       dateFrom,
@@ -849,12 +934,22 @@ export class ClubDashboardService {
           ],
         }
       : {};
+    const receiptSectionWhere: Prisma.club_receiptsWhereInput = gender
+      ? { AND: [this.receiptSectionWhere(gender)] }
+      : {};
+    const subscriptionSectionWhere: Prisma.club_subscriptionsWhereInput = gender
+      ? { AND: [this.subscriptionSectionWhere(gender)] }
+      : {};
+    const lockerSectionWhere: Prisma.club_locker_subscriptionsWhereInput = gender
+      ? { AND: [this.lockerSectionWhere(gender)] }
+      : {};
 
     if (summaryOnly) {
       const receiptWhere: Prisma.club_receiptsWhereInput = {
         ...dateFilter({ receipt_date: dateFrom ?? '' }),
         ...receiptBranchWhere,
         ...creatorWhere,
+        ...receiptSectionWhere,
       };
       const receiptPaymentWhere: Prisma.club_receipt_paymentsWhereInput = {
         receipt: { is: receiptWhere },
@@ -863,6 +958,7 @@ export class ClubDashboardService {
         ...dateFilter({ registration_date: dateFrom ?? '' }),
         ...clubBranchWhere,
         ...creatorWhere,
+        ...subscriptionSectionWhere,
         paid_amount: { gt: 0 },
         receipts: {
           none: dateFrom && dateTo
@@ -870,6 +966,34 @@ export class ClubDashboardService {
             : {},
         },
       };
+      const spaWhere: Prisma.club_spa_invoicesWhereInput = {
+        ...dateFilter({ invoice_date: dateFrom ?? '' }),
+        is_active: true,
+        status: 'paid',
+        ...clubBranchWhere,
+        ...creatorWhere,
+      };
+      const inbodyWhere: Prisma.club_inbody_invoicesWhereInput = {
+        ...dateFilter({ invoice_date: dateFrom ?? '' }),
+        is_active: true,
+        status: 'paid',
+        ...clubBranchWhere,
+        ...creatorWhere,
+      };
+      if (gender) {
+        const [spaMembers, inbodyMembers] = await Promise.all([
+          this.prisma.club_spa_invoices.findMany({ where: spaWhere, select: { member_id: true }, distinct: ['member_id'] }),
+          this.prisma.club_inbody_invoices.findMany({ where: inbodyWhere, select: { member_id: true }, distinct: ['member_id'] }),
+        ]);
+        const allowed = [
+          ...(await this.sectionMemberIds(gender, [
+            ...spaMembers.map((row) => row.member_id),
+            ...inbodyMembers.map((row) => row.member_id),
+          ])),
+        ];
+        spaWhere.member_id = { in: allowed };
+        inbodyWhere.member_id = { in: allowed };
+      }
 
       const [
         receiptPayments,
@@ -903,6 +1027,7 @@ export class ClubDashboardService {
             ...dateFilter({ subscription_start_date: dateFrom ?? '' }),
             ...lockerBranchWhere,
             ...creatorWhere,
+            ...lockerSectionWhere,
             paid_amount: { gt: 0 },
           },
           _sum: { paid_amount: true },
@@ -910,25 +1035,13 @@ export class ClubDashboardService {
         }),
         this.prisma.club_spa_invoices.groupBy({
           by: ['payment_method'],
-          where: {
-            ...dateFilter({ invoice_date: dateFrom ?? '' }),
-            is_active: true,
-            status: 'paid',
-            ...clubBranchWhere,
-            ...creatorWhere,
-          },
+          where: spaWhere,
           _sum: { total_amount: true },
           _count: { _all: true },
         }),
         this.prisma.club_inbody_invoices.groupBy({
           by: ['payment_method'],
-          where: {
-            ...dateFilter({ invoice_date: dateFrom ?? '' }),
-            is_active: true,
-            status: 'paid',
-            ...clubBranchWhere,
-            ...creatorWhere,
-          },
+          where: inbodyWhere,
           _sum: { total_amount: true },
           _count: { _all: true },
         }),
@@ -995,6 +1108,7 @@ export class ClubDashboardService {
           ...dateFilter({ receipt_date: dateFrom ?? '' }),
           ...receiptBranchWhere,
           ...creatorWhere,
+          ...receiptSectionWhere,
         },
         include: { payments: { select: { method: true, amount: true }, orderBy: { id: 'asc' } } },
       }),
@@ -1003,6 +1117,7 @@ export class ClubDashboardService {
           ...dateFilter({ registration_date: dateFrom ?? '' }),
           ...clubBranchWhere,
           ...creatorWhere,
+          ...subscriptionSectionWhere,
           receipts: {
             none: dateFrom && dateTo
               ? { receipt_date: dateFrom === dateTo ? dateFrom : { gte: dateFrom, lte: dateTo } }
@@ -1015,6 +1130,7 @@ export class ClubDashboardService {
           ...dateFilter({ subscription_start_date: dateFrom ?? '' }),
           ...lockerBranchWhere,
           ...creatorWhere,
+          ...lockerSectionWhere,
         },
       }),
       this.prisma.club_spa_invoices.findMany({
@@ -1048,10 +1164,13 @@ export class ClubDashboardService {
       memberIds.length > 0
         ? await this.prisma.club_members.findMany({
             where: { id: { in: memberIds } },
-            select: { id: true, name: true },
+            select: { id: true, name: true, gender: true },
           })
         : [];
     const memberNameById = new Map(memberRows.map((m) => [m.id, m.name]));
+    const memberGenderById = new Map(memberRows.map((m) => [m.id, m.gender]));
+    const inSection = (memberId: number | null) =>
+      !gender || (memberId != null && memberGenderById.get(memberId) === gender);
 
     // Every subscription payment also creates a club_receipts row, so receipts are the single
     // source of truth for subscription cash. Only emit a subscription-sourced entry when the
@@ -1101,13 +1220,13 @@ export class ClubDashboardService {
           amount: toNum(s.paid_amount),
           paymentMethod: s.payment_method ?? 'cash',
         })),
-      ...spaInvoices.map((i) => ({
+      ...spaInvoices.filter((i) => inSection(i.member_id)).map((i) => ({
         source: 'spa',
         customerName: memberNameById.get(i.member_id) ?? i.service?.name ?? '—',
         amount: toNum(i.total_amount),
         paymentMethod: i.payment_method ?? 'cash',
       })),
-      ...inbodyInvoices.map((i) => ({
+      ...inbodyInvoices.filter((i) => inSection(i.member_id)).map((i) => ({
         source: 'inbody',
         customerName:
           (i.member_id ? memberNameById.get(i.member_id) : null) ?? i.customer_name ?? '—',

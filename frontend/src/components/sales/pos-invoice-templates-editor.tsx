@@ -18,6 +18,7 @@ import {
   type PosPrintFontScale,
   type PosPrintTemplate,
 } from './pos-printing';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 function ToggleSetting({
   label,
@@ -83,8 +84,8 @@ function TemplateEditorCard({
               <div className="grid gap-1.5"><Label>{ui('العنوان المطبوع')}</Label><Input value={template.headerText} onChange={(event) => onChange({ ...template, headerText: event.target.value })} /></div>
               <div className="grid gap-1.5 sm:col-span-2"><Label>{ui('رسالة نهاية الورقة')}</Label><Input value={template.footerText} onChange={(event) => onChange({ ...template, footerText: event.target.value })} /></div>
               <div className="grid gap-1.5"><Label>{ui('اسم الطابعة المستهدفة')}</Label><div className="relative"><Printer className="absolute start-3 top-2.5 size-4 text-muted-foreground" /><Input className="ps-9" value={template.layoutConfig.printerName} onChange={(event) => updateLayout({ printerName: event.target.value })} /></div></div>
-              <div className="grid gap-1.5"><Label>{ui('حجم الورق الحراري')}</Label><select className="h-10 rounded-md border bg-background px-3 text-sm" value={template.paperSize} onChange={(event) => onChange({ ...template, paperSize: event.target.value as '80mm' | '58mm' })}><option value="80mm">80mm — {ui('المقاس القياسي للكافيه')}</option><option value="58mm">58mm — {ui('مقاس صغير')}</option></select></div>
-              <div className="grid gap-1.5"><Label>{ui('حجم الخط')}</Label><select className="h-10 rounded-md border bg-background px-3 text-sm" value={template.layoutConfig.fontScale} onChange={(event) => updateLayout({ fontScale: event.target.value as PosPrintFontScale })}><option value="compact">{ui('مضغوط')}</option><option value="normal">{ui('عادي')}</option><option value="large">{ui('كبير وواضح')}</option></select></div>
+              <div className="grid gap-1.5"><Label>{ui('حجم الورق الحراري')}</Label><SearchableSelect className="h-10 rounded-md border bg-background px-3 text-sm" value={template.paperSize} onChange={(event) => onChange({ ...template, paperSize: event.target.value as '80mm' | '58mm' })}><option value="80mm">80mm — {ui('المقاس القياسي للكافيه')}</option><option value="58mm">58mm — {ui('مقاس صغير')}</option></SearchableSelect></div>
+              <div className="grid gap-1.5"><Label>{ui('حجم الخط')}</Label><SearchableSelect className="h-10 rounded-md border bg-background px-3 text-sm" value={template.layoutConfig.fontScale} onChange={(event) => updateLayout({ fontScale: event.target.value as PosPrintFontScale })}><option value="compact">{ui('مضغوط')}</option><option value="normal">{ui('عادي')}</option><option value="large">{ui('كبير وواضح')}</option></SearchableSelect></div>
               <div className="grid gap-1.5"><Label>{ui('عدد النسخ')}</Label><Input className="nums" type="number" min={1} max={5} value={template.layoutConfig.copies} onChange={(event) => updateLayout({ copies: Math.min(5, Math.max(1, Number(event.target.value) || 1)) })} /></div>
             </div>
             <p className="mt-2 rounded-lg bg-muted/45 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">{ui('اسم الطابعة هو مفتاح الربط مع برنامج الطباعة المحلي عند توصيل الجهاز. قبل التوصيل تظهر النسختان في معاينة التأكيد بدون فتح صفحة طباعة إضافية.')}</p>

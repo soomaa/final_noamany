@@ -2,6 +2,10 @@ import { Building2 } from 'lucide-react';
 import { MemberAvatar } from '@/components/club/member-avatar';
 import { api } from '@/lib/api';
 import { toArabicDigits } from '@/lib/utils';
+import { BlockedChip } from '@/components/club/blocked-member-flag';
+import { normalizeScannedCode } from '@/lib/scanned-code';
+
+export { normalizeScannedCode };
 import type { ClubSearchHit } from '@/types/gym-ops';
 
 /** Reception's member search (`/club/search`): name, mobile, member code, card/barcode, national ID. */
@@ -12,13 +16,14 @@ export interface ClubMemberSearchResult {
 
 export const CLUB_MEMBER_SEARCH_MIN_CHARS = 2;
 
+
 export async function searchClubMembersUniversal(
   q: string,
   options: { branchId?: number | string; withEntitlement?: boolean; signal?: AbortSignal } = {},
 ): Promise<ClubMemberSearchResult> {
   const { data } = await api.get<ClubMemberSearchResult | ClubSearchHit[]>('/club/search', {
     params: {
-      q: q.trim(),
+      q: normalizeScannedCode(q),
       ...(options.withEntitlement ? { withEntitlement: true } : {}),
       branchId: options.branchId || undefined,
     },
@@ -31,7 +36,7 @@ export async function searchClubMembersUniversal(
 
 /** A hit the query names exactly by member code or card/barcode — what a scanner produces. */
 export function exactCodeHit(result: ClubMemberSearchResult, q: string): ClubSearchHit | null {
-  const value = q.trim().toLowerCase();
+  const value = normalizeScannedCode(q).toLowerCase();
   return (
     result.hits.find((hit) => hit.memberCode.toLowerCase() === value) ??
     result.hits.find((hit) => hit.matchType === 'code' || hit.matchType === 'card') ??
@@ -68,7 +73,11 @@ export function ClubMemberSearchHits({
           >
             <MemberAvatar name={h.name} size="md" />
             <div className="min-w-0 flex-1">
-              <p className="truncate font-medium">{h.name}</p>
+              <p className="flex items-center gap-2 font-medium">
+                <span className="truncate">{h.name}</span>
+                {h.isBlocked ? <BlockedChip /> : null}
+              </p>
+              {h.isBlocked && h.blockReason ? <p className="truncate text-xs text-destructive">السبب: {h.blockReason}</p> : null}
               <p className="text-xs text-muted-foreground nums">
                 {h.memberCode}
                 {h.phone ? ` · ${toArabicDigits(h.phone)}` : ''}

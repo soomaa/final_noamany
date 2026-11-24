@@ -262,4 +262,23 @@ describe('TrainerPortalService', () => {
     expect(result.earnings.total).toBe(0);
     expect(result.earnings.items).toEqual([]);
   });
+
+  it('limits the dashboard to the calendar month of dateFrom, whatever range is asked', async () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const prisma = {
+      club_trainers: { findFirst: jest.fn().mockResolvedValue(trainer) },
+      club_classes: { findMany },
+      club_trainer_salaries: { findMany: jest.fn().mockResolvedValue([]) },
+      club_trainer_earning_payments: {
+        aggregate: jest.fn().mockResolvedValue({ _sum: { amount: null } }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      club_private_attendance_commissions: { findMany: jest.fn().mockResolvedValue([]) },
+    };
+    const service = new TrainerPortalService(prisma as unknown as PrismaService);
+
+    await service.dashboard(user, { dateFrom: '2026-02-10', dateTo: '2026-05-31' });
+
+    expect(findMany.mock.calls[0][0].where.class_date).toEqual({ gte: '2026-02-01', lte: '2026-02-28' });
+  });
 });

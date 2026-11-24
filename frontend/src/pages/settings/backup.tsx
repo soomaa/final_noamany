@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useBranches } from '@/hooks/use-branches';
 import { api, apiError } from '@/lib/api';
 import { useLocale } from '@/store/locale';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 async function downloadCsv(path: string, filename: string) {
   const { data } = await api.get<string>(path, { responseType: 'text' });
@@ -57,7 +58,7 @@ export function BackupSettingsPage() {
         <CardContent className="space-y-4">
           <div className="max-w-xs">
             <label className="text-sm font-medium">{ui('الفرع')}</label>
-            <select
+            <SearchableSelect
               className="mt-1 w-full rounded-md border bg-background px-3 py-2 text-sm"
               value={branchId}
               onChange={(e) => setBranchId(e.target.value)}
@@ -68,7 +69,7 @@ export function BackupSettingsPage() {
                   {b.name}
                 </option>
               ))}
-            </select>
+            </SearchableSelect>
           </div>
 
           <div className="flex flex-wrap gap-3">

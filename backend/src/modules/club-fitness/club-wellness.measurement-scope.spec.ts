@@ -18,10 +18,10 @@ function setup() {
   return { service, prisma };
 }
 describe('reception member measurements', () => {
-  it('limits both rows and totals to today, active group members and the permitted section', async () => {
+  it('limits both rows and totals to today and active group members of either section', async () => {
     const { service, prisma } = setup();
     await service.listInbodyMeasurements({ ...query as object, dateFrom: '2000-01-01', dateTo: '2099-12-31' } as never, receptionist);
-    expect(prisma.club_members.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { is_deleted: false, branch_id: { in: [3, 7] }, gender: 'male' } }));
+    expect(prisma.club_members.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { is_deleted: false, branch_id: { in: [3, 7] } } }));
     const where = { measurement_date: localDateString(), member_id: { in: [42] } };
     expect(prisma.club_inbody_measurements.findMany).toHaveBeenCalledWith(expect.objectContaining({ where }));
     expect(prisma.club_inbody_measurements.count).toHaveBeenCalledWith({ where });
@@ -41,10 +41,10 @@ describe('reception member measurements', () => {
   it('allows a new measurement today for an older grouped member', async () => {
     const { service, prisma } = setup();
     await expect(service.createInbodyMeasurement({ memberId: 42, measurementDate: localDateString(), reportUrl: '/uploads/test.pdf' }, receptionist)).resolves.toMatchObject({ memberId: 42 });
-    expect(prisma.club_members.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { AND: [{ id: 42 }, { is_deleted: false, branch_id: { in: [3, 7] }, gender: 'male' }] } }));
+    expect(prisma.club_members.findFirst).toHaveBeenCalledWith(expect.objectContaining({ where: { AND: [{ id: 42 }, { is_deleted: false, branch_id: { in: [3, 7] } }] } }));
     expect(prisma.club_inbody_measurements.create).toHaveBeenCalled();
   });
-  it('blocks adding a measurement for a member outside the allowed group or section', async () => {
+  it('blocks adding a measurement for a member outside the allowed branch group', async () => {
     const { service, prisma } = setup();
     prisma.club_members.findFirst.mockResolvedValueOnce({ id: 99 }).mockResolvedValueOnce(null as never);
     await expect(service.createInbodyMeasurement({ memberId: 99, measurementDate: localDateString() }, receptionist)).rejects.toBeInstanceOf(ForbiddenException);

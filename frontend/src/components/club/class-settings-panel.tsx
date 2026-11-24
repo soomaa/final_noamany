@@ -13,6 +13,7 @@ import { api, apiError } from '@/lib/api';
 import { confirm } from '@/lib/confirm';
 import { toArabicDigits } from '@/lib/utils';
 import type { ClubClassType, ClubHallRow, ClubTrainerRow } from '@/types/fitness';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 type ScheduleDraft = {
   weekday: number;
@@ -320,25 +321,25 @@ export function ClassSettingsPanel({ autoOpenCreate = false, onAutoOpenHandled }
                         <div key={`${trainerId}-${index}`} className="grid gap-2 rounded-lg border bg-background p-3 md:grid-cols-[1fr_1fr_1fr_1.2fr_1.2fr_0.8fr_auto]">
                           <div className="space-y-1">
                             <Label className="text-xs">اليوم</Label>
-                            <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={slot.weekday} onChange={(event) => updateTrainerSlot(trainerId, index, { weekday: Number(event.target.value) })}>
+                            <SearchableSelect className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={slot.weekday} onChange={(event) => updateTrainerSlot(trainerId, index, { weekday: Number(event.target.value) })}>
                               {weekdayOptions.map((day) => <option key={day.value} value={day.value}>{day.label}</option>)}
-                            </select>
+                            </SearchableSelect>
                           </div>
                           <div className="space-y-1"><Label className="text-xs">البداية</Label><Time12Input value={slot.startTime} onValueChange={(value) => updateTrainerSlot(trainerId, index, { startTime: value })} /></div>
                           <div className="space-y-1"><Label className="text-xs">النهاية</Label><Time12Input value={slot.endTime} onValueChange={(value) => updateTrainerSlot(trainerId, index, { endTime: value })} /></div>
                           <div className="space-y-1">
                             <Label className="text-xs">الفرع</Label>
-                            <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={slot.branchId || ''} onChange={(event) => updateTrainerSlot(trainerId, index, { branchId: Number(event.target.value) })}>
+                            <SearchableSelect className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={slot.branchId || ''} onChange={(event) => updateTrainerSlot(trainerId, index, { branchId: Number(event.target.value) })}>
                               <option value="">اختر الفرع</option>
                               {(branches ?? []).map((branch) => <option key={branch.id} value={branch.id}>{branch.name ?? branch.id}</option>)}
-                            </select>
+                            </SearchableSelect>
                           </div>
                           <div className="space-y-1">
                             <Label className="text-xs">القاعة</Label>
-                            <select className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={slot.hallId ?? ''} onChange={(event) => updateTrainerSlot(trainerId, index, { hallId: event.target.value ? Number(event.target.value) : null })}>
+                            <SearchableSelect className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" value={slot.hallId ?? ''} onChange={(event) => updateTrainerSlot(trainerId, index, { hallId: event.target.value ? Number(event.target.value) : null })}>
                               <option value="">بدون قاعة</option>
                               {(halls ?? []).filter((hall) => hall.branchId === slot.branchId).map((hall) => <option key={hall.id} value={hall.id}>{hall.name} - {hall.hallNumber}</option>)}
-                            </select>
+                            </SearchableSelect>
                           </div>
                           <div className="space-y-1"><Label className="text-xs">الأماكن</Label><Input type="number" min={1} className="nums" value={slot.maxCapacity} onChange={(event) => updateTrainerSlot(trainerId, index, { maxCapacity: Number(event.target.value) || 1 })} /></div>
                           <div className="flex items-end">

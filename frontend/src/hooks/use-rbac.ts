@@ -23,6 +23,7 @@ const keys = {
   userRoles: (id: number) => ['rbac', 'user-roles', id] as const,
   exceptions: (id: number) => ['rbac', 'exceptions', id] as const,
   operationalScope: (id: number) => ['rbac', 'operational-scope', id] as const,
+  sales: (id: number) => ['rbac', 'sales', id] as const,
   audit: (skip: number) => ['rbac', 'audit', skip] as const,
 };
 
@@ -183,6 +184,31 @@ export function useClearExceptions(userId: number) {
   return toastMutation<void>(() => api.delete(`/rbac/users/${userId}/exceptions`), {
     success: uiStatic('تم مسح كل الاستثناءات'),
     invalidate: [keys.exceptions(userId), currentSessionQueries],
+  });
+}
+
+export interface SalesToggleResponse {
+  userId: number;
+  enabled: boolean;
+  /** The job title itself is a sales title (always sells; the toggle is locked on). */
+  byJobTitle: boolean;
+  jobTitle: string | null;
+  hasEmployee: boolean;
+}
+
+/** «يعمل كأخصائي مبيعات» — any role can also sell (adds the additional_sales role). */
+export function useSalesToggle(userId: number | null) {
+  return useQuery({
+    queryKey: keys.sales(userId ?? 0),
+    queryFn: async () => (await api.get<SalesToggleResponse>(`/rbac/users/${userId}/sales`)).data,
+    enabled: userId != null,
+  });
+}
+
+export function useSetSalesToggle(userId: number) {
+  return toastMutation((enabled: boolean) => api.put(`/rbac/users/${userId}/sales`, { enabled }), {
+    success: uiStatic('تم حفظ إعداد المبيعات'),
+    invalidate: [keys.sales(userId), keys.exceptions(userId), keys.userRoles(userId), currentSessionQueries],
   });
 }
 

@@ -76,6 +76,9 @@ describe('ClubSubscriptionsService category and branch scope', () => {
     allowedBranchIds: jest.fn(),
     resolveListFilter: jest.fn(),
     memberGenderFilter: jest.fn(),
+    // Real رجالي/حريمي rule on top of the mocked employee section.
+    resolveMemberGenderRequest: jest.fn((user: unknown, requested?: string | null) =>
+      BranchScopeService.prototype.resolveMemberGenderRequest.call(branchScope, user as never, requested)),
   };
   const groups = { sharesGroup: jest.fn().mockResolvedValue(false), siblingBranchIds: jest.fn().mockResolvedValue([3]) };
   const service = new ClubSubscriptionsService(
@@ -100,7 +103,8 @@ describe('ClubSubscriptionsService category and branch scope', () => {
     branchScope.resolveListFilter.mockReturnValue([3]);
     branchScope.allowedBranchIds.mockReturnValue([3]);
     groups.siblingBranchIds.mockResolvedValue([3]);
-    branchScope.memberGenderFilter.mockReturnValue('female');
+    // No hard men/women restriction any more: the section is only the screen default.
+    branchScope.memberGenderFilter.mockReturnValue(null);
   });
 
   it('labels a legacy subscription with its member category and branch', async () => {
@@ -125,8 +129,22 @@ describe('ClubSubscriptionsService category and branch scope', () => {
     expect(prisma.club_subscriptions.findMany.mock.calls[2][0].where.AND).toContainEqual({ branch_id: { in: [3] } });
   });
 
-  it('forces a women-section employee to their branch and category despite forged filters', async () => {
-    await service.list({ page: '1', pageSize: '20', branch: '99', gender: 'male' } as never, {
+  it('lets a women-section employee open the men section', async () => {
+    await expect(service.list({ page: '1', pageSize: '20', gender: 'male' } as never, {
+      level: 2,
+      branch: 3,
+      man_women_type: 2,
+    } as never)).resolves.toEqual(expect.objectContaining({ total: 1 }));
+
+    const where = prisma.club_subscriptions.findMany.mock.calls[0][0].where;
+    expect(where.AND).toEqual(expect.arrayContaining([
+      { branch_id: { in: [3] } },
+      { OR: [{ gender: 'male' }, { gender: null, member: { is: { gender: 'male' } } }] },
+    ]));
+  });
+
+  it('keeps a one-section employee to their branch despite a forged branch, without forcing a section', async () => {
+    await service.list({ page: '1', pageSize: '20', branch: '99' } as never, {
       level: 2,
       branch: 3,
       man_women_type: 1,
@@ -135,11 +153,11 @@ describe('ClubSubscriptionsService category and branch scope', () => {
     const where = prisma.club_subscriptions.findMany.mock.calls[0][0].where;
     expect(where.AND).toEqual(expect.arrayContaining([
       { branch_id: { in: [3] } },
-      { OR: [{ gender: 'female' }, { gender: null, member: { is: { gender: 'female' } } }] },
     ]));
+    expect(JSON.stringify(where)).not.toContain('gender');
   });
 
-  it('applies the employee section to expired-subscription reports', async () => {
+  it('scopes expired-subscription reports to the branch, and to a section only when one is picked', async () => {
     await service.expiredReport({ page: '1', pageSize: '20' }, {
       level: 2,
       branch: 3,
@@ -148,6 +166,17 @@ describe('ClubSubscriptionsService category and branch scope', () => {
 
     const where = prisma.club_subscriptions.findMany.mock.calls[0][0].where;
     expect(where.AND).toEqual(expect.arrayContaining([
+      { branch_id: { in: [3] } },
+    ]));
+    expect(JSON.stringify(where)).not.toContain('gender');
+
+    prisma.club_subscriptions.findMany.mockClear();
+    await service.expiredReport({ page: '1', pageSize: '20', gender: 'female' }, {
+      level: 2,
+      branch: 3,
+      man_women_type: 1,
+    } as never);
+    expect(prisma.club_subscriptions.findMany.mock.calls[0][0].where.AND).toEqual(expect.arrayContaining([
       { branch_id: { in: [3] } },
       { OR: [{ gender: 'female' }, { gender: null, member: { is: { gender: 'female' } } }] },
     ]));

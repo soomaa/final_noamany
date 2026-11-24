@@ -23,6 +23,6 @@ export class ListClubAttendanceDto extends PaginationDto {
   status?: string;
 
   @IsOptional()
-  @IsIn(['male', 'female'])
+  @IsIn(['all', 'male', 'female'])
   gender?: string;
 }

@@ -16,6 +16,7 @@ import { useListQuery } from '@/lib/use-list-query';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
 import type { EmployeeListItem } from '@/types/employees';
+import { SearchableSelect } from '@/components/common/searchable-select';
 
 interface SwapRow { id: number; empCode: number; empName: string; sheftDate: string; ttypeName: string; dwamTitle?: string; }
 interface ExtraRow { id: number; empCode: number; empName: string; edafaDate: string; numHours: number; }
@@ -94,7 +95,7 @@ export function AttendanceAdjustmentsPage() {
           <div><Label>{ui('الإدارة')}</Label><Input disabled value={swapEmployee?.edara_n ?? ''} /></div>
           <div><Label>{ui('القسم')}</Label><Input disabled value={swapEmployee?.qsm_n ?? ''} /></div>
           <div><Label>{ui('التاريخ')}</Label><Input type="date" value={swap.sheftDate} onChange={(e) => setSwap((x) => ({ ...x, sheftDate: e.target.value }))} /></div>
-          <div><Label>{ui('نوع العملية')}</Label><select className="h-10 w-full rounded-md border bg-background px-3" value={swap.ttype} onChange={(e) => setSwap((x) => ({ ...x, ttype: e.target.value }))}><option value="1">{ui('تبديل وردية')}</option><option value="2">{ui('إضافة وردية')}</option></select></div>
+          <div><Label>{ui('نوع العملية')}</Label><SearchableSelect className="h-10 w-full rounded-md border bg-background px-3" value={swap.ttype} onChange={(e) => setSwap((x) => ({ ...x, ttype: e.target.value }))}><option value="1">{ui('تبديل وردية')}</option><option value="2">{ui('إضافة وردية')}</option></SearchableSelect></div>
           <div><Label>{ui('الوردية')}</Label><Combobox value={swap.dwamIdFk} options={shiftOptions} placeholder={ui('اختر الوردية')} searchPlaceholder={ui('ابحث في الورديات…')} onValueChange={(dwamIdFk) => setSwap((x) => ({ ...x, dwamIdFk }))} /></div>
           <div className="flex items-end"><Button className="w-full" disabled={saving} onClick={() => void saveSwap()}>{ui('حفظ')}</Button></div>
         </div>
