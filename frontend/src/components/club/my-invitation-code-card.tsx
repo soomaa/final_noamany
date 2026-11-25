@@ -1,8 +1,39 @@
 import { useQuery } from '@tanstack/react-query';
-import { ArrowLeft, Ticket } from 'lucide-react';
+import { ArrowLeft, Check, Copy, Ticket } from 'lucide-react';
+import { useState } from 'react';
+import { toast } from 'sonner';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { CLUB_ROUTES } from '@/lib/club-routes';
+
+/** Copies an invitation code (to send it to the employee, or for the employee to share it). */
+export function CopyCodeButton({ code, className = '' }: { code: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async (event: React.MouseEvent) => {
+    // Inside a link or a table row: copying must not open anything.
+    event.preventDefault();
+    event.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(code);
+      setCopied(true);
+      toast.success(`تم نسخ الكود ${code}`);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error('تعذر نسخ الكود');
+    }
+  };
+  return (
+    <button
+      type="button"
+      onClick={(event) => void copy(event)}
+      title="نسخ الكود"
+      aria-label={`نسخ الكود ${code}`}
+      className={`inline-flex size-8 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground transition hover:border-primary/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${className}`}
+    >
+      {copied ? <Check className="size-4 text-success" /> : <Copy className="size-4" />}
+    </button>
+  );
+}
 
 interface MineSummary {
   code: string | null;
@@ -45,7 +76,10 @@ export function MyInvitationCodeCard() {
         </span>
         <div>
           <p className="text-sm text-muted-foreground">كود الدعوات بتاعك {summary.isActive ? '' : '· موقوف'}</p>
-          <p className="text-2xl font-black tracking-wider" dir="ltr">{summary.code}</p>
+          <p className="flex items-center gap-2">
+            <span className="text-2xl font-black tracking-wider" dir="ltr">{summary.code}</span>
+            <CopyCodeButton code={summary.code} />
+          </p>
         </div>
       </div>
       <div className="grid flex-1 grid-cols-2 gap-2 sm:grid-cols-4">

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { CopyCodeButton } from '@/components/club/my-invitation-code-card';
 import { MaskedPhone } from '@/components/club/masked-phone';
 import { STAFF_INVITATIONS_KEY, StaffInvitationButton } from '@/components/club/staff-invitation-dialog';
 import { PageHeader } from '@/components/common/page-header';
@@ -558,6 +559,7 @@ function CodeCell({ row }: { row: CodeRow }) {
   return (
     <span className="inline-flex items-center gap-1">
       <Badge variant={row.isActive ? 'default' : 'secondary'} dir="ltr">{row.code}</Badge>
+      <CopyCodeButton code={row.code} className="size-7" />
       {!row.isActive ? <span className="text-xs text-destructive">موقوف</span> : null}
     </span>
   );
@@ -830,7 +832,10 @@ export function MyInvitationCodePage() {
             <div>
               <p className="text-sm text-muted-foreground">{summary.employeeName}{summary.jobTitle ? ` · ${summary.jobTitle}` : ''}</p>
               {summary.code ? (
-                <p className="mt-1 text-3xl font-bold tracking-wider" dir="ltr">{summary.code}</p>
+                <p className="mt-1 flex items-center gap-2">
+                  <span className="text-3xl font-bold tracking-wider" dir="ltr">{summary.code}</span>
+                  <CopyCodeButton code={summary.code} className="size-9" />
+                </p>
               ) : (
                 <p className="mt-1 text-lg font-semibold text-muted-foreground">لسه مالكش كود — كلم الإدارة</p>
               )}
