@@ -70,6 +70,7 @@ import { LegalFilesModule } from './modules/legal-files/legal-files.module';
 import { AppUsersModule } from './modules/app-users/app-users.module';
 import { UserAdminModule } from './modules/user-admin/user-admin.module';
 import { PushModule } from './modules/push/push.module';
+import { MemberPushModule } from './modules/member-push/member-push.module';
 import { MobileModule } from './modules/mobile/mobile.module';
 import { MemberModule } from './modules/member/member.module';
 import { ClubMembersModule } from './modules/club-members/club-members.module';
@@ -179,6 +180,7 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     AppUsersModule,
     UserAdminModule,
     PushModule,
+    MemberPushModule,
     MobileModule,
     MemberModule,
     ClubMembersModule,

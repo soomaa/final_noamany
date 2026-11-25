@@ -196,4 +196,16 @@ export class CreateMemberNotificationDto {
   @IsOptional() @Transform(({ value }) => (value != null && value !== '' ? parseInt(value, 10) : undefined))
   @IsInt()
   branchId?: number;
+
+  /** «إرسال على الموبايل كمان» — also push to the members' phones (default true). */
+  @IsOptional() @Transform(({ value }) => (value == null || value === '' ? undefined : !(value === false || value === 'false' || value === '0' || value === 0)))
+  @IsBoolean()
+  sendPush?: boolean;
+}
+
+/** «تجربة على عضو» — test push to one member's registered phones. */
+export class TestMemberPushDto {
+  @Transform(({ value }) => (value != null && value !== '' ? parseInt(value, 10) : undefined))
+  @IsInt()
+  memberId!: number;
 }

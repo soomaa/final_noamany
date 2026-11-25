@@ -23,6 +23,13 @@ import {
   MemberLoginDto,
 } from "./dto/member.dto";
 import { MemberService } from "./member.service";
+import {
+  MemberDeviceTokenDeleteDto,
+  MemberDeviceTokenDto,
+} from "../push/dto/push.dto";
+import { PushService } from "../push/push.service";
+import { MemberPushService } from "../member-push/member-push.service";
+import { PushOpenedDto } from "../member-push/dto/member-push.dto";
 
 @Controller("member/auth")
 export class MemberAuthController {
@@ -70,7 +77,39 @@ export class MemberController {
   constructor(
     private readonly member: MemberService,
     private readonly auth: MemberAuthService,
+    private readonly push: PushService,
+    private readonly memberPush: MemberPushService,
   ) {}
+
+  /** The app reports a tap on a push: data.sendId of the message. Counted once per member. */
+  @Post("notification-opened")
+  @HttpCode(200)
+  notificationOpened(
+    @CurrentMember() user: MemberJwtUser,
+    @Body() dto: PushOpenedDto,
+  ) {
+    return this.memberPush.recordOpen(user.memberId, dto.sendId);
+  }
+
+  /** Register / refresh this phone's FCM token; returns the FCM topics the app subscribes to. */
+  @Post("device-token")
+  @HttpCode(200)
+  registerDeviceToken(
+    @CurrentMember() user: MemberJwtUser,
+    @Body() dto: MemberDeviceTokenDto,
+  ) {
+    return this.push.registerMemberDevice(user.memberId, dto);
+  }
+
+  /** Forget this phone's FCM token (logout / notifications off). */
+  @Delete("device-token")
+  @HttpCode(200)
+  removeDeviceToken(
+    @CurrentMember() user: MemberJwtUser,
+    @Body() dto: MemberDeviceTokenDeleteDto,
+  ) {
+    return this.push.removeMemberDevice(user.memberId, dto.token);
+  }
 
   @Get("profile")
   profile(@CurrentMember() user: MemberJwtUser) {

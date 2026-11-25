@@ -14,4 +14,5 @@ export const APP_MANAGEMENT_ROUTES = {
   news: '/app/news',
   community: '/app/community',
   ads: '/app/ads',
+  push: '/app/push-notifications',
 } as const;

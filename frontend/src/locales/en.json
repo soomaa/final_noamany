@@ -301,6 +301,7 @@
       "/app/exercises": "Exercises Management",
       "/app/news": "News Management",
       "/app/ads": "Ads Management",
+      "/app/push-notifications": "Member push notifications",
       "/org/branches": "Branches",
       "/org/departments": "Departments",
       "/employees": "Employee List",

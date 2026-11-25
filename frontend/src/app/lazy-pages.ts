@@ -282,6 +282,7 @@ export const AppExercisesPage = lazyPage(() => import('@/pages/app-management'),
 export const AppNewsPage = lazyPage(() => import('@/pages/app-management'), 'AppNewsPage');
 export const AppCommunityPage = lazyPage(() => import('@/pages/app-management/community'), 'AppCommunityPage');
 export const AppAdsPage = lazyPage(() => import('@/pages/app-management'), 'AppAdsPage');
+export const MemberPushPage = lazyPage(() => import('@/pages/app-management/push-notifications'), 'MemberPushPage');
 export const PortalManagementPage = lazyPage(() => import('@/pages/portal-management'), 'PortalManagementPage');
 export const AutomationPage = lazyPage(() => import('@/pages/settings/automation'), 'AutomationPage');
 export const GymPoliciesPage = lazyPage(() => import('@/pages/settings/gym-policies'), 'GymPoliciesPage');

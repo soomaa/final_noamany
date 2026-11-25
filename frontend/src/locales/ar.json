@@ -301,6 +301,7 @@
       "/app/exercises": "إدارة التمارين",
       "/app/news": "إدارة الأخبار",
       "/app/ads": "إدارة الإعلانات",
+      "/app/push-notifications": "إشعارات الموبايل للأعضاء",
       "/org/branches": "الفروع",
       "/club/branch-groups": "مجموعات الفروع",
       "/settings/payment-methods": "طرق الدفع",

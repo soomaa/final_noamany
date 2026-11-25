@@ -236,6 +236,7 @@ import {
   AppNewsPage,
   AppCommunityPage,
   AppAdsPage,
+  MemberPushPage,
   PortalManagementPage,
   FitnessProgramsPage,
   FitnessTemplatesPage,
@@ -700,6 +701,7 @@ export function AppRouter() {
           <Route path="app/news" element={<Lazy><AppNewsPage /></Lazy>} />
           <Route path="app/community" element={<Lazy><AppCommunityPage /></Lazy>} />
           <Route path="app/ads" element={<Lazy><AppAdsPage /></Lazy>} />
+          <Route path="app/push-notifications" element={<Lazy><MemberPushPage /></Lazy>} />
 
           <Route path="users" element={<Lazy><UsersPage /></Lazy>} />
           <Route path="users/manage" element={<Lazy><UsersPage /></Lazy>} />

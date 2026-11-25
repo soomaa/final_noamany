@@ -562,6 +562,7 @@ export const RESOURCE_TREE: ResourceNode[] = [
         page('app-management.community', 'إدارة المجتمع', '/app/community', LIST, 'Community'),
         page('app-management.ads', 'إدارة الإعلانات', '/app/ads', LIST, 'Ads'),
         page('app-management.notifications', 'إشعارات الأعضاء', '/app/notifications', LIST, 'Member notifications'),
+        page('app-management.push', 'إشعارات الموبايل للأعضاء', '/app/push-notifications', LIST, 'Member push notifications'),
       ], 'Content'),
     ],
   },

@@ -1387,6 +1387,121 @@ model am_member_notifications {
   @@map("am_member_notifications")
 }
 
+/// Member app (Ana Noamany) FCM device tokens. One row per token; a token belongs to one member
+/// and is re-pointed when it moves. token_hash = sha256(token) carries the unique key because
+/// FCM tokens can be long. invalid_at is set when FCM answers UNREGISTERED / INVALID_ARGUMENT.
+model club_member_device_tokens {
+  id           Int       @id @default(autoincrement())
+  member_id    Int
+  token        String    @db.Text
+  token_hash   String    @unique(map: "uq_club_member_device_tokens_hash") @db.Char(64)
+  platform     String    @db.VarChar(10)
+  app_version  String?   @db.VarChar(40)
+  created_at   DateTime  @default(now())
+  last_seen_at DateTime  @default(now())
+  invalid_at   DateTime?
+
+  @@index([member_id])
+  @@map("club_member_device_tokens")
+}
+
+/// «إشعارات الموبايل للأعضاء» — a saved message with a schedule (once / daily / weekly / monthly /
+/// every N days, Cairo time). The audience is a JSON filter evaluated at send time.
+model push_campaigns {
+  id            Int       @id @default(autoincrement())
+  name          String    @db.VarChar(150)
+  preset        String?   @db.VarChar(40)
+  title         String    @db.VarChar(200)
+  body          String    @db.Text
+  type          String    @default("general") @db.VarChar(40)
+  link          String?   @db.VarChar(500)
+  image_url     String?   @db.VarChar(500)
+  audience      String    @db.Text
+  in_app        Boolean   @default(true)
+  schedule_kind String    @db.VarChar(10) // once | daily | weekly | monthly | interval
+  run_at        DateTime?
+  time_of_day   String?   @db.VarChar(5)
+  weekdays      String?   @db.VarChar(20) // "0,3,5" (0 = Sunday)
+  month_day     Int?
+  interval_days Int?
+  start_date    String?   @db.VarChar(10)
+  end_date      String?   @db.VarChar(10)
+  status        String    @default("active") @db.VarChar(10) // active | paused | done
+  next_run_at   DateTime?
+  last_run_at   DateTime?
+  last_send_id  Int?
+  created_by    Int?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  @@index([status, next_run_at])
+  @@map("push_campaigns")
+}
+
+/// One push run (manual, scheduled or test) with its delivery counts.
+model push_sends {
+  id               Int       @id @default(autoincrement())
+  campaign_id      Int?
+  run_key          String?   @unique(map: "uq_push_sends_run_key") @db.VarChar(80)
+  trigger          String    @db.VarChar(10) // manual | schedule | test
+  title            String    @db.VarChar(200)
+  body             String    @db.Text
+  type             String    @default("general") @db.VarChar(40)
+  link             String?   @db.VarChar(500)
+  image_url        String?   @db.VarChar(500)
+  audience         String    @db.Text
+  audience_summary String?   @db.VarChar(500)
+  delivery         String    @default("tokens") @db.VarChar(10) // topic | tokens
+  topic_condition  String?   @db.VarChar(500)
+  in_app           Boolean   @default(true)
+  members_count    Int       @default(0)
+  devices_count    Int       @default(0)
+  sent_count       Int       @default(0)
+  failed_count     Int       @default(0)
+  invalid_count    Int       @default(0)
+  limited_count    Int       @default(0)
+  opened_count     Int       @default(0)
+  status           String    @default("running") @db.VarChar(10) // running | done | failed | skipped
+  error            String?   @db.Text
+  created_by       Int?
+  created_at       DateTime  @default(now())
+  finished_at      DateTime?
+
+  @@index([campaign_id])
+  @@index([created_at])
+  @@map("push_sends")
+}
+
+/// Per-member result of a token send (topic sends only get a row when the member opens it).
+model push_send_recipients {
+  id         Int       @id @default(autoincrement())
+  send_id    Int
+  member_id  Int
+  status     String    @db.VarChar(10) // sent | failed | invalid | no_device | limited | topic
+  opened_at  DateTime?
+  created_at DateTime  @default(now())
+
+  @@unique([send_id, member_id], map: "uq_push_send_recipients")
+  @@index([member_id, created_at])
+  @@map("push_send_recipients")
+}
+
+/// Single row (id = 1): quiet hours, default type, per-member daily limit, last FCM error.
+model push_settings {
+  id            Int       @id
+  quiet_enabled Boolean   @default(true)
+  quiet_start   String    @default("23:00") @db.VarChar(5)
+  quiet_end     String    @default("08:00") @db.VarChar(5)
+  quiet_mode    String    @default("defer") @db.VarChar(10) // defer | skip
+  default_type  String    @default("general") @db.VarChar(40)
+  daily_limit   Int       @default(3)
+  last_error    String?   @db.Text
+  last_error_at DateTime?
+  updated_at    DateTime  @default(now()) @updatedAt
+
+  @@map("push_settings")
+}
+
 model users {
   user_id              Int     @id @default(autoincrement())
   agent_brok_fk        Int? // FK-by-convention

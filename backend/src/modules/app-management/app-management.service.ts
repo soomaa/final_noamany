@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   NotFoundException,
+  Optional,
 } from '@nestjs/common';
 import { managerKind, managerPeriodBounds } from '../../common/utils/manager-scope.util';
 import { cairoDayRange } from '../../common/utils/cairo-day-range.util';
@@ -13,6 +14,7 @@ import { JwtUser } from '../../common/types/jwt-user';
 import { PrismaService } from '../../common/prisma/prisma.service';
 import { assertDateOrder } from '../../common/validators/validation.util';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
+import { MEMBER_TOPIC_ALL, memberBranchTopic, MemberPushPayload, PushService } from '../push/push.service';
 import {
   CreateInvitationDto,
   CreateMemberNotificationDto,
@@ -40,12 +42,25 @@ function uploadUrl(base: string, path: string | null | undefined): string | null
   return `${prefix}${rel}`;
 }
 
+/** `data` of a member notification is optional JSON; its `link` (or `url`) becomes the push deep link. */
+function notificationLink(data?: string | null): string | undefined {
+  if (!data?.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(data) as { link?: unknown; url?: unknown };
+    const link = parsed?.link ?? parsed?.url;
+    return typeof link === 'string' && link.trim() ? link.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 @Injectable()
 export class AppManagementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly branchScope: BranchScopeService = new BranchScopeService(),
+    @Optional() private readonly push?: PushService,
   ) {}
 
   /** Invitations belong to `branch_id`; scoped staff only see/act on their own branches. */
@@ -871,6 +886,15 @@ export class AppManagementService {
       created_by: createdBy ?? null,
     };
 
+    const sendPush = dto.sendPush !== false;
+    const pushPayload = (id: number | string): MemberPushPayload => ({
+      type: base.type,
+      id,
+      title: base.title,
+      body: base.body,
+      link: notificationLink(dto.data),
+    });
+
     if (dto.memberId != null) {
       const member = await this.prisma.club_members.findFirst({
         where: { id: dto.memberId, is_deleted: false },
@@ -880,7 +904,8 @@ export class AppManagementService {
       const row = await this.prisma.am_member_notifications.create({
         data: { ...base, member_id: member.id, branch_id: dto.branchId ?? member.branch_id },
       });
-      return { sent: 1, notification: this.mapMemberNotification(row) };
+      const push = sendPush && this.push ? await this.push.sendToMembers([member.id], pushPayload(row.id)) : null;
+      return { sent: 1, notification: this.mapMemberNotification(row), push };
     }
 
     if (dto.broadcast) {
@@ -892,14 +917,33 @@ export class AppManagementService {
         },
         select: { id: true, branch_id: true },
       });
-      if (members.length === 0) return { sent: 0 };
+      if (members.length === 0) return { sent: 0, push: null };
       const res = await this.prisma.am_member_notifications.createMany({
         data: members.map((m) => ({ ...base, member_id: m.id, branch_id: m.branch_id })),
       });
-      return { sent: res.count };
+      // Broadcast rows have one id per member, so the push carries id "0" (open the notifications list).
+      const topic = dto.branchId != null ? memberBranchTopic(dto.branchId) : MEMBER_TOPIC_ALL;
+      const push = sendPush && this.push ? { topic, ok: await this.push.sendToTopic(topic, pushPayload(0)) } : null;
+      return { sent: res.count, push };
     }
 
     throw new BadRequestException('حدّد memberId لعضو واحد أو broadcast=true للإرسال للجميع');
+  }
+
+  /** «تجربة على عضو» — send a test push to every registered phone of one member. */
+  async testMemberPush(memberId: number) {
+    const member = await this.prisma.club_members.findFirst({
+      where: { id: memberId, is_deleted: false },
+      select: { id: true },
+    });
+    if (!member) throw new NotFoundException('العضو غير موجود');
+    if (!this.push) return { sent: 0, invalid: 0, devices: 0 };
+    return this.push.sendToMembers([member.id], {
+      type: 'test',
+      id: 0,
+      title: 'تجربة إشعارات نعماني',
+      body: 'لو الإشعار ده وصلك يبقى الإشعارات شغالة على موبايلك',
+    });
   }
 
   async deleteMemberNotification(id: number) {

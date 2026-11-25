@@ -393,6 +393,7 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: AM.news },
           { to: AM.community },
           { to: AM.ads },
+          { to: AM.push },
         ],
       },
     ],

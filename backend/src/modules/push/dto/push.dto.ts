@@ -1,4 +1,4 @@
-import { IsInt, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 /** Register / refresh the caller's mobile push token (users.device_token). */
 export class RegisterTokenDto {
@@ -25,4 +25,28 @@ export class BroadcastDto {
   @IsOptional()
   @IsInt()
   branchId?: number;
+}
+
+/** POST /member/device-token — member app (أنا نعماني) FCM token. */
+export class MemberDeviceTokenDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(4096)
+  token!: string;
+
+  @IsIn(['android', 'ios'])
+  platform!: 'android' | 'ios';
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(40)
+  appVersion?: string;
+}
+
+/** DELETE /member/device-token */
+export class MemberDeviceTokenDeleteDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(4096)
+  token!: string;
 }

@@ -22,6 +22,7 @@ import {
   ListAppItemsDto,
   ListInvitationsDto,
   ListMemberNotificationsDto,
+  TestMemberPushDto,
   UpdateAboutAppDto,
   UpdateInvitationDto,
   UpsertAdDto,
@@ -259,6 +260,13 @@ export class AppManagementController {
     @CurrentUser('sub') userId: number,
   ) {
     return this.service.createMemberNotification(body, userId);
+  }
+
+  /** «تجربة على عضو» → { sent, invalid, devices } */
+  @Post('notifications/test-push')
+  @RequiresPermission('app-management.notifications:create')
+  testMemberPush(@Body() body: TestMemberPushDto) {
+    return this.service.testMemberPush(body.memberId);
   }
 
   @Delete('notifications/:id')
