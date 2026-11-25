@@ -637,6 +637,17 @@ export interface ExecutiveDashboardSummary extends ClubDashboardSummary {
     discountValue: number;
     netValue: number;
     discountPct: number;
+    /** Same figures per branch, biggest discount first. */
+    byBranch?: Array<{
+      branchId: number;
+      branchName: string;
+      subscriptionsCount: number;
+      discountedCount: number;
+      grossValue: number;
+      discountValue: number;
+      netValue: number;
+      discountPct: number;
+    }>;
   };
   period: { start: string; end: string; days: number };
   branchId: number | null;

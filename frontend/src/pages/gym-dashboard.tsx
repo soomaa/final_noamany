@@ -687,13 +687,20 @@ function AlertCenter({
 
 const MIX_COLORS = { subscriptions: '#D4A72C', bar: '#0ea5e9', products: '#8b5cf6' } as const;
 
+/** A share with one decimal when it is not a whole number (0.2٪ / 99.8٪ instead of 0٪ / 100٪). */
+function sharePct(share: number) {
+  return pct(share, Number.isInteger(Math.round(share * 10) / 10) ? 0 : 1);
+}
+
 function RevenueMixCard({
   mix,
+  branches,
   ui,
   compact,
   reducedMotion,
 }: {
   mix: NonNullable<ExecutiveDashboardSummary['revenueMix']>;
+  branches: ExecutiveDashboardSummary['branchBreakdown'];
   ui: (value: string) => string;
   compact: boolean;
   reducedMotion: boolean;
@@ -731,14 +738,47 @@ function RevenueMixCard({
                   <span className="nums shrink-0 font-black">{money(part.value, compact)}</span>
                 </div>
                 <div className="mt-1.5 flex items-center gap-2">
-                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full" style={{ width: `${share}%`, backgroundColor: MIX_COLORS[part.key] }} /></div>
-                  <span className="nums w-9 shrink-0 text-end text-[10px] font-bold text-muted-foreground">{pct(share, 0)}</span>
+                  <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full" style={{ width: share > 0 ? `max(${share}%, 3px)` : '0%', backgroundColor: MIX_COLORS[part.key] }} /></div>
+                  <span className="nums w-11 shrink-0 text-end text-[10px] font-bold text-muted-foreground">{sharePct(share)}</span>
                 </div>
               </li>
             );
           })}
         </ul>
       </div>
+      {branches.length > 0 && (
+        <div className="mt-5 border-t border-border/60 pt-4">
+          <p className="mb-2.5 text-xs font-bold text-muted-foreground">{ui('حسب الفرع')}</p>
+          <ul className="space-y-3">
+            {[...branches].sort((a, b) => b.totalRevenue - a.totalRevenue).map((branch) => {
+              const total = branch.subscriptionRevenue + branch.barRevenue + branch.productRevenue;
+              const segments = [
+                { key: 'subscriptions' as const, value: branch.subscriptionRevenue, label: ui('الاشتراكات') },
+                { key: 'bar' as const, value: branch.barRevenue, label: ui('البار والكافيه') },
+                { key: 'products' as const, value: branch.productRevenue, label: ui('البروتين والمنتجات') },
+              ];
+              return (
+                <li key={branch.branchId} className="min-w-0">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="min-w-0 truncate font-semibold">{branch.branchName}</span>
+                    <span className="nums shrink-0 font-black">{money(total, compact)}</span>
+                  </div>
+                  <div className="mt-1.5 flex h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+                    {segments.map((segment) => segment.value > 0 && total > 0 ? (
+                      <div key={segment.key} className="h-full" style={{ width: `max(${(segment.value / total) * 100}%, 3px)`, backgroundColor: MIX_COLORS[segment.key] }} />
+                    ) : null)}
+                  </div>
+                  <p className="nums mt-1 flex flex-wrap gap-x-3 text-[10px] text-muted-foreground">
+                    {segments.map((segment) => (
+                      <span key={segment.key}>{segment.label} {money(segment.value, true)} ({sharePct(total > 0 ? (segment.value / total) * 100 : 0)})</span>
+                    ))}
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </DashCard>
   );
 }
@@ -800,6 +840,32 @@ function DiscountsCard({
           <dd className="nums mt-0.5 text-sm font-black">{number(discounts.discountedCount)} <span className="text-[11px] font-medium text-muted-foreground">{ui('من')} {number(discounts.subscriptionsCount)} ({pct(discountedShare, 0)})</span></dd>
         </div>
       </dl>
+      {discounts.byBranch && discounts.byBranch.length > 0 && (
+        <div className="mt-5 border-t border-border/60 pt-4">
+          <p className="mb-2.5 text-xs font-bold text-muted-foreground">{ui('حسب الفرع')}</p>
+          <ul className="space-y-3">
+            {discounts.byBranch.map((branch) => {
+              const tone = branch.discountPct >= 20 ? 'text-rose-600 dark:text-rose-300' : branch.discountPct >= 10 ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300';
+              return (
+                <li key={branch.branchId} className="min-w-0">
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <span className="min-w-0 truncate font-semibold">{branch.branchName}</span>
+                    <span className={cn('nums shrink-0 font-black', tone)}>{pct(branch.discountPct)}</span>
+                  </div>
+                  <div className="mt-1.5 flex h-1.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+                    <div className="h-full bg-fuchsia-500" style={{ width: `${Math.min(100, branch.discountPct)}%` }} />
+                  </div>
+                  <p className="nums mt-1 flex flex-wrap gap-x-3 text-[10px] text-muted-foreground">
+                    <span>{ui('الخصم')} {money(branch.discountValue, true)}</span>
+                    <span>{ui('من')} {money(branch.grossValue, true)}</span>
+                    <span>{number(branch.discountedCount)} {ui('اشتراك بخصم من')} {number(branch.subscriptionsCount)}</span>
+                  </p>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </DashCard>
   );
 }
@@ -1215,7 +1281,7 @@ export function DashboardPage() {
       {data && (
         <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3 sm:gap-5">
           <AlertCenter data={data} ui={ui} activeRate={activeRate} />
-          {showMix && data.revenueMix && <RevenueMixCard mix={data.revenueMix} ui={ui} compact={compact} reducedMotion={reducedMotion} />}
+          {showMix && data.revenueMix && <RevenueMixCard mix={data.revenueMix} branches={data.branchBreakdown ?? []} ui={ui} compact={compact} reducedMotion={reducedMotion} />}
           {showDiscounts && data.discounts && <DiscountsCard discounts={data.discounts} ui={ui} compact={compact} />}
         </section>
       )}

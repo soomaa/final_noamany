@@ -615,6 +615,7 @@ export class ClubDashboardService {
           },
           select: {
             registration_date: true,
+            branch_id: true,
             subscription_type: true,
             subscription_value: true,
             discount_enabled: true,
@@ -925,7 +926,17 @@ export class ClubDashboardService {
         branchSales.reduce((sum, row) => sum + toNum(row.bar_revenue), 0),
         branchSales.reduce((sum, row) => sum + toNum(row.product_revenue), 0),
       ),
-      discounts: summarizeDiscounts(subscriptions),
+      discounts: {
+        ...summarizeDiscounts(subscriptions),
+        // Each branch: its discounts on its own subscriptions in the period (client, 25 Nov).
+        byBranch: [...new Set(subscriptions.map((row) => row.branch_id))]
+          .map((id) => ({
+            branchId: id,
+            branchName: branchBreakdown.find((row) => row.branchId === id)?.branchName ?? `فرع ${id}`,
+            ...summarizeDiscounts(subscriptions.filter((row) => row.branch_id === id)),
+          }))
+          .sort((a, b) => b.discountValue - a.discountValue),
+      },
       period: { start, end, days },
       branchId: scopedBranches?.length === 1 ? scopedBranches[0] : null,
     };
