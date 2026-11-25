@@ -1225,3 +1225,8 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261125-r3/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov25-r3-update-backup.GtOiCZ
 - المرجع للرفع اللي جاي: system.html = payload 25-r3، schema = payload 25-r3 (output بيشاور على scratchpad محلي زي r6)، Client 517 موديل،
   الخلفية = ملفات 25-r3. أي رفعة لازم تتبني فوق claude/hr-fixes-20261124.
+- 20261125-r4 اتثبت واتأكد (UPDATE VERIFIED): واجهة بس — إظهار رقم بيخفي الرقم اللي كان مفتوح. system.html جديد + 304 asset، من غير
+  restart (السيرفر بيقرا system.html من الديسك كل طلب). release-tools/daily-update-20261125-r4، الحزمة sha256 33e93e64….
+  الرجوع: cp -p tmp/nov25-r4-update-backup.vx2bkz/system.html public/system.html
+- مزامنة البرنامج القديم (/usr/local/sbin/legacy-gym-sync) اتعدلت 25 نوفمبر 04:02: ساعة الحضور بتتحول من القاهرة لـ UTC
+  (كانت بتظهر متأخرة ساعتين). النسخة القديمة: /usr/local/sbin/legacy-gym-sync.before-tz-20261125. السجلات القديمة متغيرتش.
