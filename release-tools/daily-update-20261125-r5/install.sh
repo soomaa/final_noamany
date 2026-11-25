@@ -47,5 +47,5 @@ for a in $(grep -oE '/assets/[^"]+' "$PKG/payload/public/system.html"); do
   [ "$(curl -s -o /dev/null -w '%{http_code}' -m 20 "$SITE$a")" = 200 ]
 done
 trap - ERR
-say "UPDATE VERIFIED: 2026-11-25-r4; management UI updated (new HTML on 3 routes, entry assets 200)."
+say "UPDATE VERIFIED: 2026-11-25-r5; management UI updated (new HTML on 3 routes, entry assets 200)."
 say "undo: cp -p $BACKUP/system.html $APP/public/system.html"

@@ -1230,3 +1230,6 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   الرجوع: cp -p tmp/nov25-r4-update-backup.vx2bkz/system.html public/system.html
 - مزامنة البرنامج القديم (/usr/local/sbin/legacy-gym-sync) اتعدلت 25 نوفمبر 04:02: ساعة الحضور بتتحول من القاهرة لـ UTC
   (كانت بتظهر متأخرة ساعتين). النسخة القديمة: /usr/local/sbin/legacy-gym-sync.before-tz-20261125. السجلات القديمة متغيرتش.
+- 20261125-r5 اتثبت واتأكد: واجهة بس — شيل «حذف (اتعمل بالغلط)» من كارت الاشتراك في الاستقبال (فاضل في قائمة الاشتراكات).
+  الحزمة sha256 c7fc2361…؛ الرجوع: cp -p tmp/nov25-r5-update-backup.eGO6QC/system.html public/system.html
+  (رسالة المثبّت المطبوعة قالت r4 بالغلط في النص بس؛ اتصلحت في الأداة).
