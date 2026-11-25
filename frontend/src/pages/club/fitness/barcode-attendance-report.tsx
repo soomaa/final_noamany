@@ -21,7 +21,8 @@ export type BarcodeReportKind = 'member' | 'class' | 'spa';
 
 type ReportRow = {
   key: string;
-  source: 'a' | 's' | 'e';
+  /** v = a visit sold on «فواتير السبا» (removed from that page, not here). */
+  source: 'a' | 's' | 'e' | 'v';
   id: number;
   memberCode: string;
   memberName: string;
@@ -122,7 +123,9 @@ export function BarcodeAttendanceReportPanel({
       ? [{
           id: 'actions',
           header: 'الإجراء',
-          cell: ({ row }: { row: { original: ReportRow } }) => (
+          cell: ({ row }: { row: { original: ReportRow } }) => row.original.source === 'v' ? (
+            <span className="text-xs text-muted-foreground">فاتورة سبا</span>
+          ) : (
             <Button size="sm" variant="outline" className="text-destructive" onClick={() => void remove(row.original)}>
               <Trash2 className="size-4" /> حذف
             </Button>
