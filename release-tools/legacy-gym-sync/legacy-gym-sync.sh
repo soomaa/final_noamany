@@ -599,6 +599,8 @@ SET @checkins_waiting=(SELECT COUNT(*) FROM \`$O\`.tbl_hdoor_classes h
   LEFT JOIN m_orphan ao ON ao.legacy_id=h.member_id
   WHERE h.hodoor_id>@att_from AND h.type='eshtrak' AND m.legacy_id IS NULL
     AND COALESCE(am.target_id,ao.target_id) IS NULL);
+-- The old system's check-in time is Cairo wall-clock; the new system stores UTC (the app adds Cairo's
+-- offset when it shows it), so it is converted here (client, 25 Nov: synced check-ins showed 2 hours late).
 SET @n=(SELECT COALESCE(MAX(id),0) FROM club_attendance);
 UPDATE n_att SET new_id=(@n:=@n+1) ORDER BY legacy_id;
 INSERT INTO club_attendance
@@ -608,10 +610,10 @@ SELECT t.new_id,COALESCE(mm.target_id,om.target_id),
   LEFT(COALESCE(m.m_code,h.member_code,CONCAT('ORPH-L',h.member_id)),30),
   LEFT(COALESCE(m.name,CONCAT('Legacy member ',h.member_id)),200),sm.target_id,LEFT(st.title,150),
   bm.new_branch_id,
-  TIMESTAMP(DATE(FROM_UNIXTIME(CAST(h.hdoor_date_s AS SIGNED)+10800)),COALESCE(h.hdoor_time_24,'00:00:00')),
+  COALESCE(CONVERT_TZ(TIMESTAMP(DATE(FROM_UNIXTIME(CAST(h.hdoor_date_s AS SIGNED)+10800)),COALESCE(h.hdoor_time_24,'00:00:00')),'Africa/Cairo','+00:00'),TIMESTAMP(DATE(FROM_UNIXTIME(CAST(h.hdoor_date_s AS SIGNED)+10800)),COALESCE(h.hdoor_time_24,'00:00:00')) - INTERVAL 2 HOUR),
   DATE_FORMAT(FROM_UNIXTIME(CAST(h.hdoor_date_s AS SIGNED)+10800),'%Y-%m-%d'),'checked_in',
   CONCAT('Imported from tbl_hdoor_classes.hodoor_id=',h.hodoor_id),um.new_user_id,
-  TIMESTAMP(DATE(FROM_UNIXTIME(CAST(h.hdoor_date_s AS SIGNED)+10800)),COALESCE(h.hdoor_time_24,'00:00:00'))
+  COALESCE(CONVERT_TZ(TIMESTAMP(DATE(FROM_UNIXTIME(CAST(h.hdoor_date_s AS SIGNED)+10800)),COALESCE(h.hdoor_time_24,'00:00:00')),'Africa/Cairo','+00:00'),TIMESTAMP(DATE(FROM_UNIXTIME(CAST(h.hdoor_date_s AS SIGNED)+10800)),COALESCE(h.hdoor_time_24,'00:00:00')) - INTERVAL 2 HOUR)
 FROM n_att t JOIN \`$O\`.tbl_hdoor_classes h ON h.hodoor_id=t.legacy_id
 LEFT JOIN \`$O\`.tbl_members m ON m.mem_id=h.member_id
 JOIN legacy_branch_mappings bm ON bm.source_key='$KEY' AND bm.legacy_id=h.branch_id_fk
