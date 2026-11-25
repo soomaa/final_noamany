@@ -194,7 +194,7 @@ export class ClubStaffInvitationsService {
 
   // ── admin list ──────────────────────────────────────────────────────────
 
-  async list(user: JwtUser, query: { branchId?: number; search?: string; withCode?: string; status?: string }) {
+  async list(user: JwtUser, query: { branchId?: number; search?: string; withCode?: string; status?: string; dateFrom?: string; dateTo?: string }) {
     const viewer = await this.viewer(user);
     const visible = await this.visibleEmployeeIds(viewer);
     const branches = this.branchScope.resolveListFilter(user, query.branchId ?? null);
@@ -227,6 +227,29 @@ export class ClubStaffInvitationsService {
     const codes = ids.length ? await this.prisma.club_staff_invitation_codes.findMany({ where: { employee_id: { in: ids } } }) : [];
     const codeByEmployee = new Map(codes.map((row) => [row.employee_id, row] as const));
     const period = invitationPeriod(this.today());
+    // «زيارات الفترة»: guests who visited in the chosen range (default: this month), and how many
+    // of them subscribed — so the page can be read for any month or dates, not only now.
+    const rangeFrom = query.dateFrom ?? `${period}-01`;
+    const rangeTo = query.dateTo ?? this.today();
+    const [periodVisits, periodConverted] = ids.length
+      ? await Promise.all([
+          this.prisma.club_staff_invitations.groupBy({
+            by: ['employee_id'],
+            where: { employee_id: { in: ids }, visit_date: { gte: rangeFrom, lte: rangeTo } },
+            _count: { _all: true },
+          }),
+          this.prisma.$queryRaw<Array<{ employee_id: number; total: bigint }>>(Prisma.sql`
+            SELECT si.employee_id, COUNT(*) AS total
+            FROM club_staff_invitations si
+            INNER JOIN club_leads l ON l.id = si.lead_id
+            WHERE si.employee_id IN (${Prisma.join(ids)})
+              AND si.visit_date BETWEEN ${rangeFrom} AND ${rangeTo}
+              AND (l.converted_member_id IS NOT NULL OR l.status = 'converted')
+            GROUP BY si.employee_id`),
+        ])
+      : [[], []];
+    const periodVisitsBy = new Map(periodVisits.map((row) => [row.employee_id, row._count._all] as const));
+    const periodConvertedBy = new Map(periodConverted.map((row) => [Number(row.employee_id), Number(row.total)] as const));
     const [usage, totals, converted, titleOf, branchNames] = await Promise.all([
       this.usage(codes, period),
       ids.length ? this.prisma.club_staff_invitations.groupBy({ by: ['employee_id'], where: { employee_id: { in: ids } }, _count: { _all: true } }) : [],
@@ -264,12 +287,15 @@ export class ClubStaffInvitationsService {
         remaining: code?.is_active ? use?.remaining ?? 0 : 0,
         totalGuests: totalBy.get(employee.id) ?? 0,
         convertedGuests: convertedBy.get(employee.id) ?? 0,
+        periodVisits: periodVisitsBy.get(employee.id) ?? 0,
+        periodConverted: periodConvertedBy.get(employee.id) ?? 0,
       };
     });
     const filtered = query.withCode === 'yes' ? rows.filter((row) => row.codeId) : query.withCode === 'no' ? rows.filter((row) => !row.codeId) : rows;
     const canManage = isSystemAdmin(user) || (await this.engine.canAny(user.sub, MANAGE_KEYS));
     return {
       period,
+      range: { from: rangeFrom, to: rangeTo },
       canManage,
       canOverride: await this.canOverride(user),
       scope: viewer.kind,
@@ -280,6 +306,8 @@ export class ClubStaffInvitationsService {
         usedThisMonth: filtered.reduce((sum, row) => sum + row.usedThisMonth, 0),
         totalGuests: filtered.reduce((sum, row) => sum + row.totalGuests, 0),
         convertedGuests: filtered.reduce((sum, row) => sum + row.convertedGuests, 0),
+        periodVisits: filtered.reduce((sum, row) => sum + row.periodVisits, 0),
+        periodConverted: filtered.reduce((sum, row) => sum + row.periodConverted, 0),
       },
     };
   }
