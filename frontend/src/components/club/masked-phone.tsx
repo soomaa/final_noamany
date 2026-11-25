@@ -30,6 +30,12 @@ export const REVEAL_TTL_MS = 60_000;
 type RevealIds = { memberId?: number | null; leadId?: number | null };
 
 /**
+ * Only one number is uncovered at a time (client, 25 Nov): showing a number hides the one that was
+ * open anywhere else on the page. Holds the hide function of the number currently shown.
+ */
+let openReveal: { owner: object; hide: () => void } | null = null;
+
+/**
  * Fetches one real number through the audited endpoint. Resolves to `null` when the
  * record has no number; rejects when the caller is not allowed to read it.
  */
@@ -120,9 +126,14 @@ export function MaskedPhone({
   const [loading, setLoading] = useState(false);
   const timer = useRef<number | null>(null);
 
+  const self = useRef({});
+
   const clearTimer = () => {
     if (timer.current != null) window.clearTimeout(timer.current);
     timer.current = null;
+  };
+  const release = () => {
+    if (openReveal?.owner === self.current) openReveal = null;
   };
 
   // A different record in the same slot starts hidden again.
@@ -130,7 +141,7 @@ export function MaskedPhone({
     setRevealed(null);
     clearTimer();
   }, [value, memberId, leadId]);
-  useEffect(() => clearTimer, []);
+  useEffect(() => () => { clearTimer(); release(); }, []);
 
   if (!value) return <span className={className}>—</span>;
 
@@ -150,11 +161,14 @@ export function MaskedPhone({
 
   const hide = () => {
     clearTimer();
+    release();
     setRevealed(null);
     onRevealed?.(null);
   };
 
   const show = (phone: string) => {
+    if (openReveal && openReveal.owner !== self.current) openReveal.hide();
+    openReveal = { owner: self.current, hide };
     setRevealed(phone);
     onRevealed?.(phone);
     clearTimer();
