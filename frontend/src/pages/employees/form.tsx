@@ -53,6 +53,8 @@ const schema = z.object({
   qsm_id_fk: z.string().min(1, uiStatic('القسم مطلوب')),
   job_title_id_fk: z.string().min(1, uiStatic('المسمى الوظيفي مطلوب')),
   monthly_target: z.string().optional(),
+  /** «يعمل بالمبيعات»: 'true' / 'false' (hidden for a sales job title, which always sells). */
+  is_sales: z.string().optional(),
   class_commission_percentage: z.string().optional(),
   addToSystem: z.boolean().optional(),
   birth_date: z.string().optional(),
@@ -256,6 +258,8 @@ export function EmployeeFormPage() {
     [jobTitles, selectedDepartmentId],
   );
   const selectedJobTitle = jobTitles?.find((job) => String(job.id) === watch('job_title_id_fk'));
+  // A sales job title always sells; the «يعمل بالمبيعات» toggle is for every other title.
+  const isSalesJobTitle = ['أخصائي مبيعات', 'مسؤول تسويق', 'مندوب المبيعات'].some((title) => (selectedJobTitle?.name ?? '').includes(title));
   const isTrainerEmployee =
     !!selectedJobTitle?.isTrainer ||
     ['مدرب', 'مدرب لياقة', 'مدربة لياقة'].includes(selectedJobTitle?.name?.trim() ?? '');
@@ -489,6 +493,21 @@ export function EmployeeFormPage() {
                       />
                     </FieldWrapper>
                   </>
+                ) : null}
+                {selectedJobTitle && !isSalesJobTitle ? (
+                  <div className="col-span-full flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/[0.04] p-4">
+                    <Checkbox
+                      id="works-in-sales"
+                      checked={watch('is_sales') === 'true'}
+                      onCheckedChange={(v) => setValue('is_sales', v === true ? 'true' : 'false', { shouldDirty: true })}
+                    />
+                    <label htmlFor="works-in-sales" className="grid gap-1">
+                      <span className="text-sm font-semibold">{ui('يعمل بالمبيعات')}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {ui('فوق شغله الأساسي بيبيع كمان: بتظهر له صفحات المبيعات، ويتحدد له تارجت وعمولة، ويظهر في قايمة أخصائي المبيعات.')}
+                      </span>
+                    </label>
+                  </div>
                 ) : null}
               </FormSection>
             </div>

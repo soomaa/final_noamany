@@ -320,10 +320,12 @@ export class ClubStaffInvitationsService {
   }
 
   async mine(user: JwtUser) {
-    if (!user.emp_code) throw new BadRequestException('الحساب ده مش مربوط بموظف، فمالوش كود دعوات');
+    // An account with no employee (the system admin) has no code: an answer, not an error, so the
+    // page and the home card can say so instead of failing (console showed 400s on every load).
+    if (!user.emp_code) return { linked: false, summary: null, guests: [] };
     const summary = await this.employeeSummary(user.emp_code, user);
     const guests = await this.guests(user.emp_code, user, {});
-    return { summary, guests };
+    return { linked: true, summary, guests };
   }
 
   // ── codes & quota ───────────────────────────────────────────────────────

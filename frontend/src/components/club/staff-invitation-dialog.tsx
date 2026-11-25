@@ -85,6 +85,8 @@ export function StaffInvitationDialog({
   const user = useAuth((state) => state.user);
   const { data: branches = [] } = useBranches();
   const canOverride = can('club.staff_invitations:approve');
+  // An employee tied to one branch records visits for that branch only; the admin picks one.
+  const branchLocked = user?.level !== 1 && !!user?.branch && user.branch > 0;
 
   const [codeInput, setCodeInput] = useState('');
   const [card, setCard] = useState<StaffCodeLookup | null>(null);
@@ -135,7 +137,8 @@ export function StaffInvitationDialog({
 
   useEffect(() => {
     if (!open) return;
-    const fallbackBranch = defaultBranchId ?? (user?.branch && user.branch > 0 ? user.branch : null);
+    const ownBranch = user?.branch && user.branch > 0 ? user.branch : null;
+    const fallbackBranch = (user?.level !== 1 ? ownBranch : null) ?? defaultBranchId ?? ownBranch;
     setBranchId(fallbackBranch ? String(fallbackBranch) : '');
     if (defaultEmployeeId) void lookup({ employeeId: defaultEmployeeId });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -285,7 +288,7 @@ export function StaffInvitationDialog({
             </div>
             <div className="space-y-1.5">
               <Label>الفرع</Label>
-              <SearchableSelect className="h-10 w-full rounded-md border bg-background px-3" value={branchId} onChange={(event) => setBranchId(event.target.value)}>
+              <SearchableSelect className="h-10 w-full rounded-md border bg-background px-3 disabled:opacity-70" value={branchId} disabled={branchLocked} onChange={(event) => setBranchId(event.target.value)}>
                 <option value="">اختار الفرع</option>
                 {branches.map((branch) => <option key={branch.id} value={branch.id}>{branch.name ?? `#${branch.id}`}</option>)}
               </SearchableSelect>
@@ -342,20 +345,30 @@ export function StaffInvitationButton({
   variant = 'outline',
   defaultEmployeeId,
   defaultBranchId,
+  iconOnly = false,
 }: {
   className?: string;
   variant?: 'outline' | 'brand';
   defaultEmployeeId?: number | null;
   defaultBranchId?: number | null;
+  /** Reception's quick search row: the icon alone (title says what it does). */
+  iconOnly?: boolean;
 }) {
   const { can } = usePermission();
   const [open, setOpen] = useState(false);
   if (!can('club.staff_invitations:create') && !can('club.reception:create')) return null;
   return (
     <>
-      <Button type="button" variant={variant} className={className} onClick={() => setOpen(true)}>
-        <UserPlus className="size-4" />
-        دعوة بكود موظف
+      <Button
+        type="button"
+        variant={variant}
+        className={className}
+        onClick={() => setOpen(true)}
+        title="إضافة زيارة بكود موظف"
+        aria-label="إضافة زيارة بكود موظف"
+      >
+        <UserPlus className={iconOnly ? 'size-5' : 'size-4'} />
+        {iconOnly ? null : 'دعوة بكود موظف'}
       </Button>
       <StaffInvitationDialog open={open} onOpenChange={setOpen} defaultEmployeeId={defaultEmployeeId} defaultBranchId={defaultBranchId} />
     </>

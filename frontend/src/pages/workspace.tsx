@@ -2,6 +2,7 @@ import { ArrowLeft, BriefcaseBusiness, LockKeyhole, Sparkles } from 'lucide-reac
 import { Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { WorkspaceWidgets } from '@/components/workspace/workspace-widgets';
+import { MyInvitationCodeCard } from '@/components/club/my-invitation-code-card';
 import { type NavApiNode, useNav, useWorkspace } from '@/hooks/use-permission';
 import { useAuth } from '@/store/auth';
 import { useLocale } from '@/store/locale';
@@ -41,6 +42,8 @@ export function WorkspacePage() {
           </div>
         </div>
       </section>
+
+      <MyInvitationCodeCard />
 
       <WorkspaceWidgets />
 

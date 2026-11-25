@@ -810,14 +810,20 @@ export function ClubStaffInvitationsPage() {
 export function MyInvitationCodePage() {
   const mine = useQuery({
     queryKey: [...STAFF_INVITATIONS_KEY, 'me'],
-    queryFn: async () => (await api.get<{ summary: EmployeeSummary }>('/club-staff-invitations/me')).data,
+    queryFn: async () => (await api.get<{ linked?: boolean; summary: EmployeeSummary | null }>('/club-staff-invitations/me')).data,
   });
   const summary = mine.data?.summary;
+  const notLinked = mine.data?.linked === false;
   return (
     <div className="space-y-5">
       <PageHeader title="كود الدعوات الخاص بي" description="ادّي الكود ده لأي حد عايز تعزمه — بيتسجل عند الاستقبال وبيروح للسيلز باسمك." />
       {mine.isError ? <ErrorState message={apiError(mine.error)} onRetry={() => void mine.refetch()} /> : null}
       {mine.isLoading ? <div className="py-10 text-center"><Loader2 className="mx-auto size-6 animate-spin" /></div> : null}
+      {notLinked ? (
+        <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+          الحساب ده مش مربوط بموظف، فمالوش كود دعوات. أكواد الموظفين بتتدار من «أكواد الدعوات للموظفين».
+        </div>
+      ) : null}
       {summary ? (
         <>
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-primary/30 bg-primary/5 p-5">
