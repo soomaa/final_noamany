@@ -1237,3 +1237,18 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
   (modules/club-dashboard/club-dashboard.service.js) + system.html + assets، مع restart. الحزمة sha256 c6cf1d15….
   أول محاولة رجعت لوحدها لـ 25-r5 (فحص الصفحات من غير Accept: text/html بيرجع 404) واتصلح الفحص.
   backup: tmp/nov25-r6-update-backup.68WfIX (الملف القديم + system.html).
+
+آخر تثبيت مؤكد: 20261125-r7 — إشعارات الموبايل للأعضاء (25 نوفمبر 2026، ~17:30 UTC)
+--------------------------------------------------------------------------------
+- الفرع: claude/push-center-20261125 (فوق claude/hr-fixes-20261124 = 25-r6). release-tools/daily-update-20261125-r7.
+- قاعدة البيانات: sql/01 club_member_device_tokens، sql/02 push_campaigns / push_sends / push_send_recipients / push_settings
+  (هدوء 23:00–08:00، حد 3 في اليوم) + صلاحية app-management.push. Prisma Client جديد 522 موديل (517 + 5).
+- Firebase: مشروع noamany-5ac59 (Spark مجاني). المفتاح في secrets/firebase-service-account.json (600، برّه public، 404 من الموقع)،
+  و FIREBASE_SERVICE_ACCOUNT_FILE في .env. اتجرب validate_only = 200. الـ Legacy Server Key مقفول من جوجل (يونيو 2024).
+- APIs: POST/DELETE /api/member/device-token، POST /api/member/notification-opened، /api/app/push/* (إرسال، جدولة، سجل، إعدادات).
+  الجدولة cron كل دقيقة بـ GET_LOCK و run_key مميز.
+- الأبليكيشن (al-nomany-flutter-handoff، 6.2.0+70): بيسجل الجهاز ويشترك في noamany_members / noamany_branch_<id> / noamany_gender_<..>.
+  google-services.json الصح (noamany-5ac59) اتسلم للجلسة. لازم نسخة جديدة على المتاجر.
+- اتأكد: UPDATE VERIFIED: 2026-11-25-r7. backup: tmp/nov25-r7-update-backup.ByTwmu
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261125-r7/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov25-r7-update-backup.ByTwmu
+- المرجع للرفع اللي جاي: الفرع claude/push-center-20261125.
