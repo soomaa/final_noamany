@@ -1,0 +1,6 @@
+MakeHuman graphical assets: CC0 1.0 Universal.
+Source: https://github.com/makehumancommunity/makehuman/tree/a8bc2d54ff0ac92e78ff71431b1023eda42bf482
+Assets: data/3dobjs/base.obj and macrodetails sex/weight targets.
+SWAT modifications: remove helper groups, triangulate, normalize, bake a neutral template and measurement loops.
+No MakeHuman program code is included. The viewer and fitter are independently authored.
+Measurement fitting does not infer body composition or predict actual future appearance.

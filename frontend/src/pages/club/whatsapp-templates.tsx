@@ -12,6 +12,7 @@ import { GYM_NAME, useWhatsAppTemplates, WHATSAPP_TEMPLATES_QUERY_KEY } from '@/
 import { usePermission } from '@/hooks/use-permission';
 import { api, apiError } from '@/lib/api';
 import { localToday } from '@/lib/formatters';
+import { TemplatesTab } from '@/pages/club/whatsapp';
 import {
   DEFAULT_WHATSAPP_TEMPLATES,
   memberSubscriptionsMessage,
@@ -209,6 +210,16 @@ export function ClubWhatsAppTemplatesPage() {
           </div>
         </>
       ) : null}
+      {/* Messages sent by hand from lists (attendance, member commitment) live in the campaign templates. */}
+      <section className="space-y-3 border-t pt-6" aria-labelledby="reminder-templates-label">
+        <div>
+          <h2 id="reminder-templates-label" className="font-semibold">رسائل الحضور والالتزام</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            «لم يحضر منذ مدة» بتطلع من حضور الاستقبال، و«عدم الالتزام بالحضور» من تقرير التزام الأعضاء.
+          </p>
+        </div>
+        <TemplatesTab only="reminders" />
+      </section>
     </div>
   );
 }

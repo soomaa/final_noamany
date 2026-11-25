@@ -287,7 +287,7 @@ function BranchComparison({
     { key: 'expenses', label: ui('إجمالي المصروفات'), currency: true, tone: 'rose', icon: TrendingDown, lowerIsBetter: true },
     { key: 'subscriptionsCount', label: ui('عدد الاشتراكات'), currency: false, tone: 'blue', icon: PackageCheck },
     { key: 'newMembers', label: ui('الأعضاء الجدد'), currency: false, tone: 'fuchsia', icon: UserPlus },
-    { key: 'inbodyCount', label: ui('جلسات InBody'), currency: false, tone: 'teal', icon: HeartPulse },
+    { key: 'inbodyCount', label: ui('قياسات InBody'), currency: false, tone: 'teal', icon: HeartPulse },
     { key: 'blockedMembers', label: ui('الأعضاء المحظورون'), currency: false, tone: 'slate', icon: AlertTriangle, lowerIsBetter: true },
   ];
 
@@ -1025,7 +1025,7 @@ export function DashboardPage() {
     { label: ui('اشتراك جديد'), icon: UserPlus, href: '/club/subscriptions/new', tone: 'bg-emerald-500/10 text-emerald-600' },
     { label: ui('تسجيل حضور'), icon: ScanLine, href: '/club/attendance', tone: 'bg-sky-500/10 text-sky-600' },
     { label: ui('إيصال اشتراك'), icon: ReceiptText, href: '/club/subscriptions/receipts', tone: 'bg-amber-500/10 text-amber-600' },
-    { label: ui('فاتورة InBody'), icon: HeartPulse, href: '/club/subscriptions/inbody-invoices', tone: 'bg-violet-500/10 text-violet-600' },
+    { label: ui('قياسات الأعضاء'), icon: HeartPulse, href: '/club/members/measurements', tone: 'bg-violet-500/10 text-violet-600' },
     { label: ui('إدارة الإيرادات'), icon: TrendingUp, href: '/finance/revenues', tone: 'bg-teal-500/10 text-teal-600' },
     { label: ui('التقارير الشاملة'), icon: FileBarChart, href: '/reports', tone: 'bg-rose-500/10 text-rose-600' },
   ];

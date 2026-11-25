@@ -305,6 +305,7 @@ export const FitnessTrainerSettingsPage = lazyPage(() => import('@/pages/club/fi
 export const FitnessTrainerTargetsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerTargetsPage');
 export const FitnessTrainerEvaluationsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerEvaluationsPage');
 export const FitnessTrainerEvaluationCriteriaPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainerEvaluationCriteriaPage');
+export const FitnessTrainingSpacePage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessTrainingSpacePage');
 export const FitnessBranchAnalysisPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessBranchAnalysisPage');
 export const FitnessReceptionAnalysisPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessReceptionAnalysisPage');
 export const FitnessShiftAnalysisPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessShiftAnalysisPage');
@@ -317,7 +318,6 @@ export const FitnessSpaInvoicesPage = lazyPage(() => import('@/pages/club/fitnes
 export const FitnessBarcodeCheckInPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessBarcodeCheckInPage');
 export const FitnessSpaAttendancePage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessSpaAttendancePage');
 export const FitnessClassAttendancePage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessClassAttendancePage');
-export const FitnessInbodyInvoicesPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessInbodyInvoicesPage');
 export const FitnessFacilitySettingsPage = lazyPage(() => import('@/pages/club/fitness/route-pages'), 'FitnessFacilitySettingsPage');
 export const ClubEventsPage = lazyPage(() => import('@/pages/club/events/route-pages'), 'EventsBoard');
 export const CafeProductsPage = lazyPage(() => import('@/pages/cafe/route-pages'), 'CafeProductsPage');

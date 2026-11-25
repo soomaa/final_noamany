@@ -23,6 +23,8 @@ export const FITNESS_ROUTES = {
     targets: '/club/fitness/trainer-targets',
     evaluations: '/club/fitness/trainer-evaluations',
     evaluationCriteria: '/club/fitness/trainer-evaluation-criteria',
+    /** مساحة التدريب (ported from Gymora): plans, journey, measurements, exercise & equipment library. */
+    trainingSpace: '/club/fitness/training-space',
     branchAnalysis: '/club/fitness/branch-analysis',
     receptionAnalysis: '/club/fitness/reception-analysis',
     shiftAnalysis: '/club/fitness/shift-analysis',

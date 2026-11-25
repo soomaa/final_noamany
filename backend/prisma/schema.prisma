@@ -5181,6 +5181,7 @@ model club_subscription_types {
   class_types                  club_subscription_type_classes[]
   session_prices               club_subscription_type_session_prices[]
 
+  member_group_plans club_member_group_plans[]
   @@map("club_subscription_types")
 }
 
@@ -5318,6 +5319,14 @@ model club_subscriptions {
   inbody_invoices                club_inbody_invoices[]
   spa_invoices                   club_spa_invoices[]
 
+  /// Member-group discount snapshot saved when the subscription was created (immutable history).
+  discount_group_id    Int?
+  discount_group_name  String?             @db.VarChar(200)
+  group_discount_type  String?             @db.VarChar(20)
+  group_discount_rate  Decimal?            @db.Decimal(10, 2)
+  group_discount_value Decimal             @default(0) @db.Decimal(10, 2)
+  discount_group       club_member_groups? @relation(fields: [discount_group_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@index([discount_group_id, registration_date])
   @@index([member_id])
   @@index([special_class_type_id])
   @@index([private_package_id])
@@ -5841,13 +5850,20 @@ model club_member_groups {
   id              Int                         @id @default(autoincrement())
   name            String                      @db.VarChar(200)
   category        String                      @default("عام") @db.VarChar(100)
+  branch_id       Int?
+  /// 'none' | 'percentage' | 'fixed' — default rule for every package the group does not customise.
+  discount_type   String                      @default("none") @db.VarChar(20)
+  discount_amount Decimal                     @default(0) @db.Decimal(10, 2)
   max_members     Int                         @default(0)
   current_members Int                         @default(0)
   is_active       Boolean                     @default(true)
   created_at      DateTime                    @default(now())
   updated_at      DateTime                    @updatedAt
   members         club_member_group_members[]
+  subscriptions   club_subscriptions[]
+  plans           club_member_group_plans[]
 
+  @@index([branch_id, is_active])
   @@map("club_member_groups")
 }
 
@@ -5855,6 +5871,8 @@ model club_member_group_members {
   id         Int      @id @default(autoincrement())
   group_id   Int
   member_id  Int
+  /// The member's employee number at the group's organisation (optional).
+  employee_number String? @db.VarChar(50)
   created_at DateTime @default(now())
 
   group  club_member_groups @relation(fields: [group_id], references: [id], onDelete: Cascade)
@@ -5863,6 +5881,23 @@ model club_member_group_members {
   @@unique([member_id])
   @@index([group_id])
   @@map("club_member_group_members")
+}
+
+/// Per-package discount rule of a member group (overrides the group default for that package).
+model club_member_group_plans {
+  id                   Int                     @id @default(autoincrement())
+  group_id             Int
+  subscription_type_id Int
+  /// 'percentage' | 'fixed'
+  discount_type        String                  @default("percentage") @db.VarChar(20)
+  discount_value       Decimal                 @default(0) @db.Decimal(10, 2)
+  created_at           DateTime                @default(now())
+  group                club_member_groups      @relation(fields: [group_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  subscription_type    club_subscription_types @relation(fields: [subscription_type_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([group_id, subscription_type_id])
+  @@index([subscription_type_id])
+  @@map("club_member_group_plans")
 }
 
 model club_surveys {
@@ -6451,9 +6486,18 @@ model club_inbody_measurements {
   updated_at       DateTime @updatedAt
 
   @@index([member_id])
+  @@index([entitlement_id])
+  @@index([invoice_id])
   @@map("club_inbody_measurements")
   staff_name       String?  @db.VarChar(150)
   file_url         String?  @db.VarChar(255)
+  /// Where this measurement was settled: legacy | subscription | package | paid_single | package_purchase.
+  settlement_source String  @default("legacy") @db.VarChar(30)
+  branch_id         Int?
+  subscription_id   Int?
+  entitlement_id    Int?
+  invoice_id        Int?
+  created_by        Int?
 }
 
 model club_spa_services {
@@ -6575,13 +6619,49 @@ model club_inbody_services {
   name        String                 @db.VarChar(200)
   description String?                @db.Text
   price       Decimal                @db.Decimal(10, 2)
+  /// 1 = the branch's single-measurement price; > 1 = a package of measurements.
+  measurement_count Int              @default(1)
+  /// Package validity from the purchase date (null = never expires).
+  validity_days     Int?
   branch_id   Int?
   is_active   Boolean                @default(true)
   created_at  DateTime               @default(now())
   updated_at  DateTime               @updatedAt
   invoices    club_inbody_invoices[]
 
+  @@index([branch_id])
   @@map("club_inbody_services")
+}
+
+/// Per-branch InBody sales policy («قياسات الأعضاء» ← الإعدادات).
+model club_inbody_branch_settings {
+  id                              Int      @id @default(autoincrement())
+  branch_id                       Int      @unique
+  allow_without_active_membership Boolean  @default(true)
+  created_at                      DateTime @default(now())
+  updated_at                      DateTime @updatedAt
+
+  @@map("club_inbody_branch_settings")
+}
+
+/// Measurement balance bought with a paid InBody invoice (single price or package).
+model club_inbody_entitlements {
+  id             Int      @id @default(autoincrement())
+  member_id      Int
+  branch_id      Int
+  service_id     Int
+  invoice_id     Int      @unique
+  total_count    Int
+  used_count     Int      @default(0)
+  purchased_date String   @db.VarChar(10)
+  expires_at     String?  @db.VarChar(10)
+  is_active      Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  @@index([member_id, expires_at])
+  @@index([branch_id])
+  @@map("club_inbody_entitlements")
 }
 
 model club_facilities {
@@ -6610,6 +6690,10 @@ model club_equipment {
   status        ClubFitnessHallStatus        @default(available)
   purchase_date String?                      @db.VarChar(10)
   notes         String?                      @db.Text
+  /// Training equipment library photo: an uploaded path (/uploads/club/equipment/...) or an https URL.
+  image_url     String?                      @db.VarChar(1000)
+  /// Training-library group: cardio | machines | free_weights | accessories | functional. NULL = other.
+  category      String?                      @db.VarChar(30)
   is_active     Boolean                      @default(true)
   created_at    DateTime                     @default(now())
   updated_at    DateTime                     @updatedAt
@@ -11199,4 +11283,154 @@ model hr_attendance_exception_resolutions {
   @@unique([emp_code, work_date, shift_id], map: "uq_attendance_exception_emp_date_shift")
   @@index([work_date, branch_id], map: "idx_attendance_exception_date_branch")
   @@map("hr_attendance_exception_resolutions")
+}
+
+// ─── Training space (مساحة التدريب) — ported from Gymora training-journey ───
+model training_plans {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(200)
+  goal       String?  @db.VarChar(500)
+  weeks      Int      @default(8)
+  revision   Int      @default(1)
+  status     String   @default("draft") @db.VarChar(20)
+  branch_id  Int
+  days       Json
+  created_by Int
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([branch_id, status])
+}
+
+model training_assignments {
+  id            Int      @id @default(autoincrement())
+  member_id     Int
+  trainer_id    Int?
+  plan_id       Int
+  plan_revision Int
+  snapshot      Json
+  start_date    String   @db.VarChar(10)
+  is_active     Boolean  @default(true)
+  handover_note String?  @db.Text
+  created_by    Int
+  created_at    DateTime @default(now())
+
+  @@index([member_id, is_active])
+  @@index([trainer_id, is_active])
+}
+
+model training_sessions {
+  id            String   @id @db.VarChar(80)
+  member_id     Int
+  assignment_id Int?
+  day_id        String?  @db.VarChar(80)
+  date          String   @db.VarChar(10)
+  status        String   @default("in_progress") @db.VarChar(20)
+  revision      Int      @default(1)
+  entries       Json
+  note          String?  @db.Text
+  author        String   @db.VarChar(80)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@index([member_id, date])
+}
+
+model training_exercise_profiles {
+  key               String   @id @db.VarChar(80)
+  name              String   @db.VarChar(200)
+  kind              String   @default("strength") @db.VarChar(20)
+  primary_muscles   Json
+  secondary_muscles Json
+  instructions      String?  @db.Text
+  video_url         String?  @db.VarChar(1000)
+  equipment_ids     Json?
+  created_by        Int?
+  updated_by        Int
+  updated_at        DateTime @updatedAt
+}
+
+model training_metrics {
+  id        Int     @id @default(autoincrement())
+  member_id Int
+  date      String  @db.VarChar(10)
+  test_key  String  @db.VarChar(100)
+  label     String  @db.VarChar(200)
+  unit      String  @db.VarChar(30)
+  side      String  @default("both") @db.VarChar(10)
+  value     Decimal @db.Decimal(10, 3)
+  protocol  String  @db.VarChar(500)
+  author    String  @db.VarChar(80)
+
+  @@index([member_id, test_key, date])
+}
+
+model training_events {
+  id         Int      @id @default(autoincrement())
+  member_id  Int
+  kind       String   @db.VarChar(40)
+  note       String   @db.Text
+  author     String   @db.VarChar(80)
+  created_at DateTime @default(now())
+
+  @@index([member_id, created_at])
+}
+
+model training_body_checkins {
+  id           String   @id @db.VarChar(80)
+  member_id    Int
+  date         String   @db.VarChar(10)
+  measurements Json
+  note         String   @db.VarChar(1000)
+  author       String   @db.VarChar(80)
+  created_at   DateTime @default(now())
+
+  @@index([member_id, date, created_at])
+}
+
+model training_body_targets {
+  member_id    Int      @id
+  revision     Int      @default(1)
+  measurements Json
+  target_date  String?  @db.VarChar(10)
+  note         String   @db.VarChar(1000)
+  author       String   @db.VarChar(80)
+  updated_at   DateTime @updatedAt
+}
+
+/// Member progress photos stay in the gym database; served only to the member and, with consent, staff.
+model training_photos {
+  id                String   @id @db.VarChar(80)
+  member_id         Int
+  date              String   @db.VarChar(10)
+  angle             String   @db.VarChar(20)
+  shared_with_coach Boolean  @default(false)
+  mime              String   @db.VarChar(40)
+  content           Bytes    @db.LongBlob
+  created_at        DateTime @default(now())
+
+  @@index([member_id, angle, date])
+}
+
+/// Coach audio/video notes; files live under <STORAGE_DIR>/tenants/<slug>/private/training-recordings.
+model training_recordings {
+  id               String    @id @db.VarChar(36)
+  member_id        Int
+  branch_id        Int
+  assignment_id    Int?
+  day_id           String    @db.VarChar(80)
+  kind             String    @db.VarChar(10)
+  mime             String    @db.VarChar(60)
+  bytes            Int
+  duration_seconds Int?
+  storage_key      String?   @db.VarChar(255)
+  share_token      String    @unique @db.Char(43)
+  note             String    @default("") @db.VarChar(500)
+  expires_at       DateTime
+  deleted_at       DateTime?
+  created_by       Int
+  created_at       DateTime  @default(now())
+
+  @@index([member_id, assignment_id])
+  @@index([expires_at, deleted_at])
 }

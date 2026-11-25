@@ -139,7 +139,7 @@ export function MaskedPhone({
   if (showFull && !serverMasked) {
     return (
       <span className={cn('nums inline-flex items-center gap-1.5', className)} dir={dir}>
-        <span className="select-all">{formatDigits(phoneNational(value))}</span>
+        <span className="select-all">{phoneNational(value)}</span>
         {copyable && <ReceptionCopyButton value={value} label={ui('نسخ رقم الموبايل')} />}
       </span>
     );
@@ -184,7 +184,7 @@ export function MaskedPhone({
   };
 
   const text = revealed
-    ? formatDigits(phoneNational(revealed))
+    ? phoneNational(revealed)
     : serverMasked
       ? value
       : maskPhoneLocally(value);

@@ -105,6 +105,8 @@ import { confirm, afterMenuClose } from '@/lib/confirm';
 import { useListQuery } from '@/lib/use-list-query';
 import { cn, toArabicDigits } from '@/lib/utils';
 import type { ClubSubscriptionsView } from '@/lib/club-routes';
+import { GroupDiscountNotice } from '@/components/club/group-discount-notice';
+import { groupForPackage, hasMemberGroupDiscount, memberGroupDiscountValue } from '@/lib/member-group-discount';
 import type { ClubDiscountCode, ClubMemberListItem, ClubPrivatePackage, ClubSubscriptionListItem, ClubSubscriptionStatistics, ClubSubscriptionType } from '@/types/club';
 import type { ClubClassType } from '@/types/fitness';
 import { SearchableSelect } from '@/components/common/searchable-select';
@@ -497,6 +499,9 @@ export function ClubSubscriptionsPage({
   const pageFormGridCls = openCreateOnMount ? '2xl:grid-cols-4' : undefined;
   const pagePaddingCls = openCreateOnMount ? 'px-4 sm:px-8' : undefined;
   const [editSubId, setEditSubId] = useState<number | null>(null);
+  /** Group-discount snapshot of the subscription being edited (its saved rule stays fixed). */
+  const [editGroupDiscount, setEditGroupDiscount] = useState<ClubSubscriptionListItem['groupDiscount']>(null);
+  const [editGrossValue, setEditGrossValue] = useState<number | null>(null);
   const [editOriginal, setEditOriginal] = useState<{ startDate: string; typeId: string } | null>(null);
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [printSub, setPrintSub] = useState<ClubSubscriptionListItem | null>(null);
@@ -639,8 +644,18 @@ export function ClubSubscriptionsPage({
       employeeId: grant.employeeId ? String(grant.employeeId) : current.employeeId,
     }));
   }, [dialogOpen, editSubId, subscriptionKind, memberDiscountGrants, form.memberDiscountGrantId]);
+  // Member groups: a package the group discounts gets that rule automatically (never combined).
+  const memberGroupForPackage = groupForPackage(selectedMember?.group, Number(form.subscriptionTypeId) || null);
+  const formGroupDiscount = editSubId ? editGroupDiscount : memberGroupForPackage;
+  // Private-trainer sales are priced by their own service, which has no group rule.
+  // A captain's granted code is checked before the group on the server, so it wins here too.
+  const groupDiscountActive = subscriptionKind !== 'private' && !appliedGrant && hasMemberGroupDiscount(formGroupDiscount);
   const formDiscountValue = useMemo(
-    () => calculateSubscriptionDiscount(
+    () => groupDiscountActive
+      ? editSubId && editGrossValue != null && Number(form.subscriptionValue) === editGrossValue
+        ? formGroupDiscount?.appliedValue ?? 0
+        : memberGroupDiscountValue(Number(form.subscriptionValue), formGroupDiscount)
+      : calculateSubscriptionDiscount(
       Number(form.subscriptionValue) || 0,
       form.discountMode,
       form.discountMode === 'code' ? memberDiscountGrants.map((grant) => ({ id: grant.id, code: grant.code ?? '', percentage: grant.percentage, isActive: true, usageCount: 0, createdAt: '', updatedAt: '' })) : discountCodes,
@@ -649,7 +664,7 @@ export function ClubSubscriptionsPage({
       form.pointsToRedeem,
       pointsAccount?.conversion ?? null,
     ),
-    [discountCodes, form.discountCodeId, form.discountMode, form.discountValue, form.memberDiscountGrantId, form.pointsToRedeem, form.subscriptionValue, memberDiscountGrants, pointsAccount?.conversion],
+    [discountCodes, form.discountCodeId, form.discountMode, form.discountValue, form.memberDiscountGrantId, form.pointsToRedeem, form.subscriptionValue, memberDiscountGrants, pointsAccount?.conversion, groupDiscountActive, formGroupDiscount, editSubId, editGrossValue],
   );
   const formNetValue = Math.max(0, (Number(form.subscriptionValue) || 0) - formDiscountValue);
   useEffect(() => {
@@ -946,6 +961,8 @@ export function ClubSubscriptionsPage({
   const openEdit = async (row: ClubSubscriptionListItem) => {
     if (!canUpdateSubscriptions) return;
     setEditSubId(row.id);
+    setEditGroupDiscount(row.groupDiscount ?? null);
+    setEditGrossValue(row.subscriptionValue ?? null);
     const spaRow = !row.specialClassTypeId && !row.isSpecial && isSpaOnlyType(row.subscriptionType);
     setSpaMode(spaRow);
     setSubscriptionKind(row.specialClassTypeId || row.isSpecial ? 'special' : spaRow ? 'package' : row.isLinkedToSessions ? 'sessions' : 'package');
@@ -1082,7 +1099,15 @@ export function ClubSubscriptionsPage({
       toast.error(split.error);
       return;
     }
-    const discountPayload = {
+    const discountPayload = groupDiscountActive ? {
+      // The server applies the member's group rule itself; send the rule fingerprint the cashier saw.
+      discountEnabled: false,
+      discountCodeId: null,
+      memberDiscountGrantId: undefined,
+      discountValue: 0,
+      pointsToRedeem: undefined,
+      ...(editSubId ? {} : { groupDiscountVersion: memberGroupForPackage?.version ?? 'none' }),
+    } : {
       // Points are resolved on the server from the current balance. Sending a
       // regular discount flag with them would correctly be rejected as stacking.
       discountEnabled: form.discountMode !== 'none' && form.discountMode !== 'points',
@@ -2568,6 +2593,9 @@ export function ClubSubscriptionsPage({
 
               <div>
                 <DialogFormSection title="كود خصم أو قيمة خصم" icon={Sparkles}>
+                  {groupDiscountActive ? (
+                    <GroupDiscountNotice group={formGroupDiscount} grossValue={Number(form.subscriptionValue) || 0} historical={!!editSubId} />
+                  ) : (
                   <SubscriptionDiscountFields
                     grossValue={Number(form.subscriptionValue) || 0}
                     codes={memberDiscountGrants.map((grant) => ({ id: grant.id, code: grant.code ?? '', percentage: grant.percentage, isActive: true, usageCount: 0, createdAt: '', updatedAt: '' }))}
@@ -2588,6 +2616,7 @@ export function ClubSubscriptionsPage({
                       discountEnabled: discount.mode !== 'none',
                     }))}
                   />
+                  )}
                 </DialogFormSection>
               <div>
 

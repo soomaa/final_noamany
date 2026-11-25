@@ -1,4 +1,5 @@
 import { zodResolver } from '@hookform/resolvers/zod';
+import { MyInvitationCodeCard } from '@/components/club/my-invitation-code-card';
 import { BadgeCheck, BriefcaseBusiness, Building2, Camera, Eye, EyeOff, KeyRound, LayoutGrid, Loader2, ShieldCheck, UserRound } from 'lucide-react';
 import { useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
@@ -116,6 +117,8 @@ export function ProfilePage() {
   return (
     <div className="mx-auto max-w-6xl space-y-6">
       <PageHeader title={ui('الملف الشخصي')} description={user?.name ? `${ui('مرحباً،')} ${user.name}` : ui('بيانات حسابك ومساحة العمل المتاحة لك')} />
+
+      <MyInvitationCodeCard />
 
       <Card className="overflow-hidden border-primary/15">
         <div className="h-28 bg-brand-gradient opacity-95" />

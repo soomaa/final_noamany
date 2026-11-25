@@ -43,6 +43,7 @@ import { playEntrySound, prepareEntrySound } from '@/lib/entry-sounds';
 import { isExpiryRefusal } from '@/lib/entry-voice';
 import { CameraScanButton } from '@/components/club/camera-barcode-scanner';
 import { EntrySoundSettings } from '@/components/club/entry-sound-settings';
+import { StaffInvitationButton } from '@/components/club/staff-invitation-dialog';
 import { useSaveAndWhatsApp } from '@/hooks/use-whatsapp-templates';
 import { messageAmount } from '@/lib/whatsapp-message';
 import { ReceptionServiceAllowances } from '@/components/club/reception-service-allowances';
@@ -1522,6 +1523,8 @@ export function ClubReceptionPage() {
               }}
             />
             <EntrySoundSettings className={cn('rounded-2xl', tabletMode ? 'size-16' : 'size-14')} />
+            {/* A guest who came through an employee's invitation code → a sales lead credited to that code. */}
+            <StaffInvitationButton iconOnly defaultBranchId={activeReceptionBranchId ?? null} className={cn('rounded-2xl px-0', tabletMode ? 'size-16' : 'size-14')} />
           </div>
           <Button
             variant="brand"

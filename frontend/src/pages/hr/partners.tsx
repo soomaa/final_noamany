@@ -191,7 +191,7 @@ export function HrPartnersPage() {
     {
       id: 'phones',
       header: ui('أرقام الهاتف'),
-      cell: ({ row }) => <div className="space-y-1">{row.original.phones.map((item) => <div key={item.id ?? item.phone} className="flex items-center gap-1 text-xs"><Phone className="size-3 text-muted-foreground" /><span className="nums">{toArabicDigits(item.phone)}</span>{item.isPrimary ? <Star className="size-3 fill-amber-400 text-amber-400" /> : null}</div>)}</div>,
+      cell: ({ row }) => <div className="space-y-1">{row.original.phones.map((item) => <div key={item.id ?? item.phone} className="flex items-center gap-1 text-xs"><Phone className="size-3 text-muted-foreground" /><span className="nums">{item.phone}</span>{item.isPrimary ? <Star className="size-3 fill-amber-400 text-amber-400" /> : null}</div>)}</div>,
     },
     { accessorKey: 'nationalId', header: ui('رقم الهوية'), cell: ({ getValue }) => getValue() ? <span className="nums">{toArabicDigits(getValue() as string)}</span> : '—' },
     { accessorKey: 'isActive', header: ui('الحالة'), cell: ({ row }) => <StatusBadge status={row.original.isActive ? 'active' : 'suspended'} /> },

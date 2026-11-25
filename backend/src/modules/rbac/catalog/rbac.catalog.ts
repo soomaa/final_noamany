@@ -299,7 +299,7 @@ export const RESOURCE_TREE: ResourceNode[] = [
         page('club.members', 'إدارة العضوية', '/club/members', [...LIST, ...CONTACT], 'Members'),
         page('club.members.barcode_management', 'إدارة الباركود', '/club/members/barcode-management', LIST, 'Barcode management'),
         page('club.members.attendance', 'حضور الأعضاء', '/club/members/attendance', LIST, 'Member attendance'),
-        page('club.members.groups', 'المجموعات والفئات', '/club/members/groups', LIST, 'Groups'),
+        page('club.members.groups', 'مجموعات الأعضاء', '/club/members/groups', LIST, 'Member groups'),
         page('club.members.surveys', 'الاستبيانات', '/club/members/surveys', LIST, 'Surveys'),
         { key: 'sales.portal', nameAr: 'بوابة المبيعات', nameEn: 'Sales portal', type: 'page', actions: ['view', 'update', ...CONTACT] },
       ], 'Membership'),
@@ -340,7 +340,9 @@ export const RESOURCE_TREE: ResourceNode[] = [
         // SPA + InBody paid invoices — relocated here (they already count in revenue). Keys kept
         // under club.fitness.* so existing permissions/guards (club.fitness:*) keep working.
         page('club.fitness.spa_invoices', 'فواتير SPA', '/club/fitness/spa-invoices', LIST, 'SPA invoices'),
-        page('club.fitness.inbody_invoices', 'فواتير InBody', '/club/subscriptions/inbody-invoices', LIST, 'InBody invoices'),
+        // «فواتير InBody» page removed (client, 25 Nov): prices/packages live in «قياسات الأعضاء» ← الإعدادات.
+        // The key stays (no route) so roles and the reception/finance guards that use it keep working.
+        { key: 'club.fitness.inbody_invoices', nameAr: 'صلاحية فواتير InBody', nameEn: 'InBody invoices permission', type: 'page', actions: LIST },
         page('club.subscriptions.outstanding', 'المبالغ المتبقية', '/club/subscriptions/outstanding', APPROVAL, 'Outstanding'),
         page('club.subscriptions.treasury', 'يومية الخزينة', '/club/subscriptions/treasury', APPROVAL, 'Treasury'),
         page('club.subscriptions.unified_treasury', 'الخزينة الموحدة', '/club/unified-treasury', APPROVAL, 'Unified treasury'),
@@ -364,6 +366,8 @@ export const RESOURCE_TREE: ResourceNode[] = [
         page('club.fitness.trainer_targets', 'تارجت المدربين', '/club/fitness/trainer-targets', SETTINGS, 'Trainer targets'),
         page('club.fitness.trainer_evaluations', 'تقييم المدربين الشهري', '/club/fitness/trainer-evaluations', LIST, 'Trainer evaluations'),
         page('club.fitness.trainer_evaluation_criteria', 'بنود تقييم المدربين', '/club/fitness/trainer-evaluation-criteria', SETTINGS, 'Trainer evaluation criteria'),
+        // مساحة التدريب (ported from Gymora): plans, member journey, measurements, exercise & equipment library.
+        page('club.fitness.training_space', 'مساحة التدريب', '/club/fitness/training-space', LIST, 'Training space'),
         page('club.fitness.branch_analysis', 'تحليل الفروع', '/club/fitness/branch-analysis', REPORT, 'Branch analysis'),
         page('club.fitness.reception_analysis', 'تحليل الريسيبشن', '/club/fitness/reception-analysis', REPORT, 'Reception analysis'),
         page('club.fitness.shift_analysis', 'تحليل الشِفتات', '/club/fitness/shift-analysis', REPORT, 'Shift analysis'),

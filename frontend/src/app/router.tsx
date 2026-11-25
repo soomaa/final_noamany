@@ -251,6 +251,7 @@ import {
   FitnessTrainerTargetsPage,
   FitnessTrainerEvaluationsPage,
   FitnessTrainerEvaluationCriteriaPage,
+  FitnessTrainingSpacePage,
   FitnessBranchAnalysisPage,
   FitnessReceptionAnalysisPage,
   FitnessShiftAnalysisPage,
@@ -263,7 +264,6 @@ import {
   FitnessBarcodeCheckInPage,
   FitnessSpaAttendancePage,
   FitnessClassAttendancePage,
-  FitnessInbodyInvoicesPage,
   FitnessFacilitySettingsPage,
   ClubEventsPage,
   ClubEventWorkspacePage,
@@ -308,7 +308,7 @@ function WeeklyLeaveRedirect() {
   return <Navigate to={id ? `/employees/${id}/attendance` : '/employees'} replace />;
 }
 
-const TRAINER_ALLOWED_PATHS = new Set(['/trainer', '/profile', '/notifications', '/workspace']);
+const TRAINER_ALLOWED_PATHS = new Set(['/trainer', '/trainer/training', '/profile', '/notifications', '/workspace']);
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { status, user } = useAuth();
@@ -351,6 +351,7 @@ export function AppRouter() {
           }
         >
           <Route path="trainer" element={<Lazy><TrainerPortalPage /></Lazy>} />
+          <Route path="trainer/training" element={<Lazy><TrainerPortalPage /></Lazy>} />
           <Route path="club/events/:id/live/display" element={<Lazy><ClubEventLiveDisplayPage /></Lazy>} />
           <Route path="club/events/:id/live/checkin" element={<Lazy><ClubEventLiveCheckInPage /></Lazy>} />
           <Route path="club/events/:id/live/guest" element={<Lazy><ClubEventLiveGuestPage /></Lazy>} />
@@ -579,6 +580,7 @@ export function AppRouter() {
           <Route path="club/fitness/trainer-targets" element={<Lazy><FitnessTrainerTargetsPage /></Lazy>} />
           <Route path="club/fitness/trainer-evaluations" element={<Lazy><FitnessTrainerEvaluationsPage /></Lazy>} />
           <Route path="club/fitness/trainer-evaluation-criteria" element={<Lazy><FitnessTrainerEvaluationCriteriaPage /></Lazy>} />
+          <Route path="club/fitness/training-space" element={<Lazy><FitnessTrainingSpacePage /></Lazy>} />
           <Route path="club/fitness/branch-analysis" element={<Lazy><FitnessBranchAnalysisPage /></Lazy>} />
           <Route path="club/fitness/reception-analysis" element={<Lazy><FitnessReceptionAnalysisPage /></Lazy>} />
           <Route path="club/fitness/shift-analysis" element={<Lazy><FitnessShiftAnalysisPage /></Lazy>} />
@@ -588,8 +590,8 @@ export function AppRouter() {
           <Route path="club/fitness/spa-attendance" element={<Navigate to="/club/members/barcode-management?tab=spa-attendance" replace />} />
           <Route path="club/fitness/classes-attendance" element={<Navigate to="/club/members/barcode-management?tab=class-attendance" replace />} />
           <Route path="club/fitness/spa-bookings" element={<Lazy><FitnessSpaBookingsPage /></Lazy>} />
-          <Route path="club/subscriptions/inbody-invoices" element={<Lazy><FitnessInbodyInvoicesPage /></Lazy>} />
-          <Route path="club/fitness/inbody-invoices" element={<Navigate to="/club/subscriptions/inbody-invoices" replace />} />
+          <Route path="club/subscriptions/inbody-invoices" element={<Navigate to="/club/members/measurements" replace />} />
+          <Route path="club/fitness/inbody-invoices" element={<Navigate to="/club/members/measurements" replace />} />
           <Route path="club/fitness/facility-settings" element={<Lazy><FitnessFacilitySettingsPage /></Lazy>} />
           <Route path="club/fitness/class-booking" element={<Navigate to="/club/subscriptions/special?section=scheduling" replace />} />
           <Route path="club/fitness/room-bookings" element={<Lazy><FitnessRoomBookingsPage /></Lazy>} />

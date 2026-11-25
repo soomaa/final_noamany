@@ -23,8 +23,12 @@ export function whatsappPhone(phone: string | null | undefined): string | null {
   return /^[1-9]\d{9,14}$/.test(digits) ? digits : null;
 }
 
+/**
+ * A chat with the message typed in. Uses api.whatsapp.com/send, not wa.me: wa.me's redirect page
+ * turns emoji into «�» (client screenshot, 25 Nov), the send endpoint keeps them.
+ */
 export function whatsappMessageLink(phone: string, message: string): string {
-  return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+  return `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`;
 }
 
 export function searchMemberSubscriptions(rows: readonly MemberMessageSubscription[], search: string): MemberMessageSubscription[] {

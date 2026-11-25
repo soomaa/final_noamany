@@ -1294,7 +1294,15 @@ export class ClubAttendanceService {
     const enrollmentSql = Prisma.sql`SELECT 'e' AS src, e.id AS id, e.updated_at AS sort_at
       FROM club_class_enrollments e JOIN club_classes c ON c.id = e.class_id JOIN club_members m ON m.id = e.member_id ${where(enrollmentParts)}`;
 
-    const sources = q.kind === 'spa' ? [spaSql] : q.kind === 'class' ? [attendanceSql, enrollmentSql] : [attendanceSql, spaSql, enrollmentSql];
+    // «فواتير السبا»: a SPA visit sold there (paid, or taken from the subscription's SPA balance)
+    // writes no club_spa_attendance row, so the SPA report read only the barcode / reception
+    // check-ins and missed every visit recorded as an invoice (client, 25 Nov).
+    const invoiceParts = filters('i', 'invoice_date', 'i.branch_id', 'm.name', 'm.member_code');
+    invoiceParts.push(Prisma.sql`i.is_active = 1`, Prisma.sql`i.status NOT IN ('cancelled', 'canceled', 'refunded', 'ملغاة', 'ملغي')`);
+    const spaInvoiceSql = Prisma.sql`SELECT 'v' AS src, i.id AS id, i.created_at AS sort_at
+      FROM club_spa_invoices i JOIN club_members m ON m.id = i.member_id ${where(invoiceParts)}`;
+
+    const sources = q.kind === 'spa' ? [spaSql, spaInvoiceSql] : q.kind === 'class' ? [attendanceSql, enrollmentSql] : [attendanceSql, spaSql, enrollmentSql];
     const unionSql = Prisma.join(sources, ' UNION ALL ');
     const [keys, countRows] = await Promise.all([
       this.prisma.$queryRaw<{ src: string; id: number; sort_at: Date }[]>(
@@ -1303,14 +1311,15 @@ export class ClubAttendanceService {
       this.prisma.$queryRaw<{ cnt: bigint }[]>(Prisma.sql`SELECT COUNT(*) AS cnt FROM (${unionSql}) r`),
     ]);
     const idsOf = (src: string) => keys.filter((k) => k.src === src).map((k) => Number(k.id));
-    const [attendanceRows, spaRows, enrollmentRows] = await Promise.all([
+    const [attendanceRows, spaRows, enrollmentRows, spaInvoiceRows] = await Promise.all([
       this.prisma.club_attendance.findMany({ where: { id: { in: idsOf('a') } } }),
       this.prisma.club_spa_attendance.findMany({ where: { id: { in: idsOf('s') } } }),
       this.prisma.club_class_enrollments.findMany({ where: { id: { in: idsOf('e') } }, include: { class: { select: { branch_id: true, class_date: true } } } }),
+      this.prisma.club_spa_invoices.findMany({ where: { id: { in: idsOf('v') } }, include: { service: { select: { name: true } } } }),
     ]);
-    const subscriptionIds = [...new Set([...spaRows.map((r) => r.subscription_id), ...enrollmentRows.map((r) => r.subscription_id)].filter((id): id is number => id != null))];
-    const memberIds = [...new Set(enrollmentRows.map((r) => r.member_id))];
-    const userIds = [...new Set([...attendanceRows.map((r) => r.created_by), ...spaRows.map((r) => r.created_by)].filter((id): id is number => id != null))];
+    const subscriptionIds = [...new Set([...spaRows.map((r) => r.subscription_id), ...enrollmentRows.map((r) => r.subscription_id), ...spaInvoiceRows.map((r) => r.subscription_id)].filter((id): id is number => id != null))];
+    const memberIds = [...new Set([...enrollmentRows.map((r) => r.member_id), ...spaInvoiceRows.map((r) => r.member_id)])];
+    const userIds = [...new Set([...attendanceRows.map((r) => r.created_by), ...spaRows.map((r) => r.created_by), ...spaInvoiceRows.map((r) => r.created_by)].filter((id): id is number => id != null))];
     const [subscriptions, members, users] = await Promise.all([
       this.prisma.club_subscriptions.findMany({ where: { id: { in: subscriptionIds } }, select: { id: true, subscription_type: true } }),
       this.prisma.club_members.findMany({ where: { id: { in: memberIds } }, select: { id: true, name: true, member_code: true } }),
@@ -1322,9 +1331,10 @@ export class ClubAttendanceService {
     const attendanceById = new Map(attendanceRows.map((r) => [r.id, r]));
     const spaById = new Map(spaRows.map((r) => [r.id, r]));
     const enrollmentById = new Map(enrollmentRows.map((r) => [r.id, r]));
+    const spaInvoiceById = new Map(spaInvoiceRows.map((r) => [r.id, r]));
 
     type ReportRow = {
-      key: string; source: 'a' | 's' | 'e'; id: number; memberId: number; memberCode: string; memberName: string;
+      key: string; source: 'a' | 's' | 'e' | 'v'; id: number; memberId: number; memberCode: string; memberName: string;
       subscriptionName: string | null; branchId: number | null; attendanceDate: string; time: string | null;
       attendanceType: string; employeeName: string | null;
     };
@@ -1348,6 +1358,18 @@ export class ClubAttendanceService {
           subscriptionName: subscriptionName.get(r.subscription_id) ?? null, branchId: r.branch_id, attendanceDate: r.attendance_date,
           time: r.check_in_time.slice(0, 5), attendanceType: 'spa',
           employeeName: r.created_by != null ? employeeName.get(r.created_by) ?? null : null,
+        }];
+      }
+      if (key.src === 'v') {
+        const r = spaInvoiceById.get(id);
+        if (!r) return [];
+        const member = memberById.get(r.member_id);
+        return [{
+          key: `v-${r.id}`, source: 'v', id: r.id, memberId: r.member_id, memberCode: member?.member_code ?? '', memberName: member?.name ?? '',
+          // The package when the visit came out of its balance, otherwise the SPA service sold.
+          subscriptionName: r.subscription_id != null ? subscriptionName.get(r.subscription_id) ?? r.service.name : r.service.name,
+          branchId: r.branch_id, attendanceDate: r.invoice_date, time: cairoDateTime(r.created_at).time.slice(0, 5),
+          attendanceType: 'spa', employeeName: r.created_by != null ? employeeName.get(r.created_by) ?? null : null,
         }];
       }
       const r = enrollmentById.get(id);

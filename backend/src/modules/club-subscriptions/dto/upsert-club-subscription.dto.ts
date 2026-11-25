@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -90,6 +91,12 @@ export class UpsertClubSubscriptionDto {
   @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean()
   discountEnabled?: boolean;
+
+  /** Fingerprint of the member-group rule the cashier saw ('none' when there was none). */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  groupDiscountVersion?: string;
 
   @IsOptional()
   @Transform(({ value }) => (value != null && value !== '' ? Number(value) : null))

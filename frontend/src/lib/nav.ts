@@ -160,7 +160,6 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: CR.subscriptions.reports },
           { to: CR.subscriptions.receipts },
           { to: FIT.facilities.spaInvoices },
-          { to: CR.subscriptions.inbodyInvoices },
           { to: CR.subscriptions.outstanding },
           { to: CR.subscriptions.treasury },
           { to: CR.subscriptions.unifiedTreasury },
@@ -228,6 +227,7 @@ export const NAV_SECTIONS: NavSection[] = [
           { to: FIT.trainers.targets },
           { to: FIT.trainers.evaluations },
           { to: FIT.trainers.evaluationCriteria },
+          { to: FIT.trainers.trainingSpace },
         ],
       },
       {
@@ -595,7 +595,18 @@ export function sectionRoutePaths(sectionId: string): string[] {
 }
 
 /** The single best-matching item path for the current location (longest prefix wins). */
+/**
+ * Pages reached through a redirect from their menu link (the menu keeps the old link): the real
+ * path → the menu item, so opening the page keeps its section and item open in the sidebar
+ * instead of dropping back to the top-level menu (client, 25 Nov: «إدارة المبيعات»).
+ */
+const NAV_PATH_ALIASES: Record<string, string> = {
+  '/club/sales-reports': CR.sales.dashboard,
+};
+
 export function activeNavPath(pathname: string): string {
+  const alias = NAV_PATH_ALIASES[pathname.replace(/\/+$/, '')];
+  if (alias) return alias;
   let best = '';
   for (const item of allItems()) {
     if (pathname === item.to || pathname.startsWith(item.to + '/')) {

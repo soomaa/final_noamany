@@ -20,6 +20,12 @@ interface MemberSearchComboboxProps {
   forMeasurementOperation?: boolean;
   disabled?: boolean;
   className?: string;
+  /** Input id, so a <Label htmlFor> can point at the search box. */
+  id?: string;
+  /** Clear the box after each pick (multi-select pickers such as member groups). */
+  resetOnSelect?: boolean;
+  /** Members already chosen elsewhere; hidden from the results. */
+  excludedMemberIds?: number[];
 }
 
 export function MemberSearchCombobox({
@@ -33,9 +39,14 @@ export function MemberSearchCombobox({
   forMeasurementOperation = false,
   disabled,
   className,
+  id,
+  resetOnSelect = false,
+  excludedMemberIds = [],
 }: MemberSearchComboboxProps) {
   const ct = useClubT();
   const rootRef = useRef<HTMLDivElement>(null);
+  const excludedRef = useRef(excludedMemberIds);
+  excludedRef.current = excludedMemberIds;
   const [query, setQuery] = useState('');
   const [hits, setHits] = useState<ClubMemberLookupItem[]>([]);
   const [open, setOpen] = useState(false);
@@ -69,8 +80,9 @@ export function MemberSearchCombobox({
         try {
           const result = await searchClubMembers(trimmed, branchId, exactBranch, forMembershipOperation, forRefundTransfer, forMeasurementOperation);
           if (cancelled) return;
-          setHits(result.hits);
-          setOpen(result.hits.length > 0);
+          const visible = result.hits.filter((hit) => !excludedRef.current.includes(hit.id));
+          setHits(visible);
+          setOpen(visible.length > 0);
           setActiveIndex(0);
         } catch {
           if (cancelled) return;
@@ -106,7 +118,7 @@ export function MemberSearchCombobox({
         ? `/club-members/membership-operation-member/${hit.id}`
         : `/club-members/${hit.id}`);
       onSelect(data);
-      setQuery(`${data.name} · ${data.memberCode}`);
+      setQuery(resetOnSelect ? '' : `${data.name} · ${data.memberCode}`);
       setOpen(false);
       setHits([]);
     } catch {
@@ -153,6 +165,7 @@ export function MemberSearchCombobox({
       <div className="relative">
         <Search className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
+          id={id}
           className="ps-9 pe-9"
           value={query}
           disabled={disabled}

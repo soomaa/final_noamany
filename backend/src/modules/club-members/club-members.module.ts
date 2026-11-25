@@ -7,7 +7,9 @@ import { ClubAttendanceCron } from './club-attendance.cron';
 import { ClubAttendanceService } from './club-attendance.service';
 import { ClubReceptionInvitationsController } from './club-reception-invitations.controller';
 import { ClubReceptionInvitationsService } from './club-reception-invitations.service';
-import { ClubMemberGroupsController, ClubSurveysController } from './club-extras.controller';
+import { ClubSurveysController } from './club-extras.controller';
+import { ClubMemberGroupsController } from './club-member-groups.controller';
+import { ClubMemberGroupsService } from './club-member-groups.service';
 import { ClubMembersController } from './club-members.controller';
 import { ClubMembersService } from './club-members.service';
 import { ClubMemberPhoneRevealService } from './club-member-phone-reveal.service';
@@ -19,7 +21,7 @@ import { ClubPointsModule } from '../club-points/club-points.module';
 @Module({
   imports: [GymOpsModule, ClubSubscriptionsModule, EmployeesModule, ClubPointsModule],
   controllers: [ClubMembersController, ClubMembershipTypesController, ClubAttendanceController, ClubMemberGroupsController, ClubSurveysController, ClubReceptionInvitationsController],
-  providers: [ClubMembersService, ClubMemberPhoneRevealService, ClubMembershipTypesService, ClubAttendanceService, ClubAttendanceCron, MemberDocumentStorageService, ClubReceptionInvitationsService],
+  providers: [ClubMembersService, ClubMemberGroupsService, ClubMemberPhoneRevealService, ClubMembershipTypesService, ClubAttendanceService, ClubAttendanceCron, MemberDocumentStorageService, ClubReceptionInvitationsService],
   exports: [ClubMembersService],
 })
 export class ClubMembersModule {}

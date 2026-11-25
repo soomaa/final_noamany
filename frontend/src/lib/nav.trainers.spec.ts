@@ -16,6 +16,7 @@ const requiredRoutes = [
   '/club/fitness/trainer-targets',
   '/club/fitness/trainer-evaluations',
   '/club/fitness/trainer-evaluation-criteria',
+  '/club/fitness/training-space',
 ];
 const expectedAnalysisRoutes = [
   '/club/fitness/branch-analysis',

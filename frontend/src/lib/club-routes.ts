@@ -63,7 +63,6 @@ export const CLUB_ROUTES = {
     memberTransfer: '/club/subscriptions/member-transfer',
     refunds: '/club/subscriptions/refunds',
     receipts: '/club/subscriptions/receipts',
-    inbodyInvoices: '/club/subscriptions/inbody-invoices',
     financialReports: '/club/subscriptions/financial-reports',
     expired: '/club/subscriptions/expired',
     expiring: '/club/subscriptions/expiring',

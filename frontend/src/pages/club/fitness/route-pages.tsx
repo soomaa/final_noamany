@@ -26,6 +26,7 @@ export {
   FitnessTrainerEvaluationsPage,
   FitnessTrainerTargetsPage,
 } from './trainers/performance';
+export { TrainingJourneyPage as FitnessTrainingSpacePage } from './training/journey';
 export { FitnessFacilitiesPage } from './facilities/index';
 export { FitnessEquipmentPage } from './facilities/equipment';
 export { FitnessMaintenancePage } from './facilities/maintenance';
@@ -35,5 +36,4 @@ export { FitnessSpaInvoicesPage } from './facilities/spa-invoices';
 export { FitnessBarcodeCheckInPage } from './barcode-check-in';
 export { FitnessSpaAttendancePage } from './spa-attendance';
 export { FitnessClassAttendancePage } from './class-attendance';
-export { FitnessInbodyInvoicesPage } from './facilities/inbody-invoices';
 export { FitnessFacilitySettingsPage } from './facilities/settings';

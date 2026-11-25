@@ -78,6 +78,7 @@ import { ClubQuickServicesModule } from './modules/club-quick-services/club-quic
 import { ClubCustomerSourcesModule } from './modules/club-customer-sources/club-customer-sources.module';
 import { ClubLockersModule } from './modules/club-lockers/club-lockers.module';
 import { ClubFitnessModule } from './modules/club-fitness/club-fitness.module';
+import { TrainingJourneyModule } from './modules/training-journey/training.module';
 import { ClubDashboardModule } from './modules/club-dashboard/club-dashboard.module';
 import { PeriodSummaryModule } from './modules/period-summary/period-summary.module';
 import { ClubEventsModule } from './modules/club-events/club-events.module';
@@ -187,6 +188,7 @@ import { ClubPointsModule } from './modules/club-points/club-points.module';
     ClubCustomerSourcesModule,
     ClubLockersModule,
     ClubFitnessModule,
+    TrainingJourneyModule,
     ClubDashboardModule,
     PeriodSummaryModule,
     ClubEventsModule,

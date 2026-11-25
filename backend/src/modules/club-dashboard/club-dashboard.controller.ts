@@ -27,6 +27,13 @@ export class ClubDashboardController {
     return this.service.treasury({ date, dateFrom, dateTo, branchId, gender }, user);
   }
 
+  /** The alert-centre counts for the notifications bell (reception and managers, not only the dashboard). */
+  @Get('alerts')
+  @RequiresPermission('club.dashboard:view', 'club.reception:view', 'club.members:view')
+  alerts(@CurrentUser() user: JwtUser) {
+    return this.service.followUpAlerts(user);
+  }
+
   @Get('summary')
   summary(
     @Query('startDate') startDate?: string,

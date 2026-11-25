@@ -3,6 +3,7 @@ import {
   CalendarDays,
   CheckCircle2,
   Clock3,
+  Dumbbell,
   LogOut,
   TrendingUp,
   UserCheck,
@@ -10,7 +11,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useState } from 'react';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ClubStatCard } from '@/components/club/stat-card';
 import { LOGO_SRC } from '@/components/brand/logo';
 import { PageSkeleton } from '@/components/common/page-skeleton';
@@ -24,6 +25,8 @@ import { api, apiError } from '@/lib/api';
 import { localDateStr, formatMoneyNumber } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useAuth } from '@/store/auth';
+import { TrainingPortalContext } from '@/pages/club/fitness/training/access';
+import { TrainingJourneyPage } from '@/pages/club/fitness/training/journey';
 
 interface TrainerPortalData {
   trainer: { id: number; name: string; specialization: string | null; imageUrl: string | null };
@@ -68,6 +71,7 @@ const money = (value: number) => `${formatMoneyNumber(value)} ج.م`;
 export function TrainerPortalPage() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const openTraining = useLocation().pathname.replace(/\/+$/, '') === '/trainer/training';
   // One calendar month only (client, 20 Nov 2026): from the 1st to the last day of the chosen month.
   const [month, setMonth] = useState(() => localDateStr(new Date()).slice(0, 7));
   const [year, monthNumber] = month.split('-').map(Number);
@@ -157,12 +161,13 @@ export function TrainerPortalPage() {
               <ClubStatCard label="إجمالي المستحقات" value={money(data.statistics.totalEarnings)} icon={Wallet} />
             </div>
 
-            <Tabs defaultValue="schedule">
+            <Tabs defaultValue={openTraining ? 'training' : 'schedule'}>
               <TabsList className="h-auto flex-wrap">
                 <TabsTrigger value="schedule"><CalendarDays className="size-4" /> جدولي</TabsTrigger>
                 <TabsTrigger value="attendance"><UserCheck className="size-4" /> الحضور</TabsTrigger>
                 <TabsTrigger value="earnings"><Wallet className="size-4" /> مستحقاتي</TabsTrigger>
                 <TabsTrigger value="statistics"><TrendingUp className="size-4" /> الإحصائيات</TabsTrigger>
+                <TabsTrigger value="training"><Dumbbell className="size-4" /> مساحة التدريب</TabsTrigger>
               </TabsList>
 
               <TabsContent value="schedule" className="pt-2">
@@ -234,6 +239,13 @@ export function TrainerPortalPage() {
 
               <TabsContent value="statistics">
                 <Card><CardHeader><CardTitle>ملخص الأداء</CardTitle></CardHeader><CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"><div className="rounded-xl border p-4"><Clock3 className="mb-3 size-5 text-primary" /><p className="text-sm text-muted-foreground">الحصص المنفذة</p><b className="mt-1 block text-2xl nums">{toArabicDigits(data.statistics.completedClasses)}</b></div><div className="rounded-xl border p-4"><UserCheck className="mb-3 size-5 text-primary" /><p className="text-sm text-muted-foreground">إجمالي الحضور</p><b className="mt-1 block text-2xl nums">{toArabicDigits(data.statistics.totalAttendance)}</b></div><div className="rounded-xl border p-4"><TrendingUp className="mb-3 size-5 text-primary" /><p className="text-sm text-muted-foreground">نسبة الالتزام</p><b className="mt-1 block text-2xl nums">{toArabicDigits(data.statistics.adherenceRate.toFixed(0))}%</b></div></CardContent></Card>
+              </TabsContent>
+
+              {/* مساحة التدريب — the same Gymora training workspace, scoped by the API to this trainer's own clients. */}
+              <TabsContent value="training" className="pt-2">
+                <TrainingPortalContext.Provider value={true}>
+                  <TrainingJourneyPage />
+                </TrainingPortalContext.Provider>
               </TabsContent>
             </Tabs>
           </>

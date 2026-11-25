@@ -10,6 +10,7 @@ import { isSystemAdmin } from '../../common/utils/system-admin.util';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { paginated } from '../../common/dto/list-result';
 import { formToData, rowToForm } from './employees.fieldmap';
+import { ADDITIONAL_SALES_ROLE_KEY } from '../rbac/job-title-role.util';
 import {
   resolveRoleIdForJobTitleId,
 } from '../rbac/job-title-role.util';
@@ -361,6 +362,7 @@ export class EmployeesService {
       );
       return { ...form };
     });
+    resolved.is_sales = row.is_sales === true || Number(row.is_sales) === 1 ? 'true' : 'false';
     if (row.mosma_wazefy_code) {
       resolved.job_title_id_fk = String(row.mosma_wazefy_code);
     } else if (String(row.mosma_wazefy_n ?? '').trim()) {
@@ -613,8 +615,35 @@ export class EmployeesService {
 
     // Trainer job title → mirror into the club_trainers roster (class trainer picker).
     await this.syncTrainerCommission(created.id, body);
+    await this.syncSalesFlag(created.id, body, resolvedBody);
 
     return { id: created.id, emp_code: created.emp_code };
+  }
+
+  /**
+   * «يعمل بالمبيعات» on the employee form (MetaFit's is_sales): another job title that also
+   * sells gets the sales pages (the additional_sales role on their account), a target, and shows
+   * as a أخصائي مبيعات. A sales job title always sells, so the flag is not stored for it.
+   */
+  private async syncSalesFlag(employeeId: number, body: Record<string, unknown>, resolvedBody: Record<string, unknown>) {
+    if (!('is_sales' in body)) return;
+    const byTitle = isMarketingRepJobTitle(String(resolvedBody.mosma_wazefy_n ?? ''));
+    const enabled = !byTitle && (body.is_sales === true || body.is_sales === 'true' || body.is_sales === '1');
+    await this.prisma.employees.updateMany({ where: { id: employeeId }, data: { is_sales: enabled } });
+    const [account, role] = await Promise.all([
+      this.prisma.users.findFirst({ where: { emp_code: employeeId }, select: { user_id: true } }),
+      this.prisma.rbac_roles.findUnique({ where: { key: ADDITIONAL_SALES_ROLE_KEY }, select: { id: true } }),
+    ]);
+    if (!account || !role) return;
+    if (enabled) {
+      await this.prisma.rbac_user_roles.upsert({
+        where: { user_id_role_id: { user_id: account.user_id, role_id: role.id } },
+        update: {},
+        create: { user_id: account.user_id, role_id: role.id },
+      });
+    } else {
+      await this.prisma.rbac_user_roles.deleteMany({ where: { user_id: account.user_id, role_id: role.id } });
+    }
   }
 
   /** Sales specialists (أخصائي مبيعات) for member registration dropdown. */
@@ -787,6 +816,7 @@ export class EmployeesService {
       );
       if (roleId == null) await this.revokeDashboardAccess(id);
       await this.syncTrainerCommission(id, body);
+      await this.syncSalesFlag(id, body, resolvedBody);
     } catch (error) {
       // Say why (phone already on another employee / app account / system account), so the
       // admin can fix that record instead of guessing from a generic warning.

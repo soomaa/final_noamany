@@ -33,6 +33,7 @@ import {
   ListWaMessagesDto,
   UpsertWaTemplateDto,
   WaAbsenceLookupDto,
+  WaCommitmentLookupDto,
   WaAbsenceSettingsDto,
   WaAudienceDto,
   WaBirthdaySettingsDto,
@@ -127,6 +128,8 @@ export class WaRemindersController {
   constructor(private readonly wa: WaCampaignsService) {}
 
   @Get('absence') absence(@Query() q: WaAbsenceLookupDto, @CurrentUser() user: JwtUser) { return this.wa.absenceLookup(q, user); }
+  /** «عدم الالتزام بالحضور» text for the rows of the member commitment report. */
+  @Get('commitment') commitment(@Query() q: WaCommitmentLookupDto, @CurrentUser() user: JwtUser) { return this.wa.commitmentLookup(q, user); }
 }
 
 /** `Authorization: Bearer pwa_…` → request.waDevice (paired, not revoked). */

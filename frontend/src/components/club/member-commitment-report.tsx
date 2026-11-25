@@ -1,6 +1,6 @@
 import type { ColumnDef } from '@tanstack/react-table';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
-import { ArrowDownUp, Building2, Eye, LockKeyhole } from 'lucide-react';
+import { ArrowDownUp, Building2, Eye, LockKeyhole, MessageCircle } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { useBranches } from '@/hooks/use-branches';
 import { api, apiError } from '@/lib/api';
+import { whatsappMessageLink } from '@/lib/member-whatsapp';
 import { downloadExcel } from '@/lib/export';
 import { formatDate, localToday } from '@/lib/formatters';
 import { cn, toArabicDigits } from '@/lib/utils';
@@ -124,6 +125,20 @@ export function MemberCommitmentReport() {
       })).data,
     placeholderData: keepPreviousData,
   });
+
+  // «عدم الالتزام بالحضور» WhatsApp text for this page's subscriptions (a failure only disables the buttons).
+  const subscriptionIds = useMemo(() => (report.data?.data ?? []).map((r) => r.subscriptionId), [report.data]);
+  const waMessages = useQuery({
+    queryKey: ['wa-reminders', 'commitment', subscriptionIds.join(',')],
+    queryFn: async () =>
+      (await api.get<{ rows: Array<{ subscriptionId: number; phone: string | null; text: string | null }> }>('/wa-reminders/commitment', {
+        params: { subscriptions: subscriptionIds.join(',') },
+      })).data,
+    enabled: subscriptionIds.length > 0,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const waBySubscription = useMemo(() => new Map((waMessages.data?.rows ?? []).map((r) => [r.subscriptionId, r])), [waMessages.data]);
 
   const branchName = (id: number) => branches.find((b) => b.id === id)?.name?.trim() || `فرع ${id}`;
   const resetPage = () => setPage(1);
@@ -247,9 +262,43 @@ export function MemberCommitmentReport() {
         header: 'آخر حضور',
         cell: ({ row }) => <span className="nums">{row.original.lastAttendanceDate ? formatDate(row.original.lastAttendanceDate) : 'لم يحضر'}</span>,
       },
+      {
+        id: 'whatsapp',
+        header: 'واتساب',
+        cell: ({ row }) => {
+          const info = waBySubscription.get(row.original.subscriptionId);
+          const link = info?.phone && info.text ? whatsappMessageLink(info.phone, info.text) : null;
+          const hint = !info
+            ? 'جاري تحميل رسالة واتساب…'
+            : !info.phone
+              ? 'مفيش رقم موبايل صالح للعضو'
+              : 'مفيش قالب «عدم الالتزام بالحضور» — حدده من صفحة واتساب';
+          return link ? (
+            <a
+              href={link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-[#25D366] text-white shadow-sm transition hover:brightness-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title="إرسال رسالة «عدم الالتزام بالحضور» على واتساب"
+              aria-label="إرسال رسالة «عدم الالتزام بالحضور» على واتساب"
+            >
+              <MessageCircle className="size-4" />
+            </a>
+          ) : (
+            <span
+              className="inline-flex size-9 shrink-0 cursor-not-allowed items-center justify-center rounded-full bg-muted text-muted-foreground/60"
+              title={hint}
+              aria-label={hint}
+              role="img"
+            >
+              <MessageCircle className="size-4" />
+            </span>
+          );
+        },
+      },
     ],
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [branches, isSystemAdmin, navigate, sortOrder],
+    [branches, isSystemAdmin, navigate, sortOrder, waBySubscription],
   );
 
   const exportExcel = async () => {

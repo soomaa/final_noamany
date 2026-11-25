@@ -28,6 +28,40 @@ export const SIDEBAR_API_POLICIES: Record<string, string[]> = {
   "AdminInbodyController.create": [
     "club.members.measurements:create"
   ],
+  // InBody settings tab on «قياسات الأعضاء» + balance / auto-charge recording.
+  "ClubInbodyMeasurementsController.memberContext": [
+    "club.members.measurements:view",
+    "club.reception:view"
+  ],
+  "ClubInbodyMeasurementsController.record": [
+    "club.members.measurements:create"
+  ],
+  "ClubInbodySettingsController.get": [
+    "club.members.measurements:view"
+  ],
+  "ClubInbodySettingsController.update": [
+    "club.members.measurements:update"
+  ],
+  "ClubInbodyServicesController.list": [
+    "club.fitness:view",
+    "club.members.measurements:view"
+  ],
+  "ClubInbodyServicesController.findOne": [
+    "club.fitness:view",
+    "club.members.measurements:view"
+  ],
+  "ClubInbodyServicesController.create": [
+    "club.fitness:create",
+    "club.members.measurements:update"
+  ],
+  "ClubInbodyServicesController.update": [
+    "club.fitness:update",
+    "club.members.measurements:update"
+  ],
+  "ClubInbodyServicesController.remove": [
+    "club.fitness:delete",
+    "club.members.measurements:update"
+  ],
   "ClubLockersController.inventorySnapshot": [
     "club.lockers.inventory:view",
     "club.lockers.inventory:create",

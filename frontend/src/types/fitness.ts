@@ -66,6 +66,46 @@ export interface InbodyMeasurementRow extends MemberRowFields {
   bmi: number | null;
   notes: string | null;
   reportUrl?: string | null;
+  branchId?: number | null;
+  /** legacy | subscription | package | paid_single | package_purchase */
+  settlementSource?: string;
+}
+
+/** An InBody price (measurementCount 1) or package (> 1) of a branch. */
+export interface InbodyOffer {
+  id: number;
+  name: string;
+  description?: string | null;
+  price: number;
+  measurementCount: number;
+  validityDays: number | null;
+  branchId: number | null;
+  isActive?: boolean;
+}
+
+export interface InbodyBalance {
+  id: number;
+  source: 'subscription' | 'package';
+  label: string;
+  remaining: number;
+  expiresAt: string | null;
+}
+
+export interface InbodyMemberContext {
+  member: { id: number; memberCode: string; name: string; branchId: number };
+  totalRemaining: number;
+  hasActiveMembership: boolean;
+  allowWithoutActiveMembership: boolean;
+  balances: InbodyBalance[];
+  offers: InbodyOffer[];
+}
+
+export interface InbodyBranchSettings {
+  branchId: number;
+  allowWithoutActiveMembership: boolean;
+  offers: InbodyOffer[];
+  /** Legacy prices saved for «كل الفروع» (from the removed «فواتير InBody» page). */
+  globalOffers?: InbodyOffer[];
 }
 
 export interface PhysicalAssessmentRow extends MemberRowFields {

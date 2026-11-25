@@ -38,10 +38,15 @@ export class ClubStaffInvitationsController {
     @Query('search') search?: string,
     @Query('withCode') withCode?: string,
     @Query('status') status?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
   ) {
     const id = branchId ? Number(branchId) : undefined;
     if (id !== undefined && (!Number.isInteger(id) || id < 1)) throw new BadRequestException('الفرع غير صالح');
-    return this.service.list(user, { branchId: id, search, withCode, status });
+    const day = /^\d{4}-\d{2}-\d{2}$/;
+    if ((dateFrom && !day.test(dateFrom)) || (dateTo && !day.test(dateTo))) throw new BadRequestException('التاريخ غير صالح');
+    if (dateFrom && dateTo && dateFrom > dateTo) throw new BadRequestException('«من» لازم يكون قبل «إلى»');
+    return this.service.list(user, { branchId: id, search, withCode, status, dateFrom, dateTo });
   }
 
   /** The signed-in employee's own code, remaining allowance and guests (no page grant needed). */

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
+import { CopyCodeButton } from '@/components/club/my-invitation-code-card';
 import { MaskedPhone } from '@/components/club/masked-phone';
 import { STAFF_INVITATIONS_KEY, StaffInvitationButton } from '@/components/club/staff-invitation-dialog';
 import { PageHeader } from '@/components/common/page-header';
@@ -54,6 +55,9 @@ interface CodeRow {
   remaining: number;
   totalGuests: number;
   convertedGuests: number;
+  /** Guests who visited in the chosen range, and how many of them subscribed. */
+  periodVisits: number;
+  periodConverted: number;
   /** false = suspended or left (shown only with the «الموقوفين» / «الكل» filter). */
   isEmployeeActive?: boolean;
 }
@@ -64,7 +68,8 @@ interface ListResponse {
   canOverride: boolean;
   scope: 'all' | 'branches' | 'manager' | 'self';
   rows: CodeRow[];
-  totals: { employees: number; withCode: number; usedThisMonth: number; totalGuests: number; convertedGuests: number };
+  range?: { from: string; to: string };
+  totals: { employees: number; withCode: number; usedThisMonth: number; totalGuests: number; convertedGuests: number; periodVisits: number; periodConverted: number };
 }
 
 interface EmployeeSummary {
@@ -558,6 +563,7 @@ function CodeCell({ row }: { row: CodeRow }) {
   return (
     <span className="inline-flex items-center gap-1">
       <Badge variant={row.isActive ? 'default' : 'secondary'} dir="ltr">{row.code}</Badge>
+      <CopyCodeButton code={row.code} className="size-7" />
       {!row.isActive ? <span className="text-xs text-destructive">موقوف</span> : null}
     </span>
   );
@@ -580,6 +586,11 @@ function RowActions({
 }) {
   return (
     <div className="inline-flex items-center gap-1">
+      {canManage ? (
+        <Button variant={row.codeId ? 'outline' : 'brand'} size="sm" onClick={onEdit}>
+          <Pencil className="size-4" /> {row.codeId ? 'تعديل' : 'إنشاء كود'}
+        </Button>
+      ) : null}
       <Button variant="outline" size="sm" onClick={onGuests}><Users className="size-4" /> الضيوف</Button>
       {canManage || row.codeId ? (
         <DropdownMenu>
@@ -616,6 +627,17 @@ export function ClubStaffInvitationsPage() {
   const [search, setSearch] = useState('');
   const [withCode, setWithCode] = useState('');
   const [status, setStatus] = useState('active');
+  // «زيارات الفترة»: a month, or any from/to range (default this month).
+  const thisMonth = new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Cairo' }).slice(0, 7);
+  const [month, setMonth] = useState(thisMonth);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const monthEnd = (value: string) => {
+    const [y, m] = value.split('-').map(Number);
+    return `${value}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}`;
+  };
+  const rangeFrom = dateFrom || (month ? `${month}-01` : '');
+  const rangeTo = dateTo || (month ? monthEnd(month) : '');
   const [guestsOf, setGuestsOf] = useState<CodeRow | null>(null);
   const [editing, setEditing] = useState<CodeRow | null>(null);
   const [adjusting, setAdjusting] = useState<{ row: CodeRow; sign: 1 | -1 } | null>(null);
@@ -625,9 +647,9 @@ export function ClubStaffInvitationsPage() {
   const [generating, setGenerating] = useState(false);
 
   const list = useQuery({
-    queryKey: [...STAFF_INVITATIONS_KEY, 'list', branchId, search, withCode, status],
+    queryKey: [...STAFF_INVITATIONS_KEY, 'list', branchId, search, withCode, status, rangeFrom, rangeTo],
     queryFn: async () => (await api.get<ListResponse>('/club-staff-invitations', {
-      params: { ...(branchId ? { branchId } : {}), ...(search.trim() ? { search: search.trim() } : {}), ...(withCode ? { withCode } : {}), status },
+      params: { ...(branchId ? { branchId } : {}), ...(search.trim() ? { search: search.trim() } : {}), ...(withCode ? { withCode } : {}), status, ...(rangeFrom ? { dateFrom: rangeFrom } : {}), ...(rangeTo ? { dateTo: rangeTo } : {}) },
     })).data,
   });
   const refresh = () => void qc.invalidateQueries({ queryKey: STAFF_INVITATIONS_KEY });
@@ -694,7 +716,7 @@ export function ClubStaffInvitationsPage() {
         <StatCard title="موظفين ليهم كود" value={totals ? `${n(totals.withCode)} / ${n(totals.employees)}` : '—'} icon={<Ticket className="size-5" />} loading={list.isLoading} colorIndex={0} />
         <StatCard title="دعوات الشهر ده" value={totals ? n(totals.usedThisMonth) : '—'} subtitle={list.data?.period} icon={<Users className="size-5" />} loading={list.isLoading} colorIndex={2} />
         <StatCard title="إجمالي الضيوف" value={totals ? n(totals.totalGuests) : '—'} icon={<Users className="size-5" />} loading={list.isLoading} colorIndex={3} />
-        <StatCard title="اشتركوا" value={totals ? n(totals.convertedGuests) : '—'} icon={<UserCheck className="size-5" />} loading={list.isLoading} colorIndex={5} />
+        <StatCard title="زيارات الفترة" value={totals ? n(totals.periodVisits) : '—'} subtitle={totals ? `اشترك منهم ${n(totals.periodConverted)}` : undefined} icon={<UserCheck className="size-5" />} loading={list.isLoading} colorIndex={5} />
       </div>
 
       <div className="grid gap-3 rounded-xl border bg-card p-4 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)]">
@@ -725,6 +747,22 @@ export function ClubStaffInvitationsPage() {
             <option value="all">الكل</option>
           </SearchableSelect>
         </div>
+        <div className="col-span-full grid gap-3 border-t pt-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)_auto] sm:items-end">
+          <div>
+            <Label htmlFor="visits-month">الشهر</Label>
+            <Input id="visits-month" type="month" dir="ltr" className="mt-2 h-10" value={month} onChange={(event) => { setMonth(event.target.value); setDateFrom(''); setDateTo(''); }} />
+          </div>
+          <div>
+            <Label htmlFor="visits-from">من</Label>
+            <Input id="visits-from" type="date" dir="ltr" className="mt-2 h-10" value={dateFrom || rangeFrom} onChange={(event) => setDateFrom(event.target.value)} />
+          </div>
+          <div>
+            <Label htmlFor="visits-to">إلى</Label>
+            <Input id="visits-to" type="date" dir="ltr" className="mt-2 h-10" value={dateTo || rangeTo} onChange={(event) => setDateTo(event.target.value)} />
+          </div>
+          <Button type="button" variant="outline" className="h-10" onClick={() => { setMonth(thisMonth); setDateFrom(''); setDateTo(''); }}>الشهر ده</Button>
+          <p className="col-span-full text-xs text-muted-foreground">الفترة بتحدد عمود «زيارات الفترة». رصيد الشهر والزيادة والنقص دايمًا على الشهر الحالي.</p>
+        </div>
       </div>
 
       {list.isError ? <ErrorState message={apiError(list.error)} onRetry={() => void list.refetch()} /> : list.isLoading ? (
@@ -741,7 +779,8 @@ export function ClubStaffInvitationsPage() {
                   <TableHead>الموظف</TableHead>
                   <TableHead>الكود</TableHead>
                   <TableHead className="text-center">رصيد الشهر</TableHead>
-                  <TableHead className="text-center">الضيوف</TableHead>
+                  <TableHead className="text-center">زيارات الفترة</TableHead>
+                  <TableHead className="text-center">كل الضيوف</TableHead>
                   <TableHead className="sticky left-0 z-10 bg-card text-center">الإجراءات</TableHead>
                 </TableRow>
               </TableHeader>
@@ -757,6 +796,10 @@ export function ClubStaffInvitationsPage() {
                     </TableCell>
                     <TableCell><CodeCell row={row} /></TableCell>
                     <TableCell className="text-center"><QuotaCell row={row} canManage={canManage} onAdjust={(sign) => setAdjusting({ row, sign })} /></TableCell>
+                    <TableCell className="nums whitespace-nowrap text-center">
+                      <span className="font-semibold">{n(row.periodVisits)}</span>
+                      <span className="block text-[11px] text-muted-foreground">اشترك {n(row.periodConverted)}</span>
+                    </TableCell>
                     <TableCell className="nums whitespace-nowrap text-center">
                       <button type="button" className="hover:underline" onClick={() => setGuestsOf(row)}>{n(row.totalGuests)}</button>
                       <span className="block text-[11px] text-muted-foreground">اشترك {n(row.convertedGuests)}</span>
@@ -784,6 +827,10 @@ export function ClubStaffInvitationsPage() {
                 <div className="flex items-center justify-between gap-2 rounded-lg bg-muted/30 px-2 py-1">
                   <QuotaCell row={row} canManage={canManage} onAdjust={(sign) => setAdjusting({ row, sign })} />
                   <span className="nums text-center text-sm">
+                    {n(row.periodVisits)} في الفترة
+                    <span className="block text-[11px] text-muted-foreground">اشترك {n(row.periodConverted)}</span>
+                  </span>
+                  <span className="nums text-center text-sm">
                     {n(row.totalGuests)} ضيف
                     <span className="block text-[11px] text-muted-foreground">اشترك {n(row.convertedGuests)}</span>
                   </span>
@@ -810,21 +857,30 @@ export function ClubStaffInvitationsPage() {
 export function MyInvitationCodePage() {
   const mine = useQuery({
     queryKey: [...STAFF_INVITATIONS_KEY, 'me'],
-    queryFn: async () => (await api.get<{ summary: EmployeeSummary }>('/club-staff-invitations/me')).data,
+    queryFn: async () => (await api.get<{ linked?: boolean; summary: EmployeeSummary | null }>('/club-staff-invitations/me')).data,
   });
   const summary = mine.data?.summary;
+  const notLinked = mine.data?.linked === false;
   return (
     <div className="space-y-5">
       <PageHeader title="كود الدعوات الخاص بي" description="ادّي الكود ده لأي حد عايز تعزمه — بيتسجل عند الاستقبال وبيروح للسيلز باسمك." />
       {mine.isError ? <ErrorState message={apiError(mine.error)} onRetry={() => void mine.refetch()} /> : null}
       {mine.isLoading ? <div className="py-10 text-center"><Loader2 className="mx-auto size-6 animate-spin" /></div> : null}
+      {notLinked ? (
+        <div className="rounded-2xl border border-dashed p-8 text-center text-sm text-muted-foreground">
+          الحساب ده مش مربوط بموظف، فمالوش كود دعوات. أكواد الموظفين بتتدار من «أكواد الدعوات للموظفين».
+        </div>
+      ) : null}
       {summary ? (
         <>
           <div className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-primary/30 bg-primary/5 p-5">
             <div>
               <p className="text-sm text-muted-foreground">{summary.employeeName}{summary.jobTitle ? ` · ${summary.jobTitle}` : ''}</p>
               {summary.code ? (
-                <p className="mt-1 text-3xl font-bold tracking-wider" dir="ltr">{summary.code}</p>
+                <p className="mt-1 flex items-center gap-2">
+                  <span className="text-3xl font-bold tracking-wider" dir="ltr">{summary.code}</span>
+                  <CopyCodeButton code={summary.code} className="size-9" />
+                </p>
               ) : (
                 <p className="mt-1 text-lg font-semibold text-muted-foreground">لسه مالكش كود — كلم الإدارة</p>
               )}

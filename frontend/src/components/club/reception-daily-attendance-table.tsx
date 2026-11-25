@@ -7,6 +7,7 @@ import { DataTable, type PaginatedResponse } from '@/components/common/data-tabl
 import { Button } from '@/components/ui/button';
 import { useClubT } from '@/hooks/use-club-t';
 import { api, apiError } from '@/lib/api';
+import { whatsappMessageLink } from '@/lib/member-whatsapp';
 import { formatTimeFromDate, localToday } from '@/lib/formatters';
 import { toArabicDigits } from '@/lib/utils';
 import { useLocale } from '@/store/locale';
@@ -196,7 +197,7 @@ export function ReceptionDailyAttendanceTable({
         header: ct('common.actions'),
         cell: ({ row }) => {
           const info = row.original.memberId ? absenceByMember.get(row.original.memberId) : undefined;
-          const link = info?.phone && info.text ? `https://wa.me/${info.phone}?text=${encodeURIComponent(info.text)}` : null;
+          const link = info?.phone && info.text ? whatsappMessageLink(info.phone, info.text) : null;
           const waHint = !info
             ? ui('جاري تحميل رسالة واتساب…')
             : info.newSubscription

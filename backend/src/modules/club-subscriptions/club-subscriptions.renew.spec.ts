@@ -28,6 +28,10 @@ describe('ClubSubscriptionsService.renew history safety', () => {
     club_subscription_freezes: {
       findFirst: jest.fn(),
     },
+    // Member not in a group: the renewal keeps the original discount.
+    club_member_group_members: {
+      findUnique: jest.fn().mockResolvedValue(null),
+    },
     club_receipts: {
       findMany: jest.fn(),
     },
