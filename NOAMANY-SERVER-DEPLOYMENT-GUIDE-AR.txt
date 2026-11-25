@@ -1204,3 +1204,24 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - اتأكد: UPDATE VERIFIED: 2026-11-25-r2، العملية 906910 → 1135695. backup: tmp/nov25-r2-update-backup.GNUUzg (فيه dump كامل 65M)
   الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261125-r2/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov25-r2-update-backup.GNUUzg
 - المرجع للرفع اللي جاي: system.html = payload 25-r2، الخلفية = ملفات 25-r2، أي رفعة لازم تتبني فوق claude/hr-fixes-20261124.
+
+آخر تثبيت مؤكد: 20261125-r3 — متابعة اجتماع 25 نوفمبر + InBody ومجموعات الأعضاء ومساحة التدريب من Gymora (25 نوفمبر 2026، ~02:55)
+-----------------------------------------------------------------------------------------------------------------
+- الفرع: claude/hr-fixes-20261124 (دمج claude/meeting-followups-20261124 لحد abbde7a، commit f5fff37). الأساس 25-r2
+  (system.html eaf7fbc3…، schema 4c68c02d…، Client 8304f9e6…).
+- release-tools/daily-update-20261125-r3، الحزمة noamany-daily-update-20261125-r3.zip (sha256 edb2b734…)، المشغّل release/run-install-20261125-r3.sh.
+- قاعدة البيانات: sql/01 (InBody: club_inbody_branch_settings، club_inbody_entitlements، أعمدة club_inbody_services/measurements)،
+  sql/02 (المجموعات: club_member_group_plans، أعمدة club_member_groups/_members، 5 أعمدة خصم المجموعة + FK على club_subscriptions)،
+  sql/03 (10 جداول training_*، image_url/category في club_equipment)، sql/04 (صلاحية club.fitness.training_space، اسم «مجموعات الأعضاء»).
+  اتسجلت التلاتة في _prisma_migrations.
+- Prisma Client جديد 517 موديل = مخطط السيرفر 4c68c02d + 13 موديل وأعمدة 7 موديلات بس، output مخصص، سطر التوافق منقول.
+  اتقارن بالـ Client الحي قبل وبعد: كل التصديرات والموديلات والحقول القديمة زي ما هي.
+- اتجرب قبل الرفع على نسخة من قاعدة الإنتاج (dump 25-r2 + SQL r2 + SQL r3) بالـ Client الجديد و main.js والملفات المعدلة يدوي بتاعة السيرفر:
+  اشتراك عادي، اشتراك بخصم مجموعة، باقة InBody والرصيد، حفظ برنامج تدريب، «يعمل بالمبيعات»، وقراءات الشاشات.
+- الخلفية: 25 ملف متغير + 17 جديد (منهم standard-exercise-profiles.json). public: assets جديدة + فولدرين anatomy وbody3d.
+  main.js والملفات المعدلة يدوي متلمستش.
+- اتأكد: UPDATE VERIFIED: 2026-11-25-r3، العملية 1135695 → 1355986. باقي تطبيقات PM2 على السيرفر متلمستش (نفس وقت التشغيل).
+  backup: tmp/nov25-r3-update-backup.GtOiCZ (فيه dump كامل 65M)
+  الرجوع: bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261125-r3/rollback.sh /home/noamanycenter/final.noamanycenter.com/tmp/nov25-r3-update-backup.GtOiCZ
+- المرجع للرفع اللي جاي: system.html = payload 25-r3، schema = payload 25-r3 (output بيشاور على scratchpad محلي زي r6)، Client 517 موديل،
+  الخلفية = ملفات 25-r3. أي رفعة لازم تتبني فوق claude/hr-fixes-20261124.
