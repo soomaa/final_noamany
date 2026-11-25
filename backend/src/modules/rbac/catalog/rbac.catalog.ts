@@ -364,6 +364,8 @@ export const RESOURCE_TREE: ResourceNode[] = [
         page('club.fitness.trainer_targets', 'تارجت المدربين', '/club/fitness/trainer-targets', SETTINGS, 'Trainer targets'),
         page('club.fitness.trainer_evaluations', 'تقييم المدربين الشهري', '/club/fitness/trainer-evaluations', LIST, 'Trainer evaluations'),
         page('club.fitness.trainer_evaluation_criteria', 'بنود تقييم المدربين', '/club/fitness/trainer-evaluation-criteria', SETTINGS, 'Trainer evaluation criteria'),
+        // مساحة التدريب (ported from Gymora): plans, member journey, measurements, exercise & equipment library.
+        page('club.fitness.training_space', 'مساحة التدريب', '/club/fitness/training-space', LIST, 'Training space'),
         page('club.fitness.branch_analysis', 'تحليل الفروع', '/club/fitness/branch-analysis', REPORT, 'Branch analysis'),
         page('club.fitness.reception_analysis', 'تحليل الريسيبشن', '/club/fitness/reception-analysis', REPORT, 'Reception analysis'),
         page('club.fitness.shift_analysis', 'تحليل الشِفتات', '/club/fitness/shift-analysis', REPORT, 'Shift analysis'),

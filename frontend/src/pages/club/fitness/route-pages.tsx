@@ -26,6 +26,7 @@ export {
   FitnessTrainerEvaluationsPage,
   FitnessTrainerTargetsPage,
 } from './trainers/performance';
+export { TrainingJourneyPage as FitnessTrainingSpacePage } from './training/journey';
 export { FitnessFacilitiesPage } from './facilities/index';
 export { FitnessEquipmentPage } from './facilities/equipment';
 export { FitnessMaintenancePage } from './facilities/maintenance';

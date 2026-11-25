@@ -246,6 +246,7 @@ import {
   FitnessTrainerTargetsPage,
   FitnessTrainerEvaluationsPage,
   FitnessTrainerEvaluationCriteriaPage,
+  FitnessTrainingSpacePage,
   FitnessBranchAnalysisPage,
   FitnessReceptionAnalysisPage,
   FitnessShiftAnalysisPage,
@@ -302,7 +303,7 @@ function WeeklyLeaveRedirect() {
   return <Navigate to={id ? `/employees/${id}/attendance` : '/employees'} replace />;
 }
 
-const TRAINER_ALLOWED_PATHS = new Set(['/trainer', '/profile', '/notifications', '/workspace']);
+const TRAINER_ALLOWED_PATHS = new Set(['/trainer', '/trainer/training', '/profile', '/notifications', '/workspace']);
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
   const { status, user } = useAuth();
@@ -345,6 +346,7 @@ export function AppRouter() {
           }
         >
           <Route path="trainer" element={<Lazy><TrainerPortalPage /></Lazy>} />
+          <Route path="trainer/training" element={<Lazy><TrainerPortalPage /></Lazy>} />
           <Route path="club/events/:id/live/display" element={<Lazy><ClubEventLiveDisplayPage /></Lazy>} />
           <Route path="club/events/:id/live/checkin" element={<Lazy><ClubEventLiveCheckInPage /></Lazy>} />
           <Route path="club/events/:id/live/guest" element={<Lazy><ClubEventLiveGuestPage /></Lazy>} />
@@ -568,6 +570,7 @@ export function AppRouter() {
           <Route path="club/fitness/trainer-targets" element={<Lazy><FitnessTrainerTargetsPage /></Lazy>} />
           <Route path="club/fitness/trainer-evaluations" element={<Lazy><FitnessTrainerEvaluationsPage /></Lazy>} />
           <Route path="club/fitness/trainer-evaluation-criteria" element={<Lazy><FitnessTrainerEvaluationCriteriaPage /></Lazy>} />
+          <Route path="club/fitness/training-space" element={<Lazy><FitnessTrainingSpacePage /></Lazy>} />
           <Route path="club/fitness/branch-analysis" element={<Lazy><FitnessBranchAnalysisPage /></Lazy>} />
           <Route path="club/fitness/reception-analysis" element={<Lazy><FitnessReceptionAnalysisPage /></Lazy>} />
           <Route path="club/fitness/shift-analysis" element={<Lazy><FitnessShiftAnalysisPage /></Lazy>} />

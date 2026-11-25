@@ -6635,6 +6635,10 @@ model club_equipment {
   status        ClubFitnessHallStatus        @default(available)
   purchase_date String?                      @db.VarChar(10)
   notes         String?                      @db.Text
+  /// Training equipment library photo: an uploaded path (/uploads/club/equipment/...) or an https URL.
+  image_url     String?                      @db.VarChar(1000)
+  /// Training-library group: cardio | machines | free_weights | accessories | functional. NULL = other.
+  category      String?                      @db.VarChar(30)
   is_active     Boolean                      @default(true)
   created_at    DateTime                     @default(now())
   updated_at    DateTime                     @updatedAt
@@ -11197,4 +11201,154 @@ model wa_control_settings {
   id         Int      @id @default(1)
   selectors  Json?
   updated_at DateTime @updatedAt
+}
+
+// ─── Training space (مساحة التدريب) — ported from Gymora training-journey ───
+model training_plans {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(200)
+  goal       String?  @db.VarChar(500)
+  weeks      Int      @default(8)
+  revision   Int      @default(1)
+  status     String   @default("draft") @db.VarChar(20)
+  branch_id  Int
+  days       Json
+  created_by Int
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+
+  @@index([branch_id, status])
+}
+
+model training_assignments {
+  id            Int      @id @default(autoincrement())
+  member_id     Int
+  trainer_id    Int?
+  plan_id       Int
+  plan_revision Int
+  snapshot      Json
+  start_date    String   @db.VarChar(10)
+  is_active     Boolean  @default(true)
+  handover_note String?  @db.Text
+  created_by    Int
+  created_at    DateTime @default(now())
+
+  @@index([member_id, is_active])
+  @@index([trainer_id, is_active])
+}
+
+model training_sessions {
+  id            String   @id @db.VarChar(80)
+  member_id     Int
+  assignment_id Int?
+  day_id        String?  @db.VarChar(80)
+  date          String   @db.VarChar(10)
+  status        String   @default("in_progress") @db.VarChar(20)
+  revision      Int      @default(1)
+  entries       Json
+  note          String?  @db.Text
+  author        String   @db.VarChar(80)
+  created_at    DateTime @default(now())
+  updated_at    DateTime @updatedAt
+
+  @@index([member_id, date])
+}
+
+model training_exercise_profiles {
+  key               String   @id @db.VarChar(80)
+  name              String   @db.VarChar(200)
+  kind              String   @default("strength") @db.VarChar(20)
+  primary_muscles   Json
+  secondary_muscles Json
+  instructions      String?  @db.Text
+  video_url         String?  @db.VarChar(1000)
+  equipment_ids     Json?
+  created_by        Int?
+  updated_by        Int
+  updated_at        DateTime @updatedAt
+}
+
+model training_metrics {
+  id        Int     @id @default(autoincrement())
+  member_id Int
+  date      String  @db.VarChar(10)
+  test_key  String  @db.VarChar(100)
+  label     String  @db.VarChar(200)
+  unit      String  @db.VarChar(30)
+  side      String  @default("both") @db.VarChar(10)
+  value     Decimal @db.Decimal(10, 3)
+  protocol  String  @db.VarChar(500)
+  author    String  @db.VarChar(80)
+
+  @@index([member_id, test_key, date])
+}
+
+model training_events {
+  id         Int      @id @default(autoincrement())
+  member_id  Int
+  kind       String   @db.VarChar(40)
+  note       String   @db.Text
+  author     String   @db.VarChar(80)
+  created_at DateTime @default(now())
+
+  @@index([member_id, created_at])
+}
+
+model training_body_checkins {
+  id           String   @id @db.VarChar(80)
+  member_id    Int
+  date         String   @db.VarChar(10)
+  measurements Json
+  note         String   @db.VarChar(1000)
+  author       String   @db.VarChar(80)
+  created_at   DateTime @default(now())
+
+  @@index([member_id, date, created_at])
+}
+
+model training_body_targets {
+  member_id    Int      @id
+  revision     Int      @default(1)
+  measurements Json
+  target_date  String?  @db.VarChar(10)
+  note         String   @db.VarChar(1000)
+  author       String   @db.VarChar(80)
+  updated_at   DateTime @updatedAt
+}
+
+/// Member progress photos stay in the gym database; served only to the member and, with consent, staff.
+model training_photos {
+  id                String   @id @db.VarChar(80)
+  member_id         Int
+  date              String   @db.VarChar(10)
+  angle             String   @db.VarChar(20)
+  shared_with_coach Boolean  @default(false)
+  mime              String   @db.VarChar(40)
+  content           Bytes    @db.LongBlob
+  created_at        DateTime @default(now())
+
+  @@index([member_id, angle, date])
+}
+
+/// Coach audio/video notes; files live under <STORAGE_DIR>/tenants/<slug>/private/training-recordings.
+model training_recordings {
+  id               String    @id @db.VarChar(36)
+  member_id        Int
+  branch_id        Int
+  assignment_id    Int?
+  day_id           String    @db.VarChar(80)
+  kind             String    @db.VarChar(10)
+  mime             String    @db.VarChar(60)
+  bytes            Int
+  duration_seconds Int?
+  storage_key      String?   @db.VarChar(255)
+  share_token      String    @unique @db.Char(43)
+  note             String    @default("") @db.VarChar(500)
+  expires_at       DateTime
+  deleted_at       DateTime?
+  created_by       Int
+  created_at       DateTime  @default(now())
+
+  @@index([member_id, assignment_id])
+  @@index([expires_at, deleted_at])
 }

@@ -1,0 +1,252 @@
+[
+  {
+    "names": [
+      "ضغط الصدر بالبار",
+      "ضغط بنش مستوي",
+      "Barbell bench press",
+      "Bench press"
+    ],
+    "primary": [
+      "chest"
+    ],
+    "secondary": [
+      "triceps",
+      "shoulders"
+    ],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "ضغط بنش مائل",
+      "Incline bench press"
+    ],
+    "primary": [
+      "chest"
+    ],
+    "secondary": [
+      "shoulders",
+      "triceps"
+    ],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "ضغط صدر بالدمبل",
+      "Dumbbell chest press"
+    ],
+    "primary": [
+      "chest"
+    ],
+    "secondary": [
+      "triceps",
+      "shoulders"
+    ],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "السكوات",
+      "سكوات",
+      "Squat"
+    ],
+    "primary": [
+      "quads",
+      "glutes"
+    ],
+    "secondary": [
+      "adductors",
+      "abs",
+      "lower_back"
+    ],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "الرفعة المميتة",
+      "ديدليفت",
+      "Deadlift",
+      "Barbell deadlift"
+    ],
+    "primary": [
+      "glutes",
+      "hamstrings",
+      "lower_back"
+    ],
+    "secondary": [
+      "quads",
+      "traps",
+      "forearms",
+      "abs"
+    ],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "العقلة",
+      "عقلة",
+      "Pull-up",
+      "Pull up"
+    ],
+    "primary": [
+      "lats",
+      "upper_back"
+    ],
+    "secondary": [
+      "biceps",
+      "forearms",
+      "shoulders"
+    ],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "سحب أرضي",
+      "سحب ظهر",
+      "Seated row",
+      "Back row"
+    ],
+    "primary": [
+      "lats",
+      "upper_back"
+    ],
+    "secondary": [
+      "biceps",
+      "shoulders",
+      "forearms"
+    ],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "تمرين البلانك",
+      "Plank"
+    ],
+    "primary": [
+      "abs"
+    ],
+    "secondary": [
+      "obliques",
+      "glutes",
+      "shoulders"
+    ],
+    "kind": "timed"
+  },
+  {
+    "names": [
+      "الجري على السير",
+      "جري على الجهاز",
+      "Treadmill running"
+    ],
+    "primary": [
+      "quads",
+      "hamstrings",
+      "calves"
+    ],
+    "secondary": [
+      "glutes",
+      "abs"
+    ],
+    "kind": "cardio"
+  },
+  {
+    "names": [
+      "ضغط الكتف",
+      "ضغط كتف",
+      "Shoulder press"
+    ],
+    "primary": [
+      "shoulders"
+    ],
+    "secondary": [
+      "triceps",
+      "traps"
+    ],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "تمرين العضلة الأمامية",
+      "Biceps curl"
+    ],
+    "primary": [
+      "biceps"
+    ],
+    "secondary": [
+      "forearms"
+    ],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "دفع الأرجل",
+      "Leg press"
+    ],
+    "primary": [
+      "quads",
+      "glutes"
+    ],
+    "secondary": [
+      "adductors",
+      "hamstrings"
+    ],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "تمارين البطن العلوية",
+      "المعدة العلوية",
+      "Crunches"
+    ],
+    "primary": [
+      "abs"
+    ],
+    "secondary": [],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "رفرفة جانبي",
+      "Lateral raise"
+    ],
+    "primary": [
+      "shoulders"
+    ],
+    "secondary": [
+      "traps"
+    ],
+    "kind": "strength"
+  },
+  {
+    "names": [
+      "دراجة ثابتة",
+      "Stationary bike",
+      "Spinning"
+    ],
+    "primary": [
+      "quads"
+    ],
+    "secondary": [
+      "glutes",
+      "hamstrings",
+      "calves"
+    ],
+    "kind": "cardio"
+  },
+  {
+    "names": [
+      "لانجز",
+      "Lunge",
+      "Lunges"
+    ],
+    "primary": [
+      "quads",
+      "glutes"
+    ],
+    "secondary": [
+      "hamstrings",
+      "adductors",
+      "abs"
+    ],
+    "kind": "strength"
+  }
+]
