@@ -1233,3 +1233,7 @@ bash /home/noamanycenter/final.noamanycenter.com/noamany-daily-update-20261027-r
 - 20261125-r5 اتثبت واتأكد: واجهة بس — شيل «حذف (اتعمل بالغلط)» من كارت الاشتراك في الاستقبال (فاضل في قائمة الاشتراكات).
   الحزمة sha256 c7fc2361…؛ الرجوع: cp -p tmp/nov25-r5-update-backup.eGO6QC/system.html public/system.html
   (رسالة المثبّت المطبوعة قالت r4 بالغلط في النص بس؛ اتصلحت في الأداة).
+- 20261125-r6 اتثبت واتأكد: لوحة المدير — الخصومات ومصادر الإيراد حسب الفرع، والنسب بعلامة عشرية. ملف خلفية واحد
+  (modules/club-dashboard/club-dashboard.service.js) + system.html + assets، مع restart. الحزمة sha256 c6cf1d15….
+  أول محاولة رجعت لوحدها لـ 25-r5 (فحص الصفحات من غير Accept: text/html بيرجع 404) واتصلح الفحص.
+  backup: tmp/nov25-r6-update-backup.68WfIX (الملف القديم + system.html).

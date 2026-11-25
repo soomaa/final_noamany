@@ -59,7 +59,7 @@ touch tmp/restart.txt; chown "$OWNER" tmp/restart.txt || true
 wait_restart "$PIDS_BEFORE"
 three_health
 for p in /login /dashboard; do
-  [ "$(curl -fsS -m 20 -H 'Cache-Control: no-cache' "$SITE$p" | sha256sum | cut -d' ' -f1)" = "$(sha "$PKG/payload/public/system.html")" ]
+  [ "$(curl -fsS -m 20 -H 'Accept: text/html' -H 'Cache-Control: no-cache' "$SITE$p" | sha256sum | cut -d' ' -f1)" = "$(sha "$PKG/payload/public/system.html")" ]
 done
 for a in $(grep -oE '/assets/[^"]+' "$PKG/payload/public/system.html"); do [ "$(curl -s -o /dev/null -w '%{http_code}' -m 20 "$SITE$a")" = 200 ]; done
 [ "$(curl -s -o /dev/null -w '%{http_code}' -m 20 "$SITE/api/dashboard/executive")" = 401 ]
