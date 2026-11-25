@@ -5126,6 +5126,7 @@ model club_subscription_types {
   class_types                  club_subscription_type_classes[]
   session_prices               club_subscription_type_session_prices[]
 
+  member_group_plans club_member_group_plans[]
   @@map("club_subscription_types")
 }
 
@@ -5263,6 +5264,14 @@ model club_subscriptions {
   inbody_invoices                club_inbody_invoices[]
   spa_invoices                   club_spa_invoices[]
 
+  /// Member-group discount snapshot saved when the subscription was created (immutable history).
+  discount_group_id    Int?
+  discount_group_name  String?             @db.VarChar(200)
+  group_discount_type  String?             @db.VarChar(20)
+  group_discount_rate  Decimal?            @db.Decimal(10, 2)
+  group_discount_value Decimal             @default(0) @db.Decimal(10, 2)
+  discount_group       club_member_groups? @relation(fields: [discount_group_id], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  @@index([discount_group_id, registration_date])
   @@index([member_id])
   @@index([special_class_type_id])
   @@index([private_package_id])
@@ -5786,13 +5795,20 @@ model club_member_groups {
   id              Int                         @id @default(autoincrement())
   name            String                      @db.VarChar(200)
   category        String                      @default("عام") @db.VarChar(100)
+  branch_id       Int?
+  /// 'none' | 'percentage' | 'fixed' — default rule for every package the group does not customise.
+  discount_type   String                      @default("none") @db.VarChar(20)
+  discount_amount Decimal                     @default(0) @db.Decimal(10, 2)
   max_members     Int                         @default(0)
   current_members Int                         @default(0)
   is_active       Boolean                     @default(true)
   created_at      DateTime                    @default(now())
   updated_at      DateTime                    @updatedAt
   members         club_member_group_members[]
+  subscriptions   club_subscriptions[]
+  plans           club_member_group_plans[]
 
+  @@index([branch_id, is_active])
   @@map("club_member_groups")
 }
 
@@ -5800,6 +5816,8 @@ model club_member_group_members {
   id         Int      @id @default(autoincrement())
   group_id   Int
   member_id  Int
+  /// The member's employee number at the group's organisation (optional).
+  employee_number String? @db.VarChar(50)
   created_at DateTime @default(now())
 
   group  club_member_groups @relation(fields: [group_id], references: [id], onDelete: Cascade)
@@ -5808,6 +5826,23 @@ model club_member_group_members {
   @@unique([member_id])
   @@index([group_id])
   @@map("club_member_group_members")
+}
+
+/// Per-package discount rule of a member group (overrides the group default for that package).
+model club_member_group_plans {
+  id                   Int                     @id @default(autoincrement())
+  group_id             Int
+  subscription_type_id Int
+  /// 'percentage' | 'fixed'
+  discount_type        String                  @default("percentage") @db.VarChar(20)
+  discount_value       Decimal                 @default(0) @db.Decimal(10, 2)
+  created_at           DateTime                @default(now())
+  group                club_member_groups      @relation(fields: [group_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  subscription_type    club_subscription_types @relation(fields: [subscription_type_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([group_id, subscription_type_id])
+  @@index([subscription_type_id])
+  @@map("club_member_group_plans")
 }
 
 model club_surveys {

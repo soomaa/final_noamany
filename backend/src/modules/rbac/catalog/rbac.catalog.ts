@@ -297,7 +297,7 @@ export const RESOURCE_TREE: ResourceNode[] = [
         page('club.members', 'إدارة العضوية', '/club/members', [...LIST, ...CONTACT], 'Members'),
         page('club.members.barcode_management', 'إدارة الباركود', '/club/members/barcode-management', LIST, 'Barcode management'),
         page('club.members.attendance', 'حضور الأعضاء', '/club/members/attendance', LIST, 'Member attendance'),
-        page('club.members.groups', 'المجموعات والفئات', '/club/members/groups', LIST, 'Groups'),
+        page('club.members.groups', 'مجموعات الأعضاء', '/club/members/groups', LIST, 'Member groups'),
         page('club.members.surveys', 'الاستبيانات', '/club/members/surveys', LIST, 'Surveys'),
         { key: 'sales.portal', nameAr: 'بوابة المبيعات', nameEn: 'Sales portal', type: 'page', actions: ['view', 'update', ...CONTACT] },
       ], 'Membership'),

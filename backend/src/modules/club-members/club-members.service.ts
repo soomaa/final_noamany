@@ -1,3 +1,4 @@
+import { groupDiscountVersion } from '../club-subscriptions/club-group-discount';
 import {
   BadRequestException,
   ConflictException,
@@ -417,11 +418,36 @@ export class ClubMembersService {
     created_at: Date;
     updated_at: Date;
     membership_type?: { id: number; name: string; price: Prisma.Decimal; duration_days: number } | null;
+    group_membership?: {
+      employee_number?: string | null;
+      group: {
+        id: number; name: string; is_active: boolean; discount_type: string; discount_amount: Prisma.Decimal;
+        plans?: Array<{ subscription_type_id: number; discount_type: string; discount_value: unknown }>;
+      };
+    } | null;
     attendances?: { check_in_time: Date }[];
   }) {
+    const groupLink = row.group_membership;
     return {
       id: row.id,
       memberCode: row.member_code,
+      group: groupLink?.group.is_active
+        ? {
+            id: groupLink.group.id,
+            name: groupLink.group.name,
+            discountType: groupLink.group.discount_type,
+            discountAmount: Number(groupLink.group.discount_amount),
+            version: groupDiscountVersion(groupLink.group),
+            employeeNumber: groupLink.employee_number ?? null,
+            // Packages this group customises; every other package uses the group's default rule.
+            plans: (groupLink.group.plans ?? []).map((plan) => ({
+              subscriptionTypeId: plan.subscription_type_id,
+              discountType: plan.discount_type,
+              discountAmount: Number(plan.discount_value),
+              version: groupDiscountVersion(groupLink.group, plan),
+            })),
+          }
+        : null,
       name: row.name,
       phone: row.phone,
       email: row.email,
@@ -960,7 +986,10 @@ export class ClubMembersService {
   async findOne(id: number, user?: JwtUser, forMembershipOperation = false, forRefundTransfer = false) {
     const row = await this.prisma.club_members.findFirst({
       where: { id, is_deleted: false },
-      include: { membership_type: { select: { id: true, name: true, price: true, duration_days: true } } },
+      include: {
+        membership_type: { select: { id: true, name: true, price: true, duration_days: true } },
+        group_membership: { include: { group: { include: { plans: true } } } },
+      },
     });
     if (!row) throw new NotFoundException('العضو غير موجود');
     if (forRefundTransfer) {

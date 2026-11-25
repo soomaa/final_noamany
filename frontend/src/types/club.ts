@@ -1,4 +1,15 @@
+/** A member group's discount rule (or the snapshot saved on a subscription). */
+export interface ClubMemberGroup {
+  id: number; name: string; discountType: string; discountAmount: number; appliedValue?: number; version?: string;
+  /** The member's employee number at the group's organisation (optional). */
+  employeeNumber?: string | null;
+  /** Packages the group customises, each with its own rule. Other packages use the group's default rule. */
+  plans?: Array<{ subscriptionTypeId: number; discountType: string; discountAmount: number; version: string }>;
+}
+
 export interface ClubMemberListItem {
+  /** Active member group (null when the member belongs to none). */
+  group?: ClubMemberGroup | null;
   id: number;
   memberCode: string;
   name: string;
@@ -245,6 +256,8 @@ export interface DuplicateCheckResult {
 }
 
 export interface ClubSubscriptionListItem {
+  /** Member-group discount saved when the subscription was created. */
+  groupDiscount?: ClubMemberGroup | null;
   id: number;
   subscriptionNumber: string;
   registrationDate: string;

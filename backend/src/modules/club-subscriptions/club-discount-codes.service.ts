@@ -1,6 +1,7 @@
 import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { managerKind } from '../../common/utils/manager-scope.util';
 import { managerStaff } from '../../common/utils/manager-staff.util';
+import { GroupDiscount, loadGroupDiscount } from './club-group-discount';
 import { Prisma } from '@prisma/client';
 import { BranchScopeService } from '../../common/branch-scope/branch-scope.service';
 import { PrismaService } from '../../common/prisma/prisma.service';
@@ -43,6 +44,8 @@ export interface ResolvedClubDiscount {
   discountCodeId: number | null;
   discountPercentage: number | null;
   discountValue: number;
+  /** Set when the member's group rule produced this discount (saved as an immutable snapshot). */
+  groupDiscount?: GroupDiscount | null;
 }
 
 @Injectable()
@@ -428,6 +431,10 @@ export class ClubDiscountCodesService {
 
   async resolveDiscount(
     input: {
+      /** Member being sold to; an active member group discount wins over codes and manual discounts. */
+      memberId?: number | null;
+      /** Package being sold; a group discount applies only to packages the group lists. */
+      subscriptionTypeId?: number | null;
       subscriptionValue: number;
       discountCodeId?: number | null;
       discountEnabled?: boolean;
@@ -438,6 +445,17 @@ export class ClubDiscountCodesService {
     const subscriptionValue = roundMoney(input.subscriptionValue);
     if (!Number.isFinite(subscriptionValue) || subscriptionValue < 0) {
       throw new BadRequestException('قيمة الاشتراك غير صالحة');
+    }
+
+    const group = await loadGroupDiscount(client, input.memberId, subscriptionValue, input.subscriptionTypeId);
+    if (group) {
+      return {
+        discountEnabled: group.appliedValue > 0,
+        discountCodeId: null,
+        discountPercentage: group.discountType === 'percentage' ? group.discountAmount : null,
+        discountValue: group.appliedValue,
+        groupDiscount: group,
+      };
     }
 
     if (input.discountCodeId != null) {

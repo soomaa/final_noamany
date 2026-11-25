@@ -18,6 +18,7 @@ const freezeLog = new Logger('ClubSubscriptionFreezes');
 const isLegacySubscription = (sub: { subscription_number: string | null }) => (sub.subscription_number ?? '').startsWith('LEG-');
 import { resolveSalePromotion } from './package-offer';
 import { PrismaService } from '../../common/prisma/prisma.service';
+import { calculateGroupDiscount, groupDiscountColumns, loadGroupDiscount, mapGroupDiscount } from './club-group-discount';
 import { paginated } from '../../common/dto/list-result';
 import { retryOnUniqueViolation } from '../../common/retry-unique';
 import { loadLegacySubscriptionStaff } from './legacy-subscription-staff.util';
@@ -168,6 +169,7 @@ export class ClubSubscriptionsService {
       subscriptionStartDate: start,
       subscriptionEndDate: end,
       subscriptionValue: toNum(row.subscription_value),
+      groupDiscount: mapGroupDiscount(row),
       discountEnabled: row.discount_enabled,
       discountCodeId: row.discount_code_id ?? null,
       discountPercentage: row.discount_percentage != null ? toNum(row.discount_percentage) : null,
@@ -1545,11 +1547,18 @@ export class ClubSubscriptionsService {
             return this.discountCodes.resolveMemberGrant(memberGrantId, data.memberId, subValue);
           })()
         : await this.discountCodes.resolveDiscount({
+          memberId: data.memberId ?? null,
+          subscriptionTypeId: data.subscriptionTypeId ?? null,
           subscriptionValue: subValue,
           discountCodeId: data.discountCodeId,
           discountEnabled: data.discountEnabled,
           discountValue: data.discountValue,
         });
+    const groupDiscount = 'groupDiscount' in resolvedDiscount ? resolvedDiscount.groupDiscount ?? null : null;
+    // The cashier priced the sale against a group rule; refuse if it changed in the meantime.
+    if (data.groupDiscountVersion !== undefined && data.groupDiscountVersion !== (groupDiscount?.version ?? 'none')) {
+      throw new BadRequestException('تغيّر خصم مجموعة العضو أثناء التسجيل؛ راجع السعر وأعد المحاولة');
+    }
     const discountEnabled = resolvedDiscount.discountEnabled;
     const discount = resolvedDiscount.discountValue;
     const grantEmployeeId = 'employeeId' in resolvedDiscount ? (resolvedDiscount.employeeId as number | null) : null;
@@ -1605,6 +1614,7 @@ export class ClubSubscriptionsService {
           discount_code_id: resolvedDiscount.discountCodeId,
           discount_percentage: resolvedDiscount.discountPercentage,
           discount_value: discount,
+          ...groupDiscountColumns(groupDiscount),
           points_redeemed: requestedPoints ?? 0,
           paid_amount: paid,
           remaining_amount: remaining,
@@ -1888,7 +1898,21 @@ export class ClubSubscriptionsService {
     if (existing.points_redeemed > 0 && discountChanged) {
       throw new BadRequestException('لا يمكن استبدال خصم النقاط بخصم آخر بعد إنشاء الاشتراك');
     }
-    const resolvedDiscount = discountChanged
+    // A group-discounted subscription keeps its saved rule; only the amount follows a new price.
+    const savedGroup = mapGroupDiscount(existing);
+    const savedGroupValue = savedGroup
+      ? subValue === toNum(existing.subscription_value)
+        ? savedGroup.appliedValue
+        : calculateGroupDiscount(subValue, savedGroup.discountType, savedGroup.discountAmount)
+      : 0;
+    const resolvedDiscount = savedGroup
+      ? {
+          discountEnabled: savedGroupValue > 0,
+          discountCodeId: null,
+          discountPercentage: savedGroup.discountType === 'percentage' ? savedGroup.discountAmount : null,
+          discountValue: savedGroupValue,
+        }
+      : discountChanged
       ? await this.discountCodes.resolveDiscount({
           subscriptionValue: subValue,
           discountCodeId: dto.discountCodeId,
@@ -1924,12 +1948,13 @@ export class ClubSubscriptionsService {
           ? { subscription_end_date: end }
           : {}),
         ...(dto.subscriptionValue != null || linkedToSessions ? { subscription_value: subValue } : {}),
-        ...(discountChanged
+        ...(discountChanged || savedGroup
           ? {
               discount_enabled: resolvedDiscount.discountEnabled,
               discount_code_id: resolvedDiscount.discountCodeId,
               discount_percentage: resolvedDiscount.discountPercentage,
               discount_value: resolvedDiscount.discountValue,
+              ...(savedGroup ? { group_discount_value: savedGroupValue } : {}),
             }
           : {}),
         ...(dto.subscriptionType != null ? { subscription_type: dto.subscriptionType } : {}),
@@ -2355,12 +2380,24 @@ export class ClubSubscriptionsService {
       sessionsUsed: 0,
     });
     const subValue = toNum(sub.subscription_value);
-    const discount = toNum(sub.discount_value);
+    // A renewal is a new sale: the member's current group rule replaces any earlier discount.
+    // Points / code discounts are never carried over onto a group renewal (no combining).
+    const renewalGroup = await loadGroupDiscount(this.prisma, sub.member_id, subValue, sub.subscription_type_id);
+    const discountEnabledForRenewal = renewalGroup
+      ? renewalGroup.appliedValue > 0
+      : sub.discount_group_id
+        ? false
+        : sub.discount_enabled;
+    const discount = renewalGroup
+      ? renewalGroup.appliedValue
+      : sub.discount_group_id
+        ? 0
+        : toNum(sub.discount_value);
     const paidAmount = Math.max(0, opts?.paidAmount ?? 0);
     if (!Number.isFinite(paidAmount)) {
       throw new BadRequestException('المبلغ المدفوع غير صالح');
     }
-    const renewalNetValue = netValue(subValue, sub.discount_enabled, discount);
+    const renewalNetValue = netValue(subValue, discountEnabledForRenewal, discount);
     if (renewalNetValue < 0) {
       throw new BadRequestException('قيمة الخصم لا يمكن أن تتجاوز قيمة الاشتراك');
     }
@@ -2391,13 +2428,17 @@ export class ClubSubscriptionsService {
           subscription_start_date: newStart,
           subscription_end_date: newEnd,
           subscription_value: sub.subscription_value,
-          discount_enabled: sub.discount_enabled,
-          discount_value: sub.discount_value,
+          discount_enabled: discountEnabledForRenewal,
+          discount_value: discount,
+          ...(renewalGroup
+            ? { discount_percentage: renewalGroup.discountType === 'percentage' ? renewalGroup.discountAmount : null }
+            : {}),
+          ...groupDiscountColumns(renewalGroup),
           paid_amount: paidAmount,
           waived_amount: 0,
           remaining_amount: remainingAmount(
             subValue,
-            sub.discount_enabled,
+            discountEnabledForRenewal,
             discount,
             paidAmount,
           ),
@@ -2455,7 +2496,7 @@ export class ClubSubscriptionsService {
             paidAmount,
             subscriptionValue: subValue,
             discountValue: discount,
-            discountEnabled: sub.discount_enabled,
+            discountEnabled: discountEnabledForRenewal,
             paymentMethod,
             payments: paymentSplits,
             branchId: sub.branch_id,
